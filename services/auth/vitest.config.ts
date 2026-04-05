@@ -13,4 +13,12 @@ export default defineConfig({
       ),
     },
   },
+  resolve: {
+    alias: {
+      "@carebridge/db-schema": path.resolve(
+        __dirname,
+        "../../packages/db-schema/src/index.ts",
+      ),
+    },
+  },
 });
