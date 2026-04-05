@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { pgTable, text, boolean, index } from "drizzle-orm/pg-core";
 
 export const patients = pgTable("patients", {
@@ -53,4 +54,16 @@ export const careTeamMembers = pgTable("care_team_members", {
   created_at: text("created_at").notNull(),
 }, (table) => [
   index("idx_care_team_patient").on(table.patient_id, table.is_active),
+]);
+
+export const careTeamAssignments = pgTable("care_team_assignments", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  user_id: text("user_id").notNull(),
+  patient_id: text("patient_id").notNull(),
+  role: text("role").notNull(), // "attending", "consulting", "nursing", etc.
+  assigned_at: text("assigned_at").notNull().$defaultFn(() => new Date().toISOString()),
+  removed_at: text("removed_at"), // null = active
+}, (table) => [
+  index("idx_care_team_assignments_user_patient").on(table.user_id, table.patient_id),
+  index("idx_care_team_assignments_patient").on(table.patient_id),
 ]);
