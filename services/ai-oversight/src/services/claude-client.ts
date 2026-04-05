@@ -26,15 +26,25 @@ function getClient(): Anthropic {
   return client;
 }
 
+export interface ReviewResponse {
+  text: string;
+  inputTokens: number;
+  outputTokens: number;
+}
+
 /**
- * Send a clinical review to Claude and return the text response.
+ * Send a clinical review to Claude and return the response with token usage.
  *
  * Retries up to 3 times with exponential backoff on transient failures.
+ *
+ * IMPORTANT: The caller must ensure the userMessage has been sanitized
+ * (PHI redacted) before calling this function. This module does NOT
+ * perform redaction — see packages/phi-sanitizer.
  */
 export async function reviewPatientRecord(
   systemPrompt: string,
   userMessage: string,
-): Promise<string> {
+): Promise<ReviewResponse> {
   const anthropic = getClient();
 
   let lastError: Error | null = null;
@@ -59,7 +69,11 @@ export async function reviewPatientRecord(
         throw new Error("No text content in Claude response");
       }
 
-      return textBlock.text;
+      return {
+        text: textBlock.text,
+        inputTokens: response.usage.input_tokens,
+        outputTokens: response.usage.output_tokens,
+      };
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
 
@@ -83,6 +97,7 @@ export async function reviewPatientRecord(
     `Claude API call failed after ${MAX_RETRIES} attempts: ${lastError?.message}`,
   );
 }
+
 
 function isNonTransientError(error: unknown): boolean {
   if (error instanceof Anthropic.AuthenticationError) return true;

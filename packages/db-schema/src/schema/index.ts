@@ -5,3 +5,5 @@ export * from "./ai-flags.js";
 export * from "./auth.js";
 export * from "./notifications.js";
 export * from "./fhir.js";
+export * from "./llm-audit.js";
+export * from "./medlens.js";

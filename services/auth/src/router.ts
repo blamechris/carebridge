@@ -4,6 +4,7 @@ import { loginSchema, createUserSchema } from "@carebridge/validators";
 import { getDb, users, sessions } from "@carebridge/db-schema";
 import { eq } from "drizzle-orm";
 import crypto from "node:crypto";
+import { hashPassword, verifyPassword } from "./password.js";
 
 // ---------- tRPC setup (mirrors api-gateway's context shape) ----------
 
@@ -30,21 +31,8 @@ const protectedProcedure = t.procedure.use(isAuthenticated);
 
 // ---------- Helpers ----------
 
-const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-
-/**
- * Placeholder password hashing for dev mode.
- * In production this would use bcrypt / argon2.
- */
-function hashPassword(password: string): string {
-  return `hashed:${password}`;
-}
-
-function verifyPassword(password: string, hash: string): boolean {
-  // Dev-mode: accept plain "hashed:" prefix comparison.
-  // Production would use bcrypt.compare / argon2.verify.
-  return hash === `hashed:${password}`;
-}
+// 24 hours absolute TTL; idle timeout enforced separately in auth middleware
+const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
 // ---------- Router ----------
 
@@ -63,6 +51,8 @@ export const authRouter = t.router({
       .limit(1);
 
     if (userRows.length === 0) {
+      // Perform a dummy hash to prevent timing-based user enumeration
+      await hashPassword("dummy-timing-equalization");
       throw new TRPCError({
         code: "UNAUTHORIZED",
         message: "Invalid email or password.",
@@ -71,7 +61,8 @@ export const authRouter = t.router({
 
     const row = userRows[0]!;
 
-    if (!verifyPassword(input.password, row.password_hash)) {
+    const passwordValid = await verifyPassword(input.password, row.password_hash);
+    if (!passwordValid) {
       throw new TRPCError({
         code: "UNAUTHORIZED",
         message: "Invalid email or password.",
@@ -159,7 +150,7 @@ export const authRouter = t.router({
     await db.insert(users).values({
       id: userId,
       email: input.email,
-      password_hash: hashPassword(input.password),
+      password_hash: await hashPassword(input.password),
       name: input.name,
       role: input.role,
       specialty: input.specialty ?? null,

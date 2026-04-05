@@ -17,8 +17,13 @@ export const sessions = pgTable("sessions", {
   id: text("id").primaryKey(),
   user_id: text("user_id").notNull().references(() => users.id),
   expires_at: text("expires_at").notNull(),
+  // last_active_at enables idle session timeout (HIPAA §164.312(a)(2)(iii))
+  last_active_at: text("last_active_at"),
+  // ip_address recorded at session creation for audit purposes
+  created_ip: text("created_ip"),
 }, (table) => [
   index("idx_sessions_user").on(table.user_id),
+  index("idx_sessions_active").on(table.last_active_at),
 ]);
 
 export const auditLog = pgTable("audit_log", {

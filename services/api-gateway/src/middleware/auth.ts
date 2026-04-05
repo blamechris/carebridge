@@ -4,7 +4,13 @@ import { getDb } from "@carebridge/db-schema";
 import { users, sessions } from "@carebridge/db-schema";
 import { eq } from "drizzle-orm";
 
-/** Hardcoded dev users for local development without a seeded database. */
+/**
+ * Hardcoded dev users for local development without a seeded database.
+ *
+ * SECURITY NOTE: This bypass is gated behind an explicit CAREBRIDGE_DEV_AUTH=true
+ * environment variable. Setting NODE_ENV alone is NOT sufficient to enable it.
+ * Never set CAREBRIDGE_DEV_AUTH=true in any environment that handles real PHI.
+ */
 const DEV_USERS: Record<string, User> = {
   "dev-admin": {
     id: "dev-admin",
@@ -38,7 +44,11 @@ const DEV_USERS: Record<string, User> = {
   },
 };
 
-const isDevMode = process.env.NODE_ENV !== "production";
+// Explicit opt-in required — not derived from NODE_ENV alone
+const isDevAuthEnabled = process.env.CAREBRIDGE_DEV_AUTH === "true";
+
+// Session idle timeout: 15 minutes of inactivity (HIPAA §164.312(a)(2)(iii))
+const SESSION_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 
 /**
  * Fastify preHandler hook that resolves the current user from either:
@@ -52,17 +62,23 @@ export async function authMiddleware(
   request: FastifyRequest,
   _reply: FastifyReply,
 ): Promise<void> {
-  // --- Dev mode shortcut ---
-  if (isDevMode) {
+  // --- Dev auth shortcut (explicit opt-in only) ---
+  // Requires CAREBRIDGE_DEV_AUTH=true in the environment.
+  // Never enable this in any environment that handles real PHI.
+  if (isDevAuthEnabled) {
     const devUserId = request.headers["x-dev-user-id"] as string | undefined;
     if (devUserId) {
       const devUser = DEV_USERS[devUserId];
       if (devUser) {
         (request as unknown as Record<string, unknown>).user = devUser;
+        request.log.warn(
+          { devUserId },
+          "[auth] Dev auth bypass used — CAREBRIDGE_DEV_AUTH=true should not be set in PHI environments",
+        );
         return;
       }
 
-      // Dev header present but not a hardcoded user -- try the database.
+      // Dev header present but not a hardcoded user — try the database.
       const db = getDb();
       const rows = await db.select().from(users).where(eq(users.id, devUserId)).limit(1);
       if (rows.length > 0) {
@@ -118,10 +134,30 @@ export async function authMiddleware(
 
   const session = sessionRows[0]!;
 
-  // Check expiration.
+  // Check absolute expiration.
   if (new Date(session.expires_at) < new Date()) {
     return;
   }
+
+  // Check idle timeout (HIPAA §164.312(a)(2)(iii) — automatic logoff).
+  // last_active_at is updated on each authenticated request.
+  if (session.last_active_at) {
+    const idleMs = Date.now() - new Date(session.last_active_at).getTime();
+    if (idleMs > SESSION_IDLE_TIMEOUT_MS) {
+      // Session timed out due to inactivity — silently reject without leaking timing info
+      return;
+    }
+  }
+
+  // Update last_active_at asynchronously (don't block request)
+  const db2 = getDb();
+  db2
+    .update(sessions)
+    .set({ last_active_at: new Date().toISOString() })
+    .where(eq(sessions.id, sessionId))
+    .catch(() => {
+      // Non-critical — don't fail the request if this update fails
+    });
 
   const userRows = await db
     .select()

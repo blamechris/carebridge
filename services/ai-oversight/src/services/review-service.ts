@@ -11,15 +11,20 @@
 
 import { eq } from "drizzle-orm";
 import { getDb } from "@carebridge/db-schema";
-import { reviewJobs, diagnoses, medications } from "@carebridge/db-schema";
+import { reviewJobs, diagnoses, medications, llmInteractionLog } from "@carebridge/db-schema";
 import type { ClinicalEvent, FlagSource } from "@carebridge/shared-types";
 import {
   CLINICAL_REVIEW_SYSTEM_PROMPT,
   PROMPT_VERSION,
   buildReviewPrompt,
-  parseReviewResponse,
 } from "@carebridge/ai-prompts";
-import type { LLMFlagOutput } from "@carebridge/ai-prompts";
+import {
+  redactContext,
+  validateLLMResponse,
+  isSuspiciousFlagCount,
+  buildLLMAudit,
+  hashPrompt,
+} from "@carebridge/phi-sanitizer";
 
 import { checkCriticalValues } from "../rules/critical-values.js";
 import { checkCrossSpecialtyPatterns } from "../rules/cross-specialty.js";
@@ -102,42 +107,120 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
     }
 
     // Step 4: Build patient context for LLM review
-    const reviewContext = await buildPatientContext(event.patient_id, event);
+    const rawReviewContext = await buildPatientContext(event.patient_id, event);
 
-    // Step 5: Build LLM prompt
-    const userMessage = buildReviewPrompt(reviewContext);
+    // Step 5: Redact PHI from context before transmitting to external LLM
+    const { context: sanitizedContext, mapping, audit: redactionAudit } =
+      redactContext(rawReviewContext, event.patient_id);
 
-    // Step 6: Call Claude API
-    const llmResponse = await reviewPatientRecord(
-      CLINICAL_REVIEW_SYSTEM_PROMPT,
-      userMessage,
-    );
+    // Step 6: Build sanitized LLM prompt
+    const userMessage = buildReviewPrompt(sanitizedContext);
+    const promptHash = hashPrompt(userMessage);
 
-    // Step 7: Parse response
-    const llmFindings = parseReviewResponse(llmResponse);
+    // Step 7: Call Claude API with sanitized context
+    const llmStartTime = Date.now();
+    let llmRawResponse: string;
+    let llmTokensIn: number | null = null;
+    let llmTokensOut: number | null = null;
 
-    // Step 8: Create flags for LLM findings (deduplicate against rule-based flags)
-    for (const finding of llmFindings) {
-      if (isDuplicate(finding, allRuleFlags)) {
-        continue;
+    try {
+      const { text, inputTokens, outputTokens } = await reviewPatientRecord(
+        CLINICAL_REVIEW_SYSTEM_PROMPT,
+        userMessage,
+      );
+      llmRawResponse = text;
+      llmTokensIn = inputTokens;
+      llmTokensOut = outputTokens;
+    } catch (llmError) {
+      // Record audit entry for failed LLM call
+      await recordLLMAudit({
+        patientId: event.patient_id,
+        jobId,
+        promptHash,
+        redactionAudit,
+        requestTokens: null,
+        responseTokens: null,
+        responseValid: false,
+        flagCount: 0,
+        validationError: llmError instanceof Error ? llmError.message : "LLM call failed",
+        latencyMs: Date.now() - llmStartTime,
+      });
+      throw llmError;
+    }
+
+    const llmLatencyMs = Date.now() - llmStartTime;
+
+    // Step 8: Validate and parse LLM response
+    const validationResult = validateLLMResponse(llmRawResponse);
+
+    if (!validationResult.ok) {
+      // Record audit entry for invalid response — distinct from empty response
+      await recordLLMAudit({
+        patientId: event.patient_id,
+        jobId,
+        promptHash,
+        redactionAudit,
+        requestTokens: llmTokensIn,
+        responseTokens: llmTokensOut,
+        responseValid: false,
+        flagCount: 0,
+        validationError: validationResult.error,
+        latencyMs: llmLatencyMs,
+      });
+      console.warn(
+        `[review-service] Job ${jobId}: LLM response validation failed — proceeding with rules-only flags. Error: ${validationResult.error}`,
+      );
+      // Don't throw — continue with rule-based flags only
+    } else {
+      const llmFindings = validationResult.flags;
+
+      // Warn on suspiciously high flag count (possible hallucination)
+      if (isSuspiciousFlagCount(llmFindings)) {
+        console.warn(
+          `[review-service] Job ${jobId}: Suspiciously high flag count (${llmFindings.length}) — possible hallucination. Capping.`,
+        );
       }
 
-      const flag = await createFlag({
-        patient_id: event.patient_id,
-        source: "ai-review" as FlagSource,
-        severity: finding.severity,
-        category: finding.category as ClinicalFlagCategory,
-        summary: finding.summary,
-        rationale: finding.rationale,
-        suggested_action: finding.suggested_action,
-        notify_specialties: finding.notify_specialties,
-        trigger_event_ids: [event.id],
-        status: "open",
-        model_id: "claude-sonnet-4-6",
-        prompt_version: PROMPT_VERSION,
+      // Step 9: Create flags for valid LLM findings (deduplicate against rule-based flags)
+      for (const finding of llmFindings) {
+        if (isDuplicate(finding, allRuleFlags)) {
+          continue;
+        }
+
+        const flag = await createFlag({
+          patient_id: event.patient_id,
+          source: "ai-review" as FlagSource,
+          severity: finding.severity,
+          category: finding.category as ClinicalFlagCategory,
+          summary: finding.summary,
+          rationale: finding.rationale,
+          suggested_action: finding.suggested_action,
+          notify_specialties: finding.notify_specialties,
+          trigger_event_ids: [event.id],
+          status: "open",
+          model_id: "claude-sonnet-4-6",
+          prompt_version: PROMPT_VERSION,
+        });
+        flagIds.push(flag.id);
+      }
+
+      // Record successful LLM audit entry
+      await recordLLMAudit({
+        patientId: event.patient_id,
+        jobId,
+        promptHash,
+        redactionAudit,
+        requestTokens: llmTokensIn,
+        responseTokens: llmTokensOut,
+        responseValid: true,
+        flagCount: llmFindings.length,
+        validationError: null,
+        latencyMs: llmLatencyMs,
       });
-      flagIds.push(flag.id);
     }
+
+    // Suppress unused variable warning — mapping used for future response re-hydration
+    void mapping;
 
     // Step 9: Update review_jobs record — completed
     const processingTime = Date.now() - startTime;
@@ -186,6 +269,62 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
 
 // Type alias for readability
 type ClinicalFlagCategory = import("@carebridge/shared-types").FlagCategory;
+
+/**
+ * Record an LLM interaction audit entry.
+ * Non-blocking — logs errors but doesn't fail the main pipeline.
+ */
+async function recordLLMAudit(params: {
+  patientId: string;
+  jobId: string;
+  promptHash: string;
+  redactionAudit: import("@carebridge/phi-sanitizer").RedactionAudit;
+  requestTokens: number | null;
+  responseTokens: number | null;
+  responseValid: boolean;
+  flagCount: number;
+  validationError: string | null;
+  latencyMs: number;
+}): Promise<void> {
+  const db = getDb();
+  const audit = buildLLMAudit({
+    patientId: params.patientId,
+    model: "claude-sonnet-4-6",
+    promptVersion: PROMPT_VERSION,
+    fieldsRedacted: params.redactionAudit.fields_redacted,
+    providerCountRedacted: params.redactionAudit.provider_count,
+    sanitizedPrompt: params.promptHash, // pass hash directly — buildLLMAudit will re-hash
+    requestTokens: params.requestTokens,
+    responseTokens: params.responseTokens,
+    responseValid: params.responseValid,
+    responseFlagsCount: params.flagCount,
+    validationError: params.validationError,
+    latencyMs: params.latencyMs,
+  });
+
+  try {
+    await db.insert(llmInteractionLog).values({
+      id: audit.interaction_id,
+      patient_id: params.patientId,
+      review_job_id: params.jobId,
+      model: audit.model,
+      prompt_version: audit.prompt_version,
+      fields_redacted: audit.fields_redacted,
+      provider_count_redacted: audit.provider_count_redacted,
+      prompt_hash: params.promptHash,
+      request_tokens: audit.request_tokens,
+      response_tokens: audit.response_tokens,
+      response_valid: audit.response_valid,
+      response_flags_count: audit.response_flags_count,
+      validation_error: audit.validation_error,
+      latency_ms: audit.latency_ms,
+      timestamp: audit.timestamp,
+    });
+  } catch (err) {
+    // Non-fatal — log but don't fail the clinical pipeline
+    console.error("[review-service] Failed to write LLM audit log:", err);
+  }
+}
 
 /**
  * Build a lightweight PatientContext for the deterministic cross-specialty rules.
