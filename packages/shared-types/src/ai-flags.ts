@@ -86,6 +86,7 @@ export type ClinicalEventType =
   | "medication.updated"
   | "note.saved"
   | "note.signed"
+  | "medication.administered"
   | "procedure.completed"
   | "diagnosis.added"
   | "fhir.imported";

@@ -31,9 +31,10 @@ export async function createVital(input: CreateVitalInput): Promise<Vital> {
   await emitClinicalEvent({
     type: "vital.created",
     resourceId: id,
-    patientId: input.patient_id,
+    patient_id: input.patient_id,
+    provider_id: input.provider_id,
     timestamp: now,
-    payload: { vitalType: input.type, value: input.value_primary },
+    data: { vitalType: input.type, value: input.value_primary },
   });
 
   return {

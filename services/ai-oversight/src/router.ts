@@ -2,9 +2,11 @@
  * tRPC router for the AI oversight service.
  *
  * Exposes flag management and review job queries to the API gateway.
+ * All operations restricted to clinical staff (physician, specialist, nurse, admin).
  */
 
-import { initTRPC } from "@trpc/server";
+import { initTRPC, TRPCError } from "@trpc/server";
+import type { User, ServiceContext } from "@carebridge/shared-types";
 import { z } from "zod";
 import { eq, desc } from "drizzle-orm";
 import { getDb } from "@carebridge/db-schema";
@@ -18,11 +20,42 @@ import {
 
 import * as flagService from "./services/flag-service.js";
 
-const t = initTRPC.create();
+// ---------------------------------------------------------------------------
+// tRPC instance with gateway context
+// ---------------------------------------------------------------------------
 
+const t = initTRPC.context<ServiceContext>().create();
+
+// ---------------------------------------------------------------------------
+// Procedure builders with RBAC
+// ---------------------------------------------------------------------------
+const CLINICIAN_ROLES: User["role"][] = ["admin", "physician", "specialist", "nurse"];
+
+const authed = t.middleware(({ ctx, next }) => {
+  if (!ctx.user) {
+    throw new TRPCError({ code: "UNAUTHORIZED", message: "Authentication required." });
+  }
+  return next({ ctx: { ...ctx, user: ctx.user } });
+});
+
+const requireClinician = t.middleware(({ ctx, next }) => {
+  if (!ctx.user || !CLINICIAN_ROLES.includes(ctx.user.role)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: `This operation requires one of the following roles: ${CLINICIAN_ROLES.join(", ")}.`,
+    });
+  }
+  return next({ ctx: { ...ctx, user: ctx.user } });
+});
+
+const clinicianProcedure = t.procedure.use(authed).use(requireClinician);
+
+// ---------------------------------------------------------------------------
+// Router
+// ---------------------------------------------------------------------------
 export const aiOversightRouter = t.router({
   flags: t.router({
-    getByPatient: t.procedure
+    getByPatient: clinicianProcedure
       .input(
         z.object({
           patientId: z.string().uuid(),
@@ -33,7 +66,7 @@ export const aiOversightRouter = t.router({
         return flagService.getFlagsByPatient(input.patientId, input.status);
       }),
 
-    acknowledge: t.procedure
+    acknowledge: clinicianProcedure
       .input(
         z.object({
           flagId: z.string().uuid(),
@@ -44,7 +77,7 @@ export const aiOversightRouter = t.router({
         return { success: true };
       }),
 
-    resolve: t.procedure
+    resolve: clinicianProcedure
       .input(
         z.object({
           flagId: z.string().uuid(),
@@ -59,7 +92,7 @@ export const aiOversightRouter = t.router({
         return { success: true };
       }),
 
-    dismiss: t.procedure
+    dismiss: clinicianProcedure
       .input(
         z.object({
           flagId: z.string().uuid(),
@@ -74,7 +107,7 @@ export const aiOversightRouter = t.router({
         return { success: true };
       }),
 
-    getOpenCount: t.procedure
+    getOpenCount: clinicianProcedure
       .input(z.object({ patientId: z.string().uuid() }))
       .query(async ({ input }) => {
         const count = await flagService.getOpenFlagCount(input.patientId);
@@ -83,7 +116,7 @@ export const aiOversightRouter = t.router({
   }),
 
   reviews: t.router({
-    getByPatient: t.procedure
+    getByPatient: clinicianProcedure
       .input(z.object({ patientId: z.string().uuid() }))
       .query(async ({ input }) => {
         const db = getDb();

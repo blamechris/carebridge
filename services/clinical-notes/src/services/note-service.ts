@@ -29,8 +29,8 @@ export async function createNote(input: CreateNoteInput): Promise<ClinicalNote> 
   await emitClinicalEvent({
     type: "note.saved",
     noteId: id,
-    patientId: input.patient_id,
-    providerId: input.provider_id,
+    patient_id: input.patient_id,
+    provider_id: input.provider_id,
     timestamp: now,
   });
 
@@ -93,10 +93,10 @@ export async function updateNote(
   await emitClinicalEvent({
     type: "note.saved",
     noteId,
-    patientId: existing.patient_id,
-    providerId: existing.provider_id,
+    patient_id: existing.patient_id,
+    provider_id: existing.provider_id,
     timestamp: now,
-    payload: { version: newVersion },
+    data: { version: newVersion },
   });
 
   return {
@@ -144,10 +144,10 @@ export async function signNote(
   await emitClinicalEvent({
     type: "note.signed",
     noteId,
-    patientId: existing.patient_id,
-    providerId: existing.provider_id,
+    patient_id: existing.patient_id,
+    provider_id: existing.provider_id,
     timestamp: now,
-    payload: { signedBy },
+    data: { signedBy },
   });
 
   return {

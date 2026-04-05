@@ -147,6 +147,25 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/phi-sanitizer:
+    dependencies:
+      '@carebridge/ai-prompts':
+        specifier: workspace:*
+        version: link:../ai-prompts
+      '@carebridge/shared-types':
+        specifier: workspace:*
+        version: link:../shared-types
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/shared-types:
     devDependencies:
       typescript:
@@ -180,6 +199,9 @@ importers:
       '@carebridge/medical-logic':
         specifier: workspace:*
         version: link:../../packages/medical-logic
+      '@carebridge/phi-sanitizer':
+        specifier: workspace:*
+        version: link:../../packages/phi-sanitizer
       '@carebridge/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
@@ -202,15 +224,42 @@ importers:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.17
+      tsx:
+        specifier: ^4.19.0
+        version: 4.21.0
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
 
   services/api-gateway:
     dependencies:
+      '@carebridge/ai-oversight':
+        specifier: workspace:*
+        version: link:../ai-oversight
+      '@carebridge/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@carebridge/clinical-data':
+        specifier: workspace:*
+        version: link:../clinical-data
+      '@carebridge/clinical-notes':
+        specifier: workspace:*
+        version: link:../clinical-notes
       '@carebridge/db-schema':
         specifier: workspace:*
         version: link:../../packages/db-schema
+      '@carebridge/fhir-gateway':
+        specifier: workspace:*
+        version: link:../fhir-gateway
+      '@carebridge/notifications':
+        specifier: workspace:*
+        version: link:../notifications
+      '@carebridge/patient-records':
+        specifier: workspace:*
+        version: link:../patient-records
+      '@carebridge/scheduling':
+        specifier: workspace:*
+        version: link:../scheduling
       '@carebridge/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types

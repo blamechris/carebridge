@@ -3,6 +3,7 @@ import type { User } from "@carebridge/shared-types";
 import { loginSchema, createUserSchema } from "@carebridge/validators";
 import { getDb, users, sessions } from "@carebridge/db-schema";
 import { eq } from "drizzle-orm";
+import { z } from "zod";
 import crypto from "node:crypto";
 import { hashPassword, verifyPassword } from "./password.js";
 
@@ -124,10 +125,68 @@ export const authRouter = t.router({
   }),
 
   /**
-   * Create a new user account.
-   * In production this would be admin-only; in dev mode it is open.
+   * Register a new patient account (public — patients self-register).
    */
-  createUser: publicProcedure.input(createUserSchema).mutation(async ({ input }) => {
+  registerPatient: publicProcedure
+    .input(createUserSchema.extend({ role: z.literal("patient") }))
+    .mutation(async ({ input }) => {
+      const db = getDb();
+
+      const existing = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.email, input.email))
+        .limit(1);
+
+      if (existing.length > 0) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "A user with this email already exists.",
+        });
+      }
+
+      const now = new Date().toISOString();
+      const userId = crypto.randomUUID();
+
+      await db.insert(users).values({
+        id: userId,
+        email: input.email,
+        password_hash: await hashPassword(input.password),
+        name: input.name,
+        role: "patient",
+        specialty: null,
+        department: null,
+        is_active: true,
+        created_at: now,
+        updated_at: now,
+      });
+
+      const user: User = {
+        id: userId,
+        email: input.email,
+        name: input.name,
+        role: "patient",
+        is_active: true,
+        created_at: now,
+        updated_at: now,
+      };
+
+      return user;
+    }),
+
+  /**
+   * Create a clinical or admin user account.
+   * Requires the caller to be authenticated with the "admin" role.
+   */
+  createUser: protectedProcedure.input(createUserSchema).mutation(async ({ input, ctx }) => {
+    if (input.role !== "patient" && ctx.user.role !== "admin") {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message:
+          "Only administrators can create accounts with clinical or admin roles.",
+      });
+    }
+
     const db = getDb();
 
     // Check for duplicate email.

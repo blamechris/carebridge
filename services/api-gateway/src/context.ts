@@ -1,11 +1,10 @@
 import type { CreateFastifyContextOptions } from "@trpc/server/adapters/fastify";
-import type { User } from "@carebridge/shared-types";
+import type { User, ServiceContext } from "@carebridge/shared-types";
 import { getDb } from "@carebridge/db-schema";
 import crypto from "node:crypto";
 
-export interface Context {
+export interface Context extends ServiceContext {
   db: ReturnType<typeof getDb>;
-  user: User | null;
   requestId: string;
 }
 

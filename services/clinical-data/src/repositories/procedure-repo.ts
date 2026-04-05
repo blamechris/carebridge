@@ -36,9 +36,10 @@ export async function createProcedure(input: CreateProcedureInput): Promise<Proc
     await emitClinicalEvent({
       type: "procedure.completed",
       resourceId: id,
-      patientId: input.patient_id,
+      patient_id: input.patient_id,
+      provider_id: input.provider_id,
       timestamp: now,
-      payload: { name: input.name, cptCode: input.cpt_code },
+      data: { name: input.name, cptCode: input.cpt_code },
     });
   }
 

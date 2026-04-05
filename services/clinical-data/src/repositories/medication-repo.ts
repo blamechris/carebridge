@@ -38,9 +38,10 @@ export async function createMedication(input: CreateMedicationInput): Promise<Me
   await emitClinicalEvent({
     type: "medication.created",
     resourceId: id,
-    patientId: input.patient_id,
+    patient_id: input.patient_id,
+    provider_id: input.ordering_provider_id,
     timestamp: now,
-    payload: { name: input.name, status: input.status ?? "active" },
+    data: { name: input.name, status: input.status ?? "active" },
   });
 
   return {
@@ -106,9 +107,9 @@ export async function updateMedication(
   await emitClinicalEvent({
     type: "medication.updated",
     resourceId: id,
-    patientId: existing.patient_id,
+    patient_id: existing.patient_id,
     timestamp: now,
-    payload: { changedFields: Object.keys(input) },
+    data: { changedFields: Object.keys(input) },
   });
 
   // Re-fetch the updated record
@@ -223,9 +224,9 @@ export async function logAdministration(
   await emitClinicalEvent({
     type: "medication.administered",
     resourceId: id,
-    patientId: med.patient_id,
+    patient_id: med.patient_id,
     timestamp: now,
-    payload: { medicationId: medId, administeredAt },
+    data: { medicationId: medId, administeredAt },
   });
 
   return {

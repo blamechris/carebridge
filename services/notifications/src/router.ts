@@ -1,16 +1,56 @@
-import { initTRPC } from "@trpc/server";
+import { initTRPC, TRPCError } from "@trpc/server";
+import type { User, ServiceContext } from "@carebridge/shared-types";
 import { z } from "zod";
 import { getDb } from "@carebridge/db-schema";
 import { notifications } from "@carebridge/db-schema";
 import { eq, and, desc } from "drizzle-orm";
 import crypto from "node:crypto";
 
-const t = initTRPC.create();
+// ---------------------------------------------------------------------------
+// tRPC instance with gateway context
+// ---------------------------------------------------------------------------
 
+const t = initTRPC.context<ServiceContext>().create();
+
+// ---------------------------------------------------------------------------
+// Procedure builders with RBAC
+// ---------------------------------------------------------------------------
+const CLINICAL_WRITER_ROLES: User["role"][] = ["admin", "physician", "specialist", "nurse"];
+
+const authed = t.middleware(({ ctx, next }) => {
+  if (!ctx.user) {
+    throw new TRPCError({ code: "UNAUTHORIZED", message: "Authentication required." });
+  }
+  return next({ ctx: { ...ctx, user: ctx.user } });
+});
+
+const requireClinicalWrite = t.middleware(({ ctx, next }) => {
+  if (!ctx.user || !CLINICAL_WRITER_ROLES.includes(ctx.user.role)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Clinical data modifications require a clinical staff role.",
+    });
+  }
+  return next({ ctx: { ...ctx, user: ctx.user } });
+});
+
+const protectedProcedure = t.procedure.use(authed);
+const clinicalWriteProcedure = t.procedure.use(authed).use(requireClinicalWrite);
+
+// ---------------------------------------------------------------------------
+// Router
+// ---------------------------------------------------------------------------
 export const notificationsRouter = t.router({
-  getByUser: t.procedure
+  getByUser: protectedProcedure
     .input(z.object({ userId: z.string(), unreadOnly: z.boolean().optional() }))
-    .query(async ({ input }) => {
+    .query(async ({ ctx, input }) => {
+      // Users can only view their own notifications
+      if (ctx.user.id !== input.userId) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You can only view your own notifications.",
+        });
+      }
       const db = getDb();
       const conditions = [eq(notifications.user_id, input.userId)];
       if (input.unreadOnly) conditions.push(eq(notifications.is_read, false));
@@ -20,17 +60,25 @@ export const notificationsRouter = t.router({
         .limit(50);
     }),
 
-  markRead: t.procedure
+  markRead: protectedProcedure
     .input(z.object({ id: z.string() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      // Verify the notification belongs to the requesting user
       const db = getDb();
+      const [existing] = await db.select().from(notifications).where(eq(notifications.id, input.id));
+      if (existing && existing.user_id !== ctx.user.id) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "You can only mark your own notifications as read.",
+        });
+      }
       await db.update(notifications)
         .set({ is_read: true, read_at: new Date().toISOString() })
         .where(eq(notifications.id, input.id));
       return { success: true };
     }),
 
-  create: t.procedure
+  create: clinicalWriteProcedure
     .input(z.object({
       user_id: z.string(),
       type: z.string(),

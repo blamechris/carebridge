@@ -17,6 +17,14 @@ export interface Session {
   expires_at: string;
 }
 
+/**
+ * Minimal tRPC context expected by service routers for RBAC enforcement.
+ * The api-gateway's full Context extends this (it adds db, requestId, etc.).
+ */
+export interface ServiceContext {
+  user: User | null;
+}
+
 export type Permission =
   | "read:patients"
   | "write:patients"

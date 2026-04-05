@@ -5,6 +5,7 @@ import { appRouter } from "./router.js";
 import { createContext } from "./context.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { auditMiddleware } from "./middleware/audit.js";
+import { sessionCookieHook } from "./middleware/session-cookie.js";
 
 const API_PORT = Number(process.env.API_PORT) || 4000;
 const API_HOST = process.env.API_HOST ?? "0.0.0.0";
@@ -24,6 +25,7 @@ async function main() {
 
   // --- Hooks ---
   server.addHook("preHandler", authMiddleware);
+  server.addHook("onSend", sessionCookieHook);
   server.addHook("onResponse", auditMiddleware);
 
   // --- tRPC ---
