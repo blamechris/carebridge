@@ -18,6 +18,7 @@ import {
   PROMPT_VERSION,
   buildReviewPrompt,
   parseReviewResponse,
+  enforceTokenBudget,
 } from "@carebridge/ai-prompts";
 import type { LLMFlagOutput } from "@carebridge/ai-prompts";
 
@@ -104,8 +105,20 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
     // Step 4: Build patient context for LLM review
     const reviewContext = await buildPatientContext(event.patient_id, event);
 
-    // Step 5: Build LLM prompt
-    const userMessage = buildReviewPrompt(reviewContext);
+    // Step 5: Build LLM prompt and enforce token budget
+    const rawPrompt = buildReviewPrompt(reviewContext);
+    const budgetResult = enforceTokenBudget(rawPrompt);
+
+    if (budgetResult.truncated) {
+      console.warn(
+        `[review-service] Token budget exceeded for patient ${event.patient_id}. ` +
+          `Original: ${budgetResult.originalTokens} tokens, ` +
+          `Final: ${budgetResult.finalTokens} tokens. ` +
+          `Sections trimmed: ${budgetResult.sectionsRemoved.join(", ")}`,
+      );
+    }
+
+    const userMessage = budgetResult.prompt;
 
     // Step 6: Call Claude API
     const llmResponse = await reviewPatientRecord(
@@ -156,7 +169,8 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
     console.log(
       `[review-service] Job ${jobId} completed in ${processingTime}ms. ` +
         `Rules fired: ${rulesFired.length}, LLM findings: ${llmFindings.length}, ` +
-        `Total flags: ${flagIds.length}`,
+        `Total flags: ${flagIds.length}` +
+        (budgetResult.truncated ? ` (prompt truncated: ${budgetResult.originalTokens} -> ${budgetResult.finalTokens} tokens)` : ""),
     );
   } catch (error) {
     // Step 10: Update review_jobs — failed
