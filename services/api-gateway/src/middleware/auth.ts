@@ -134,6 +134,14 @@ export async function authMiddleware(
   }
 
   const row = userRows[0]!;
+
+  // Reject deactivated users and clean up their session.
+  if (!row.is_active) {
+    await db.delete(sessions).where(eq(sessions.id, session.id));
+    _reply.code(401).send({ error: "Session expired" });
+    return;
+  }
+
   (request as unknown as Record<string, unknown>).user = {
     id: row.id,
     email: row.email,
