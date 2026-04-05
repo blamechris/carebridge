@@ -17,8 +17,11 @@ export const sessions = pgTable("sessions", {
   id: text("id").primaryKey(),
   user_id: text("user_id").notNull().references(() => users.id),
   expires_at: text("expires_at").notNull(),
+  created_at: text("created_at").notNull(),
+  last_active_at: text("last_active_at"),
 }, (table) => [
   index("idx_sessions_user").on(table.user_id),
+  index("idx_sessions_expires").on(table.expires_at),
 ]);
 
 export const auditLog = pgTable("audit_log", {

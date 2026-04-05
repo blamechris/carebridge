@@ -87,12 +87,15 @@ export const authRouter = t.router({
 
     // Create session.
     const sessionId = crypto.randomUUID();
+    const now = new Date().toISOString();
     const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
 
     await db.insert(sessions).values({
       id: sessionId,
       user_id: row.id,
       expires_at: expiresAt,
+      created_at: now,
+      last_active_at: now,
     });
 
     const user: User = {

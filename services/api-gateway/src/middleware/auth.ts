@@ -120,6 +120,8 @@ export async function authMiddleware(
 
   // Check expiration.
   if (new Date(session.expires_at) < new Date()) {
+    // Clean up the expired session from the database.
+    await db.delete(sessions).where(eq(sessions.id, sessionId));
     return;
   }
 

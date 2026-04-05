@@ -22,6 +22,7 @@
     "@carebridge/validators": "workspace:*",
     "@carebridge/db-schema": "workspace:*",
     "@trpc/server": "^11.0.0",
+    "bullmq": "^5.30.0",
     "drizzle-orm": "^0.38.0",
     "zod": "^3.24.0"
   },
