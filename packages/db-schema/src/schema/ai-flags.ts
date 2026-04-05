@@ -1,0 +1,63 @@
+import { pgTable, text, integer, jsonb, index } from "drizzle-orm/pg-core";
+import { patients } from "./patients.js";
+
+export const clinicalFlags = pgTable("clinical_flags", {
+  id: text("id").primaryKey(),
+  patient_id: text("patient_id").notNull().references(() => patients.id),
+  source: text("source").notNull(), // rules, ai-review
+  severity: text("severity").notNull(), // critical, warning, info
+  category: text("category").notNull(), // cross-specialty, drug-interaction, etc.
+  summary: text("summary").notNull(),
+  rationale: text("rationale").notNull(),
+  suggested_action: text("suggested_action").notNull(),
+  notify_specialties: jsonb("notify_specialties").$type<string[]>().default([]),
+  trigger_event_ids: jsonb("trigger_event_ids").$type<string[]>().default([]),
+  status: text("status").notNull().default("open"),
+  resolution_note: text("resolution_note"),
+  acknowledged_by: text("acknowledged_by"),
+  acknowledged_at: text("acknowledged_at"),
+  resolved_by: text("resolved_by"),
+  resolved_at: text("resolved_at"),
+  dismissed_by: text("dismissed_by"),
+  dismissed_at: text("dismissed_at"),
+  dismiss_reason: text("dismiss_reason"),
+  model_id: text("model_id"),
+  prompt_version: text("prompt_version"),
+  created_at: text("created_at").notNull(),
+}, (table) => [
+  index("idx_flags_patient").on(table.patient_id, table.status),
+  index("idx_flags_severity").on(table.severity, table.status),
+]);
+
+export const clinicalRules = pgTable("clinical_rules", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  conditions: jsonb("conditions").notNull(), // ClinicalRuleCondition[]
+  severity: text("severity").notNull(),
+  category: text("category").notNull(),
+  suggested_action: text("suggested_action").notNull(),
+  rationale_template: text("rationale_template").notNull(),
+  enabled: integer("enabled").notNull().default(1),
+  created_at: text("created_at").notNull(),
+});
+
+export const reviewJobs = pgTable("review_jobs", {
+  id: text("id").primaryKey(),
+  patient_id: text("patient_id").notNull().references(() => patients.id),
+  status: text("status").notNull().default("pending"), // pending, processing, completed, failed
+  trigger_event_type: text("trigger_event_type").notNull(),
+  trigger_event_id: text("trigger_event_id").notNull(),
+  context_hash: text("context_hash"),
+  rules_evaluated: jsonb("rules_evaluated").$type<string[]>().default([]),
+  rules_fired: jsonb("rules_fired").$type<string[]>().default([]),
+  llm_request_tokens: integer("llm_request_tokens"),
+  llm_response_tokens: integer("llm_response_tokens"),
+  flags_generated: jsonb("flags_generated").$type<string[]>().default([]),
+  processing_time_ms: integer("processing_time_ms"),
+  error: text("error"),
+  completed_at: text("completed_at"),
+  created_at: text("created_at").notNull(),
+}, (table) => [
+  index("idx_review_jobs_patient").on(table.patient_id, table.status),
+]);
