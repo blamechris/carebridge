@@ -40,7 +40,7 @@ Respond ONLY with a valid JSON array. No markdown code fences, no explanation ou
 
 export interface ReviewContext {
   patient: {
-    age: number;
+    age: number | string;
     sex: string;
     active_diagnoses: string[];
     allergies: string[];
@@ -88,7 +88,7 @@ export function buildReviewPrompt(context: ReviewContext): string {
   return `PATIENT CLINICAL CONTEXT
 ========================
 
-Demographics: ${context.patient.age} year old ${context.patient.sex}
+Demographics: ${typeof context.patient.age === "number" ? `${context.patient.age} year old` : context.patient.age} ${context.patient.sex}
 
 Active Diagnoses:
 ${context.patient.active_diagnoses.map((d) => `  - ${d}`).join("\n") || "  None documented"}
@@ -119,30 +119,4 @@ Detail:
 ${context.triggering_event.detail}
 
 Review this patient's record for clinical concerns, paying special attention to the triggering event in the context of the full clinical picture.`;
-}
-
-export interface LLMFlagOutput {
-  severity: "critical" | "warning" | "info";
-  category: string;
-  summary: string;
-  rationale: string;
-  suggested_action: string;
-  notify_specialties: string[];
-}
-
-export function parseReviewResponse(response: string): LLMFlagOutput[] {
-  try {
-    const parsed = JSON.parse(response);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (item: unknown): item is LLMFlagOutput =>
-        typeof item === "object" &&
-        item !== null &&
-        "severity" in item &&
-        "summary" in item &&
-        "rationale" in item
-    );
-  } catch {
-    return [];
-  }
 }

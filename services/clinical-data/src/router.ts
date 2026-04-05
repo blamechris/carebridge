@@ -1,6 +1,8 @@
 import { initTRPC, TRPCError } from "@trpc/server";
 import type { User, ServiceContext } from "@carebridge/shared-types";
 import { z } from "zod";
+import { getDb, patients } from "@carebridge/db-schema";
+import { eq } from "drizzle-orm";
 import {
   createVitalSchema,
   vitalTypeSchema,
@@ -58,6 +60,21 @@ function assertPatientAccess(user: User, patientId: string): void {
   }
 }
 
+/** Verify patient_id resolves to an existing patient record. */
+async function assertPatientExists(patientId: string): Promise<void> {
+  const db = getDb();
+  const [patient] = await db
+    .select({ id: patients.id })
+    .from(patients)
+    .where(eq(patients.id, patientId));
+  if (!patient) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `Patient ${patientId} does not exist.`,
+    });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Sub-routers
 // ---------------------------------------------------------------------------
@@ -65,6 +82,7 @@ const vitalsRouter = t.router({
   create: clinicalWriteProcedure
     .input(createVitalSchema)
     .mutation(async ({ input }) => {
+      await assertPatientExists(input.patient_id);
       return vitalRepo.createVital(input);
     }),
 
@@ -92,6 +110,7 @@ const labsRouter = t.router({
   createPanel: clinicalWriteProcedure
     .input(createLabPanelSchema)
     .mutation(async ({ input }) => {
+      await assertPatientExists(input.patient_id);
       return labRepo.createLabPanel(input);
     }),
 
@@ -119,6 +138,7 @@ const medicationsRouter = t.router({
   create: clinicalWriteProcedure
     .input(createMedicationSchema)
     .mutation(async ({ input }) => {
+      await assertPatientExists(input.patient_id);
       return medicationRepo.createMedication(input);
     }),
 
@@ -166,6 +186,7 @@ const proceduresRouter = t.router({
   create: clinicalWriteProcedure
     .input(createProcedureSchema)
     .mutation(async ({ input }) => {
+      await assertPatientExists(input.patient_id);
       return procedureRepo.createProcedure(input);
     }),
 

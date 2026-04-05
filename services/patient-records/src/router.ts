@@ -81,7 +81,7 @@ export const patientRecordsRouter = t.router({
       return { id, ...data };
     }),
 
-  getById: protectedProcedure.input(z.object({ id: z.string() })).query(async ({ ctx, input }) => {
+  getById: protectedProcedure.input(z.object({ id: z.string().uuid() })).query(async ({ ctx, input }) => {
     assertPatientAccess(ctx.user, input.id);
     const db = getDb();
     const [patient] = await db.select().from(patients).where(eq(patients.id, input.id));
@@ -94,7 +94,7 @@ export const patientRecordsRouter = t.router({
   }),
 
   diagnoses: t.router({
-    getByPatient: protectedProcedure.input(z.object({ patientId: z.string() })).query(async ({ ctx, input }) => {
+    getByPatient: protectedProcedure.input(z.object({ patientId: z.string().uuid() })).query(async ({ ctx, input }) => {
       assertPatientAccess(ctx.user, input.patientId);
       const db = getDb();
       return db.select().from(diagnoses).where(eq(diagnoses.patient_id, input.patientId));
@@ -102,7 +102,7 @@ export const patientRecordsRouter = t.router({
   }),
 
   allergies: t.router({
-    getByPatient: protectedProcedure.input(z.object({ patientId: z.string() })).query(async ({ ctx, input }) => {
+    getByPatient: protectedProcedure.input(z.object({ patientId: z.string().uuid() })).query(async ({ ctx, input }) => {
       assertPatientAccess(ctx.user, input.patientId);
       const db = getDb();
       return db.select().from(allergies).where(eq(allergies.patient_id, input.patientId));
@@ -110,7 +110,7 @@ export const patientRecordsRouter = t.router({
   }),
 
   careTeam: t.router({
-    getByPatient: protectedProcedure.input(z.object({ patientId: z.string() })).query(async ({ ctx, input }) => {
+    getByPatient: protectedProcedure.input(z.object({ patientId: z.string().uuid() })).query(async ({ ctx, input }) => {
       assertPatientAccess(ctx.user, input.patientId);
       const db = getDb();
       return db.select().from(careTeamMembers).where(eq(careTeamMembers.patient_id, input.patientId));

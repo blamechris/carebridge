@@ -18,8 +18,13 @@ async function main() {
   });
 
   // --- Plugins ---
+  const corsOrigin = process.env.CORS_ORIGIN
+    ?? (process.env.NODE_ENV === "production"
+      ? false
+      : ["http://localhost:3000", "http://localhost:3001"]);
+
   await server.register(cors, {
-    origin: process.env.CORS_ORIGIN ?? true,
+    origin: corsOrigin,
     credentials: true,
   });
 

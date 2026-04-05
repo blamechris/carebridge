@@ -20,11 +20,13 @@ import {
 } from "@carebridge/ai-prompts";
 import {
   redactContext,
+  rehydrateText,
   validateLLMResponse,
   isSuspiciousFlagCount,
   buildLLMAudit,
   hashPrompt,
 } from "@carebridge/phi-sanitizer";
+import type { ValidatedFlag } from "@carebridge/phi-sanitizer";
 
 import { checkCriticalValues } from "../rules/critical-values.js";
 import { checkCrossSpecialtyPatterns } from "../rules/cross-specialty.js";
@@ -106,6 +108,8 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
       flagIds.push(flag.id);
     }
 
+    let llmFindingsCount = 0;
+
     // Step 4: Build patient context for LLM review
     const rawReviewContext = await buildPatientContext(event.patient_id, event);
 
@@ -181,6 +185,8 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
         );
       }
 
+      llmFindingsCount = llmFindings.length;
+
       // Step 9: Create flags for valid LLM findings (deduplicate against rule-based flags)
       for (const finding of llmFindings) {
         if (isDuplicate(finding, allRuleFlags)) {
@@ -192,9 +198,9 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
           source: "ai-review" as FlagSource,
           severity: finding.severity,
           category: finding.category as ClinicalFlagCategory,
-          summary: finding.summary,
-          rationale: finding.rationale,
-          suggested_action: finding.suggested_action,
+          summary: rehydrateText(finding.summary, mapping),
+          rationale: rehydrateText(finding.rationale, mapping),
+          suggested_action: rehydrateText(finding.suggested_action, mapping),
           notify_specialties: finding.notify_specialties,
           trigger_event_ids: [event.id],
           status: "open",
@@ -219,9 +225,6 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
       });
     }
 
-    // Suppress unused variable warning — mapping used for future response re-hydration
-    void mapping;
-
     // Step 9: Update review_jobs record — completed
     const processingTime = Date.now() - startTime;
     await db
@@ -238,7 +241,7 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
 
     console.log(
       `[review-service] Job ${jobId} completed in ${processingTime}ms. ` +
-        `Rules fired: ${rulesFired.length}, LLM findings: ${llmFindings.length}, ` +
+        `Rules fired: ${rulesFired.length}, LLM findings: ${llmFindingsCount}, ` +
         `Total flags: ${flagIds.length}`,
     );
   } catch (error) {
@@ -409,7 +412,7 @@ function extractSymptoms(event: ClinicalEvent): string[] {
  * overlap with any rule flag's summary, consider it a duplicate.
  */
 function isDuplicate(
-  finding: LLMFlagOutput,
+  finding: ValidatedFlag,
   ruleFlags: RuleFlag[],
 ): boolean {
   const findingWords = new Set(

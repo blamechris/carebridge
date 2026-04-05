@@ -6,10 +6,32 @@
  * through the full review pipeline: deterministic rules first, then LLM review.
  */
 
-import { Worker } from "bullmq";
+import { Worker, UnrecoverableError } from "bullmq";
 import type { Job } from "bullmq";
 import type { ClinicalEvent } from "@carebridge/shared-types";
+import { z } from "zod";
 import { processReviewJob } from "../services/review-service.js";
+
+const ClinicalEventSchema = z.object({
+  id: z.string().uuid(),
+  type: z.enum([
+    "vital.created",
+    "vital.updated",
+    "lab.resulted",
+    "medication.created",
+    "medication.updated",
+    "note.saved",
+    "note.signed",
+    "medication.administered",
+    "procedure.completed",
+    "diagnosis.added",
+    "fhir.imported",
+  ]),
+  patient_id: z.string().uuid(),
+  provider_id: z.string().uuid().optional(),
+  data: z.record(z.unknown()),
+  timestamp: z.string().datetime(),
+}) satisfies z.ZodType<ClinicalEvent>;
 
 const QUEUE_NAME = "clinical-events";
 
@@ -26,7 +48,20 @@ export function startReviewWorker(): Worker {
   const worker = new Worker(
     QUEUE_NAME,
     async (job: Job) => {
-      const event = job.data as ClinicalEvent;
+      const parseResult = ClinicalEventSchema.safeParse(job.data);
+      if (!parseResult.success) {
+        const issues = parseResult.error.issues
+          .map((i) => `${i.path.join(".")}: ${i.message}`)
+          .join("; ");
+        console.error(
+          `[review-worker] Job ${job.id} has malformed event data: ${issues}`,
+        );
+        throw new UnrecoverableError(
+          `Malformed clinical event: ${issues}`,
+        );
+      }
+
+      const event: ClinicalEvent = parseResult.data;
 
       console.log(
         `[review-worker] Processing job ${job.id} — event: ${event.type} ` +

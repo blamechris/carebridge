@@ -89,14 +89,16 @@ export function redactContext(
 
   // --- Age-band the patient age ---
   const originalAge = context.patient.age;
-  const ageBanded = ageBand(originalAge);
+  const ageBanded = typeof originalAge === "number"
+    ? ageBand(originalAge)
+    : String(originalAge);
 
   // Build the redacted context
   const redacted: ReviewContext = {
     ...context,
     patient: {
       ...context.patient,
-      age: originalAge, // keep numeric age for the type; ageBanded in prompt rendering
+      age: ageBanded, // age-banded string to reduce re-identification risk
     },
     care_team: redactedCareTeam,
     triggering_event: sanitizeTriggeringEvent(context.triggering_event, fieldsRedacted),
@@ -129,8 +131,14 @@ function sanitizeTriggeringEvent(
     fieldsRedacted.push("triggering_event.detail");
   }
 
+  const sanitizedSummary = sanitizeFreeText(triggerEvent.summary);
+  if (sanitizedSummary !== triggerEvent.summary) {
+    fieldsRedacted.push("triggering_event.summary");
+  }
+
   return {
     ...triggerEvent,
+    summary: sanitizedSummary,
     detail: sanitizedDetail,
   };
 }
@@ -152,6 +160,13 @@ const INJECTION_PATTERNS = [
   /\bsystem\s*prompt\b/gi,
   /return\s+exactly\s*:/gi,
   /output\s+only\s*:/gi,
+  // ChatML-style delimiters
+  /<\|(?:system|user|assistant|end)\|>/gi,
+  // Llama-style delimiters
+  /\[\/?(INST)\]/gi,
+  /<<\/?SYS>>/gi,
+  // Markdown heading injection with system/instruction keywords
+  /^#\s+(?:system|instruction|override|admin|ignore|prompt)/gim,
 ];
 
 export function sanitizeFreeText(text: string): string {
