@@ -112,6 +112,37 @@ export function rehydrate(
 }
 
 /**
+ * Redact clinical age shorthand patterns for a specific patient age in free text.
+ * Handles patterns like: 62yo, 62 yo, 62y/o, 62 y/o, 62-year-old, 62 year old,
+ * 62 years old.
+ *
+ * Only redacts occurrences of the exact patient age to avoid redacting
+ * unrelated ages (e.g., "prescribed for patients 18-65").
+ */
+export function redactAgeInFreeText(text: string, age: number): string {
+  const ageStr = String(age);
+  const banded = bandAge(age);
+
+  // Build pattern matching all clinical shorthand forms for the specific age.
+  // Order matters: longer patterns first to avoid partial matches.
+  // Patterns matched (all case-insensitive):
+  //   62-year-old, 62 year-old, 62-year old, 62 year old
+  //   62 years old
+  //   62y/o, 62 y/o
+  //   62yo, 62 yo
+  const pattern = new RegExp(
+    `\\b${ageStr}(?:` +
+      `[- ]?years?[- ]?old` +  // year-old / year old / years old variants
+      `|\\s?y\\/o` +            // y/o with optional space
+      `|\\s?yo` +               // yo with optional space
+    `)\\b`,
+    "gi",
+  );
+
+  return text.replace(pattern, banded);
+}
+
+/**
  * Full redaction pipeline: sanitize free text, redact provider names,
  * band ages, and produce an audit trail.
  */
@@ -146,13 +177,11 @@ export function redactClinicalText(
     audit.providersRedacted = tokenMap.size;
   }
 
-  // Step 3: band patient age if present in text
+  // Step 3: redact patient age shorthand patterns in free text
   if (options.patientAge !== undefined) {
-    const ageStr = String(options.patientAge);
-    const ageRegex = new RegExp(`\\b${ageStr}[- ]?year[- ]?old\\b`, "gi");
-    if (ageRegex.test(current)) {
-      const banded = bandAge(options.patientAge);
-      current = current.replace(ageRegex, `${banded} patient`);
+    const before = current;
+    current = redactAgeInFreeText(current, options.patientAge);
+    if (current !== before) {
       audit.agesRedacted++;
     }
   }
