@@ -12,24 +12,58 @@ const HEALTH_PORT = Number(process.env.HEALTH_PORT ?? 4001);
 
 const worker = startReviewWorker();
 
+const REDIS_PING_TIMEOUT_MS = 2_000;
+
+async function checkRedis(): Promise<"connected" | "disconnected"> {
+  try {
+    const client = await worker.client;
+    const result = await Promise.race([
+      client.ping(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("timeout")), REDIS_PING_TIMEOUT_MS),
+      ),
+    ]);
+    return result === "PONG" ? "connected" : "disconnected";
+  } catch {
+    return "disconnected";
+  }
+}
+
 const healthServer = createServer((req, res) => {
   if (req.url === "/health" && req.method === "GET") {
-    const isHealthy = worker.isRunning() && !worker.isPaused();
+    checkRedis()
+      .then((redisStatus) => {
+        const workerOk = worker.isRunning() && !worker.isPaused();
+        const redisOk = redisStatus === "connected";
+        const isHealthy = workerOk && redisOk;
 
-    res.writeHead(isHealthy ? 200 : 503, {
-      "Content-Type": "application/json",
-    });
-    res.end(
-      JSON.stringify({
-        status: isHealthy ? "healthy" : "unhealthy",
-        worker: {
-          running: worker.isRunning(),
-          paused: worker.isPaused(),
-        },
-        uptime: process.uptime(),
-        timestamp: new Date().toISOString(),
-      }),
-    );
+        res.writeHead(isHealthy ? 200 : 503, {
+          "Content-Type": "application/json",
+        });
+        res.end(
+          JSON.stringify({
+            status: isHealthy ? "healthy" : "unhealthy",
+            worker: {
+              running: worker.isRunning(),
+              paused: worker.isPaused(),
+            },
+            redis: redisStatus,
+            uptime: process.uptime(),
+            timestamp: new Date().toISOString(),
+          }),
+        );
+      })
+      .catch(() => {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            status: "unhealthy",
+            redis: "disconnected",
+            uptime: process.uptime(),
+            timestamp: new Date().toISOString(),
+          }),
+        );
+      });
   } else {
     res.writeHead(404);
     res.end();
