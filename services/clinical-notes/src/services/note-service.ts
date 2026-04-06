@@ -27,11 +27,12 @@ export async function createNote(input: CreateNoteInput): Promise<ClinicalNote> 
   await db.insert(clinicalNotes).values(note);
 
   await emitClinicalEvent({
+    id: crypto.randomUUID(),
     type: "note.saved",
-    noteId: id,
-    patientId: input.patient_id,
-    providerId: input.provider_id,
+    patient_id: input.patient_id,
+    provider_id: input.provider_id,
     timestamp: now,
+    data: { resourceId: id },
   });
 
   return {
@@ -91,12 +92,12 @@ export async function updateNote(
     .where(eq(clinicalNotes.id, noteId));
 
   await emitClinicalEvent({
+    id: crypto.randomUUID(),
     type: "note.saved",
-    noteId,
-    patientId: existing.patient_id,
-    providerId: existing.provider_id,
+    patient_id: existing.patient_id,
+    provider_id: existing.provider_id,
     timestamp: now,
-    payload: { version: newVersion },
+    data: { resourceId: noteId, version: newVersion },
   });
 
   return {
@@ -142,12 +143,12 @@ export async function signNote(
     .where(eq(clinicalNotes.id, noteId));
 
   await emitClinicalEvent({
+    id: crypto.randomUUID(),
     type: "note.signed",
-    noteId,
-    patientId: existing.patient_id,
-    providerId: existing.provider_id,
+    patient_id: existing.patient_id,
+    provider_id: existing.provider_id,
     timestamp: now,
-    payload: { signedBy },
+    data: { resourceId: noteId, signedBy },
   });
 
   return {

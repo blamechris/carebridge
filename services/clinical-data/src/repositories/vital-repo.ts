@@ -29,11 +29,11 @@ export async function createVital(input: CreateVitalInput): Promise<Vital> {
   await db.insert(vitals).values(record);
 
   await emitClinicalEvent({
+    id: crypto.randomUUID(),
     type: "vital.created",
-    resourceId: id,
-    patientId: input.patient_id,
+    patient_id: input.patient_id,
     timestamp: now,
-    payload: { vitalType: input.type, value: input.value_primary },
+    data: { resourceId: id, vitalType: input.type, value: input.value_primary },
   });
 
   return {

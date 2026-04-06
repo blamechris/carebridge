@@ -36,11 +36,11 @@ export async function createMedication(input: CreateMedicationInput): Promise<Me
   await db.insert(medications).values(record);
 
   await emitClinicalEvent({
+    id: crypto.randomUUID(),
     type: "medication.created",
-    resourceId: id,
-    patientId: input.patient_id,
+    patient_id: input.patient_id,
     timestamp: now,
-    payload: { name: input.name, status: input.status ?? "active" },
+    data: { resourceId: id, name: input.name, status: input.status ?? "active" },
   });
 
   return {
@@ -104,11 +104,11 @@ export async function updateMedication(
   await db.update(medications).set(updates).where(eq(medications.id, id));
 
   await emitClinicalEvent({
+    id: crypto.randomUUID(),
     type: "medication.updated",
-    resourceId: id,
-    patientId: existing.patient_id,
+    patient_id: existing.patient_id,
     timestamp: now,
-    payload: { changedFields: Object.keys(input) },
+    data: { resourceId: id, changedFields: Object.keys(input) },
   });
 
   // Re-fetch the updated record
@@ -221,11 +221,11 @@ export async function logAdministration(
   await db.insert(medLogs).values(record);
 
   await emitClinicalEvent({
+    id: crypto.randomUUID(),
     type: "medication.administered",
-    resourceId: id,
-    patientId: med.patient_id,
+    patient_id: med.patient_id,
     timestamp: now,
-    payload: { medicationId: medId, administeredAt },
+    data: { resourceId: id, medicationId: medId, administeredAt },
   });
 
   return {

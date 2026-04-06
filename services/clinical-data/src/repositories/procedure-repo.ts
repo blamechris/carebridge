@@ -34,11 +34,11 @@ export async function createProcedure(input: CreateProcedureInput): Promise<Proc
 
   if (effectiveStatus === "completed") {
     await emitClinicalEvent({
+      id: crypto.randomUUID(),
       type: "procedure.completed",
-      resourceId: id,
-      patientId: input.patient_id,
+      patient_id: input.patient_id,
       timestamp: now,
-      payload: { name: input.name, cptCode: input.cpt_code },
+      data: { resourceId: id, name: input.name, cptCode: input.cpt_code },
     });
   }
 

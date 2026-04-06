@@ -84,6 +84,7 @@ export type ClinicalEventType =
   | "lab.resulted"
   | "medication.created"
   | "medication.updated"
+  | "medication.administered"
   | "note.saved"
   | "note.signed"
   | "procedure.completed"
