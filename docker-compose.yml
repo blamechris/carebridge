@@ -19,9 +19,13 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
     # TLS configuration for production:
     # command: >
     #   redis-server
+    #   --requirepass ${REDIS_PASSWORD}
     #   --tls-port 6380
     #   --port 0
     #   --tls-cert-file /tls/redis.crt
@@ -30,7 +34,7 @@ services:
     # volumes:
     #   - ./tls:/tls:ro
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
