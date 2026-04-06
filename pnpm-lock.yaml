@@ -381,6 +381,9 @@ importers:
       drizzle-orm:
         specifier: ^0.38.0
         version: 0.38.4(@types/react@19.2.14)(postgres@3.4.8)(react@19.2.4)
+      ioredis:
+        specifier: ^5.6.0
+        version: 5.10.1
       zod:
         specifier: ^3.24.0
         version: 3.25.76

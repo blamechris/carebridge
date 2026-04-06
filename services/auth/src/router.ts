@@ -29,6 +29,58 @@ import {
   hashPassword,
   verifyPassword,
 } from "./password.js";
+import Redis from "ioredis";
+import { getRedisConnection } from "@carebridge/redis-config";
+
+// ---------- Redis connection for MFA session state ----------
+
+let _redis: Redis | null = null;
+
+function getRedis(): Redis {
+  if (!_redis) {
+    const opts = getRedisConnection();
+    _redis = new Redis({
+      host: opts.host,
+      port: opts.port,
+      password: opts.password,
+      tls: opts.tls,
+      lazyConnect: true,
+      maxRetriesPerRequest: 3,
+    });
+  }
+  return _redis;
+}
+
+const MFA_SESSION_KEY_PREFIX = "mfa:session:";
+
+async function setPendingMFASession(
+  mfaSessionId: string,
+  userId: string,
+  ttlMs: number,
+): Promise<void> {
+  const redis = getRedis();
+  const ttlSeconds = Math.ceil(ttlMs / 1000);
+  await redis.set(
+    `${MFA_SESSION_KEY_PREFIX}${mfaSessionId}`,
+    JSON.stringify({ userId }),
+    "EX",
+    ttlSeconds,
+  );
+}
+
+async function getPendingMFASession(
+  mfaSessionId: string,
+): Promise<{ userId: string } | null> {
+  const redis = getRedis();
+  const data = await redis.get(`${MFA_SESSION_KEY_PREFIX}${mfaSessionId}`);
+  if (!data) return null;
+  return JSON.parse(data) as { userId: string };
+}
+
+async function deletePendingMFASession(mfaSessionId: string): Promise<void> {
+  const redis = getRedis();
+  await redis.del(`${MFA_SESSION_KEY_PREFIX}${mfaSessionId}`);
+}
 
 // ---------- tRPC setup (mirrors api-gateway's context shape) ----------
 
@@ -59,15 +111,6 @@ const protectedProcedure = t.procedure.use(isAuthenticated);
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MFA_SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes for MFA completion
 const MAX_CONCURRENT_SESSIONS = 5; // max active sessions per user
-
-/**
- * In-memory store for pending MFA sessions.
- * Maps mfaSessionId -> { userId, expiresAt }
- */
-const pendingMFASessions = new Map<
-  string,
-  { userId: string; expiresAt: number }
->();
 
 /**
  * Verify a password against a stored hash, with a backward-compat fallback
@@ -178,16 +221,7 @@ export const authRouter = t.router({
     // Check if MFA is enabled
     if (row.mfa_enabled === true) {
       const mfaSessionId = crypto.randomUUID();
-      const expiresAt = Date.now() + MFA_SESSION_TTL_MS;
-      pendingMFASessions.set(mfaSessionId, {
-        userId: row.id,
-        expiresAt,
-      });
-
-      // Auto-cleanup if the user abandons the MFA flow
-      setTimeout(() => {
-        pendingMFASessions.delete(mfaSessionId);
-      }, MFA_SESSION_TTL_MS);
+      await setPendingMFASession(mfaSessionId, row.id, MFA_SESSION_TTL_MS);
 
       return {
         requiresMFA: true as const,
@@ -226,7 +260,7 @@ export const authRouter = t.router({
     .input(mfaCompleteLoginSchema)
     .mutation(async ({ input }) => {
       // Rate-limit check keyed on mfaSessionId
-      const rateLimit = checkMFARateLimit(input.mfaSessionId);
+      const rateLimit = await checkMFARateLimit(input.mfaSessionId);
       if (!rateLimit.allowed) {
         const retryMinutes = Math.ceil((rateLimit.retryAfterMs ?? 0) / 60_000);
         throw new TRPCError({
@@ -236,10 +270,9 @@ export const authRouter = t.router({
       }
 
       const db = getDb();
-      const pending = pendingMFASessions.get(input.mfaSessionId);
+      const pending = await getPendingMFASession(input.mfaSessionId);
 
-      if (!pending || pending.expiresAt < Date.now()) {
-        pendingMFASessions.delete(input.mfaSessionId);
+      if (!pending) {
         throw new TRPCError({
           code: "UNAUTHORIZED",
           message: "MFA session expired or invalid. Please log in again.",
@@ -254,7 +287,7 @@ export const authRouter = t.router({
         .limit(1);
 
       if (userRows.length === 0) {
-        pendingMFASessions.delete(input.mfaSessionId);
+        await deletePendingMFASession(input.mfaSessionId);
         throw new TRPCError({
           code: "UNAUTHORIZED",
           message: "User not found.",
@@ -290,7 +323,7 @@ export const authRouter = t.router({
       }
 
       if (!verified) {
-        recordMFAAttempt(input.mfaSessionId);
+        await recordMFAAttempt(input.mfaSessionId);
         throw new TRPCError({
           code: "UNAUTHORIZED",
           message: "Invalid MFA code.",
@@ -298,8 +331,8 @@ export const authRouter = t.router({
       }
 
       // Successful verification -- clear rate-limit history and pending session
-      clearMFAAttempts(input.mfaSessionId);
-      pendingMFASessions.delete(input.mfaSessionId);
+      await clearMFAAttempts(input.mfaSessionId);
+      await deletePendingMFASession(input.mfaSessionId);
 
       // Create real session (evict oldest if at concurrent limit first)
       await enforceSessionLimit(db, row.id);
