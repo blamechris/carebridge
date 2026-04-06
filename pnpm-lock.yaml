@@ -183,6 +183,15 @@ importers:
         specifier: ^3.0.0
         version: 3.2.4(@types/node@22.19.17)(tsx@4.21.0)
 
+  packages/redis-config:
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@22.19.17)(tsx@4.21.0)
+
   packages/shared-types:
     devDependencies:
       typescript:
@@ -216,6 +225,9 @@ importers:
       '@carebridge/medical-logic':
         specifier: workspace:*
         version: link:../../packages/medical-logic
+      '@carebridge/redis-config':
+        specifier: workspace:*
+        version: link:../../packages/redis-config
       '@carebridge/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
@@ -302,6 +314,9 @@ importers:
       '@carebridge/db-schema':
         specifier: workspace:*
         version: link:../../packages/db-schema
+      '@carebridge/redis-config':
+        specifier: workspace:*
+        version: link:../../packages/redis-config
       '@carebridge/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
@@ -336,6 +351,9 @@ importers:
       '@carebridge/db-schema':
         specifier: workspace:*
         version: link:../../packages/db-schema
+      '@carebridge/redis-config':
+        specifier: workspace:*
+        version: link:../../packages/redis-config
       '@carebridge/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
@@ -367,6 +385,9 @@ importers:
       '@carebridge/db-schema':
         specifier: workspace:*
         version: link:../../packages/db-schema
+      '@carebridge/redis-config':
+        specifier: workspace:*
+        version: link:../../packages/redis-config
       '@carebridge/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types

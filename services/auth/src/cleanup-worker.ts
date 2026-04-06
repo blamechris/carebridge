@@ -1,16 +1,8 @@
 import { Queue, Worker } from "bullmq";
+import { getRedisConnection } from "@carebridge/redis-config";
 import { cleanupExpiredSessions } from "./session-cleanup.js";
 
 const QUEUE_NAME = "session-cleanup";
-
-function getRedisConnection() {
-  const host = process.env.REDIS_HOST ?? "localhost";
-  const port = Number(process.env.REDIS_PORT ?? 6379);
-  const password = process.env.REDIS_PASSWORD || undefined;
-  const tls = process.env.REDIS_TLS === "true" ? {} : undefined;
-
-  return { host, port, password, tls };
-}
 
 /**
  * Start the session-cleanup BullMQ worker and enqueue a repeatable hourly job.
