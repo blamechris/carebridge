@@ -10,7 +10,7 @@ export const users = pgTable("users", {
   department: text("department"),
   is_active: boolean("is_active").notNull().default(true),
   mfa_secret: text("mfa_secret"), // encrypted TOTP secret, null if MFA not set up
-  mfa_enabled: text("mfa_enabled").default("false"), // "true" or "false"
+  mfa_enabled: boolean("mfa_enabled").default(false),
   recovery_codes: text("recovery_codes"), // JSON array of hashed recovery codes
   created_at: text("created_at").notNull(),
   updated_at: text("updated_at").notNull(),

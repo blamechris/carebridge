@@ -135,12 +135,18 @@ export const authRouter = t.router({
     }
 
     // Check if MFA is enabled
-    if (row.mfa_enabled === "true") {
+    if (row.mfa_enabled === true) {
       const mfaSessionId = crypto.randomUUID();
+      const expiresAt = Date.now() + MFA_SESSION_TTL_MS;
       pendingMFASessions.set(mfaSessionId, {
         userId: row.id,
-        expiresAt: Date.now() + MFA_SESSION_TTL_MS,
+        expiresAt,
       });
+
+      // Auto-cleanup if the user abandons the MFA flow
+      setTimeout(() => {
+        pendingMFASessions.delete(mfaSessionId);
+      }, MFA_SESSION_TTL_MS);
 
       return {
         requiresMFA: true as const,
@@ -330,6 +336,21 @@ export const authRouter = t.router({
    */
   mfaSetup: protectedProcedure.mutation(async ({ ctx }) => {
     const db = getDb();
+
+    // Prevent overwriting an active MFA configuration
+    const existing = await db
+      .select({ mfa_enabled: users.mfa_enabled })
+      .from(users)
+      .where(eq(users.id, ctx.user.id))
+      .limit(1);
+
+    if (existing[0]?.mfa_enabled === true) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "MFA is already enabled. Disable MFA first before re-configuring.",
+      });
+    }
+
     const secret = generateSecret();
     const recoveryCodes = generateRecoveryCodes();
     const hashedCodes = recoveryCodes.map(hashRecoveryCode);
@@ -364,7 +385,7 @@ export const authRouter = t.router({
 
       // Fetch the stored (but not yet enabled) secret
       const rows = await db
-        .select({ mfa_secret: users.mfa_secret, recovery_codes: users.recovery_codes })
+        .select({ mfa_secret: users.mfa_secret })
         .from(users)
         .where(eq(users.id, ctx.user.id))
         .limit(1);
@@ -388,19 +409,13 @@ export const authRouter = t.router({
       await db
         .update(users)
         .set({
-          mfa_enabled: "true",
+          mfa_enabled: true,
           updated_at: new Date().toISOString(),
         })
         .where(eq(users.id, ctx.user.id));
 
-      // Return the recovery codes (already sent during setup, but shown again for confirmation)
-      const recoveryCodes = row.recovery_codes
-        ? (JSON.parse(row.recovery_codes) as string[])
-        : [];
-
       return {
         enabled: true as const,
-        recoveryCodes,
       };
     }),
 
@@ -420,7 +435,7 @@ export const authRouter = t.router({
         .limit(1);
 
       const row = rows[0];
-      if (!row?.mfa_secret || row.mfa_enabled !== "true") {
+      if (!row?.mfa_secret || row.mfa_enabled !== true) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "MFA is not currently enabled.",
@@ -438,7 +453,7 @@ export const authRouter = t.router({
       await db
         .update(users)
         .set({
-          mfa_enabled: "false",
+          mfa_enabled: false,
           mfa_secret: null,
           recovery_codes: null,
           updated_at: new Date().toISOString(),
