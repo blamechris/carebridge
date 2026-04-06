@@ -6,17 +6,21 @@ import crypto from "node:crypto";
 export interface Context {
   db: ReturnType<typeof getDb>;
   user: User | null;
+  sessionId: string | null;
   requestId: string;
 }
 
 export async function createContext(
   opts: CreateFastifyContextOptions,
 ): Promise<Context> {
-  const user = ((opts.req as unknown as Record<string, unknown>).user as User | null) ?? null;
+  const req = opts.req as unknown as Record<string, unknown>;
+  const user = (req.user as User | null) ?? null;
+  const sessionId = (req.sessionId as string | null) ?? null;
 
   return {
     db: getDb(),
     user,
+    sessionId,
     requestId: crypto.randomUUID(),
   };
 }

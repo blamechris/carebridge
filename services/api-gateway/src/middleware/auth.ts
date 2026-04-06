@@ -171,7 +171,9 @@ export async function authMiddleware(
     return;
   }
 
-  (request as unknown as Record<string, unknown>).user = {
+  const req = request as unknown as Record<string, unknown>;
+
+  req.user = {
     id: row.id,
     email: row.email,
     name: row.name,
@@ -182,4 +184,6 @@ export async function authMiddleware(
     created_at: row.created_at,
     updated_at: row.updated_at,
   } satisfies User;
+
+  req.sessionId = sessionId;
 }

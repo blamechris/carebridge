@@ -35,6 +35,7 @@ import {
 export interface Context {
   db: ReturnType<typeof getDb>;
   user: User | null;
+  sessionId: string | null;
   requestId: string;
 }
 
@@ -324,13 +325,17 @@ export const authRouter = t.router({
     }),
 
   /**
-   * Log out -- deletes the caller's session.
+   * Log out -- deletes only the current session identified by the caller's token.
    */
   logout: protectedProcedure.mutation(async ({ ctx }) => {
     const db = getDb();
 
-    // Delete all sessions for the current user (simple approach for dev).
-    await db.delete(sessions).where(eq(sessions.user_id, ctx.user.id));
+    if (ctx.sessionId) {
+      // Delete only the current session, preserving all other active sessions.
+      await db.delete(sessions).where(
+        and(eq(sessions.id, ctx.sessionId), eq(sessions.user_id, ctx.user.id)),
+      );
+    }
 
     return { success: true };
   }),
