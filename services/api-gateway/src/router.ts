@@ -1,9 +1,9 @@
 import { router, publicProcedure } from "./trpc.js";
 import { authRouter } from "@carebridge/auth";
-import { patientRecordsRouter } from "@carebridge/patient-records";
-import { clinicalDataRouter } from "@carebridge/clinical-data";
-import { clinicalNotesRouter } from "@carebridge/clinical-notes";
 import { aiOversightRouter } from "@carebridge/ai-oversight";
+import { patientRecordsRbacRouter } from "./routers/patient-records.js";
+import { clinicalDataRbacRouter } from "./routers/clinical-data.js";
+import { clinicalNotesRbacRouter } from "./routers/clinical-notes.js";
 
 export const appRouter = router({
   healthCheck: publicProcedure.query(() => {
@@ -14,9 +14,9 @@ export const appRouter = router({
     };
   }),
   auth: authRouter,
-  patients: patientRecordsRouter,
-  clinicalData: clinicalDataRouter,
-  notes: clinicalNotesRouter,
+  patients: patientRecordsRbacRouter,
+  clinicalData: clinicalDataRbacRouter,
+  notes: clinicalNotesRbacRouter,
   aiOversight: aiOversightRouter,
 });
 

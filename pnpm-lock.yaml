@@ -259,6 +259,9 @@ importers:
       '@carebridge/medical-logic':
         specifier: workspace:*
         version: link:../../packages/medical-logic
+      '@carebridge/phi-sanitizer':
+        specifier: workspace:*
+        version: link:../../packages/phi-sanitizer
       '@carebridge/redis-config':
         specifier: workspace:*
         version: link:../../packages/redis-config
@@ -284,6 +287,9 @@ importers:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.17
+      tsx:
+        specifier: ^4.19.0
+        version: 4.21.0
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
@@ -335,6 +341,9 @@ importers:
       ioredis:
         specifier: ^5.6.0
         version: 5.10.1
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
     devDependencies:
       '@types/node':
         specifier: ^22.0.0

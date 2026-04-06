@@ -25,7 +25,8 @@
     "@fastify/rate-limit": "^10.3.0",
     "@trpc/server": "^11.0.0",
     "drizzle-orm": "^0.38.0",
-    "ioredis": "^5.6.0"
+    "ioredis": "^5.6.0",
+    "zod": "^3.24.0"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
