@@ -4,7 +4,7 @@ export const biologicalSexSchema = z.enum(["male", "female", "unknown"]);
 
 export const createPatientSchema = z.object({
   name: z.string().min(1).max(200),
-  date_of_birth: z.string().datetime().optional(),
+  date_of_birth: z.string().date().optional(),
   biological_sex: biologicalSexSchema.optional(),
   diagnosis: z.string().max(2000).optional(),
   notes: z.string().max(5000).optional(),

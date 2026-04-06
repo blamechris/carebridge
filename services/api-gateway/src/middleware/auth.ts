@@ -39,11 +39,13 @@ const DEV_USERS: Record<string, User> = {
   },
 };
 
-const isDevMode = process.env.NODE_ENV !== "production";
+const isDevAuthEnabled =
+  process.env.NODE_ENV !== "production" &&
+  process.env.CAREBRIDGE_DEV_AUTH === "true";
 
 /**
  * Fastify preHandler hook that resolves the current user from either:
- *   1. `x-dev-user-id` header (dev mode only)
+ *   1. `x-dev-user-id` header (local dev only, requires CAREBRIDGE_DEV_AUTH=true)
  *   2. `Authorization: Bearer <sessionId>` header
  *   3. `session` cookie
  *
@@ -53,8 +55,8 @@ export async function authMiddleware(
   request: FastifyRequest,
   _reply: FastifyReply,
 ): Promise<void> {
-  // --- Dev mode shortcut ---
-  if (isDevMode) {
+  // --- Dev mode shortcut (only when CAREBRIDGE_DEV_AUTH=true and non-production) ---
+  if (isDevAuthEnabled) {
     const devUserId = request.headers["x-dev-user-id"] as string | undefined;
     if (devUserId) {
       const devUser = DEV_USERS[devUserId];
@@ -62,25 +64,9 @@ export async function authMiddleware(
         (request as unknown as Record<string, unknown>).user = devUser;
         return;
       }
-
-      // Dev header present but not a hardcoded user -- try the database.
-      const db = getDb();
-      const rows = await db.select().from(users).where(eq(users.id, devUserId)).limit(1);
-      if (rows.length > 0) {
-        const row = rows[0]!;
-        (request as unknown as Record<string, unknown>).user = {
-          id: row.id,
-          email: row.email,
-          name: row.name,
-          role: row.role as User["role"],
-          specialty: row.specialty ?? undefined,
-          department: row.department ?? undefined,
-          is_active: row.is_active,
-          created_at: row.created_at,
-          updated_at: row.updated_at,
-        } satisfies User;
-        return;
-      }
+      // Unknown dev user ID — fall through to normal JWT auth rather than
+      // performing a live DB lookup with no token, which would allow
+      // impersonating any real user without credentials.
     }
   }
 
