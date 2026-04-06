@@ -7,6 +7,8 @@
  * that preserves the most clinically relevant data.
  */
 
+import { PROMPT_SECTIONS } from "./prompt-sections.js";
+
 /** Rough token estimation: ~4 chars per token for English text. */
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
@@ -30,10 +32,10 @@ export interface TruncationResult {
 // ─── Section markers used by buildReviewPrompt ─────────────────────
 
 const SECTION_PATTERNS: { name: string; regex: RegExp }[] = [
-  { name: "recent_labs", regex: /Recent Lab Results:\n([\s\S]*?)(?=\n\n|\nCare Team:|\nTRIGGERING EVENT)/ },
-  { name: "latest_vitals", regex: /Latest Vitals:\n([\s\S]*?)(?=\n\n|\nRecent Lab Results:|\nCare Team:)/ },
-  { name: "active_medications", regex: /Active Medications:\n([\s\S]*?)(?=\n\n|\nLatest Vitals:)/ },
-  { name: "recent_flags", regex: /Recent Open Flags:\n([\s\S]*?)(?=\n\n|\nTRIGGERING EVENT)/ },
+  { name: "recent_labs", regex: new RegExp(`${PROMPT_SECTIONS.LABS}:\\n([\\s\\S]*?)(?=\\n\\n|\\n${PROMPT_SECTIONS.CARE_TEAM}:|\\n${PROMPT_SECTIONS.TRIGGERING_EVENT})`) },
+  { name: "latest_vitals", regex: new RegExp(`${PROMPT_SECTIONS.VITALS}:\\n([\\s\\S]*?)(?=\\n\\n|\\n${PROMPT_SECTIONS.LABS}:|\\n${PROMPT_SECTIONS.CARE_TEAM}:)`) },
+  { name: "active_medications", regex: new RegExp(`${PROMPT_SECTIONS.MEDICATIONS}:\\n([\\s\\S]*?)(?=\\n\\n|\\n${PROMPT_SECTIONS.VITALS}:)`) },
+  { name: "recent_flags", regex: new RegExp(`${PROMPT_SECTIONS.FLAGS}:\\n([\\s\\S]*?)(?=\\n\\n|\\n${PROMPT_SECTIONS.TRIGGERING_EVENT})`) },
 ];
 
 /**
@@ -128,7 +130,7 @@ export function enforceTokenBudget(
 
   // Step 5: Hard truncate as last resort — preserve the triggering event at the end
   const budgetChars = budget * 4;
-  const triggerMarker = "TRIGGERING EVENT";
+  const triggerMarker = PROMPT_SECTIONS.TRIGGERING_EVENT;
   const triggerIdx = current.indexOf(triggerMarker);
 
   if (triggerIdx !== -1) {

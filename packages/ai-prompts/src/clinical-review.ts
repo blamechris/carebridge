@@ -3,6 +3,8 @@
  * These are versioned and testable — changes to prompts are tracked.
  */
 
+import { PROMPT_SECTIONS } from "./prompt-sections.js";
+
 export const PROMPT_VERSION = "1.0.0";
 
 export const CLINICAL_REVIEW_SYSTEM_PROMPT = `You are a clinical decision support system reviewing a patient's medical record.
@@ -82,30 +84,30 @@ export function buildReviewPrompt(context: ReviewContext): string {
   return `PATIENT CLINICAL CONTEXT
 ========================
 
-Demographics: ${context.patient.age} year old ${context.patient.sex}
+${PROMPT_SECTIONS.DEMOGRAPHICS}: ${context.patient.age} year old ${context.patient.sex}
 
-Active Diagnoses:
+${PROMPT_SECTIONS.DIAGNOSES}:
 ${context.patient.active_diagnoses.map((d) => `  - ${d}`).join("\n") || "  None documented"}
 
-Allergies:
+${PROMPT_SECTIONS.ALLERGIES}:
 ${context.patient.allergies.map((a) => `  - ${a}`).join("\n") || "  NKDA"}
 
-Active Medications:
+${PROMPT_SECTIONS.MEDICATIONS}:
 ${context.active_medications.map((m) => `  - ${m.name} ${m.dose} ${m.route} ${m.frequency} (since ${m.started_at})`).join("\n") || "  None"}
 
-Latest Vitals:
+${PROMPT_SECTIONS.VITALS}:
 ${Object.entries(context.latest_vitals).map(([type, v]) => `  - ${type}: ${v.value} ${v.unit} (${v.recorded_at})${v.trend ? ` [${v.trend}]` : ""}`).join("\n") || "  None recorded"}
 
-${context.recent_labs ? `Recent Lab Results:
+${context.recent_labs ? `${PROMPT_SECTIONS.LABS}:
 ${context.recent_labs.map((l) => `  - ${l.test_name}: ${l.value} ${l.unit}${l.flag ? ` [${l.flag}]` : ""}${l.trend ? ` (${l.trend})` : ""} (${l.collected_at})`).join("\n")}` : ""}
 
-Care Team:
+${PROMPT_SECTIONS.CARE_TEAM}:
 ${context.care_team.map((c) => `  - ${c.name} (${c.specialty})${c.recent_note_date ? ` — last note: ${c.recent_note_date}` : ""}`).join("\n") || "  Not documented"}
 
-Recent Open Flags:
+${PROMPT_SECTIONS.FLAGS}:
 ${context.recent_flags.filter((f) => f.status === "open").map((f) => `  - [${f.severity}] ${f.summary} (${f.created_at})`).join("\n") || "  None"}
 
-TRIGGERING EVENT
+${PROMPT_SECTIONS.TRIGGERING_EVENT}
 ================
 Type: ${context.triggering_event.type}
 Summary: ${context.triggering_event.summary}
