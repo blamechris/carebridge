@@ -4,7 +4,11 @@ import { encryptedText } from "../encryption.js";
 
 export const patients = pgTable("patients", {
   id: text("id").primaryKey(),
-  name: text("name").notNull(),
+  // Non-deterministic encryption (random IV per write) means identical names produce
+  // different ciphertexts. The `name_hmac` column stores a deterministic HMAC-SHA256
+  // digest enabling search/lookup without decryption.
+  name: encryptedText("name").notNull(),
+  name_hmac: text("name_hmac"),
   date_of_birth: encryptedText("date_of_birth"),
   biological_sex: text("biological_sex").default("unknown"),
   diagnosis: text("diagnosis"),
