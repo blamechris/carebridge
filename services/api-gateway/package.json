@@ -8,6 +8,7 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "clean": "rm -rf dist"
   },
   "dependencies": {
@@ -22,6 +23,7 @@
   "devDependencies": {
     "typescript": "^5.7.0",
     "@types/node": "^22.0.0",
-    "tsx": "^4.19.0"
+    "tsx": "^4.19.0",
+    "vitest": "^3.0.0"
   }
 }
