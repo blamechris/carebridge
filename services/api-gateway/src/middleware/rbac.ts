@@ -1,7 +1,36 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
 import type { User } from "@carebridge/shared-types";
-import { getDb, careTeamAssignments } from "@carebridge/db-schema";
+import { getDb, careTeamAssignments, auditLog } from "@carebridge/db-schema";
 import { eq, and, isNull } from "drizzle-orm";
+import crypto from "node:crypto";
+
+/**
+ * Log an RBAC access denial to the audit trail.
+ *
+ * Fires-and-forgets so it never blocks or crashes the request cycle.
+ */
+async function logAccessDenial(
+  request: FastifyRequest,
+  userId: string,
+  reason: string,
+  details: Record<string, unknown>,
+): Promise<void> {
+  try {
+    const db = getDb();
+    await db.insert(auditLog).values({
+      id: crypto.randomUUID(),
+      user_id: userId,
+      action: "access_denied",
+      resource_type: "rbac",
+      resource_id: "",
+      details: JSON.stringify({ reason, ...details }),
+      ip_address: request.ip,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    request.log.error({ err }, "Failed to write RBAC denial audit log");
+  }
+}
 
 /**
  * Type-guard: returns `true` when `request.user` has been populated by
@@ -72,6 +101,10 @@ export async function assertPatientAccess(
     if (user.id === patientId) {
       return true;
     }
+    await logAccessDenial(request, user.id, "patient_access_denied", {
+      requested_patient_id: patientId,
+      role: user.role,
+    });
     reply.code(403).send({ error: "Access denied: patients may only access their own records" });
     return false;
   }
@@ -79,6 +112,10 @@ export async function assertPatientAccess(
   // Clinicians (physician, specialist, nurse) must be on the care team.
   const hasAccess = await assertCareTeamAccess(user.id, patientId);
   if (!hasAccess) {
+    await logAccessDenial(request, user.id, "care_team_not_assigned", {
+      requested_patient_id: patientId,
+      role: user.role,
+    });
     reply.code(403).send({
       error: "Access denied: no active care-team assignment for this patient",
     });
