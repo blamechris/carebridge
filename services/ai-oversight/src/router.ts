@@ -2,23 +2,44 @@
  * tRPC router for the AI oversight service.
  *
  * Exposes flag management and review job queries to the API gateway.
+ * All flag mutation procedures require authentication — the acting user
+ * is derived from the session context, never accepted as client input.
  */
 
-import { initTRPC } from "@trpc/server";
+import { initTRPC, TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { eq, desc } from "drizzle-orm";
 import { getDb } from "@carebridge/db-schema";
 import { reviewJobs } from "@carebridge/db-schema";
+import type { User } from "@carebridge/shared-types";
 import {
-  acknowledgeFlagSchema,
-  resolveFlagSchema,
-  dismissFlagSchema,
   flagStatusSchema,
 } from "@carebridge/validators";
 
 import * as flagService from "./services/flag-service.js";
 
-const t = initTRPC.create();
+export interface Context {
+  user: User | null;
+}
+
+const t = initTRPC.context<Context>().create();
+
+const isAuthenticated = t.middleware(({ ctx, next }) => {
+  if (!ctx.user) {
+    throw new TRPCError({
+      code: "UNAUTHORIZED",
+      message: "You must be logged in to access this resource.",
+    });
+  }
+  return next({
+    ctx: {
+      ...ctx,
+      user: ctx.user,
+    },
+  });
+});
+
+const protectedProcedure = t.procedure.use(isAuthenticated);
 
 export const aiOversightRouter = t.router({
   flags: t.router({
@@ -33,42 +54,44 @@ export const aiOversightRouter = t.router({
         return flagService.getFlagsByPatient(input.patientId, input.status);
       }),
 
-    acknowledge: t.procedure
+    acknowledge: protectedProcedure
       .input(
         z.object({
           flagId: z.string().uuid(),
-        }).merge(acknowledgeFlagSchema),
+        }),
       )
-      .mutation(async ({ input }) => {
-        await flagService.acknowledgeFlag(input.flagId, input.acknowledged_by);
+      .mutation(async ({ input, ctx }) => {
+        await flagService.acknowledgeFlag(input.flagId, ctx.user.id);
         return { success: true };
       }),
 
-    resolve: t.procedure
+    resolve: protectedProcedure
       .input(
         z.object({
           flagId: z.string().uuid(),
-        }).merge(resolveFlagSchema),
+          resolution_note: z.string().min(1).max(2000),
+        }),
       )
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         await flagService.resolveFlag(
           input.flagId,
-          input.resolved_by,
+          ctx.user.id,
           input.resolution_note,
         );
         return { success: true };
       }),
 
-    dismiss: t.procedure
+    dismiss: protectedProcedure
       .input(
         z.object({
           flagId: z.string().uuid(),
-        }).merge(dismissFlagSchema),
+          dismiss_reason: z.string().min(1).max(2000),
+        }),
       )
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
         await flagService.dismissFlag(
           input.flagId,
-          input.dismissed_by,
+          ctx.user.id,
           input.dismiss_reason,
         );
         return { success: true };
