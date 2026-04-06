@@ -6,18 +6,71 @@
  * only moved through their lifecycle.
  */
 
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, gte, sql } from "drizzle-orm";
 import { getDb } from "@carebridge/db-schema";
 import { clinicalFlags } from "@carebridge/db-schema";
 import type { ClinicalFlag, FlagStatus } from "@carebridge/shared-types";
 
+// 24 hours in milliseconds — window for LLM flag deduplication
+const LLM_DEDUP_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 /**
  * Create a new clinical flag.
+ *
+ * Before inserting, checks for an existing open flag that would be a duplicate:
+ *  - Rule-based flags: dedup on (patient_id, rule_id, status='open')
+ *  - LLM flags (no rule_id): dedup on (patient_id, category, severity, status='open')
+ *    within the last 24 hours to avoid suppressing genuinely new findings.
+ *
+ * Returns the existing flag if a duplicate is found, otherwise inserts and returns the new one.
  */
 export async function createFlag(
   flag: Omit<ClinicalFlag, "id" | "created_at">,
 ): Promise<ClinicalFlag> {
   const db = getDb();
+
+  // Check for existing open duplicate before inserting
+  if (flag.rule_id) {
+    // Rule-based flag: exact match on (patient_id, rule_id, status='open')
+    const existing = await db
+      .select()
+      .from(clinicalFlags)
+      .where(
+        and(
+          eq(clinicalFlags.patient_id, flag.patient_id),
+          eq(clinicalFlags.rule_id, flag.rule_id),
+          eq(clinicalFlags.status, "open"),
+        ),
+      )
+      .limit(1);
+
+    if (existing.length > 0) {
+      return existing[0] as unknown as ClinicalFlag;
+    }
+  } else {
+    // LLM-generated flag: dedup on (patient_id, category, severity, status='open')
+    // within the last 24 hours
+    const windowStart = new Date(Date.now() - LLM_DEDUP_WINDOW_MS).toISOString();
+
+    const existing = await db
+      .select()
+      .from(clinicalFlags)
+      .where(
+        and(
+          eq(clinicalFlags.patient_id, flag.patient_id),
+          eq(clinicalFlags.category, flag.category),
+          eq(clinicalFlags.severity, flag.severity),
+          eq(clinicalFlags.status, "open"),
+          gte(clinicalFlags.created_at, windowStart),
+        ),
+      )
+      .limit(1);
+
+    if (existing.length > 0) {
+      return existing[0] as unknown as ClinicalFlag;
+    }
+  }
+
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
 

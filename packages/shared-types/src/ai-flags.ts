@@ -16,6 +16,7 @@ export type FlagStatus = "open" | "acknowledged" | "resolved" | "dismissed" | "e
 export interface ClinicalFlag extends BaseRecord {
   patient_id: string;
   source: FlagSource;
+  rule_id?: string;
   severity: FlagSeverity;
   category: FlagCategory;
   summary: string;
