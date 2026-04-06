@@ -1,16 +1,17 @@
 import { pgTable, text, boolean, index } from "drizzle-orm/pg-core";
+import { encryptedText } from "../encryption.js";
 
 export const patients = pgTable("patients", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
-  date_of_birth: text("date_of_birth"),
+  date_of_birth: encryptedText("date_of_birth"),
   biological_sex: text("biological_sex").default("unknown"),
   diagnosis: text("diagnosis"),
   notes: text("notes"),
-  mrn: text("mrn").unique(),
-  insurance_id: text("insurance_id"),
-  emergency_contact_name: text("emergency_contact_name"),
-  emergency_contact_phone: text("emergency_contact_phone"),
+  mrn: encryptedText("mrn").unique(),
+  insurance_id: encryptedText("insurance_id"),
+  emergency_contact_name: encryptedText("emergency_contact_name"),
+  emergency_contact_phone: encryptedText("emergency_contact_phone"),
   primary_provider_id: text("primary_provider_id"),
   created_at: text("created_at").notNull(),
   updated_at: text("updated_at").notNull(),
