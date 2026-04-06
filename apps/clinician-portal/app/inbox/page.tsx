@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { AuthGuard } from "@/lib/auth-guard";
 
 interface Flag {
   id: string;
@@ -85,7 +86,7 @@ const initialFlags: Flag[] = [
 
 const severityOrder = { critical: 0, warning: 1, info: 2 };
 
-export default function InboxPage() {
+function InboxContent() {
   const [flags, setFlags] = useState(initialFlags);
   const [filter, setFilter] = useState<"all" | "critical" | "warning" | "info">(
     "all"
@@ -232,5 +233,13 @@ export default function InboxPage() {
         )}
       </div>
     </>
+  );
+}
+
+export default function InboxPage() {
+  return (
+    <AuthGuard>
+      <InboxContent />
+    </AuthGuard>
   );
 }
