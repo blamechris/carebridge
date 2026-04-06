@@ -24,6 +24,10 @@ import {
   recordMFAAttempt,
   clearMFAAttempts,
 } from "./mfa-rate-limit.js";
+import {
+  hashPassword,
+  verifyPassword,
+} from "./password.js";
 
 // ---------- tRPC setup (mirrors api-gateway's context shape) ----------
 
@@ -63,17 +67,17 @@ const pendingMFASessions = new Map<
 >();
 
 /**
- * Placeholder password hashing for dev mode.
- * In production this would use bcrypt / argon2.
+ * Verify a password against a stored hash, with a backward-compat fallback
+ * for legacy dev seeds that used the `hashed:<plaintext>` format.
+ * In production that format is unconditionally rejected.
  */
-function hashPassword(password: string): string {
-  return `hashed:${password}`;
-}
-
-function verifyPassword(password: string, hash: string): boolean {
-  // Dev-mode: accept plain "hashed:" prefix comparison.
-  // Production would use bcrypt.compare / argon2.verify.
-  return hash === `hashed:${password}`;
+async function checkPassword(password: string, storedHash: string): Promise<boolean> {
+  if (storedHash.startsWith("hashed:")) {
+    // Legacy dev-seed format: never accept in production.
+    if (process.env.NODE_ENV === "production") return false;
+    return storedHash === `hashed:${password}`;
+  }
+  return verifyPassword(password, storedHash);
 }
 
 function buildUserResponse(row: {
@@ -125,7 +129,7 @@ export const authRouter = t.router({
 
     const row = userRows[0]!;
 
-    if (!verifyPassword(input.password, row.password_hash)) {
+    if (!(await checkPassword(input.password, row.password_hash))) {
       throw new TRPCError({
         code: "UNAUTHORIZED",
         message: "Invalid email or password.",
@@ -326,7 +330,7 @@ export const authRouter = t.router({
     await db.insert(users).values({
       id: userId,
       email: input.email,
-      password_hash: hashPassword(input.password),
+      password_hash: await hashPassword(input.password),
       name: input.name,
       role: input.role,
       specialty: input.specialty ?? null,

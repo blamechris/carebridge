@@ -21,8 +21,23 @@ function uuid() { return crypto.randomUUID(); }
 function now() { return new Date().toISOString(); }
 function daysAgo(n: number) { return new Date(Date.now() - n * 86400000).toISOString(); }
 
+/**
+ * Hash a password using scrypt — same parameters as services/auth/src/password.ts.
+ * Duplicated here so the seed has no runtime dependency on the auth service.
+ */
+function hashPassword(password: string): Promise<string> {
+  const salt = crypto.randomBytes(16);
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(password, salt, 64, { N: 16384, r: 8, p: 1 }, (err, key) => {
+      if (err) return reject(err);
+      resolve(`scrypt:${salt.toString("hex")}:${key.toString("hex")}`);
+    });
+  });
+}
+
 async function seed() {
   console.log("Seeding CareBridge database...");
+  const devPasswordHash = await hashPassword("password123");
 
   // ─── Users (dev accounts) ───────────────────────────────────────
   const drSmith = uuid();
@@ -34,7 +49,7 @@ async function seed() {
     {
       id: drSmith,
       email: "dr.smith@carebridge.dev",
-      password_hash: "hashed:password123",
+      password_hash: devPasswordHash,
       name: "Dr. Sarah Smith",
       role: "physician",
       specialty: "Hematology/Oncology",
@@ -46,7 +61,7 @@ async function seed() {
     {
       id: drJones,
       email: "dr.jones@carebridge.dev",
-      password_hash: "hashed:password123",
+      password_hash: devPasswordHash,
       name: "Dr. Michael Jones",
       role: "specialist",
       specialty: "Interventional Radiology",
@@ -58,7 +73,7 @@ async function seed() {
     {
       id: nurseRachel,
       email: "nurse.rachel@carebridge.dev",
-      password_hash: "hashed:password123",
+      password_hash: devPasswordHash,
       name: "Rachel Torres, RN",
       role: "nurse",
       department: "Oncology",
@@ -69,7 +84,7 @@ async function seed() {
     {
       id: patientUser,
       email: "patient@carebridge.dev",
-      password_hash: "hashed:password123",
+      password_hash: devPasswordHash,
       name: "Demo Patient",
       role: "patient",
       is_active: true,
