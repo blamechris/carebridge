@@ -11,6 +11,7 @@ const navItems = [
   { href: "/inbox", label: "Inbox (AI Flags)", icon: "\u26A0" },
   { href: "/notes", label: "Notes", icon: "\u270E" },
   { href: "/schedule", label: "Schedule", icon: "\u25F7" },
+  { href: "/settings", label: "Settings", icon: "\u2699" },
 ];
 
 function getInitials(name: string): string {

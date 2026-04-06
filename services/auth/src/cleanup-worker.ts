@@ -15,7 +15,13 @@ export async function startCleanupWorker(): Promise<{
 }> {
   const connection = getRedisConnection();
 
-  const queue = new Queue(QUEUE_NAME, { connection });
+  const queue = new Queue(QUEUE_NAME, {
+    connection,
+    defaultJobOptions: {
+      removeOnComplete: { count: 1000 },
+      removeOnFail: { count: 10000 },
+    },
+  });
 
   // Add a repeatable job that fires at the top of every hour.
   await queue.upsertJobScheduler(
