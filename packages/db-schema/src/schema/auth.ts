@@ -1,4 +1,5 @@
 import { pgTable, text, boolean, index } from "drizzle-orm/pg-core";
+import { encryptedText } from "../encryption.js";
 
 export const users = pgTable("users", {
   id: text("id").primaryKey(),
@@ -9,7 +10,7 @@ export const users = pgTable("users", {
   specialty: text("specialty"),
   department: text("department"),
   is_active: boolean("is_active").notNull().default(true),
-  mfa_secret: text("mfa_secret"), // encrypted TOTP secret, null if MFA not set up
+  mfa_secret: encryptedText("mfa_secret"), // encrypted TOTP secret, null if MFA not set up
   mfa_enabled: boolean("mfa_enabled").default(false),
   recovery_codes: text("recovery_codes"), // JSON array of hashed recovery codes
   created_at: text("created_at").notNull(),
