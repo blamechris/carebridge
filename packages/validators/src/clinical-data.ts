@@ -73,7 +73,7 @@ export const createLabPanelSchema = z.object({
   results: z.array(
     z.object({
       test_name: z.string().min(1).max(100),
-      test_code: z.string().max(20).optional(),
+      test_code: z.string().regex(/^\d{1,5}-\d$/, "Must be a valid LOINC code (e.g. 6690-2)"),
       value: z.number(),
       unit: z.string().min(1).max(20),
       reference_low: z.number().optional(),
