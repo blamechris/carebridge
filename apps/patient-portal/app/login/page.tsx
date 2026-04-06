@@ -21,7 +21,12 @@ export default function LoginPage() {
 
     try {
       const result = await trpcVanilla.auth.login.mutate({ email, password });
-      setSession(result.user, result.session.id);
+      if ("requiresMFA" in result && result.requiresMFA) {
+        setError("MFA is required. Please use the clinician portal for MFA login.");
+        return;
+      }
+      const loginResult = result as { user: { id: string; name: string; email: string; role: string }; session: { id: string } };
+      setSession(loginResult.user, loginResult.session.id);
       router.push("/");
     } catch (err: unknown) {
       const message =

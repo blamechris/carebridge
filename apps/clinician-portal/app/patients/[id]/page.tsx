@@ -49,11 +49,11 @@ function OverviewTab({ patientId }: { patientId: string }) {
         <div className="detail-card-title">Demographics</div>
         <div className="detail-row">
           <span className="detail-label">Date of Birth</span>
-          <span className="detail-value">{patient.dob}</span>
+          <span className="detail-value">{patient.date_of_birth}</span>
         </div>
         <div className="detail-row">
           <span className="detail-label">Sex</span>
-          <span className="detail-value">{patient.sex}</span>
+          <span className="detail-value">{patient.biological_sex}</span>
         </div>
         <div className="detail-row">
           <span className="detail-label">MRN</span>
@@ -70,7 +70,7 @@ function OverviewTab({ patientId }: { patientId: string }) {
         ) : diagnoses.length > 0 ? (
           diagnoses.map((dx, i) => (
             <div key={i} className="list-item">
-              {dx.description} {dx.icd_code ? `(${dx.icd_code})` : ""}
+              {dx.description} {dx.icd10_code ? `(${dx.icd10_code})` : ""}
             </div>
           ))
         ) : (
@@ -108,7 +108,7 @@ function OverviewTab({ patientId }: { patientId: string }) {
           careTeam.map((member, i) => (
             <div key={i} className="detail-row">
               <span className="detail-label">{member.role}</span>
-              <span className="detail-value">{member.provider_name}</span>
+              <span className="detail-value">{member.provider_id}</span>
             </div>
           ))
         ) : (
@@ -145,7 +145,7 @@ function VitalsTab({ patientId }: { patientId: string }) {
             className="stat-value"
             style={{ fontSize: 24, color: "var(--text-primary)" }}
           >
-            {vital.value} {vital.unit}
+            {vital.value_primary} {vital.unit}
           </span>
           <span className="stat-detail">
             {new Date(vital.recorded_at).toLocaleString()}
@@ -176,9 +176,9 @@ function LabsTab({ patientId }: { patientId: string }) {
       {panels.map((panel, pi) => (
         <div key={pi} className="table-container">
           <div className="table-header">
-            <span className="table-title">{panel.panel_name}</span>
+            <span className="table-title">{panel.panel.panel_name}</span>
             <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-              {new Date(panel.ordered_at).toLocaleDateString()}
+              {new Date(panel.panel.created_at).toLocaleDateString()}
             </span>
           </div>
           {panel.results && panel.results.length > 0 ? (
@@ -385,7 +385,7 @@ function FlagsTab({ patientId }: { patientId: string }) {
             </div>
             <div className="flag-content">
               <div className="flag-summary">{flag.summary}</div>
-              <div className="flag-suggestion">{flag.suggestion}</div>
+              <div className="flag-suggestion">{flag.suggested_action}</div>
               <div className="flag-time">
                 {new Date(flag.created_at).toLocaleString()}
               </div>
@@ -448,8 +448,8 @@ function PatientChartContent() {
               <div className="chart-patient-name">{patient.name}</div>
               <div className="chart-patient-meta">
                 <span>{patient.mrn}</span>
-                <span>DOB: {patient.dob}</span>
-                <span>{patient.sex}</span>
+                <span>DOB: {patient.date_of_birth}</span>
+                <span>{patient.biological_sex}</span>
               </div>
             </div>
           </div>

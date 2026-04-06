@@ -104,11 +104,11 @@ function PatientDashboard() {
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
                 <span style={{ color: "#999" }}>DOB</span>
-                <span>{myRecord.dob}</span>
+                <span>{myRecord.date_of_birth}</span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <span style={{ color: "#999" }}>Sex</span>
-                <span>{myRecord.sex}</span>
+                <span>{myRecord.biological_sex}</span>
               </div>
             </div>
           ) : patientsQuery.isLoading ? (
@@ -136,7 +136,7 @@ function PatientDashboard() {
                 >
                   <span style={{ color: "#999" }}>{vital.type}</span>
                   <span>
-                    {vital.value} {vital.unit}
+                    {vital.value_primary} {vital.unit}
                   </span>
                 </div>
               ))}

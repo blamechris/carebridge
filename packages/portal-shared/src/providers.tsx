@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { trpc, getTRPCLinks } from "./trpc.js";
-import { AuthProvider } from "./auth.js";
+import { trpc, getTRPCLinks } from "./trpc";
+import { AuthProvider } from "./auth";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(

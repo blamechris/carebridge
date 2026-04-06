@@ -60,7 +60,7 @@ describe("cleanupExpiredSessions", () => {
   it("builds an OR condition covering expiry, idle, and hard-cap", async () => {
     await cleanupExpiredSessions();
 
-    const whereArg = mockWhere.mock.calls[0]![0] as {
+    const whereArg = (mockWhere.mock.calls[0] as unknown[])[0] as {
       op: string;
       args: unknown[];
     };
@@ -93,7 +93,7 @@ describe("cleanupExpiredSessions", () => {
     await cleanupExpiredSessions();
     const after = Date.now();
 
-    const whereArg = mockWhere.mock.calls[0]![0] as {
+    const whereArg = (mockWhere.mock.calls[0] as unknown[])[0] as {
       op: string;
       args: unknown[];
     };
@@ -115,7 +115,7 @@ describe("cleanupExpiredSessions", () => {
     await cleanupExpiredSessions();
     const after = Date.now();
 
-    const whereArg = mockWhere.mock.calls[0]![0] as {
+    const whereArg = (mockWhere.mock.calls[0] as unknown[])[0] as {
       op: string;
       args: { op: string; val: string }[];
     };

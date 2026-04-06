@@ -14,7 +14,7 @@ function PatientsContent() {
     ? patients.filter(
         (p) =>
           p.name.toLowerCase().includes(search.toLowerCase()) ||
-          p.mrn.toLowerCase().includes(search.toLowerCase()),
+          (p.mrn ?? "").toLowerCase().includes(search.toLowerCase()),
       )
     : patients;
 
@@ -101,10 +101,10 @@ function PatientsContent() {
                       {patient.mrn}
                     </td>
                     <td style={{ color: "var(--text-secondary)" }}>
-                      {patient.dob}
+                      {patient.date_of_birth}
                     </td>
                     <td style={{ color: "var(--text-secondary)" }}>
-                      {patient.sex}
+                      {patient.biological_sex}
                     </td>
                     <td>
                       <Link

@@ -137,7 +137,7 @@ function DashboardContent() {
                     {patient.mrn}
                   </td>
                   <td style={{ color: "var(--text-secondary)" }}>
-                    {patient.dob}
+                    {patient.date_of_birth}
                   </td>
                   <td>
                     <a

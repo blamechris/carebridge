@@ -27,7 +27,7 @@ import {
 
 // ---------- tRPC setup (mirrors api-gateway's context shape) ----------
 
-interface Context {
+export interface Context {
   db: ReturnType<typeof getDb>;
   user: User | null;
   requestId: string;
@@ -265,10 +265,13 @@ export const authRouter = t.router({
       const sessionId = crypto.randomUUID();
       const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
 
+      const now = new Date().toISOString();
       await db.insert(sessions).values({
         id: sessionId,
         user_id: row.id,
         expires_at: expiresAt,
+        created_at: now,
+        last_active_at: now,
       });
 
       return {
