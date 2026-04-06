@@ -26,6 +26,9 @@ importers:
 
   apps/clinician-portal:
     dependencies:
+      '@carebridge/portal-shared':
+        specifier: workspace:*
+        version: link:../../packages/portal-shared
       '@carebridge/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
@@ -75,6 +78,9 @@ importers:
 
   apps/patient-portal:
     dependencies:
+      '@carebridge/portal-shared':
+        specifier: workspace:*
+        version: link:../../packages/portal-shared
       '@carebridge/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
@@ -182,6 +188,34 @@ importers:
       vitest:
         specifier: ^3.0.0
         version: 3.2.4(@types/node@22.19.17)(tsx@4.21.0)
+
+  packages/portal-shared:
+    dependencies:
+      '@tanstack/react-query':
+        specifier: ^5.60.0
+        version: 5.96.2(react@19.2.4)
+      '@trpc/client':
+        specifier: ^11.0.0
+        version: 11.16.0(@trpc/server@11.16.0(typescript@5.9.3))(typescript@5.9.3)
+      '@trpc/react-query':
+        specifier: ^11.0.0
+        version: 11.16.0(@tanstack/react-query@5.96.2(react@19.2.4))(@trpc/client@11.16.0(@trpc/server@11.16.0(typescript@5.9.3))(typescript@5.9.3))(@trpc/server@11.16.0(typescript@5.9.3))(react@19.2.4)(typescript@5.9.3)
+      '@trpc/server':
+        specifier: ^11.0.0
+        version: 11.16.0(typescript@5.9.3)
+      react:
+        specifier: ^19.0.0
+        version: 19.2.4
+    devDependencies:
+      '@carebridge/api-gateway':
+        specifier: workspace:*
+        version: link:../../services/api-gateway
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.2.14
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
 
   packages/redis-config:
     devDependencies:
