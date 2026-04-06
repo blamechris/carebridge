@@ -7,9 +7,22 @@ describe("hashPassword", () => {
     expect(hash).toMatch(/^scrypt:[a-f0-9]+:[a-f0-9]+$/);
   });
 
+  it("returns a hash different from the input password", async () => {
+    const password = "myPlainTextPassword";
+    const hash = await hashPassword(password);
+    expect(hash).not.toBe(password);
+    expect(hash).not.toContain(password);
+  });
+
   it("produces different hashes for the same password (random salt)", async () => {
     const hash1 = await hashPassword("password123");
     const hash2 = await hashPassword("password123");
+    expect(hash1).not.toBe(hash2);
+  });
+
+  it("produces different hashes for different passwords", async () => {
+    const hash1 = await hashPassword("alpha");
+    const hash2 = await hashPassword("beta");
     expect(hash1).not.toBe(hash2);
   });
 });
