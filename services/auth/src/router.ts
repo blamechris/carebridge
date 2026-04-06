@@ -1,4 +1,5 @@
 import { TRPCError, initTRPC } from "@trpc/server";
+import { z } from "zod";
 import type { User } from "@carebridge/shared-types";
 import {
   loginSchema,
@@ -197,6 +198,7 @@ export const authRouter = t.router({
     await enforceSessionLimit(db, row.id);
 
     const sessionId = crypto.randomUUID();
+    const refreshToken = crypto.randomBytes(32).toString("hex");
     const now = new Date().toISOString();
     const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
 
@@ -206,11 +208,12 @@ export const authRouter = t.router({
       expires_at: expiresAt,
       created_at: now,
       last_active_at: now,
+      refresh_token: refreshToken,
     });
 
     return {
       user: buildUserResponse(row),
-      session: { id: sessionId, user_id: row.id, expires_at: expiresAt },
+      session: { id: sessionId, user_id: row.id, expires_at: expiresAt, refresh_token: refreshToken },
     };
   }),
 
@@ -301,6 +304,7 @@ export const authRouter = t.router({
       await enforceSessionLimit(db, row.id);
 
       const sessionId = crypto.randomUUID();
+      const refreshToken = crypto.randomBytes(32).toString("hex");
       const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
 
       const now = new Date().toISOString();
@@ -310,11 +314,12 @@ export const authRouter = t.router({
         expires_at: expiresAt,
         created_at: now,
         last_active_at: now,
+        refresh_token: refreshToken,
       });
 
       return {
         user: buildUserResponse(row),
-        session: { id: sessionId, user_id: row.id, expires_at: expiresAt },
+        session: { id: sessionId, user_id: row.id, expires_at: expiresAt, refresh_token: refreshToken },
       };
     }),
 
@@ -328,6 +333,88 @@ export const authRouter = t.router({
     await db.delete(sessions).where(eq(sessions.user_id, ctx.user.id));
 
     return { success: true };
+  }),
+
+  /**
+   * Exchange a refresh token for a new session + refresh token pair.
+   *
+   * The old session is atomically deleted and a fresh one is created,
+   * so each refresh token is single-use. Refresh tokens are valid for
+   * up to 30 days from session creation regardless of the session TTL.
+   */
+  refreshSession: publicProcedure
+    .input(z.object({ refresh_token: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      const db = getDb();
+
+      const sessionRows = await db
+        .select()
+        .from(sessions)
+        .where(eq(sessions.refresh_token, input.refresh_token))
+        .limit(1);
+
+      if (sessionRows.length === 0) {
+        throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid refresh token." });
+      }
+
+      const session = sessionRows[0]!;
+
+      // Enforce a 30-day hard cap on how long a refresh token stays valid.
+      const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+      const sessionAge = Date.now() - new Date(session.created_at).getTime();
+      if (sessionAge > REFRESH_TTL_MS) {
+        await db.delete(sessions).where(eq(sessions.id, session.id));
+        throw new TRPCError({ code: "UNAUTHORIZED", message: "Refresh token has expired. Please log in again." });
+      }
+
+      const userRows = await db
+        .select()
+        .from(users)
+        .where(eq(users.id, session.user_id))
+        .limit(1);
+
+      if (userRows.length === 0 || !userRows[0]!.is_active) {
+        await db.delete(sessions).where(eq(sessions.id, session.id));
+        throw new TRPCError({ code: "UNAUTHORIZED", message: "User not found or inactive." });
+      }
+
+      const row = userRows[0]!;
+
+      // Rotate: delete old session and issue a new one (single-use refresh token).
+      await db.delete(sessions).where(eq(sessions.id, session.id));
+
+      await enforceSessionLimit(db, row.id);
+
+      const newSessionId = crypto.randomUUID();
+      const newRefreshToken = crypto.randomBytes(32).toString("hex");
+      const now = new Date().toISOString();
+      const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
+
+      await db.insert(sessions).values({
+        id: newSessionId,
+        user_id: row.id,
+        expires_at: expiresAt,
+        created_at: now,
+        last_active_at: now,
+        refresh_token: newRefreshToken,
+      });
+
+      return {
+        user: buildUserResponse(row),
+        session: { id: newSessionId, user_id: row.id, expires_at: expiresAt, refresh_token: newRefreshToken },
+      };
+    }),
+
+  /**
+   * Revoke all sessions for the authenticated user (e.g. "log out everywhere").
+   */
+  revokeAllSessions: protectedProcedure.mutation(async ({ ctx }) => {
+    const db = getDb();
+    const deleted = await db
+      .delete(sessions)
+      .where(eq(sessions.user_id, ctx.user.id))
+      .returning({ id: sessions.id });
+    return { revokedCount: deleted.length };
   }),
 
   /**

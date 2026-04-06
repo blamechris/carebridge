@@ -23,9 +23,12 @@ export const sessions = pgTable("sessions", {
   expires_at: text("expires_at").notNull(),
   created_at: text("created_at").notNull(),
   last_active_at: text("last_active_at"),
+  /** Opaque 32-byte hex token used to issue a replacement session without re-authentication. */
+  refresh_token: text("refresh_token"),
 }, (table) => [
   index("idx_sessions_user").on(table.user_id),
   index("idx_sessions_expires").on(table.expires_at),
+  index("idx_sessions_refresh_token").on(table.refresh_token),
 ]);
 
 export const auditLog = pgTable("audit_log", {
