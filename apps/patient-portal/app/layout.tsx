@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Providers } from "./providers";
 
 export const metadata: Metadata = {
   title: "CareBridge — Patient Portal",
@@ -15,11 +16,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         margin: 0,
         padding: "2rem",
       }}>
-        <header style={{ borderBottom: "1px solid #2a2a2a", paddingBottom: "1rem", marginBottom: "2rem" }}>
-          <h1 style={{ margin: 0, fontSize: "1.5rem" }}>CareBridge</h1>
-          <p style={{ margin: "0.25rem 0 0", color: "#999", fontSize: "0.875rem" }}>Patient Portal</p>
-        </header>
-        {children}
+        <Providers>
+          <header style={{ borderBottom: "1px solid #2a2a2a", paddingBottom: "1rem", marginBottom: "2rem" }}>
+            <h1 style={{ margin: 0, fontSize: "1.5rem" }}>CareBridge</h1>
+            <p style={{ margin: "0.25rem 0 0", color: "#999", fontSize: "0.875rem" }}>Patient Portal</p>
+          </header>
+          {children}
+        </Providers>
       </body>
     </html>
   );

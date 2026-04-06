@@ -1,40 +1,8 @@
-const recentFlags = [
-  {
-    id: "1",
-    severity: "critical" as const,
-    patient: "Maria Santos",
-    summary: "Critical lab result: Potassium 6.2 mEq/L",
-    suggestion: "Recommend STAT ECG and urgent potassium correction protocol",
-    time: "12 min ago",
-  },
-  {
-    id: "2",
-    severity: "warning" as const,
-    patient: "James Thompson",
-    summary: "Medication interaction detected: Warfarin + new Amiodarone order",
-    suggestion:
-      "Consider reducing Warfarin dose by 30-50% and check INR in 3 days",
-    time: "34 min ago",
-  },
-  {
-    id: "3",
-    severity: "info" as const,
-    patient: "Aisha Johnson",
-    summary: "HbA1c trending up: 7.1% -> 7.8% over 6 months",
-    suggestion:
-      "Consider medication adjustment or endocrinology referral at next visit",
-    time: "1 hr ago",
-  },
-  {
-    id: "4",
-    severity: "warning" as const,
-    patient: "Robert Kim",
-    summary: "Missed follow-up: Post-discharge cardiology appointment overdue",
-    suggestion:
-      "Patient discharged 14 days ago, no cardiology follow-up scheduled",
-    time: "2 hr ago",
-  },
-];
+"use client";
+
+import { trpc } from "@/lib/trpc";
+import { useAuth } from "@/lib/auth";
+import { AuthGuard } from "@/lib/auth-guard";
 
 function severityClass(severity: string) {
   switch (severity) {
@@ -49,69 +17,154 @@ function severityClass(severity: string) {
   }
 }
 
-export default function DashboardPage() {
+function DashboardContent() {
+  const { user } = useAuth();
+  const healthQuery = trpc.healthCheck.useQuery();
+  const patientsQuery = trpc.patients.list.useQuery();
+
+  const patientCount = patientsQuery.data?.length ?? 0;
+
   return (
     <>
       <div className="page-header">
-        <h1 className="page-title">Good morning, Dr. Patel</h1>
+        <h1 className="page-title">
+          Good morning, {user?.name ?? "Clinician"}
+        </h1>
         <p className="page-subtitle">
           Here is your clinical overview for today.
+          {healthQuery.data && (
+            <span style={{ marginLeft: 8, fontSize: 12, color: "var(--success)" }}>
+              API: {healthQuery.data.status}
+            </span>
+          )}
+          {healthQuery.isError && (
+            <span style={{ marginLeft: 8, fontSize: 12, color: "var(--critical)" }}>
+              API: offline
+            </span>
+          )}
         </p>
       </div>
 
       <div className="stat-grid">
         <div className="stat-card">
-          <span className="stat-label">Open AI Flags</span>
-          <span className="stat-value critical">3</span>
-          <span className="stat-detail">1 critical, 2 warnings</span>
+          <span className="stat-label">Total Patients</span>
+          <span className="stat-value info">
+            {patientsQuery.isLoading ? "..." : patientCount}
+          </span>
+          <span className="stat-detail">in your panel</span>
         </div>
         <div className="stat-card">
-          <span className="stat-label">Patients Seen Today</span>
-          <span className="stat-value info">7</span>
-          <span className="stat-detail">of 14 scheduled</span>
+          <span className="stat-label">API Status</span>
+          <span
+            className="stat-value"
+            style={{
+              color: healthQuery.data
+                ? "var(--success)"
+                : healthQuery.isError
+                ? "var(--critical)"
+                : "var(--text-secondary)",
+            }}
+          >
+            {healthQuery.isLoading
+              ? "..."
+              : healthQuery.data
+              ? "OK"
+              : "Down"}
+          </span>
+          <span className="stat-detail">
+            {healthQuery.data?.timestamp
+              ? `Last check: ${new Date(healthQuery.data.timestamp).toLocaleTimeString()}`
+              : "Checking..."}
+          </span>
         </div>
         <div className="stat-card">
           <span className="stat-label">Unsigned Notes</span>
-          <span className="stat-value warning">4</span>
-          <span className="stat-detail">oldest from 2 days ago</span>
+          <span className="stat-value warning">--</span>
+          <span className="stat-detail">connect notes service</span>
         </div>
         <div className="stat-card">
           <span className="stat-label">Pending Orders</span>
           <span className="stat-value" style={{ color: "var(--text-primary)" }}>
-            2
+            --
           </span>
-          <span className="stat-detail">awaiting co-signature</span>
+          <span className="stat-detail">connect orders service</span>
         </div>
       </div>
 
       <div className="table-container">
         <div className="table-header">
-          <span className="table-title">Recent AI Flags</span>
-          <a href="/inbox" className="btn btn-ghost btn-sm">
+          <span className="table-title">Recent Patients</span>
+          <a href="/patients" className="btn btn-ghost btn-sm">
             View All
           </a>
         </div>
-        <div className="flag-list">
-          {recentFlags.map((flag) => (
-            <div key={flag.id} className="flag-item">
-              <div className="flag-severity">
-                <span className={`badge ${severityClass(flag.severity)}`}>
-                  {flag.severity.toUpperCase()}
-                </span>
-              </div>
-              <div className="flag-content">
-                <div className="flag-patient">{flag.patient}</div>
-                <div className="flag-summary">{flag.summary}</div>
-                <div className="flag-suggestion">{flag.suggestion}</div>
-                <div className="flag-time">{flag.time}</div>
-              </div>
-              <div className="flag-actions">
-                <button className="btn btn-ghost btn-sm">Review</button>
-              </div>
-            </div>
-          ))}
-        </div>
+        {patientsQuery.isLoading ? (
+          <div style={{ padding: 24, color: "var(--text-muted)" }}>
+            Loading patients...
+          </div>
+        ) : patientsQuery.isError ? (
+          <div style={{ padding: 24, color: "var(--critical)" }}>
+            Failed to load patients. Is the API running on localhost:4000?
+          </div>
+        ) : patientsQuery.data && patientsQuery.data.length > 0 ? (
+          <table>
+            <thead>
+              <tr>
+                <th>Patient Name</th>
+                <th>MRN</th>
+                <th>Date of Birth</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {patientsQuery.data.slice(0, 5).map((patient) => (
+                <tr key={patient.id}>
+                  <td>
+                    <a
+                      href={`/patients/${patient.id}`}
+                      className="table-link"
+                    >
+                      {patient.name}
+                    </a>
+                  </td>
+                  <td
+                    style={{
+                      color: "var(--text-secondary)",
+                      fontFamily: "monospace",
+                      fontSize: 12,
+                    }}
+                  >
+                    {patient.mrn}
+                  </td>
+                  <td style={{ color: "var(--text-secondary)" }}>
+                    {patient.dob}
+                  </td>
+                  <td>
+                    <a
+                      href={`/patients/${patient.id}`}
+                      className="btn btn-ghost btn-sm"
+                    >
+                      Open Chart
+                    </a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div style={{ padding: 24, color: "var(--text-muted)" }}>
+            No patients found. Run <code>pnpm db:seed</code> to populate dev data.
+          </div>
+        )}
       </div>
     </>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <AuthGuard>
+      <DashboardContent />
+    </AuthGuard>
   );
 }

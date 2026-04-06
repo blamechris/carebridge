@@ -1,4 +1,4 @@
-// TODO: This Providers component is duplicated in patient-portal/app/providers.tsx.
+// TODO: This Providers component is duplicated in clinician-portal/app/providers.tsx.
 // Extract to a shared @carebridge/ui package when adding a third portal.
 "use client";
 

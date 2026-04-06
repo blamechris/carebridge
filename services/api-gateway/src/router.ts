@@ -1,6 +1,11 @@
-import { router, publicProcedure, mergeRouters } from "./trpc.js";
+import { router, publicProcedure } from "./trpc.js";
+import { authRouter } from "@carebridge/auth";
+import { patientRecordsRouter } from "@carebridge/patient-records";
+import { clinicalDataRouter } from "@carebridge/clinical-data";
+import { clinicalNotesRouter } from "@carebridge/clinical-notes";
+import { aiOversightRouter } from "@carebridge/ai-oversight";
 
-const healthRouter = router({
+export const appRouter = router({
   healthCheck: publicProcedure.query(() => {
     return {
       status: "ok" as const,
@@ -8,13 +13,11 @@ const healthRouter = router({
       service: "api-gateway",
     };
   }),
+  auth: authRouter,
+  patients: patientRecordsRouter,
+  clinicalData: clinicalDataRouter,
+  notes: clinicalNotesRouter,
+  aiOversight: aiOversightRouter,
 });
-
-// Service routers will be imported and merged here as they are created.
-// Example:
-//   import { authRouter } from "@carebridge/auth";
-//   const appRouter = mergeRouters(healthRouter, authRouter, ...);
-
-export const appRouter = mergeRouters(healthRouter);
 
 export type AppRouter = typeof appRouter;

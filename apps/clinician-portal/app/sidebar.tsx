@@ -1,18 +1,44 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth";
+import { trpcVanilla } from "@/lib/trpc";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: "\u25A3" },
   { href: "/patients", label: "Patients", icon: "\u2302" },
-  { href: "/inbox", label: "Inbox (AI Flags)", icon: "\u26A0", badge: 3 },
+  { href: "/inbox", label: "Inbox (AI Flags)", icon: "\u26A0" },
   { href: "/notes", label: "Notes", icon: "\u270E" },
   { href: "/schedule", label: "Schedule", icon: "\u25F7" },
 ];
 
+function getInitials(name: string): string {
+  return name
+    .split(" ")
+    .map((part) => part[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+}
+
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const { user, clearSession, isAuthenticated } = useAuth();
+
+  async function handleLogout() {
+    try {
+      await trpcVanilla.auth.logout.mutate();
+    } catch {
+      // Session might already be expired -- that is fine
+    }
+    clearSession();
+    router.push("/login");
+  }
+
+  if (!isAuthenticated) return null;
 
   return (
     <aside className="sidebar">
@@ -38,7 +64,6 @@ export function Sidebar() {
             >
               <span className="nav-icon">{item.icon}</span>
               {item.label}
-              {item.badge && <span className="nav-badge">{item.badge}</span>}
             </Link>
           );
         })}
@@ -46,12 +71,23 @@ export function Sidebar() {
 
       <div className="sidebar-footer">
         <div className="provider-info">
-          <div className="provider-avatar">SP</div>
+          <div className="provider-avatar">
+            {user ? getInitials(user.name) : "?"}
+          </div>
           <div>
-            <div className="provider-name">Dr. Sarah Patel</div>
-            <div className="provider-role">Internal Medicine</div>
+            <div className="provider-name">{user?.name ?? "Unknown"}</div>
+            <div className="provider-role">
+              {user?.specialty ?? user?.role ?? ""}
+            </div>
           </div>
         </div>
+        <button
+          onClick={handleLogout}
+          className="btn btn-ghost btn-sm"
+          style={{ marginTop: 8, width: "100%", textAlign: "center" }}
+        >
+          Sign Out
+        </button>
       </div>
     </aside>
   );
