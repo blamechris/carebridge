@@ -425,10 +425,16 @@ export const authRouter = t.router({
   }),
 
   /**
-   * Create a new user account.
-   * In production this would be admin-only; in dev mode it is open.
+   * Create a new user account. Requires an authenticated admin caller.
    */
-  createUser: publicProcedure.input(createUserSchema).mutation(async ({ input }) => {
+  createUser: protectedProcedure.input(createUserSchema).mutation(async ({ ctx, input }) => {
+    if (ctx.user.role !== "admin") {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "Only admins can create user accounts.",
+      });
+    }
+
     const db = getDb();
 
     // Check for duplicate email.
