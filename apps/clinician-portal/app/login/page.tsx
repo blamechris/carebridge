@@ -6,8 +6,9 @@ import { useAuth } from "@/lib/auth";
 import { trpcVanilla } from "@/lib/trpc";
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("dr.smith@carebridge.dev");
-  const [password, setPassword] = useState("password123");
+  const isDev = process.env.NODE_ENV === "development";
+  const [email, setEmail] = useState(isDev ? "dr.smith@carebridge.dev" : "");
+  const [password, setPassword] = useState(isDev ? "password123" : "");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -114,16 +115,18 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <div
-          style={{
-            marginTop: 16,
-            fontSize: 12,
-            color: "var(--text-muted)",
-            textAlign: "center",
-          }}
-        >
-          Dev accounts: dr.smith@carebridge.dev / dr.jones@carebridge.dev / nurse.rachel@carebridge.dev
-        </div>
+        {isDev && (
+          <div
+            style={{
+              marginTop: 16,
+              fontSize: 12,
+              color: "var(--text-muted)",
+              textAlign: "center",
+            }}
+          >
+            Dev accounts: dr.smith@carebridge.dev / dr.jones@carebridge.dev / nurse.rachel@carebridge.dev
+          </div>
+        )}
       </div>
     </div>
   );

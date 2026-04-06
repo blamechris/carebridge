@@ -1,3 +1,5 @@
+// TODO: This Providers component is duplicated in clinician-portal/app/providers.tsx.
+// Extract to a shared @carebridge/ui package when adding a third portal.
 "use client";
 
 import { useState } from "react";
