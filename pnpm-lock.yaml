@@ -157,16 +157,6 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/fhir-utils:
-    dependencies:
-      '@carebridge/shared-types':
-        specifier: workspace:*
-        version: link:../shared-types
-    devDependencies:
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
   packages/medical-logic:
     dependencies:
       '@carebridge/shared-types':
@@ -314,6 +304,12 @@ importers:
       '@carebridge/db-schema':
         specifier: workspace:*
         version: link:../../packages/db-schema
+      '@carebridge/fhir-gateway':
+        specifier: workspace:*
+        version: link:../fhir-gateway
+      '@carebridge/notifications':
+        specifier: workspace:*
+        version: link:../notifications
       '@carebridge/patient-records':
         specifier: workspace:*
         version: link:../patient-records
@@ -381,6 +377,9 @@ importers:
       drizzle-orm:
         specifier: ^0.38.0
         version: 0.38.4(@types/react@19.2.14)(postgres@3.4.8)(react@19.2.4)
+      ioredis:
+        specifier: ^5.6.0
+        version: 5.10.1
       zod:
         specifier: ^3.24.0
         version: 3.25.76
@@ -533,22 +532,6 @@ importers:
       drizzle-orm:
         specifier: ^0.38.0
         version: 0.38.4(@types/react@19.2.14)(postgres@3.4.8)(react@19.2.4)
-      zod:
-        specifier: ^3.24.0
-        version: 3.25.76
-    devDependencies:
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.17
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  services/scheduling:
-    dependencies:
-      '@trpc/server':
-        specifier: ^11.0.0
-        version: 11.16.0(typescript@5.9.3)
       zod:
         specifier: ^3.24.0
         version: 3.25.76

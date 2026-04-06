@@ -16,8 +16,8 @@ pnpm dev                      # Start all services + apps
 ```
 
 ## Monorepo Structure
-- `packages/` — Shared libraries (types, validators, medical-logic, db-schema, ai-prompts, fhir-utils)
-- `services/` — Backend services (api-gateway, clinical-notes, ai-oversight, clinical-data, patient-records, auth, notifications, fhir-gateway, scheduling)
+- `packages/` — Shared libraries (types, validators, medical-logic, db-schema, ai-prompts)
+- `services/` — Backend services (api-gateway, clinical-notes, ai-oversight, clinical-data, patient-records, auth, notifications, fhir-gateway)
 - `apps/` — Frontend apps (clinician-portal on :3000, patient-portal on :3001)
 - `tooling/` — Seed data, scripts
 
