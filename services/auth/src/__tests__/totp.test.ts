@@ -7,27 +7,7 @@ import {
   hashRecoveryCode,
   verifyRecoveryCode,
   buildOTPAuthURI,
-  base32Encode,
-  base32Decode,
 } from "../totp.js";
-
-describe("Base32 encoding/decoding", () => {
-  it("round-trips arbitrary bytes", () => {
-    const original = Buffer.from("Hello, TOTP!");
-    const encoded = base32Encode(original);
-    const decoded = base32Decode(encoded);
-    expect(decoded).toEqual(original);
-  });
-
-  it("encodes known test vector (RFC 4648)", () => {
-    // "f" -> "MY"
-    expect(base32Encode(Buffer.from("f"))).toBe("MY");
-    // "fo" -> "MZXQ"
-    expect(base32Encode(Buffer.from("fo"))).toBe("MZXQ");
-    // "foo" -> "MZXW6"
-    expect(base32Encode(Buffer.from("foo"))).toBe("MZXW6");
-  });
-});
 
 describe("TOTP generation", () => {
   it("produces a 6-digit code", () => {
@@ -56,7 +36,7 @@ describe("TOTP generation", () => {
   // RFC 6238 test vector: SHA1, secret = "12345678901234567890", time step 59
   it("matches RFC 6238 test vector for SHA1", () => {
     // The secret "12345678901234567890" in ASCII = base32("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
-    const secret = base32Encode(Buffer.from("12345678901234567890"));
+    const secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
     // At time = 59, counter = 1, expected TOTP = 287082
     const code = generateTOTP(secret, 59);
     expect(code).toBe("287082");
@@ -130,10 +110,10 @@ describe("Secret generation", () => {
     expect(s1).not.toBe(s2);
   });
 
-  it("decodes back to 20 bytes", () => {
+  it("produces a secret of expected base32 length", () => {
     const secret = generateSecret();
-    const decoded = base32Decode(secret);
-    expect(decoded.length).toBe(20);
+    // 20 bytes = 32 base32 characters
+    expect(secret.length).toBe(32);
   });
 });
 

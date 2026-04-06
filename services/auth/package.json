@@ -26,6 +26,8 @@
     "bullmq": "^5.30.0",
     "drizzle-orm": "^0.38.0",
     "ioredis": "^5.6.0",
+    "jose": "^6.0.0",
+    "otpauth": "^9.4.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
