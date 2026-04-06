@@ -39,7 +39,9 @@ const DEV_USERS: Record<string, User> = {
   },
 };
 
-const isDevMode = process.env.NODE_ENV !== "production";
+const isDevMode =
+  process.env.NODE_ENV !== "production" &&
+  process.env.CAREBRIDGE_DEV_AUTH === "true";
 
 /**
  * Fastify preHandler hook that resolves the current user from either:
@@ -63,24 +65,11 @@ export async function authMiddleware(
         return;
       }
 
-      // Dev header present but not a hardcoded user -- try the database.
-      const db = getDb();
-      const rows = await db.select().from(users).where(eq(users.id, devUserId)).limit(1);
-      if (rows.length > 0) {
-        const row = rows[0]!;
-        (request as unknown as Record<string, unknown>).user = {
-          id: row.id,
-          email: row.email,
-          name: row.name,
-          role: row.role as User["role"],
-          specialty: row.specialty ?? undefined,
-          department: row.department ?? undefined,
-          is_active: row.is_active,
-          created_at: row.created_at,
-          updated_at: row.updated_at,
-        } satisfies User;
-        return;
-      }
+      // Dev header present but not in the allowlist -- reject immediately.
+      // Never fall back to a DB lookup; that would allow impersonation of any
+      // real user ID without a valid token.
+      _reply.code(401).send({ error: "Unauthorized" });
+      return;
     }
   }
 
