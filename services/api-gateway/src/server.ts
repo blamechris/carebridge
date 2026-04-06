@@ -1,6 +1,8 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import rateLimit from "@fastify/rate-limit";
 import { fastifyTRPCPlugin } from "@trpc/server/adapters/fastify";
+import Redis from "ioredis";
 import { appRouter } from "./router.js";
 import { createContext } from "./context.js";
 import { authMiddleware } from "./middleware/auth.js";
@@ -8,6 +10,19 @@ import { auditMiddleware } from "./middleware/audit.js";
 
 const API_PORT = Number(process.env.API_PORT) || 4000;
 const API_HOST = process.env.API_HOST ?? "0.0.0.0";
+
+function createRedisClient(): Redis {
+  return new Redis({
+    host: process.env.REDIS_HOST ?? "localhost",
+    port: Number(process.env.REDIS_PORT ?? 6379),
+    ...(process.env.REDIS_PASSWORD
+      ? { password: process.env.REDIS_PASSWORD }
+      : {}),
+    ...(process.env.REDIS_TLS === "true" ? { tls: {} } : {}),
+    lazyConnect: true,
+    enableOfflineQueue: false,
+  });
+}
 
 function resolveCorsOrigins(): string[] {
   const isProduction = process.env.NODE_ENV === "production";
@@ -32,6 +47,7 @@ function resolveCorsOrigins(): string[] {
 
 async function main() {
   const corsOrigins = resolveCorsOrigins();
+  const redisClient = createRedisClient();
 
   const server = Fastify({
     logger: {
@@ -43,6 +59,30 @@ async function main() {
   await server.register(cors, {
     origin: corsOrigins,
     credentials: true,
+  });
+
+  // Global rate limit: 100 requests per minute per IP across all API endpoints.
+  // Protects PHI endpoints from enumeration and abuse.
+  //
+  // The auth.login procedure gets a stricter per-IP limit of 5 req/min.
+  // At ~30 ms/scrypt check, the default would allow ~3300 guesses/second;
+  // this cap reduces that to 5 attempts per minute per IP.
+  await server.register(rateLimit, {
+    global: true,
+    max: (req, _key) => {
+      if (req.url?.startsWith("/trpc/auth.login")) {
+        return 5;
+      }
+      return 100;
+    },
+    timeWindow: "1 minute",
+    redis: redisClient,
+    keyGenerator: (req) => req.ip,
+    errorResponseBuilder: (_req, context) => ({
+      statusCode: 429,
+      error: "Too Many Requests",
+      message: `Rate limit exceeded. Try again in ${Math.ceil(context.ttl / 1000)} seconds.`,
+    }),
   });
 
   // --- Hooks ---
