@@ -1,5 +1,5 @@
 {
-  "name": "@carebridge/ai-oversight",
+  "name": "@carebridge/phi-sanitizer",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -16,18 +16,6 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "clean": "rm -rf dist"
-  },
-  "dependencies": {
-    "@carebridge/shared-types": "workspace:*",
-    "@carebridge/validators": "workspace:*",
-    "@carebridge/db-schema": "workspace:*",
-    "@carebridge/medical-logic": "workspace:*",
-    "@carebridge/ai-prompts": "workspace:*",
-    "@anthropic-ai/sdk": "^0.39.0",
-    "bullmq": "^5.30.0",
-    "drizzle-orm": "^0.38.0",
-    "@trpc/server": "^11.0.0",
-    "zod": "^3.24.0"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
