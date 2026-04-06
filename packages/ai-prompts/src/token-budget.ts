@@ -88,42 +88,24 @@ export function enforceTokenBudget(
   let current = prompt;
   const sectionsRemoved: string[] = [];
 
-  // Step 1: Trim labs to last 5
-  const labTrim = trimSectionItems(current, SECTION_PATTERNS[0].regex, 5);
-  if (labTrim.removed) {
-    current = labTrim.text;
-    sectionsRemoved.push("recent_labs (trimmed to 5)");
-  }
-  if (estimateTokens(current) <= budget) {
-    return result(current, originalTokens, sectionsRemoved);
+  // Trim sections in priority order (least important first)
+  const TRIM_PRIORITY = [
+    { section: SECTION_PATTERNS[0], keepCount: 5 },
+    { section: SECTION_PATTERNS[1], keepCount: 10 },
+    { section: SECTION_PATTERNS[2], keepCount: 15 },
+    { section: SECTION_PATTERNS[3], keepCount: 5 },
+  ];
+
+  for (const { section, keepCount } of TRIM_PRIORITY) {
+    if (estimateTokens(current) <= budget) break;
+
+    const trimResult = trimSectionItems(current, section.regex, keepCount);
+    if (trimResult.removed) {
+      current = trimResult.text;
+      sectionsRemoved.push(`${section.name} (trimmed to ${keepCount})`);
+    }
   }
 
-  // Step 2: Trim vitals to last 10
-  const vitalTrim = trimSectionItems(current, SECTION_PATTERNS[1].regex, 10);
-  if (vitalTrim.removed) {
-    current = vitalTrim.text;
-    sectionsRemoved.push("latest_vitals (trimmed to 10)");
-  }
-  if (estimateTokens(current) <= budget) {
-    return result(current, originalTokens, sectionsRemoved);
-  }
-
-  // Step 3: Trim medications to last 15
-  const medTrim = trimSectionItems(current, SECTION_PATTERNS[2].regex, 15);
-  if (medTrim.removed) {
-    current = medTrim.text;
-    sectionsRemoved.push("active_medications (trimmed to 15)");
-  }
-  if (estimateTokens(current) <= budget) {
-    return result(current, originalTokens, sectionsRemoved);
-  }
-
-  // Step 4: Trim flags to last 5
-  const flagTrim = trimSectionItems(current, SECTION_PATTERNS[3].regex, 5);
-  if (flagTrim.removed) {
-    current = flagTrim.text;
-    sectionsRemoved.push("recent_flags (trimmed to 5)");
-  }
   if (estimateTokens(current) <= budget) {
     return result(current, originalTokens, sectionsRemoved);
   }
