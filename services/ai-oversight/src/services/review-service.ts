@@ -267,15 +267,17 @@ async function buildPatientContextForRules(
   // Extract new symptoms from the event data
   const newSymptoms = extractSymptoms(event);
 
+  const activeDx = activeDiagnoses.filter((d) => d.status === "active");
+
   return {
-    active_diagnoses: activeDiagnoses
-      .filter((d) => d.status === "active")
-      .map((d) => d.description),
+    active_diagnoses: activeDx.map((d) => d.description),
+    active_diagnosis_codes: activeDx.map((d) => d.icd10_code ?? ""),
     active_medications: activeMeds
       .filter((m) => m.status === "active")
       .map((m) => m.name),
     new_symptoms: newSymptoms,
     care_team_specialties: [], // Not needed for current rules, but available for future
+    trigger_event: event,
   };
 }
 

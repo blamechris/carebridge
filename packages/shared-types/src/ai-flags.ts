@@ -7,6 +7,7 @@ export type FlagSeverity = "critical" | "warning" | "info";
 export type FlagCategory =
   | "cross-specialty"
   | "drug-interaction"
+  | "medication-safety"
   | "care-gap"
   | "critical-value"
   | "trend-concern"

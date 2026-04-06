@@ -112,6 +112,7 @@ describe("checkCrossSpecialtyPatterns", () => {
         "Pancreatic adenocarcinoma",
         "Deep vein thrombosis, right lower extremity",
       ],
+      active_diagnosis_codes: ["C25.9", "I82.401"],
       active_medications: ["Enoxaparin 40mg SQ daily"],
       new_symptoms: ["New onset severe headache"],
       care_team_specialties: ["hematology", "oncology"],
@@ -130,6 +131,7 @@ describe("checkCrossSpecialtyPatterns", () => {
   it("does not flag when only cancer + VTE but no neuro symptom", () => {
     const ctx: PatientContext = {
       active_diagnoses: ["Lung cancer", "DVT"],
+      active_diagnosis_codes: ["C34.90", "I82.401"],
       active_medications: [],
       new_symptoms: ["nausea"],
       care_team_specialties: ["oncology"],
@@ -143,6 +145,7 @@ describe("checkCrossSpecialtyPatterns", () => {
   it("returns empty for benign patient context", () => {
     const ctx: PatientContext = {
       active_diagnoses: ["Seasonal allergies"],
+      active_diagnosis_codes: ["J30.1"],
       active_medications: ["Cetirizine 10mg"],
       new_symptoms: ["runny nose"],
       care_team_specialties: ["primary_care"],
@@ -155,6 +158,7 @@ describe("checkCrossSpecialtyPatterns", () => {
   it("flags anticoagulant + bleeding symptom (ANTICOAG-BLEED-001)", () => {
     const ctx: PatientContext = {
       active_diagnoses: [],
+      active_diagnosis_codes: [],
       active_medications: ["Warfarin 5mg daily"],
       new_symptoms: ["blood in stool"],
       care_team_specialties: ["primary_care"],
@@ -167,6 +171,99 @@ describe("checkCrossSpecialtyPatterns", () => {
   });
 });
 
+
+  it("flags anticoagulant held in VTE patient (ONCO-ANTICOAG-HELD-001)", () => {
+    const ctx: PatientContext = {
+      active_diagnoses: ["Deep vein thrombosis, left lower extremity"],
+      active_diagnosis_codes: ["I82.402"],
+      active_medications: [],
+      new_symptoms: [],
+      care_team_specialties: ["hematology"],
+      trigger_event: {
+        id: "evt-held-1",
+        type: "medication.updated",
+        patient_id: "p-1",
+        data: { name: "Enoxaparin 40mg", status: "held" },
+        timestamp: new Date().toISOString(),
+      },
+    };
+
+    const flags = checkCrossSpecialtyPatterns(ctx);
+    const heldFlag = flags.find((f) => f.rule_id === "ONCO-ANTICOAG-HELD-001");
+    expect(heldFlag).toBeDefined();
+    expect(heldFlag!.severity).toBe("critical");
+    expect(heldFlag!.category).toBe("medication-safety");
+  });
+
+  it("does not flag non-anticoagulant held in VTE patient", () => {
+    const ctx: PatientContext = {
+      active_diagnoses: ["Deep vein thrombosis"],
+      active_diagnosis_codes: ["I82.401"],
+      active_medications: [],
+      new_symptoms: [],
+      care_team_specialties: [],
+      trigger_event: {
+        id: "evt-held-2",
+        type: "medication.updated",
+        patient_id: "p-1",
+        data: { name: "Metformin 500mg", status: "held" },
+        timestamp: new Date().toISOString(),
+      },
+    };
+
+    const flags = checkCrossSpecialtyPatterns(ctx);
+    const heldFlag = flags.find((f) => f.rule_id === "ONCO-ANTICOAG-HELD-001");
+    expect(heldFlag).toBeUndefined();
+  });
+
+  it("does not flag anticoagulant held without VTE diagnosis", () => {
+    const ctx: PatientContext = {
+      active_diagnoses: ["Hypertension"],
+      active_diagnosis_codes: ["I10"],
+      active_medications: [],
+      new_symptoms: [],
+      care_team_specialties: [],
+      trigger_event: {
+        id: "evt-held-3",
+        type: "medication.updated",
+        patient_id: "p-1",
+        data: { name: "Warfarin 5mg", status: "discontinued" },
+        timestamp: new Date().toISOString(),
+      },
+    };
+
+    const flags = checkCrossSpecialtyPatterns(ctx);
+    const heldFlag = flags.find((f) => f.rule_id === "ONCO-ANTICOAG-HELD-001");
+    expect(heldFlag).toBeUndefined();
+  });
+
+  it("includes anticoag modifier in ONCO-VTE-NEURO-001 suggested action", () => {
+    const ctxWithAnticoag: PatientContext = {
+      active_diagnoses: ["Pancreatic cancer", "DVT"],
+      active_diagnosis_codes: ["C25.9", "I82.401"],
+      active_medications: ["Enoxaparin 40mg SQ daily"],
+      new_symptoms: ["severe headache"],
+      care_team_specialties: [],
+    };
+
+    const flags = checkCrossSpecialtyPatterns(ctxWithAnticoag);
+    const dvtFlag = flags.find((f) => f.rule_id === "ONCO-VTE-NEURO-001");
+    expect(dvtFlag).toBeDefined();
+    expect(dvtFlag!.suggested_action).toContain("hemorrhagic risk");
+
+    const ctxNoAnticoag: PatientContext = {
+      active_diagnoses: ["Pancreatic cancer", "DVT"],
+      active_diagnosis_codes: ["C25.9", "I82.401"],
+      active_medications: [],
+      new_symptoms: ["severe headache"],
+      care_team_specialties: [],
+    };
+
+    const flags2 = checkCrossSpecialtyPatterns(ctxNoAnticoag);
+    const dvtFlag2 = flags2.find((f) => f.rule_id === "ONCO-VTE-NEURO-001");
+    expect(dvtFlag2).toBeDefined();
+    expect(dvtFlag2!.suggested_action).toContain("NOT on anticoagulation");
+  });
 describe("checkDrugInteractions", () => {
   it("flags warfarin + NSAID interaction", () => {
     const flags = checkDrugInteractions(["Warfarin 5mg", "Ibuprofen 400mg"]);

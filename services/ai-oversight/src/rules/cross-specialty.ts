@@ -7,15 +7,26 @@
  * specialists might miss because they only see their piece.
  */
 
-import type { FlagSeverity, FlagCategory } from "@carebridge/shared-types";
+import type { FlagSeverity, FlagCategory, ClinicalEvent } from "@carebridge/shared-types";
 import type { RuleFlag } from "./critical-values.js";
 
 export interface PatientContext {
   active_diagnoses: string[];
+  /** ICD-10 codes for active diagnoses (parallel to active_diagnoses). */
+  active_diagnosis_codes: string[];
   active_medications: string[];
   new_symptoms: string[];
   care_team_specialties: string[];
+  /** The triggering clinical event, used by medication-status rules. */
+  trigger_event?: ClinicalEvent;
 }
+
+/** Anticoagulant name pattern shared across rules. */
+const ANTICOAGULANT_PATTERN =
+  /warfarin|coumadin|heparin|enoxaparin|lovenox|rivaroxaban|xarelto|apixaban|eliquis|dabigatran|pradaxa|edoxaban|savaysa|fondaparinux|arixtra/i;
+
+/** ICD-10 pattern for active VTE / DVT / PE diagnoses. */
+const VTE_ICD10_PATTERN = /^(I26|I80|I82)\./;
 
 interface CrossSpecialtyRule {
   id: string;
@@ -26,6 +37,8 @@ interface CrossSpecialtyRule {
   summary: string;
   rationale: string;
   suggested_action: string;
+  /** Optional dynamic builder that overrides suggested_action when present. */
+  buildSuggestedAction?: (ctx: PatientContext) => string;
   notify_specialties: string[];
 }
 
@@ -56,6 +69,23 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       "mitigate arterial or cerebral thrombotic risk.",
     suggested_action:
       "Urgent neurological evaluation recommended. Consider CT head / CT angiography to rule out acute cerebral event.",
+    buildSuggestedAction: (ctx: PatientContext) => {
+      const onAnticoag = ctx.active_medications.some((m) =>
+        ANTICOAGULANT_PATTERN.test(m),
+      );
+      const base =
+        "Urgent neurological evaluation recommended. Consider CT head / CT angiography to rule out acute cerebral event.";
+      if (onAnticoag) {
+        return (
+          base +
+          " Note: patient is on anticoagulation — assess hemorrhagic risk before neuroimaging contrast and interventions."
+        );
+      }
+      return (
+        base +
+        " Note: patient is NOT on anticoagulation despite active VTE — assess thrombotic risk and anticoagulation candidacy."
+      );
+    },
     notify_specialties: ["neurology", "hematology"],
   },
   {
@@ -79,6 +109,48 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
     suggested_action:
       "Check INR/coagulation studies urgently. Evaluate source of bleeding. Consider holding anticoagulation pending evaluation.",
     notify_specialties: ["hematology"],
+  },
+  {
+    id: "ONCO-ANTICOAG-HELD-001",
+    name: "Anticoagulant held/discontinued in patient with active VTE",
+    check: (ctx: PatientContext) => {
+      const event = ctx.trigger_event;
+      if (!event) return false;
+
+      // Only fires on medication.updated events
+      if (event.type !== "medication.updated") return false;
+
+      // Check if the medication is an anticoagulant
+      const medName = (event.data.name as string) ?? "";
+      if (!ANTICOAGULANT_PATTERN.test(medName)) return false;
+
+      // Check if status transitioned to held or discontinued
+      const newStatus = (event.data.status as string) ?? "";
+      if (!/^(held|discontinued)$/i.test(newStatus)) return false;
+
+      // Check if patient has active VTE/DVT/PE by ICD-10 code or description
+      const hasVTEByCode = ctx.active_diagnosis_codes.some((code) =>
+        VTE_ICD10_PATTERN.test(code),
+      );
+      const hasVTEByDescription = ctx.active_diagnoses.some((d) =>
+        /dvt|deep vein thrombosis|pulmonary embolism|vte|venous thromboembolism|thrombosis/i.test(d),
+      );
+
+      return hasVTEByCode || hasVTEByDescription;
+    },
+    severity: "critical" as const,
+    category: "medication-safety" as const,
+    summary:
+      "Anticoagulant held or discontinued in patient with active VTE — elevated thrombotic risk",
+    rationale:
+      "Holding or discontinuing anticoagulation in a patient with an active venous thromboembolism " +
+      "(DVT/PE) significantly increases the risk of clot propagation, recurrent PE, or new thrombotic events. " +
+      "Cancer patients with VTE are at particularly high risk due to the underlying hypercoagulable state.",
+    suggested_action:
+      "Urgent: anticoagulation held in patient with active VTE. Assess thrombotic risk and document clinical reasoning. " +
+      "If held for a procedure, ensure bridging anticoagulation plan is in place. " +
+      "If discontinued due to bleeding, consider IVC filter placement and hematology consultation.",
+    notify_specialties: ["hematology", "oncology"],
   },
   {
     id: "CHEMO-NEUTRO-FEVER-001",
@@ -188,7 +260,9 @@ export function checkCrossSpecialtyPatterns(
         category: rule.category,
         summary: rule.summary,
         rationale: rule.rationale,
-        suggested_action: rule.suggested_action,
+        suggested_action: rule.buildSuggestedAction
+          ? rule.buildSuggestedAction(patientContext)
+          : rule.suggested_action,
         notify_specialties: rule.notify_specialties,
         rule_id: rule.id,
       });
