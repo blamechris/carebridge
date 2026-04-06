@@ -23,7 +23,7 @@ function getSessionToken(): string | undefined {
 export function getTRPCLinks() {
   return [
     httpBatchLink({
-      url: "http://localhost:4000/trpc",
+      url: process.env.NEXT_PUBLIC_API_URL ? `${process.env.NEXT_PUBLIC_API_URL}/trpc` : "http://localhost:4000/trpc",
       headers() {
         const token = getSessionToken();
         return token ? { Authorization: `Bearer ${token}` } : {};
@@ -38,7 +38,7 @@ export function getTRPCLinks() {
 export const trpcVanilla = createTRPCClient<AppRouter>({
   links: [
     vanillaHttpBatchLink({
-      url: "http://localhost:4000/trpc",
+      url: process.env.NEXT_PUBLIC_API_URL ? `${process.env.NEXT_PUBLIC_API_URL}/trpc` : "http://localhost:4000/trpc",
       headers() {
         const token = getSessionToken();
         return token ? { Authorization: `Bearer ${token}` } : {};
