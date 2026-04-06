@@ -6,7 +6,7 @@
  * the triggering event in isolation.
  */
 
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, inArray } from "drizzle-orm";
 import { getDb } from "@carebridge/db-schema";
 import {
   patients,
@@ -138,14 +138,10 @@ export async function buildPatientContext(
   let recentLabResults: ReviewContext["recent_labs"] = [];
   if (recentPanels.length > 0) {
     const panelIds = recentPanels.map((p) => p.id);
-    const allResults: typeof labResults.$inferSelect[] = [];
-    for (const panelId of panelIds) {
-      const results = await db
-        .select()
-        .from(labResults)
-        .where(eq(labResults.panel_id, panelId));
-      allResults.push(...results);
-    }
+    const allResults = await db
+      .select()
+      .from(labResults)
+      .where(inArray(labResults.panel_id, panelIds));
 
     recentLabResults = allResults.map((r) => ({
       test_name: r.test_name,
@@ -157,16 +153,21 @@ export async function buildPatientContext(
   }
 
   // Resolve care team member names
-  const careTeamWithNames: ReviewContext["care_team"] = [];
-  for (const member of careTeam) {
-    const user = await db.query.users.findFirst({
-      where: eq(users.id, member.provider_id),
-    });
-    careTeamWithNames.push({
-      name: user?.name ?? "Unknown Provider",
+  const memberIds = careTeam.map((m) => m.provider_id);
+  const teamUsers =
+    memberIds.length > 0
+      ? await db
+          .select()
+          .from(users)
+          .where(inArray(users.id, memberIds))
+      : [];
+  const userMap = new Map(teamUsers.map((u) => [u.id, u]));
+  const careTeamWithNames: ReviewContext["care_team"] = careTeam.map(
+    (member) => ({
+      name: userMap.get(member.provider_id)?.name ?? "Unknown Provider",
       specialty: member.specialty ?? member.role,
-    });
-  }
+    }),
+  );
 
   // Build trigger event summary
   const triggerSummary = buildEventSummary(triggerEvent);
