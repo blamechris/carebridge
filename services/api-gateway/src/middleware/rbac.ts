@@ -3,6 +3,46 @@ import type { User } from "@carebridge/shared-types";
 import { getDb, careTeamAssignments } from "@carebridge/db-schema";
 import { eq, and, isNull } from "drizzle-orm";
 
+/* ------------------------------------------------------------------ */
+/*  In-memory TTL cache for care-team lookups                         */
+/* ------------------------------------------------------------------ */
+
+const CACHE_TTL_MS = 60_000; // 60 seconds
+const CACHE_MAX_ENTRIES = 10_000;
+
+interface CacheEntry {
+  value: boolean;
+  expires: number;
+}
+
+const cache = new Map<string, CacheEntry>();
+
+function getCached(key: string): boolean | undefined {
+  const entry = cache.get(key);
+  if (!entry) return undefined;
+  if (Date.now() > entry.expires) {
+    cache.delete(key);
+    return undefined;
+  }
+  return entry.value;
+}
+
+function setCache(key: string, value: boolean): void {
+  // Evict oldest entries when at capacity (simple FIFO via insertion order)
+  if (cache.size >= CACHE_MAX_ENTRIES && !cache.has(key)) {
+    const firstKey = cache.keys().next().value as string;
+    cache.delete(firstKey);
+  }
+  cache.set(key, { value, expires: Date.now() + CACHE_TTL_MS });
+}
+
+/** Clear the entire care-team cache. Useful for testing and invalidation. */
+export function clearCareTeamCache(): void {
+  cache.clear();
+}
+
+/* ------------------------------------------------------------------ */
+
 /**
  * Type-guard: returns `true` when `request.user` has been populated by
  * the auth middleware. Avoids an unsafe `as unknown as User` double-cast.
@@ -13,12 +53,19 @@ function getUser(request: FastifyRequest): User | undefined {
 
 /**
  * Verify that the authenticated user has an active care-team assignment
- * for the given patient. Returns true if an active assignment exists.
+ * for the given patient. Uses a short-lived in-memory cache (60 s TTL)
+ * so repeated RBAC checks within the same request window avoid extra
+ * round-trips to the database.
  */
 export async function assertCareTeamAccess(
   userId: string,
   patientId: string,
 ): Promise<boolean> {
+  const cacheKey = `${userId}:${patientId}`;
+
+  const cached = getCached(cacheKey);
+  if (cached !== undefined) return cached;
+
   const db = getDb();
   const rows = await db
     .select({ id: careTeamAssignments.id })
@@ -32,7 +79,9 @@ export async function assertCareTeamAccess(
     )
     .limit(1);
 
-  return rows.length > 0;
+  const hasAccess = rows.length > 0;
+  setCache(cacheKey, hasAccess);
+  return hasAccess;
 }
 
 /**
