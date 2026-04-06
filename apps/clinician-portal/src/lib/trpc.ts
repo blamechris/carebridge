@@ -3,6 +3,7 @@
 import { createTRPCReact, httpBatchLink } from "@trpc/react-query";
 import { createTRPCClient, httpBatchLink as vanillaHttpBatchLink } from "@trpc/client";
 import type { AppRouter } from "@carebridge/api-gateway/src/router.js";
+import { createAuthFetch } from "./session-expiry.js";
 
 /**
  * React Query-integrated tRPC hooks for use inside components.
@@ -18,12 +19,18 @@ function getSessionToken(): string | undefined {
 }
 
 /**
+ * Fetch wrapper that intercepts 401 responses and triggers session expiry.
+ */
+const authFetch = typeof window !== "undefined" ? createAuthFetch() : fetch;
+
+/**
  * Create links array for the tRPC React provider.
  */
 export function getTRPCLinks() {
   return [
     httpBatchLink({
       url: "http://localhost:4000/trpc",
+      fetch: authFetch,
       headers() {
         const token = getSessionToken();
         return token ? { Authorization: `Bearer ${token}` } : {};
@@ -39,6 +46,7 @@ export const trpcVanilla = createTRPCClient<AppRouter>({
   links: [
     vanillaHttpBatchLink({
       url: "http://localhost:4000/trpc",
+      fetch: authFetch,
       headers() {
         const token = getSessionToken();
         return token ? { Authorization: `Bearer ${token}` } : {};
