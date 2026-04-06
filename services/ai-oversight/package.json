@@ -20,6 +20,7 @@
   "dependencies": {
     "@carebridge/redis-config": "workspace:*",
     "@carebridge/shared-types": "workspace:*",
+    "@carebridge/phi-sanitizer": "workspace:*",
     "@carebridge/validators": "workspace:*",
     "@carebridge/db-schema": "workspace:*",
     "@carebridge/medical-logic": "workspace:*",

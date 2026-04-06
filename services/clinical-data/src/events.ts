@@ -1,13 +1,8 @@
 import { Queue } from "bullmq";
 import { getRedisConnection } from "@carebridge/redis-config";
+import type { ClinicalEvent } from "@carebridge/shared-types";
 
-export interface ClinicalEvent {
-  type: string;
-  resourceId: string;
-  patientId: string;
-  timestamp: string;
-  payload?: Record<string, unknown>;
-}
+export type { ClinicalEvent };
 
 const connection = getRedisConnection();
 

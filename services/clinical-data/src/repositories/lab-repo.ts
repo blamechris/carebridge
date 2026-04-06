@@ -51,11 +51,11 @@ export async function createLabPanel(
   });
 
   await emitClinicalEvent({
+    id: crypto.randomUUID(),
     type: "lab.resulted",
-    resourceId: panelId,
-    patientId: input.patient_id,
+    patient_id: input.patient_id,
     timestamp: now,
-    payload: { panelName: input.panel_name, resultCount: input.results.length },
+    data: { resourceId: panelId, panelName: input.panel_name, resultCount: input.results.length },
   });
 
   const panel: LabPanel = {

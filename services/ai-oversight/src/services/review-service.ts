@@ -17,10 +17,13 @@ import {
   CLINICAL_REVIEW_SYSTEM_PROMPT,
   PROMPT_VERSION,
   buildReviewPrompt,
-  parseReviewResponse,
   enforceTokenBudget,
 } from "@carebridge/ai-prompts";
 import type { LLMFlagOutput } from "@carebridge/ai-prompts";
+import {
+  redactClinicalText,
+  validateLLMResponse,
+} from "@carebridge/phi-sanitizer";
 
 import { checkCriticalValues } from "../rules/critical-values.js";
 import { checkCrossSpecialtyPatterns } from "../rules/cross-specialty.js";
@@ -118,7 +121,22 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
       );
     }
 
-    const userMessage = budgetResult.prompt;
+    // Redact PHI from the assembled prompt before sending to the Claude API
+    const redactionResult = redactClinicalText(budgetResult.prompt, {
+      providerNames: reviewContext.care_team?.map((m) => m.name).filter(Boolean) as string[] | undefined,
+      patientAge: reviewContext.patient?.age,
+    });
+
+    if (redactionResult.auditTrail.fieldsRedacted > 0) {
+      console.info(
+        `[review-service] PHI redaction: ${redactionResult.auditTrail.fieldsRedacted} field(s) redacted ` +
+          `(providers: ${redactionResult.auditTrail.providersRedacted}, ` +
+          `ages: ${redactionResult.auditTrail.agesRedacted}, ` +
+          `free-text: ${redactionResult.auditTrail.freeTextSanitized})`,
+      );
+    }
+
+    const userMessage = redactionResult.redactedText;
 
     // Step 6: Call Claude API
     const llmResponse = await reviewPatientRecord(
@@ -126,8 +144,27 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
       userMessage,
     );
 
-    // Step 7: Parse response
-    const llmFindings = parseReviewResponse(llmResponse);
+    // Step 7: Validate and parse LLM response
+    const validationResult = validateLLMResponse(llmResponse);
+
+    if (!validationResult.ok) {
+      throw new Error(`LLM response validation failed: ${validationResult.error}`);
+    }
+
+    if (validationResult.warnings.length > 0) {
+      console.warn(
+        `[review-service] LLM response warnings: ${validationResult.warnings.join("; ")}`,
+      );
+    }
+
+    const llmFindings: LLMFlagOutput[] = validationResult.flags.map((f) => ({
+      severity: f.severity,
+      category: f.category,
+      summary: f.summary,
+      rationale: f.rationale,
+      suggested_action: f.suggested_action,
+      notify_specialties: f.notify_specialties,
+    }));
 
     // Step 8: Create flags for LLM findings (deduplicate against rule-based flags)
     for (const finding of llmFindings) {
