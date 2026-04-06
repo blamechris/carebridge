@@ -154,12 +154,12 @@ describe("getLabPanelsByPatient", () => {
       where: vi.fn().mockReturnValue({
         orderBy: vi.fn().mockResolvedValue([mockPanelRow]),
       }),
+      orderBy: vi.fn(),
     });
     // Second call: select results for panel-1
     selectFromMock.mockReturnValueOnce({
-      where: vi.fn().mockReturnValue({
-        orderBy: vi.fn().mockResolvedValue([mockResultRow]),
-      }),
+      where: vi.fn().mockResolvedValue([mockResultRow]),
+      orderBy: vi.fn(),
     });
 
     const results = await getLabPanelsByPatient(PATIENT_ID);
