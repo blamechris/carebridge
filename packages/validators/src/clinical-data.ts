@@ -1,5 +1,12 @@
 import { z } from "zod";
 
+// ─── ICD-10-CM format ───────────────────────────────────────────
+
+/** Matches ICD-10-CM codes: letter + 2 digits, optional dot + 1-4 digits */
+export const icd10CodeSchema = z
+  .string()
+  .regex(/^[A-Z]\d{2}(\.\d{1,4})?$/, "Invalid ICD-10-CM code format (e.g. A01, A01.1, A01.1234)");
+
 // ─── Vitals ──────────────────────────────────────────────────────
 
 export const vitalTypeSchema = z.enum([
@@ -87,7 +94,7 @@ export const createProcedureSchema = z.object({
   patient_id: z.string().uuid(),
   name: z.string().min(1).max(200),
   cpt_code: z.string().max(20).optional(),
-  icd10_codes: z.array(z.string().max(10)).optional(),
+  icd10_codes: z.array(icd10CodeSchema).optional(),
   status: procedureStatusSchema.default("scheduled"),
   performed_at: z.string().datetime().optional(),
   performed_by: z.string().max(200).optional(),

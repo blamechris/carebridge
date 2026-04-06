@@ -1,4 +1,4 @@
-import { pgTable, text, real, index } from "drizzle-orm/pg-core";
+import { pgTable, text, real, index, jsonb } from "drizzle-orm/pg-core";
 import { patients } from "./patients.js";
 
 export const medications = pgTable("medications", {
@@ -93,7 +93,7 @@ export const procedures = pgTable("procedures", {
   patient_id: text("patient_id").notNull().references(() => patients.id),
   name: text("name").notNull(),
   cpt_code: text("cpt_code"),
-  icd10_codes: text("icd10_codes"), // JSON array stored as text
+  icd10_codes: jsonb("icd10_codes").$type<string[]>(),
   status: text("status").notNull().default("scheduled"),
   performed_at: text("performed_at"),
   performed_by: text("performed_by"),
