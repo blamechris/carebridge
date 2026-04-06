@@ -9,7 +9,30 @@ import { auditMiddleware } from "./middleware/audit.js";
 const API_PORT = Number(process.env.API_PORT) || 4000;
 const API_HOST = process.env.API_HOST ?? "0.0.0.0";
 
+function resolveCorsOrigins(): string[] {
+  const isProduction = process.env.NODE_ENV === "production";
+  const rawOrigin = process.env.CORS_ORIGIN;
+
+  if (isProduction) {
+    if (!rawOrigin) {
+      throw new Error(
+        "CORS_ORIGIN must be explicitly set in production. " +
+          "Refusing to start with a wildcard origin — this would expose all PHI to any requestor.",
+      );
+    }
+    return rawOrigin.split(",").map((o) => o.trim());
+  }
+
+  // Development: use CORS_ORIGIN if set, otherwise fall back to local dev origins
+  if (rawOrigin) {
+    return rawOrigin.split(",").map((o) => o.trim());
+  }
+  return ["http://localhost:3000", "http://localhost:3001"];
+}
+
 async function main() {
+  const corsOrigins = resolveCorsOrigins();
+
   const server = Fastify({
     logger: {
       level: process.env.LOG_LEVEL ?? "info",
@@ -18,7 +41,7 @@ async function main() {
 
   // --- Plugins ---
   await server.register(cors, {
-    origin: process.env.CORS_ORIGIN ?? true,
+    origin: corsOrigins,
     credentials: true,
   });
 
