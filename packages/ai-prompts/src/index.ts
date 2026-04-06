@@ -12,3 +12,6 @@ export {
   DEFAULT_TOKEN_BUDGET,
 } from "./token-budget.js";
 export type { TruncationResult } from "./token-budget.js";
+
+export { PROMPT_SECTIONS } from "./prompt-sections.js";
+export type { PromptSectionKey, PromptSectionLabel } from "./prompt-sections.js";
