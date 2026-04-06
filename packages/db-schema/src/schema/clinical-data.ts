@@ -43,6 +43,7 @@ export const vitals = pgTable("vitals", {
   patient_id: text("patient_id").notNull().references(() => patients.id),
   recorded_at: text("recorded_at").notNull(),
   type: text("type").notNull(),
+  loinc_code: text("loinc_code"),
   value_primary: real("value_primary").notNull(),
   value_secondary: real("value_secondary"),
   unit: text("unit").notNull(),

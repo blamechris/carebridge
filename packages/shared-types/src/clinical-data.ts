@@ -66,10 +66,23 @@ export const VITAL_UNITS: Record<VitalType, string> = {
   blood_glucose: "mg/dL",
 };
 
+/** LOINC codes for standard vital sign types (FHIR R4 Observation.code) */
+export const VITAL_LOINC_CODES: Record<VitalType, string | null> = {
+  blood_pressure: "85354-9",
+  heart_rate: "8867-4",
+  o2_sat: "59408-5",
+  temperature: "8310-5",
+  weight: "29463-7",
+  respiratory_rate: "9279-1",
+  pain_level: "72514-3",
+  blood_glucose: "2339-0",
+};
+
 export interface Vital extends BaseRecord {
   patient_id: string;
   recorded_at: string;
   type: VitalType;
+  loinc_code?: string;
   value_primary: number;
   value_secondary?: number;
   unit: string;

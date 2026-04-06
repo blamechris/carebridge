@@ -175,10 +175,10 @@ async function seed() {
 
   // Vitals
   await db.insert(schema.vitals).values([
-    { id: uuid(), patient_id: dvtPatientId, recorded_at: daysAgo(1), type: "blood_pressure", value_primary: 138, value_secondary: 85, unit: "mmHg", provider_id: nurseRachel, source_system: "internal", created_at: daysAgo(1) },
-    { id: uuid(), patient_id: dvtPatientId, recorded_at: daysAgo(1), type: "heart_rate", value_primary: 88, unit: "bpm", provider_id: nurseRachel, source_system: "internal", created_at: daysAgo(1) },
-    { id: uuid(), patient_id: dvtPatientId, recorded_at: daysAgo(1), type: "o2_sat", value_primary: 96, unit: "%", provider_id: nurseRachel, source_system: "internal", created_at: daysAgo(1) },
-    { id: uuid(), patient_id: dvtPatientId, recorded_at: daysAgo(1), type: "temperature", value_primary: 98.4, unit: "°F", provider_id: nurseRachel, source_system: "internal", created_at: daysAgo(1) },
+    { id: uuid(), patient_id: dvtPatientId, recorded_at: daysAgo(1), type: "blood_pressure", loinc_code: "85354-9", value_primary: 138, value_secondary: 85, unit: "mmHg", provider_id: nurseRachel, source_system: "internal", created_at: daysAgo(1) },
+    { id: uuid(), patient_id: dvtPatientId, recorded_at: daysAgo(1), type: "heart_rate", loinc_code: "8867-4", value_primary: 88, unit: "bpm", provider_id: nurseRachel, source_system: "internal", created_at: daysAgo(1) },
+    { id: uuid(), patient_id: dvtPatientId, recorded_at: daysAgo(1), type: "o2_sat", loinc_code: "59408-5", value_primary: 96, unit: "%", provider_id: nurseRachel, source_system: "internal", created_at: daysAgo(1) },
+    { id: uuid(), patient_id: dvtPatientId, recorded_at: daysAgo(1), type: "temperature", loinc_code: "8310-5", value_primary: 98.4, unit: "°F", provider_id: nurseRachel, source_system: "internal", created_at: daysAgo(1) },
   ]);
 
   // Lab Panel — recent CBC showing some chemo effects
@@ -189,10 +189,10 @@ async function seed() {
     ordering_provider_id: drSmith, source_system: "internal", created_at: daysAgo(3),
   });
   await db.insert(schema.labResults).values([
-    { id: uuid(), panel_id: cbcPanelId, test_name: "WBC", value: 3.8, unit: "K/uL", reference_low: 4.5, reference_high: 11.0, flag: "L", created_at: daysAgo(3) },
-    { id: uuid(), panel_id: cbcPanelId, test_name: "Hemoglobin", value: 10.2, unit: "g/dL", reference_low: 12.0, reference_high: 17.5, flag: "L", created_at: daysAgo(3) },
-    { id: uuid(), panel_id: cbcPanelId, test_name: "Platelets", value: 198, unit: "K/uL", reference_low: 150, reference_high: 400, created_at: daysAgo(3) },
-    { id: uuid(), panel_id: cbcPanelId, test_name: "ANC", value: 1.8, unit: "K/uL", reference_low: 1.5, reference_high: 8.0, created_at: daysAgo(3) },
+    { id: uuid(), panel_id: cbcPanelId, test_name: "WBC", test_code: "6690-2", value: 3.8, unit: "K/uL", reference_low: 4.5, reference_high: 11.0, flag: "L", created_at: daysAgo(3) },
+    { id: uuid(), panel_id: cbcPanelId, test_name: "Hemoglobin", test_code: "718-7", value: 10.2, unit: "g/dL", reference_low: 12.0, reference_high: 17.5, flag: "L", created_at: daysAgo(3) },
+    { id: uuid(), panel_id: cbcPanelId, test_name: "Platelets", test_code: "777-3", value: 198, unit: "K/uL", reference_low: 150, reference_high: 400, created_at: daysAgo(3) },
+    { id: uuid(), panel_id: cbcPanelId, test_name: "ANC", test_code: "751-8", value: 1.8, unit: "K/uL", reference_low: 1.5, reference_high: 8.0, created_at: daysAgo(3) },
   ]);
 
   // Coagulation panel
@@ -203,9 +203,9 @@ async function seed() {
     ordering_provider_id: drSmith, source_system: "internal", created_at: daysAgo(3),
   });
   await db.insert(schema.labResults).values([
-    { id: uuid(), panel_id: coagPanelId, test_name: "D-Dimer", value: 680, unit: "ng/mL", reference_low: 0, reference_high: 500, flag: "H", created_at: daysAgo(3) },
-    { id: uuid(), panel_id: coagPanelId, test_name: "PT", value: 12.1, unit: "sec", reference_low: 11, reference_high: 13.5, created_at: daysAgo(3) },
-    { id: uuid(), panel_id: coagPanelId, test_name: "INR", value: 1.0, unit: "", reference_low: 0.8, reference_high: 1.2, created_at: daysAgo(3) },
+    { id: uuid(), panel_id: coagPanelId, test_name: "D-Dimer", test_code: "48066-5", value: 680, unit: "ng/mL", reference_low: 0, reference_high: 500, flag: "H", created_at: daysAgo(3) },
+    { id: uuid(), panel_id: coagPanelId, test_name: "PT", test_code: "5902-2", value: 12.1, unit: "sec", reference_low: 11, reference_high: 13.5, created_at: daysAgo(3) },
+    { id: uuid(), panel_id: coagPanelId, test_name: "INR", test_code: "6301-6", value: 1.0, unit: "", reference_low: 0.8, reference_high: 1.2, created_at: daysAgo(3) },
   ]);
 
   // ─── Second patient (simpler, for list variety) ─────────────────
