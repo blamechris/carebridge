@@ -2,6 +2,8 @@
 
 import { createContext, useContext, useState, useCallback, useEffect } from "react";
 import type { ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import { SessionExpiryProvider } from "./session-expiry.js";
 
 interface User {
   id: string;
@@ -26,6 +28,8 @@ const SESSION_KEY = "carebridge_session";
 const USER_KEY = "carebridge_user";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const router = useRouter();
+
   const [user, setUser] = useState<User | null>(() => {
     if (typeof window === "undefined") return null;
     try {
@@ -55,6 +59,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSessionId(null);
   }, []);
 
+  const handleSessionExpiry = useCallback(() => {
+    clearSession();
+    router.replace("/login");
+  }, [clearSession, router]);
+
+  const isAuthenticated = !!user && !!sessionId;
+
   return (
     <AuthContext.Provider
       value={{
@@ -62,10 +73,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         sessionId,
         setSession,
         clearSession,
-        isAuthenticated: !!user && !!sessionId,
+        isAuthenticated,
       }}
     >
-      {children}
+      <SessionExpiryProvider
+        isAuthenticated={isAuthenticated}
+        onLogout={handleSessionExpiry}
+      >
+        {children}
+      </SessionExpiryProvider>
     </AuthContext.Provider>
   );
 }
