@@ -19,6 +19,11 @@ import {
   verifyRecoveryCode,
   buildOTPAuthURI,
 } from "./totp.js";
+import {
+  checkMFARateLimit,
+  recordMFAAttempt,
+  clearMFAAttempts,
+} from "./mfa-rate-limit.js";
 
 // ---------- tRPC setup (mirrors api-gateway's context shape) ----------
 
@@ -180,6 +185,16 @@ export const authRouter = t.router({
   mfaCompleteLogin: publicProcedure
     .input(mfaCompleteLoginSchema)
     .mutation(async ({ input }) => {
+      // Rate-limit check keyed on mfaSessionId
+      const rateLimit = checkMFARateLimit(input.mfaSessionId);
+      if (!rateLimit.allowed) {
+        const retryMinutes = Math.ceil((rateLimit.retryAfterMs ?? 0) / 60_000);
+        throw new TRPCError({
+          code: "TOO_MANY_REQUESTS",
+          message: `Too many MFA attempts. Try again in ${retryMinutes} minute${retryMinutes === 1 ? "" : "s"}.`,
+        });
+      }
+
       const db = getDb();
       const pending = pendingMFASessions.get(input.mfaSessionId);
 
@@ -235,13 +250,15 @@ export const authRouter = t.router({
       }
 
       if (!verified) {
+        recordMFAAttempt(input.mfaSessionId);
         throw new TRPCError({
           code: "UNAUTHORIZED",
           message: "Invalid MFA code.",
         });
       }
 
-      // Clean up the pending session
+      // Successful verification -- clear rate-limit history and pending session
+      clearMFAAttempts(input.mfaSessionId);
       pendingMFASessions.delete(input.mfaSessionId);
 
       // Create real session
