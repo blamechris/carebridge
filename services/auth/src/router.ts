@@ -56,6 +56,16 @@ const protectedProcedure = t.procedure.use(isAuthenticated);
 
 // ---------- Helpers ----------
 
+const REFRESH_TOKEN_HMAC_KEY = process.env.REFRESH_TOKEN_HMAC_KEY ?? process.env.SESSION_SECRET ?? "carebridge-dev-hmac-key";
+
+/**
+ * Hash a refresh token with HMAC-SHA256 before storing it in the database.
+ * The raw token is returned to the client; only the hash is persisted.
+ */
+function hashToken(token: string): string {
+  return crypto.createHmac("sha256", REFRESH_TOKEN_HMAC_KEY).update(token).digest("hex");
+}
+
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MFA_SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes for MFA completion
 const MAX_CONCURRENT_SESSIONS = 5; // max active sessions per user
@@ -209,7 +219,7 @@ export const authRouter = t.router({
       expires_at: expiresAt,
       created_at: now,
       last_active_at: now,
-      refresh_token: refreshToken,
+      refresh_token: hashToken(refreshToken),
     });
 
     return {
@@ -315,7 +325,7 @@ export const authRouter = t.router({
         expires_at: expiresAt,
         created_at: now,
         last_active_at: now,
-        refresh_token: refreshToken,
+        refresh_token: hashToken(refreshToken),
       });
 
       return {
@@ -352,10 +362,12 @@ export const authRouter = t.router({
     .mutation(async ({ input }) => {
       const db = getDb();
 
+      const hashedInput = hashToken(input.refresh_token);
+
       const sessionRows = await db
         .select()
         .from(sessions)
-        .where(eq(sessions.refresh_token, input.refresh_token))
+        .where(eq(sessions.refresh_token, hashedInput))
         .limit(1);
 
       if (sessionRows.length === 0) {
@@ -401,7 +413,7 @@ export const authRouter = t.router({
         expires_at: expiresAt,
         created_at: now,
         last_active_at: now,
-        refresh_token: newRefreshToken,
+        refresh_token: hashToken(newRefreshToken),
       });
 
       return {
