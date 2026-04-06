@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { pgTable, text, boolean, index } from "drizzle-orm/pg-core";
 
 export const patients = pgTable("patients", {
@@ -41,6 +42,13 @@ export const allergies = pgTable("allergies", {
   index("idx_allergies_patient").on(table.patient_id),
 ]);
 
+/**
+ * Clinical care-team roster displayed on the patient chart.
+ * Tracks which providers are clinically responsible for the patient
+ * (primary, specialist, nurse, coordinator) and their specialty.
+ *
+ * NOT used for access control — see `care_team_assignments` for RBAC scoping.
+ */
 export const careTeamMembers = pgTable("care_team_members", {
   id: text("id").primaryKey(),
   patient_id: text("patient_id").notNull().references(() => patients.id),
@@ -53,4 +61,25 @@ export const careTeamMembers = pgTable("care_team_members", {
   created_at: text("created_at").notNull(),
 }, (table) => [
   index("idx_care_team_patient").on(table.patient_id, table.is_active),
+]);
+
+/**
+ * RBAC access-control table: determines which users (clinicians) are
+ * authorized to view/modify a patient's records in the system.
+ * Queried by the api-gateway RBAC middleware (`assertPatientAccess`).
+ *
+ * NOT the same as `care_team_members`, which is the clinical care-team
+ * roster shown on the patient chart. A user may be on the access list
+ * without appearing on the clinical care team and vice-versa.
+ */
+export const careTeamAssignments = pgTable("care_team_assignments", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  user_id: text("user_id").notNull(),
+  patient_id: text("patient_id").notNull(),
+  role: text("role").notNull(), // "attending", "consulting", "nursing", etc.
+  assigned_at: text("assigned_at").notNull().$defaultFn(() => new Date().toISOString()),
+  removed_at: text("removed_at"), // null = active
+}, (table) => [
+  index("idx_care_team_assignments_user_patient").on(table.user_id, table.patient_id),
+  index("idx_care_team_assignments_patient").on(table.patient_id),
 ]);

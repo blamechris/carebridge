@@ -124,6 +124,13 @@ async function seed() {
     { id: uuid(), patient_id: dvtPatientId, provider_id: nurseRachel, role: "nurse", is_active: true, started_at: daysAgo(90), created_at: daysAgo(90) },
   ]);
 
+  // Care Team Assignments (for RBAC access scoping)
+  await db.insert(schema.careTeamAssignments).values([
+    { id: uuid(), user_id: drSmith, patient_id: dvtPatientId, role: "attending", assigned_at: daysAgo(90) },
+    { id: uuid(), user_id: drJones, patient_id: dvtPatientId, role: "consulting", assigned_at: daysAgo(50) },
+    { id: uuid(), user_id: nurseRachel, patient_id: dvtPatientId, role: "nursing", assigned_at: daysAgo(90) },
+  ]);
+
   // Medications
   await db.insert(schema.medications).values([
     {
@@ -201,6 +208,11 @@ async function seed() {
   await db.insert(schema.diagnoses).values([
     { id: uuid(), patient_id: patient2Id, icd10_code: "E11.9", description: "Type 2 diabetes mellitus without complications", status: "active", onset_date: "2020-03-01", created_at: daysAgo(60) },
     { id: uuid(), patient_id: patient2Id, icd10_code: "I10", description: "Essential hypertension", status: "active", onset_date: "2019-06-01", created_at: daysAgo(60) },
+  ]);
+
+  // Care Team Assignments for Robert Williams
+  await db.insert(schema.careTeamAssignments).values([
+    { id: uuid(), user_id: drSmith, patient_id: patient2Id, role: "attending", assigned_at: daysAgo(60) },
   ]);
 
   await db.insert(schema.medications).values([
