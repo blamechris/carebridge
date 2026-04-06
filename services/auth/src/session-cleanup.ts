@@ -1,5 +1,5 @@
 import { getDb, sessions } from "@carebridge/db-schema";
-import { lt, or, and, isNotNull, sql } from "drizzle-orm";
+import { lt, or, and, isNotNull } from "drizzle-orm";
 
 const IDLE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
 const HARD_CAP_MS = 48 * 60 * 60 * 1000; // 48 hours

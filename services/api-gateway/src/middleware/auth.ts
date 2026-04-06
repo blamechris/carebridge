@@ -125,6 +125,12 @@ export async function authMiddleware(
     return;
   }
 
+  // Touch last_active_at so the cleanup worker can detect idle sessions.
+  await db
+    .update(sessions)
+    .set({ last_active_at: new Date().toISOString() })
+    .where(eq(sessions.id, sessionId));
+
   const userRows = await db
     .select()
     .from(users)
