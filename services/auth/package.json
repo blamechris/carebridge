@@ -18,17 +18,17 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@carebridge/db-schema": "workspace:*",
     "@carebridge/shared-types": "workspace:*",
     "@carebridge/validators": "workspace:*",
-    "@carebridge/db-schema": "workspace:*",
     "@trpc/server": "^11.0.0",
     "bullmq": "^5.30.0",
     "drizzle-orm": "^0.38.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
     "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   }
 }

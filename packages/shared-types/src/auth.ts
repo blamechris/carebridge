@@ -17,6 +17,35 @@ export interface Session {
   expires_at: string;
 }
 
+// ---------- MFA types ----------
+
+export interface MFASetupResponse {
+  secret: string;
+  uri: string;
+  recoveryCodes: string[];
+}
+
+export interface MFAVerifyResponse {
+  enabled: true;
+  recoveryCodes: string[];
+}
+
+export interface MFALoginRequired {
+  requiresMFA: true;
+  mfaSessionId: string;
+}
+
+export interface MFACompleteLoginResponse {
+  user: User;
+  session: Session;
+}
+
+export type LoginResponse =
+  | { user: User; session: Session }
+  | MFALoginRequired;
+
+// ---------- Permissions ----------
+
 export type Permission =
   | "read:patients"
   | "write:patients"

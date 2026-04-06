@@ -1,9 +1,24 @@
 import { TRPCError, initTRPC } from "@trpc/server";
 import type { User } from "@carebridge/shared-types";
-import { loginSchema, createUserSchema } from "@carebridge/validators";
+import {
+  loginSchema,
+  createUserSchema,
+  mfaVerifySchema,
+  mfaDisableSchema,
+  mfaCompleteLoginSchema,
+} from "@carebridge/validators";
 import { getDb, users, sessions } from "@carebridge/db-schema";
 import { eq } from "drizzle-orm";
 import crypto from "node:crypto";
+import {
+  generateSecret,
+  generateTOTP,
+  verifyTOTP,
+  generateRecoveryCodes,
+  hashRecoveryCode,
+  verifyRecoveryCode,
+  buildOTPAuthURI,
+} from "./totp.js";
 
 // ---------- tRPC setup (mirrors api-gateway's context shape) ----------
 
@@ -31,6 +46,16 @@ const protectedProcedure = t.procedure.use(isAuthenticated);
 // ---------- Helpers ----------
 
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const MFA_SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes for MFA completion
+
+/**
+ * In-memory store for pending MFA sessions.
+ * Maps mfaSessionId -> { userId, expiresAt }
+ */
+const pendingMFASessions = new Map<
+  string,
+  { userId: string; expiresAt: number }
+>();
 
 /**
  * Placeholder password hashing for dev mode.
@@ -46,12 +71,36 @@ function verifyPassword(password: string, hash: string): boolean {
   return hash === `hashed:${password}`;
 }
 
+function buildUserResponse(row: {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  specialty: string | null;
+  department: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}): User {
+  return {
+    id: row.id,
+    email: row.email,
+    name: row.name,
+    role: row.role as User["role"],
+    specialty: row.specialty ?? undefined,
+    department: row.department ?? undefined,
+    is_active: row.is_active,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
 // ---------- Router ----------
 
 export const authRouter = t.router({
   /**
    * Log in with email + password.
-   * Dev mode: simple string comparison against stored hash.
+   * If MFA is enabled, returns { requiresMFA, mfaSessionId } instead of a full session.
    */
   login: publicProcedure.input(loginSchema).mutation(async ({ input }) => {
     const db = getDb();
@@ -85,7 +134,27 @@ export const authRouter = t.router({
       });
     }
 
-    // Create session.
+    // Check if MFA is enabled
+    if (row.mfa_enabled === true) {
+      const mfaSessionId = crypto.randomUUID();
+      const expiresAt = Date.now() + MFA_SESSION_TTL_MS;
+      pendingMFASessions.set(mfaSessionId, {
+        userId: row.id,
+        expiresAt,
+      });
+
+      // Auto-cleanup if the user abandons the MFA flow
+      setTimeout(() => {
+        pendingMFASessions.delete(mfaSessionId);
+      }, MFA_SESSION_TTL_MS);
+
+      return {
+        requiresMFA: true as const,
+        mfaSessionId,
+      };
+    }
+
+    // No MFA -- issue session directly
     const sessionId = crypto.randomUUID();
     const now = new Date().toISOString();
     const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
@@ -98,23 +167,98 @@ export const authRouter = t.router({
       last_active_at: now,
     });
 
-    const user: User = {
-      id: row.id,
-      email: row.email,
-      name: row.name,
-      role: row.role as User["role"],
-      specialty: row.specialty ?? undefined,
-      department: row.department ?? undefined,
-      is_active: row.is_active,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-    };
-
     return {
-      user,
+      user: buildUserResponse(row),
       session: { id: sessionId, user_id: row.id, expires_at: expiresAt },
     };
   }),
+
+  /**
+   * Complete login for users with MFA enabled.
+   * Accepts a TOTP code or a recovery code.
+   */
+  mfaCompleteLogin: publicProcedure
+    .input(mfaCompleteLoginSchema)
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      const pending = pendingMFASessions.get(input.mfaSessionId);
+
+      if (!pending || pending.expiresAt < Date.now()) {
+        pendingMFASessions.delete(input.mfaSessionId);
+        throw new TRPCError({
+          code: "UNAUTHORIZED",
+          message: "MFA session expired or invalid. Please log in again.",
+        });
+      }
+
+      // Look up the user
+      const userRows = await db
+        .select()
+        .from(users)
+        .where(eq(users.id, pending.userId))
+        .limit(1);
+
+      if (userRows.length === 0) {
+        pendingMFASessions.delete(input.mfaSessionId);
+        throw new TRPCError({
+          code: "UNAUTHORIZED",
+          message: "User not found.",
+        });
+      }
+
+      const row = userRows[0]!;
+      const code = input.code.trim();
+      let verified = false;
+
+      // Try TOTP verification first (6-digit code)
+      if (/^\d{6}$/.test(code) && row.mfa_secret) {
+        verified = verifyTOTP(row.mfa_secret, code);
+      }
+
+      // Try recovery code if TOTP didn't match (format: XXXXX-XXXXX)
+      if (!verified && row.recovery_codes) {
+        const hashedCodes: string[] = JSON.parse(row.recovery_codes);
+        const matchIdx = verifyRecoveryCode(code, hashedCodes);
+
+        if (matchIdx >= 0) {
+          verified = true;
+          // Remove used recovery code
+          hashedCodes.splice(matchIdx, 1);
+          await db
+            .update(users)
+            .set({
+              recovery_codes: JSON.stringify(hashedCodes),
+              updated_at: new Date().toISOString(),
+            })
+            .where(eq(users.id, row.id));
+        }
+      }
+
+      if (!verified) {
+        throw new TRPCError({
+          code: "UNAUTHORIZED",
+          message: "Invalid MFA code.",
+        });
+      }
+
+      // Clean up the pending session
+      pendingMFASessions.delete(input.mfaSessionId);
+
+      // Create real session
+      const sessionId = crypto.randomUUID();
+      const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
+
+      await db.insert(sessions).values({
+        id: sessionId,
+        user_id: row.id,
+        expires_at: expiresAt,
+      });
+
+      return {
+        user: buildUserResponse(row),
+        session: { id: sessionId, user_id: row.id, expires_at: expiresAt },
+      };
+    }),
 
   /**
    * Log out -- deletes the caller's session.
@@ -186,6 +330,141 @@ export const authRouter = t.router({
 
     return user;
   }),
+
+  // ---------- MFA management (protected) ----------
+
+  /**
+   * Begin MFA setup -- generates a TOTP secret and recovery codes.
+   * Does NOT enable MFA yet; call mfa.verify to confirm and activate.
+   */
+  mfaSetup: protectedProcedure.mutation(async ({ ctx }) => {
+    const db = getDb();
+
+    // Prevent overwriting an active MFA configuration
+    const existing = await db
+      .select({ mfa_enabled: users.mfa_enabled })
+      .from(users)
+      .where(eq(users.id, ctx.user.id))
+      .limit(1);
+
+    if (existing[0]?.mfa_enabled === true) {
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message: "MFA is already enabled. Disable MFA first before re-configuring.",
+      });
+    }
+
+    const secret = generateSecret();
+    const recoveryCodes = generateRecoveryCodes();
+    const hashedCodes = recoveryCodes.map(hashRecoveryCode);
+
+    // Store secret and hashed recovery codes, but don't enable MFA yet.
+    await db
+      .update(users)
+      .set({
+        mfa_secret: secret,
+        recovery_codes: JSON.stringify(hashedCodes),
+        updated_at: new Date().toISOString(),
+      })
+      .where(eq(users.id, ctx.user.id));
+
+    const uri = buildOTPAuthURI(secret, ctx.user.email);
+
+    return {
+      secret,
+      uri,
+      recoveryCodes,
+    };
+  }),
+
+  /**
+   * Verify a TOTP code and enable MFA.
+   * Must be called after mfaSetup with a valid code from the authenticator app.
+   */
+  mfaVerify: protectedProcedure
+    .input(mfaVerifySchema)
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+
+      // Fetch the stored (but not yet enabled) secret
+      const rows = await db
+        .select({ mfa_secret: users.mfa_secret })
+        .from(users)
+        .where(eq(users.id, ctx.user.id))
+        .limit(1);
+
+      const row = rows[0];
+      if (!row?.mfa_secret) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "MFA setup has not been initiated. Call mfaSetup first.",
+        });
+      }
+
+      if (!verifyTOTP(row.mfa_secret, input.code)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Invalid TOTP code. Please try again.",
+        });
+      }
+
+      // Enable MFA
+      await db
+        .update(users)
+        .set({
+          mfa_enabled: true,
+          updated_at: new Date().toISOString(),
+        })
+        .where(eq(users.id, ctx.user.id));
+
+      return {
+        enabled: true as const,
+      };
+    }),
+
+  /**
+   * Disable MFA. Requires a valid TOTP code.
+   */
+  mfaDisable: protectedProcedure
+    .input(mfaDisableSchema)
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+
+      // Fetch the stored secret
+      const rows = await db
+        .select({ mfa_secret: users.mfa_secret, mfa_enabled: users.mfa_enabled })
+        .from(users)
+        .where(eq(users.id, ctx.user.id))
+        .limit(1);
+
+      const row = rows[0];
+      if (!row?.mfa_secret || row.mfa_enabled !== true) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "MFA is not currently enabled.",
+        });
+      }
+
+      if (!verifyTOTP(row.mfa_secret, input.code)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Invalid TOTP code.",
+        });
+      }
+
+      // Disable MFA and clear secrets
+      await db
+        .update(users)
+        .set({
+          mfa_enabled: false,
+          mfa_secret: null,
+          recovery_codes: null,
+          updated_at: new Date().toISOString(),
+        })
+        .where(eq(users.id, ctx.user.id));
+
+      return { disabled: true };
+    }),
 });
 
 export type AuthRouter = typeof authRouter;

@@ -57,6 +57,9 @@ importers:
         specifier: ^3.24.0
         version: 3.25.76
     devDependencies:
+      '@carebridge/api-gateway':
+        specifier: workspace:*
+        version: link:../../services/api-gateway
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.17
@@ -75,6 +78,18 @@ importers:
       '@carebridge/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
+      '@tanstack/react-query':
+        specifier: ^5.60.0
+        version: 5.96.2(react@19.2.4)
+      '@trpc/client':
+        specifier: ^11.0.0
+        version: 11.16.0(@trpc/server@11.16.0(typescript@5.9.3))(typescript@5.9.3)
+      '@trpc/react-query':
+        specifier: ^11.0.0
+        version: 11.16.0(@tanstack/react-query@5.96.2(react@19.2.4))(@trpc/client@11.16.0(@trpc/server@11.16.0(typescript@5.9.3))(typescript@5.9.3))(@trpc/server@11.16.0(typescript@5.9.3))(react@19.2.4)(typescript@5.9.3)
+      '@trpc/server':
+        specifier: ^11.0.0
+        version: 11.16.0(typescript@5.9.3)
       next:
         specifier: ^15.1.0
         version: 15.5.14(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -85,6 +100,9 @@ importers:
         specifier: ^19.0.0
         version: 19.2.4(react@19.2.4)
     devDependencies:
+      '@carebridge/api-gateway':
+        specifier: workspace:*
+        version: link:../../services/api-gateway
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.17
@@ -229,9 +247,24 @@ importers:
 
   services/api-gateway:
     dependencies:
+      '@carebridge/ai-oversight':
+        specifier: workspace:*
+        version: link:../ai-oversight
+      '@carebridge/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@carebridge/clinical-data':
+        specifier: workspace:*
+        version: link:../clinical-data
+      '@carebridge/clinical-notes':
+        specifier: workspace:*
+        version: link:../clinical-notes
       '@carebridge/db-schema':
         specifier: workspace:*
         version: link:../../packages/db-schema
+      '@carebridge/patient-records':
+        specifier: workspace:*
+        version: link:../patient-records
       '@carebridge/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
