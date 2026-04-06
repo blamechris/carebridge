@@ -5,6 +5,7 @@ export const clinicalFlags = pgTable("clinical_flags", {
   id: text("id").primaryKey(),
   patient_id: text("patient_id").notNull().references(() => patients.id),
   source: text("source").notNull(), // rules, ai-review
+  rule_id: text("rule_id"),
   severity: text("severity").notNull(), // critical, warning, info
   category: text("category").notNull(), // cross-specialty, drug-interaction, etc.
   summary: text("summary").notNull(),

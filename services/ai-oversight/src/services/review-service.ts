@@ -93,6 +93,7 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
       const flag = await createFlag({
         patient_id: event.patient_id,
         source: "rules" as FlagSource,
+        rule_id: ruleFlag.rule_id,
         severity: ruleFlag.severity,
         category: ruleFlag.category,
         summary: ruleFlag.summary,
@@ -315,10 +316,13 @@ function extractSymptoms(event: ClinicalEvent): string[] {
 }
 
 /**
- * Check if an LLM finding duplicates an existing rule-based flag.
+ * Check if an LLM finding duplicates an existing rule-based flag from the current job.
  *
- * We use a simple heuristic: if the LLM finding's summary shares significant
- * overlap with any rule flag's summary, consider it a duplicate.
+ * Uses word-overlap heuristic: if the LLM finding's summary shares significant
+ * overlap with any rule flag's summary, consider it a duplicate. The former
+ * category+severity catch-all has been removed — it incorrectly suppressed
+ * distinct findings that happened to share the same severity and category.
+ * DB-level deduplication in createFlag() handles cross-job duplicates.
  */
 function isDuplicate(
   finding: LLMFlagOutput,
@@ -343,14 +347,6 @@ function isDuplicate(
     // If more than 40% of the rule flag's significant words appear in the
     // LLM finding, consider it a duplicate
     if (ruleWords.length > 0 && overlap / ruleWords.length > 0.4) {
-      return true;
-    }
-
-    // Also check category + severity match for same patient concern
-    if (
-      finding.category === ruleFlag.category &&
-      finding.severity === ruleFlag.severity
-    ) {
       return true;
     }
   }
