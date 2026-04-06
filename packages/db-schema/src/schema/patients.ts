@@ -30,6 +30,7 @@ export const diagnoses = pgTable("diagnoses", {
   id: text("id").primaryKey(),
   patient_id: text("patient_id").notNull().references(() => patients.id),
   icd10_code: text("icd10_code"),
+  snomed_code: text("snomed_code"),
   description: text("description").notNull(),
   status: text("status").notNull().default("active"), // active, resolved, chronic
   onset_date: text("onset_date"),
@@ -44,6 +45,8 @@ export const allergies = pgTable("allergies", {
   id: text("id").primaryKey(),
   patient_id: text("patient_id").notNull().references(() => patients.id),
   allergen: text("allergen").notNull(),
+  snomed_code: text("snomed_code"),
+  rxnorm_code: text("rxnorm_code"),
   reaction: text("reaction"),
   severity: text("severity"), // mild, moderate, severe
   created_at: text("created_at").notNull(),
