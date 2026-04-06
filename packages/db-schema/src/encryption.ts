@@ -5,7 +5,16 @@ const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
 const AUTH_TAG_LENGTH = 16;
 
+let _cachedKey: Buffer | null = null;
+
+/** Clear the cached key. Intended for tests that swap PHI_ENCRYPTION_KEY at runtime. */
+export function _resetKeyCache(): void {
+  _cachedKey = null;
+}
+
 export function getKey(): Buffer {
+  if (_cachedKey) return _cachedKey;
+
   const hex = process.env.PHI_ENCRYPTION_KEY;
   if (!hex) {
     throw new Error(
@@ -19,6 +28,7 @@ export function getKey(): Buffer {
       `PHI_ENCRYPTION_KEY must be exactly 32 bytes (64 hex characters), got ${buf.length} bytes.`
     );
   }
+  _cachedKey = buf;
   return buf;
 }
 

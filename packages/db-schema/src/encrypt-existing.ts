@@ -60,7 +60,6 @@ async function main() {
       if (Object.keys(updates).length > 0) {
         await sql`UPDATE patients SET ${sql(updates)} WHERE id = ${row.id}`;
         updatedCount++;
-        console.log(`  Encrypted PHI for patient ${row.id}`);
       }
     }
 

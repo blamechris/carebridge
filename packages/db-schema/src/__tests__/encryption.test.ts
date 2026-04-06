@@ -1,7 +1,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { encrypt, decrypt, getKey } from "../encryption.js";
+import { encrypt, decrypt, getKey, _resetKeyCache } from "../encryption.js";
 
 const TEST_KEY = randomBytes(32).toString("hex");
 
@@ -68,7 +68,12 @@ describe("encrypt / decrypt", () => {
 describe("getKey reads PHI_ENCRYPTION_KEY from env", () => {
   const originalKey = process.env.PHI_ENCRYPTION_KEY;
 
+  before(() => {
+    _resetKeyCache();
+  });
+
   after(() => {
+    _resetKeyCache();
     if (originalKey !== undefined) {
       process.env.PHI_ENCRYPTION_KEY = originalKey;
     } else {
@@ -77,6 +82,7 @@ describe("getKey reads PHI_ENCRYPTION_KEY from env", () => {
   });
 
   it("returns a Buffer when a valid 32-byte hex key is set", () => {
+    _resetKeyCache();
     process.env.PHI_ENCRYPTION_KEY = TEST_KEY;
     const key = getKey();
     assert.ok(Buffer.isBuffer(key));
@@ -93,6 +99,7 @@ describe("getKey reads PHI_ENCRYPTION_KEY from env", () => {
   });
 
   it("throws on invalid key length", () => {
+    _resetKeyCache();
     process.env.PHI_ENCRYPTION_KEY = "aabbcc"; // too short
     assert.throws(() => getKey(), /must be exactly 32 bytes/);
   });
@@ -102,10 +109,12 @@ describe("missing PHI_ENCRYPTION_KEY", () => {
   const originalKey = process.env.PHI_ENCRYPTION_KEY;
 
   before(() => {
+    _resetKeyCache();
     delete process.env.PHI_ENCRYPTION_KEY;
   });
 
   after(() => {
+    _resetKeyCache();
     if (originalKey !== undefined) {
       process.env.PHI_ENCRYPTION_KEY = originalKey;
     }
