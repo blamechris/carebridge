@@ -19,6 +19,10 @@ export default defineConfig({
         __dirname,
         "../../packages/validators/src/index.ts",
       ),
+      "@carebridge/auth": path.resolve(
+        __dirname,
+        "../../services/auth/src/index.ts",
+      ),
     },
   },
 });

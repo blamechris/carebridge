@@ -78,6 +78,11 @@ vi.mock("drizzle-orm", () => ({
   eq: (col: unknown, val: unknown) => ({ col, val }),
 }));
 
+vi.mock("@carebridge/auth", () => ({
+  verifyJWT: async (token: string) => ({ sid: token }),
+  JWTError: class JWTError extends Error {},
+}));
+
 import { authMiddleware } from "../middleware/auth.js";
 
 // ---------------------------------------------------------------------------
