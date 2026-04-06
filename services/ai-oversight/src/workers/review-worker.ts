@@ -6,15 +6,24 @@
  * through the full review pipeline: deterministic rules first, then LLM review.
  */
 
-import { Worker } from "bullmq";
+import { Worker, Queue } from "bullmq";
 import type { Job } from "bullmq";
 import type { ClinicalEvent } from "@carebridge/shared-types";
 import { getRedisConnection } from "@carebridge/redis-config";
 import { processReviewJob } from "../services/review-service.js";
 
 const QUEUE_NAME = "clinical-events";
+const DLQ_NAME = "clinical-events-failed";
 
 const connection = getRedisConnection();
+
+const dlq = new Queue(DLQ_NAME, {
+  connection,
+  defaultJobOptions: {
+    removeOnComplete: { count: 1000 },
+    removeOnFail: { count: 10000 },
+  },
+});
 
 /**
  * Create and start the clinical events review worker.
@@ -66,9 +75,33 @@ export function startReviewWorker(): Worker {
   });
 
   worker.on("failed", (job, error) => {
+    const attemptsMade = job?.attemptsMade ?? 0;
+    const maxAttempts = job?.opts?.attempts ?? 1;
+    const isExhausted = attemptsMade >= maxAttempts;
+
     console.error(
-      `[review-worker] Job ${job?.id} permanently failed: ${error.message}`,
+      `[review-worker] Job ${job?.id} failed (attempt ${attemptsMade}/${maxAttempts}): ${error.message}`,
+      { jobData: job?.data },
     );
+
+    if (isExhausted && job != null) {
+      const dlqPayload = {
+        originalJobId: job.id,
+        originalQueue: QUEUE_NAME,
+        jobData: job.data as ClinicalEvent,
+        failedAt: new Date().toISOString(),
+        finalError: error.message,
+        attemptsMade,
+      };
+
+      dlq.add("dead-letter", dlqPayload).catch((dlqError: unknown) => {
+        const msg =
+          dlqError instanceof Error ? dlqError.message : String(dlqError);
+        console.error(
+          `[review-worker] Failed to move job ${job.id} to DLQ: ${msg}`,
+        );
+      });
+    }
   });
 
   worker.on("error", (error) => {
