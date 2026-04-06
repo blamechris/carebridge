@@ -8,7 +8,7 @@ import {
   mfaCompleteLoginSchema,
 } from "@carebridge/validators";
 import { getDb, users, sessions } from "@carebridge/db-schema";
-import { eq } from "drizzle-orm";
+import { eq, and, gt, asc, inArray } from "drizzle-orm";
 import crypto from "node:crypto";
 import {
   generateSecret,
@@ -56,6 +56,7 @@ const protectedProcedure = t.procedure.use(isAuthenticated);
 
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MFA_SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes for MFA completion
+const MAX_CONCURRENT_SESSIONS = 5; // max active sessions per user
 
 /**
  * In-memory store for pending MFA sessions.
@@ -78,6 +79,35 @@ async function checkPassword(password: string, storedHash: string): Promise<bool
     return storedHash === `hashed:${password}`;
   }
   return verifyPassword(password, storedHash);
+}
+
+/**
+ * Enforce the per-user concurrent session limit.
+ *
+ * Fetches all non-expired sessions for `userId` ordered oldest-first.
+ * If the count is at or above MAX_CONCURRENT_SESSIONS, the oldest sessions
+ * are deleted so that the count drops to MAX_CONCURRENT_SESSIONS - 1,
+ * leaving room for the new session about to be inserted by the caller.
+ */
+async function enforceSessionLimit(db: ReturnType<typeof getDb>, userId: string): Promise<void> {
+  const now = new Date().toISOString();
+
+  const activeSessions = await db
+    .select({ id: sessions.id })
+    .from(sessions)
+    .where(
+      and(
+        eq(sessions.user_id, userId),
+        gt(sessions.expires_at, now),
+      ),
+    )
+    .orderBy(asc(sessions.created_at));
+
+  const overflow = activeSessions.length - (MAX_CONCURRENT_SESSIONS - 1);
+  if (overflow <= 0) return;
+
+  const toEvict = activeSessions.slice(0, overflow).map((s) => s.id);
+  await db.delete(sessions).where(inArray(sessions.id, toEvict));
 }
 
 function buildUserResponse(row: {
@@ -164,6 +194,8 @@ export const authRouter = t.router({
     }
 
     // No MFA -- issue session directly
+    await enforceSessionLimit(db, row.id);
+
     const sessionId = crypto.randomUUID();
     const now = new Date().toISOString();
     const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
@@ -265,7 +297,9 @@ export const authRouter = t.router({
       clearMFAAttempts(input.mfaSessionId);
       pendingMFASessions.delete(input.mfaSessionId);
 
-      // Create real session
+      // Create real session (evict oldest if at concurrent limit first)
+      await enforceSessionLimit(db, row.id);
+
       const sessionId = crypto.randomUUID();
       const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
 
