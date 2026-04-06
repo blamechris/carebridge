@@ -19,6 +19,16 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    # TLS configuration for production:
+    # command: >
+    #   redis-server
+    #   --tls-port 6380
+    #   --port 0
+    #   --tls-cert-file /tls/redis.crt
+    #   --tls-key-file /tls/redis.key
+    #   --tls-ca-cert-file /tls/ca.crt
+    # volumes:
+    #   - ./tls:/tls:ro
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
