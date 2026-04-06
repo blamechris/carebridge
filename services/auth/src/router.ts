@@ -31,6 +31,10 @@ import {
 } from "./password.js";
 import Redis from "ioredis";
 import { getRedisConnection } from "@carebridge/redis-config";
+import {
+  isTOTPCodeUsed,
+  markTOTPCodeUsed,
+} from "./totp-replay-guard.js";
 
 // ---------- Redis connection for MFA session state ----------
 
@@ -310,6 +314,14 @@ export const authRouter = t.router({
 
       // Try TOTP verification first (6-digit code)
       if (/^\d{6}$/.test(code) && row.mfa_secret) {
+        // Reject replayed codes before cryptographic verification
+        if (await isTOTPCodeUsed(row.id, code)) {
+          recordMFAAttempt(input.mfaSessionId);
+          throw new TRPCError({
+            code: "UNAUTHORIZED",
+            message: "Invalid MFA code.",
+          });
+        }
         verified = verifyTOTP(row.mfa_secret, code);
       }
 
@@ -338,6 +350,11 @@ export const authRouter = t.router({
           code: "UNAUTHORIZED",
           message: "Invalid MFA code.",
         });
+      }
+
+      // Mark TOTP code as used to prevent replay attacks
+      if (/^\d{6}$/.test(code)) {
+        await markTOTPCodeUsed(row.id, code);
       }
 
       // Successful verification -- clear rate-limit history and pending session
@@ -602,12 +619,23 @@ export const authRouter = t.router({
         });
       }
 
+      // Reject replayed TOTP codes
+      if (await isTOTPCodeUsed(ctx.user.id, input.code)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Invalid TOTP code. Please try again.",
+        });
+      }
+
       if (!verifyTOTP(row.mfa_secret, input.code)) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "Invalid TOTP code. Please try again.",
         });
       }
+
+      // Mark TOTP code as used to prevent replay attacks
+      await markTOTPCodeUsed(ctx.user.id, input.code);
 
       // Enable MFA
       await db
@@ -646,12 +674,23 @@ export const authRouter = t.router({
         });
       }
 
+      // Reject replayed TOTP codes
+      if (await isTOTPCodeUsed(ctx.user.id, input.code)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Invalid TOTP code.",
+        });
+      }
+
       if (!verifyTOTP(row.mfa_secret, input.code)) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "Invalid TOTP code.",
         });
       }
+
+      // Mark TOTP code as used to prevent replay attacks
+      await markTOTPCodeUsed(ctx.user.id, input.code);
 
       // Disable MFA and clear secrets
       await db
