@@ -4,6 +4,7 @@ import { getDb } from "@carebridge/db-schema";
 import { users, sessions, auditLog } from "@carebridge/db-schema";
 import { eq } from "drizzle-orm";
 import crypto from "node:crypto";
+import { verifyJWT, JWTError } from "@carebridge/auth";
 
 /** Hardcoded dev users for local development without a seeded database. */
 const DEV_USERS: Record<string, User> = {
@@ -105,12 +106,28 @@ export async function authMiddleware(
     return; // No credentials -- user stays null.
   }
 
-  // --- Look up session & user in the database ---
+  // --- Verify JWT signature and extract the internal session UUID ---
+  // All tokens issued by the auth service are signed JWTs whose `sid` claim
+  // holds the actual sessions.id UUID. We verify the signature here so that
+  // tampered or forged tokens are rejected before we touch the database.
+  let resolvedSessionId: string;
+  try {
+    const payload = verifyJWT(sessionId);
+    resolvedSessionId = payload.sid;
+  } catch (err) {
+    if (err instanceof JWTError) {
+      // Invalid or expired token -- treat as unauthenticated.
+      return;
+    }
+    throw err;
+  }
+
+  // --- Look up session & user in the database (revocation check) ---
   const db = getDb();
   const sessionRows = await db
     .select()
     .from(sessions)
-    .where(eq(sessions.id, sessionId))
+    .where(eq(sessions.id, resolvedSessionId))
     .limit(1);
 
   if (sessionRows.length === 0) {
@@ -122,7 +139,7 @@ export async function authMiddleware(
   // Check expiration.
   if (new Date(session.expires_at) < new Date()) {
     // Clean up the expired session from the database.
-    await db.delete(sessions).where(eq(sessions.id, sessionId));
+    await db.delete(sessions).where(eq(sessions.id, resolvedSessionId));
     return;
   }
 
@@ -130,7 +147,7 @@ export async function authMiddleware(
   await db
     .update(sessions)
     .set({ last_active_at: new Date().toISOString() })
-    .where(eq(sessions.id, sessionId));
+    .where(eq(sessions.id, resolvedSessionId));
 
   const userRows = await db
     .select()

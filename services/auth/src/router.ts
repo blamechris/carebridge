@@ -29,6 +29,7 @@ import {
   hashPassword,
   verifyPassword,
 } from "./password.js";
+import { signJWT } from "./jwt.js";
 
 // ---------- tRPC setup (mirrors api-gateway's context shape) ----------
 
@@ -56,6 +57,16 @@ const protectedProcedure = t.procedure.use(isAuthenticated);
 // ---------- Helpers ----------
 
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/**
+ * Issue a signed JWT that wraps the internal session UUID.
+ * The client stores and sends this token; the gateway verifies
+ * the signature and extracts the session ID for DB revocation checks.
+ */
+function issueToken(userId: string, sessionId: string, expiresAt: string): string {
+  const exp = Math.floor(new Date(expiresAt).getTime() / 1000);
+  return signJWT({ sub: userId, sid: sessionId, iat: Math.floor(Date.now() / 1000), exp });
+}
 const MFA_SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes for MFA completion
 const MAX_CONCURRENT_SESSIONS = 5; // max active sessions per user
 
@@ -213,7 +224,12 @@ export const authRouter = t.router({
 
     return {
       user: buildUserResponse(row),
-      session: { id: sessionId, user_id: row.id, expires_at: expiresAt, refresh_token: refreshToken },
+      session: {
+        id: issueToken(row.id, sessionId, expiresAt),
+        user_id: row.id,
+        expires_at: expiresAt,
+        refresh_token: refreshToken,
+      },
     };
   }),
 
@@ -319,7 +335,12 @@ export const authRouter = t.router({
 
       return {
         user: buildUserResponse(row),
-        session: { id: sessionId, user_id: row.id, expires_at: expiresAt, refresh_token: refreshToken },
+        session: {
+          id: issueToken(row.id, sessionId, expiresAt),
+          user_id: row.id,
+          expires_at: expiresAt,
+          refresh_token: refreshToken,
+        },
       };
     }),
 
@@ -401,7 +422,12 @@ export const authRouter = t.router({
 
       return {
         user: buildUserResponse(row),
-        session: { id: newSessionId, user_id: row.id, expires_at: expiresAt, refresh_token: newRefreshToken },
+        session: {
+          id: issueToken(row.id, newSessionId, expiresAt),
+          user_id: row.id,
+          expires_at: expiresAt,
+          refresh_token: newRefreshToken,
+        },
       };
     }),
 
