@@ -8,6 +8,13 @@
       "when": 1712361600000,
       "tag": "0000_initial_schema",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1712448000000,
+      "tag": "0001_care_team_assignments",
+      "breakpoints": true
     }
   ]
 }

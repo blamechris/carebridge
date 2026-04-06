@@ -4,6 +4,14 @@ import { getDb, careTeamAssignments } from "@carebridge/db-schema";
 import { eq, and, isNull } from "drizzle-orm";
 
 /**
+ * Type-guard: returns `true` when `request.user` has been populated by
+ * the auth middleware. Avoids an unsafe `as unknown as User` double-cast.
+ */
+function getUser(request: FastifyRequest): User | undefined {
+  return (request as FastifyRequest & { user?: User }).user;
+}
+
+/**
  * Verify that the authenticated user has an active care-team assignment
  * for the given patient. Returns true if an active assignment exists.
  */
@@ -47,9 +55,7 @@ export async function assertPatientAccess(
   reply: FastifyReply,
   patientId: string,
 ): Promise<boolean> {
-  const user = (request as unknown as Record<string, unknown>).user as
-    | User
-    | undefined;
+  const user = getUser(request);
 
   if (!user) {
     reply.code(401).send({ error: "Authentication required" });

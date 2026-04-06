@@ -42,6 +42,13 @@ export const allergies = pgTable("allergies", {
   index("idx_allergies_patient").on(table.patient_id),
 ]);
 
+/**
+ * Clinical care-team roster displayed on the patient chart.
+ * Tracks which providers are clinically responsible for the patient
+ * (primary, specialist, nurse, coordinator) and their specialty.
+ *
+ * NOT used for access control — see `care_team_assignments` for RBAC scoping.
+ */
 export const careTeamMembers = pgTable("care_team_members", {
   id: text("id").primaryKey(),
   patient_id: text("patient_id").notNull().references(() => patients.id),
@@ -56,6 +63,15 @@ export const careTeamMembers = pgTable("care_team_members", {
   index("idx_care_team_patient").on(table.patient_id, table.is_active),
 ]);
 
+/**
+ * RBAC access-control table: determines which users (clinicians) are
+ * authorized to view/modify a patient's records in the system.
+ * Queried by the api-gateway RBAC middleware (`assertPatientAccess`).
+ *
+ * NOT the same as `care_team_members`, which is the clinical care-team
+ * roster shown on the patient chart. A user may be on the access list
+ * without appearing on the clinical care team and vice-versa.
+ */
 export const careTeamAssignments = pgTable("care_team_assignments", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   user_id: text("user_id").notNull(),
