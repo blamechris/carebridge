@@ -37,10 +37,13 @@ export const auditLog = pgTable("audit_log", {
   action: text("action").notNull(), // read, create, update, delete
   resource_type: text("resource_type").notNull(), // patient, vital, note, etc.
   resource_id: text("resource_id").notNull(),
+  procedure_name: text("procedure_name"), // tRPC procedure name, e.g. "patients.getById"
+  patient_id: text("patient_id"), // explicit patient ID for HIPAA audit trails
   details: text("details"), // JSON string of additional context
   ip_address: text("ip_address"),
   timestamp: text("timestamp").notNull(),
 }, (table) => [
   index("idx_audit_user").on(table.user_id, table.timestamp),
   index("idx_audit_resource").on(table.resource_type, table.resource_id),
+  index("idx_audit_patient").on(table.patient_id, table.timestamp),
 ]);
