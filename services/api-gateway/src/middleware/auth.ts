@@ -1,8 +1,9 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
 import type { User } from "@carebridge/shared-types";
 import { getDb } from "@carebridge/db-schema";
-import { users, sessions } from "@carebridge/db-schema";
+import { users, sessions, auditLog } from "@carebridge/db-schema";
 import { eq } from "drizzle-orm";
+import crypto from "node:crypto";
 
 /** Hardcoded dev users for local development without a seeded database. */
 const DEV_USERS: Record<string, User> = {
@@ -146,6 +147,26 @@ export async function authMiddleware(
   // Reject deactivated users and clean up their session.
   if (!row.is_active) {
     await db.delete(sessions).where(eq(sessions.id, session.id));
+
+    // Non-blocking audit log for deactivated-user session rejection.
+    db.insert(auditLog)
+      .values({
+        id: crypto.randomUUID(),
+        user_id: row.id,
+        action: "session_rejected_inactive",
+        resource_type: "session",
+        resource_id: session.id,
+        details: JSON.stringify({
+          reason: "User account is deactivated",
+          ip_address: request.ip,
+        }),
+        ip_address: request.ip,
+        timestamp: new Date().toISOString(),
+      })
+      .catch(() => {
+        // Audit logging must never block or crash the rejection flow.
+      });
+
     _reply.code(401).send({ error: "Session expired" });
     return;
   }
