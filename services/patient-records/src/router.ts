@@ -1,6 +1,6 @@
 import { initTRPC } from "@trpc/server";
 import { z } from "zod";
-import { getDb } from "@carebridge/db-schema";
+import { getDb, hmacForIndex } from "@carebridge/db-schema";
 import { patients, diagnoses, allergies, careTeamMembers } from "@carebridge/db-schema";
 import { createPatientSchema, updatePatientSchema } from "@carebridge/validators";
 import { eq } from "drizzle-orm";
@@ -12,7 +12,8 @@ export const patientRecordsRouter = t.router({
   create: t.procedure.input(createPatientSchema).mutation(async ({ input }) => {
     const db = getDb();
     const now = new Date().toISOString();
-    const patient = { id: crypto.randomUUID(), ...input, created_at: now, updated_at: now };
+    const mrn_hmac = input.mrn ? hmacForIndex(input.mrn) : undefined;
+    const patient = { id: crypto.randomUUID(), ...input, mrn_hmac, created_at: now, updated_at: now };
     await db.insert(patients).values(patient);
     return patient;
   }),
@@ -22,7 +23,9 @@ export const patientRecordsRouter = t.router({
     .mutation(async ({ input }) => {
       const { id, ...data } = input;
       const db = getDb();
-      await db.update(patients).set({ ...data, updated_at: new Date().toISOString() }).where(eq(patients.id, id));
+      const mrn_hmac = data.mrn !== undefined ? (data.mrn ? hmacForIndex(data.mrn) : null) : undefined;
+      const updates = { ...data, ...(mrn_hmac !== undefined ? { mrn_hmac } : {}), updated_at: new Date().toISOString() };
+      await db.update(patients).set(updates).where(eq(patients.id, id));
       return { id, ...data };
     }),
 

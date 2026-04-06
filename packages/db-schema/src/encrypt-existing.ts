@@ -11,7 +11,7 @@
  * Safe to run multiple times — already-encrypted values are skipped.
  */
 import postgres from "postgres";
-import { encrypt } from "./encryption.js";
+import { encrypt, decrypt, hmacForIndex } from "./encryption.js";
 
 const ENCRYPTED_PATTERN = /^[0-9a-f]{32}:[0-9a-f]{32}:[0-9a-f]+$/;
 
@@ -41,7 +41,7 @@ async function main() {
   const sql = postgres(databaseUrl);
 
   try {
-    const rows = await sql`SELECT id, ${sql(PHI_COLUMNS as unknown as string[])} FROM patients`;
+    const rows = await sql`SELECT id, mrn_hmac, ${sql(PHI_COLUMNS as unknown as string[])} FROM patients`;
 
     console.log(`Found ${rows.length} patient rows to process.`);
 
@@ -55,6 +55,14 @@ async function main() {
         if (value != null && typeof value === "string" && !isAlreadyEncrypted(value)) {
           updates[col] = encrypt(value, key);
         }
+      }
+
+      // Backfill mrn_hmac for rows that have an MRN but no HMAC yet
+      if (row.mrn != null && row.mrn_hmac == null) {
+        const plainMrn = isAlreadyEncrypted(row.mrn as string)
+          ? decrypt(row.mrn as string, key)
+          : row.mrn as string;
+        updates.mrn_hmac = hmacForIndex(plainMrn);
       }
 
       if (Object.keys(updates).length > 0) {
