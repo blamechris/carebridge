@@ -40,6 +40,8 @@ let latestSelectChain: ReturnType<typeof makeSelectChain>;
 
 const deletedSessionIds: string[] = [];
 
+const insertedAuditEntries: unknown[] = [];
+
 const mockDb = {
   select: vi.fn(() => {
     latestSelectChain = makeSelectChain();
@@ -52,12 +54,24 @@ const mockDb = {
       return Promise.resolve();
     }),
   })),
+  insert: vi.fn(() => ({
+    values: vi.fn((entry: unknown) => {
+      insertedAuditEntries.push(entry);
+      return Promise.resolve();
+    }),
+  })),
+  update: vi.fn(() => ({
+    set: vi.fn(() => ({
+      where: vi.fn(() => Promise.resolve()),
+    })),
+  })),
 };
 
 vi.mock("@carebridge/db-schema", () => ({
   getDb: () => mockDb,
   users: { id: "users.id" },
   sessions: { id: "sessions.id", user_id: "sessions.user_id" },
+  auditLog: { id: "audit_log.id" },
 }));
 
 vi.mock("drizzle-orm", () => ({
@@ -118,6 +132,7 @@ describe("authMiddleware", () => {
     sessionRows = [];
     userRows = [];
     deletedSessionIds.length = 0;
+    insertedAuditEntries.length = 0;
   });
 
   it("allows an active user with a valid session", async () => {
@@ -193,5 +208,35 @@ describe("authMiddleware", () => {
 
     const user = (request as unknown as Record<string, unknown>).user;
     expect(user).toBeUndefined();
+  });
+
+  it("emits an audit log entry when rejecting a deactivated user session", async () => {
+    sessionRows = [{ id: "sess-inactive", user_id: "user-2", expires_at: FUTURE }];
+    userRows = [inactiveUser];
+
+    const request = makeRequest({
+      headers: { authorization: "Bearer sess-inactive" },
+      ip: "192.168.1.42",
+    });
+    const reply = makeReply();
+
+    await authMiddleware(request, reply);
+
+    // Allow the non-blocking audit insert to settle.
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(mockDb.insert).toHaveBeenCalled();
+    expect(insertedAuditEntries.length).toBe(1);
+
+    const entry = insertedAuditEntries[0] as Record<string, unknown>;
+    expect(entry.user_id).toBe("user-2");
+    expect(entry.action).toBe("session_rejected_inactive");
+    expect(entry.resource_type).toBe("session");
+    expect(entry.resource_id).toBe("sess-inactive");
+    expect(entry.ip_address).toBe("192.168.1.42");
+
+    const details = JSON.parse(entry.details as string);
+    expect(details.reason).toBe("User account is deactivated");
+    expect(details.ip_address).toBe("192.168.1.42");
   });
 });
