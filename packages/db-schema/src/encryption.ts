@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHmac, randomBytes } from "node:crypto";
 import { customType } from "drizzle-orm/pg-core";
 
 const ALGORITHM = "aes-256-gcm";
@@ -102,6 +102,26 @@ export function decryptWithFallback(encrypted: string, currentKey: string | Buff
     }
     throw err;
   }
+}
+
+/**
+ * Compute a deterministic HMAC-SHA256 of a value for use as a unique index.
+ * Non-deterministic encryption (random IV) prevents the DB from enforcing
+ * uniqueness on ciphertext, so we store a separate HMAC digest that is
+ * stable for the same input, enabling a unique constraint in the schema.
+ *
+ * Uses PHI_HMAC_KEY when available; falls back to PHI_ENCRYPTION_KEY.
+ * In production these should be separate keys.
+ */
+export function hmacForIndex(value: string): string {
+  const key = process.env.PHI_HMAC_KEY ?? process.env.PHI_ENCRYPTION_KEY;
+  if (!key) {
+    throw new Error(
+      "Neither PHI_HMAC_KEY nor PHI_ENCRYPTION_KEY environment variable is set. " +
+        "At least one is required to compute HMAC indexes."
+    );
+  }
+  return createHmac("sha256", key).update(value).digest("hex");
 }
 
 export const encryptedText = customType<{ data: string; driverData: string }>({

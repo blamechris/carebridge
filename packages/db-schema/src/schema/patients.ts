@@ -9,11 +9,11 @@ export const patients = pgTable("patients", {
   biological_sex: text("biological_sex").default("unknown"),
   diagnosis: text("diagnosis"),
   notes: text("notes"),
-  // NOTE: Non-deterministic encryption (random IV per write) means identical MRNs produce
-  // different ciphertexts. The DB unique constraint cannot enforce MRN uniqueness on the
-  // ciphertext. This is an intentional security trade-off — application-level dedup is
-  // required before insert to prevent duplicate MRNs.
+  // Non-deterministic encryption (random IV per write) means identical MRNs produce
+  // different ciphertexts. The `mrn_hmac` column stores a deterministic HMAC-SHA256
+  // digest so the DB unique constraint can enforce MRN uniqueness.
   mrn: encryptedText("mrn"),
+  mrn_hmac: text("mrn_hmac").unique(),
   insurance_id: encryptedText("insurance_id"),
   emergency_contact_name: encryptedText("emergency_contact_name"),
   emergency_contact_phone: encryptedText("emergency_contact_phone"),

@@ -8,6 +8,7 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "@carebridge/db-schema";
+import { hmacForIndex } from "@carebridge/db-schema";
 import crypto from "node:crypto";
 
 const connectionString = process.env.DATABASE_URL
@@ -88,6 +89,7 @@ async function seed() {
     diagnosis: "Stage III Breast Cancer, DVT right lower extremity",
     notes: "Cancer-associated hypercoagulable state. IVC filter placed Feb 2026.",
     mrn: "MCH-2026-0042",
+    mrn_hmac: hmacForIndex("MCH-2026-0042"),
     primary_provider_id: drSmith,
     created_at: daysAgo(90),
     updated_at: now(),
@@ -200,6 +202,7 @@ async function seed() {
     biological_sex: "male",
     diagnosis: "Type 2 Diabetes, Hypertension",
     mrn: "RWL-2026-0108",
+    mrn_hmac: hmacForIndex("RWL-2026-0108"),
     primary_provider_id: drSmith,
     created_at: daysAgo(60),
     updated_at: now(),
