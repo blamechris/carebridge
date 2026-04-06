@@ -1,0 +1,23 @@
+{
+  "name": "@carebridge/portal-shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./trpc": "./src/trpc.ts",
+    "./auth": "./src/auth.tsx",
+    "./providers": "./src/providers.tsx"
+  },
+  "dependencies": {
+    "@trpc/client": "^11.0.0",
+    "@trpc/react-query": "^11.0.0",
+    "@trpc/server": "^11.0.0",
+    "@tanstack/react-query": "^5.60.0",
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@carebridge/api-gateway": "workspace:*",
+    "@types/react": "^19.0.0",
+    "typescript": "^5.7.0"
+  }
+}

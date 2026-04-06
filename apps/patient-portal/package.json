@@ -9,6 +9,7 @@
     "clean": "rm -rf .next"
   },
   "dependencies": {
+    "@carebridge/portal-shared": "workspace:*",
     "@carebridge/shared-types": "workspace:*",
     "@trpc/client": "^11.0.0",
     "@trpc/react-query": "^11.0.0",

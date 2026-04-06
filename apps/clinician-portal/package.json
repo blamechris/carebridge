@@ -10,6 +10,7 @@
     "clean": "rm -rf .next"
   },
   "dependencies": {
+    "@carebridge/portal-shared": "workspace:*",
     "@carebridge/shared-types": "workspace:*",
     "@carebridge/validators": "workspace:*",
     "@trpc/client": "^11.0.0",
