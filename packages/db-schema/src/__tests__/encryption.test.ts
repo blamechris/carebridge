@@ -1,7 +1,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { encrypt, decrypt, getKey, _resetKeyCache } from "../encryption.js";
+import { encrypt, decrypt, decryptWithFallback, getKey, getPreviousKey, _resetKeyCache } from "../encryption.js";
 
 const TEST_KEY = randomBytes(32).toString("hex");
 
@@ -125,5 +125,98 @@ describe("missing PHI_ENCRYPTION_KEY", () => {
       () => getKey(),
       /PHI_ENCRYPTION_KEY environment variable is not set/
     );
+  });
+});
+
+describe("key rotation — decryptWithFallback", () => {
+  const OLD_KEY = randomBytes(32).toString("hex");
+  const NEW_KEY = randomBytes(32).toString("hex");
+
+  it("decrypts data encrypted with the current key", () => {
+    const plaintext = "sensitive-data-123";
+    const encrypted = encrypt(plaintext, NEW_KEY);
+    const result = decryptWithFallback(encrypted, NEW_KEY, OLD_KEY);
+    assert.equal(result, plaintext);
+  });
+
+  it("falls back to previous key when current key fails", () => {
+    const plaintext = "old-encrypted-data";
+    const encrypted = encrypt(plaintext, OLD_KEY);
+
+    // Decrypt with NEW_KEY as current, OLD_KEY as fallback — should succeed
+    const result = decryptWithFallback(encrypted, NEW_KEY, OLD_KEY);
+    assert.equal(result, plaintext);
+  });
+
+  it("throws when neither key can decrypt", () => {
+    const unrelatedKey = randomBytes(32).toString("hex");
+    const encrypted = encrypt("test", unrelatedKey);
+
+    assert.throws(
+      () => decryptWithFallback(encrypted, NEW_KEY, OLD_KEY),
+      (err: unknown) => err instanceof Error,
+      "Should throw when neither key works"
+    );
+  });
+
+  it("throws when no previous key and current key fails", () => {
+    const encrypted = encrypt("test", OLD_KEY);
+
+    assert.throws(
+      () => decryptWithFallback(encrypted, NEW_KEY),
+      (err: unknown) => err instanceof Error,
+      "Should throw when current key fails and no fallback"
+    );
+  });
+
+  it("supports full rotation workflow: encrypt old → decrypt with new+fallback → re-encrypt new", () => {
+    const plaintext = "patient-mrn-12345";
+
+    // Step 1: Data was encrypted with the old key
+    const encryptedWithOld = encrypt(plaintext, OLD_KEY);
+
+    // Step 2: After rotation, decrypt using new key with old as fallback
+    const decrypted = decryptWithFallback(encryptedWithOld, NEW_KEY, OLD_KEY);
+    assert.equal(decrypted, plaintext);
+
+    // Step 3: Re-encrypt with the new key
+    const reEncrypted = encrypt(decrypted, NEW_KEY);
+
+    // Step 4: Now it decrypts with just the new key
+    const finalDecrypt = decrypt(reEncrypted, NEW_KEY);
+    assert.equal(finalDecrypt, plaintext);
+  });
+});
+
+describe("getPreviousKey reads PHI_ENCRYPTION_KEY_PREVIOUS from env", () => {
+  const originalPrev = process.env.PHI_ENCRYPTION_KEY_PREVIOUS;
+
+  after(() => {
+    _resetKeyCache();
+    if (originalPrev !== undefined) {
+      process.env.PHI_ENCRYPTION_KEY_PREVIOUS = originalPrev;
+    } else {
+      delete process.env.PHI_ENCRYPTION_KEY_PREVIOUS;
+    }
+  });
+
+  it("returns null when PHI_ENCRYPTION_KEY_PREVIOUS is not set", () => {
+    _resetKeyCache();
+    delete process.env.PHI_ENCRYPTION_KEY_PREVIOUS;
+    assert.equal(getPreviousKey(), null);
+  });
+
+  it("returns a Buffer when a valid key is set", () => {
+    _resetKeyCache();
+    process.env.PHI_ENCRYPTION_KEY_PREVIOUS = randomBytes(32).toString("hex");
+    const key = getPreviousKey();
+    assert.ok(Buffer.isBuffer(key));
+    assert.equal(key!.length, 32);
+  });
+
+  it("throws on invalid key length", () => {
+    _resetKeyCache();
+    process.env.PHI_ENCRYPTION_KEY_PREVIOUS = "aabbcc";
+    assert.throws(() => getPreviousKey(), /must be exactly 32 bytes/);
   });
 });
