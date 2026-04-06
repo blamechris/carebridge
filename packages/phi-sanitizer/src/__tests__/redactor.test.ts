@@ -4,6 +4,7 @@ import {
   bandAge,
   sanitizeFreeText,
   rehydrate,
+  redactAgeInFreeText,
   redactClinicalText,
 } from "../redactor.js";
 
@@ -119,6 +120,86 @@ describe("rehydrate", () => {
   });
 });
 
+describe("redactAgeInFreeText", () => {
+  it("redacts '62yo' pattern", () => {
+    expect(redactAgeInFreeText("62yo male presenting with chest pain", 62)).toBe(
+      "early 60s male presenting with chest pain",
+    );
+  });
+
+  it("redacts '62 yo' pattern (with space)", () => {
+    expect(redactAgeInFreeText("62 yo female with cough", 62)).toBe(
+      "early 60s female with cough",
+    );
+  });
+
+  it("redacts '62y/o' pattern", () => {
+    expect(redactAgeInFreeText("62y/o patient admitted", 62)).toBe(
+      "early 60s patient admitted",
+    );
+  });
+
+  it("redacts '62 y/o' pattern (with space)", () => {
+    expect(redactAgeInFreeText("62 y/o male with DVT", 62)).toBe(
+      "early 60s male with DVT",
+    );
+  });
+
+  it("redacts '62-year-old' pattern", () => {
+    expect(redactAgeInFreeText("62-year-old patient", 62)).toBe(
+      "early 60s patient",
+    );
+  });
+
+  it("redacts '62 year old' pattern", () => {
+    expect(redactAgeInFreeText("62 year old male", 62)).toBe(
+      "early 60s male",
+    );
+  });
+
+  it("redacts '62 years old' pattern", () => {
+    expect(redactAgeInFreeText("patient is 62 years old", 62)).toBe(
+      "patient is early 60s",
+    );
+  });
+
+  it("is case-insensitive", () => {
+    expect(redactAgeInFreeText("62 Year Old patient", 62)).toBe(
+      "early 60s patient",
+    );
+    expect(redactAgeInFreeText("62YO male", 62)).toBe("early 60s male");
+    expect(redactAgeInFreeText("62 Y/O female", 62)).toBe("early 60s female");
+  });
+
+  it("does not redact ages that differ from the patient age", () => {
+    const text = "prescribed for patients 18-65, this 62yo male";
+    const result = redactAgeInFreeText(text, 62);
+    expect(result).toBe("prescribed for patients 18-65, this early 60s male");
+    expect(result).toContain("18-65");
+  });
+
+  it("does not redact unrelated numeric values", () => {
+    const text = "BP 120/80, HR 62, 62yo patient";
+    const result = redactAgeInFreeText(text, 62);
+    expect(result).toContain("HR 62");
+    expect(result).toContain("BP 120/80");
+    expect(result).not.toContain("62yo");
+  });
+
+  it("handles multiple occurrences of the same age", () => {
+    const text = "62yo male, previously noted as 62 y/o";
+    const result = redactAgeInFreeText(text, 62);
+    expect(result).not.toContain("62");
+    expect(result).toBe("early 60s male, previously noted as early 60s");
+  });
+
+  it("bands different age decades correctly", () => {
+    expect(redactAgeInFreeText("45yo", 45)).toBe("mid 40s");
+    expect(redactAgeInFreeText("78 y/o", 78)).toBe("late 70s");
+    expect(redactAgeInFreeText("21-year-old", 21)).toBe("early 20s");
+  });
+});
+
 describe("redactClinicalText (full pipeline)", () => {
   it("tracks redacted fields in audit trail", () => {
     const text =
@@ -133,6 +214,27 @@ describe("redactClinicalText (full pipeline)", () => {
     expect(result.auditTrail.fieldsRedacted).toBeGreaterThanOrEqual(3);
     expect(result.redactedText).not.toContain("Dr. Smith");
     expect(result.redactedText).not.toContain("62-year-old");
+    expect(result.redactedText).toContain("early 60s");
+  });
+
+  it("redacts clinical shorthand age patterns in the pipeline", () => {
+    const text = "62yo male seen by Dr. Smith for DVT evaluation";
+    const result = redactClinicalText(text, {
+      providerNames: ["Dr. Smith"],
+      patientAge: 62,
+    });
+
+    expect(result.redactedText).not.toContain("62yo");
+    expect(result.redactedText).toContain("early 60s");
+    expect(result.redactedText).not.toContain("Dr. Smith");
+    expect(result.auditTrail.agesRedacted).toBe(1);
+  });
+
+  it("redacts y/o pattern in the pipeline", () => {
+    const text = "62 y/o patient presenting with headache";
+    const result = redactClinicalText(text, { patientAge: 62 });
+
+    expect(result.redactedText).not.toContain("62");
     expect(result.redactedText).toContain("early 60s");
   });
 
