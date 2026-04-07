@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const flagSeveritySchema = z.enum(["critical", "warning", "info"]);
 export const flagCategorySchema = z.enum([
-  "cross-specialty", "drug-interaction", "care-gap",
+  "cross-specialty", "drug-interaction", "medication-safety", "care-gap",
   "critical-value", "trend-concern", "documentation-discrepancy",
 ]);
 export const flagStatusSchema = z.enum(["open", "acknowledged", "resolved", "dismissed", "escalated"]);
