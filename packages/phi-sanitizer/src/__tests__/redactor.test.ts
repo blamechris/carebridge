@@ -6,6 +6,12 @@ import {
   rehydrate,
   redactAgeInFreeText,
   redactClinicalText,
+  redactPatientName,
+  redactMRN,
+  redactDates,
+  redactFacilityNames,
+  redactPhones,
+  redactAddresses,
 } from "../redactor.js";
 
 describe("redactProviderNames", () => {
@@ -244,5 +250,149 @@ describe("redactClinicalText (full pipeline)", () => {
 
     expect(result.redactedText).toContain("[FILTERED]");
     expect(result.auditTrail.freeTextSanitized).toBe(1);
+  });
+});
+
+describe("redactPatientName", () => {
+  it("replaces full name case-insensitively with [PATIENT]", () => {
+    const { redactedText, count } = redactPatientName(
+      "Jane Doe presented today. jane doe was febrile.",
+      "Jane Doe",
+    );
+    expect(redactedText).not.toMatch(/jane doe/i);
+    expect(redactedText).toMatch(/\[PATIENT\]/);
+    expect(count).toBeGreaterThanOrEqual(2);
+  });
+
+  it("redacts first and last name tokens individually", () => {
+    const { redactedText } = redactPatientName(
+      "Jane came back. Ms. Doe reported pain.",
+      "Jane Doe",
+    );
+    expect(redactedText).not.toMatch(/\bJane\b/);
+    expect(redactedText).not.toMatch(/\bDoe\b/);
+  });
+
+  it("handles empty patient name gracefully", () => {
+    const { redactedText, count } = redactPatientName("hello world", "");
+    expect(redactedText).toBe("hello world");
+    expect(count).toBe(0);
+  });
+});
+
+describe("redactMRN", () => {
+  it("redacts labeled MRN values", () => {
+    const { redactedText, count } = redactMRN("Patient MRN: 12345678 admitted");
+    expect(redactedText).toContain("[MRN]");
+    expect(redactedText).not.toContain("12345678");
+    expect(count).toBe(1);
+  });
+
+  it("redacts MRN with hash sign", () => {
+    const { redactedText } = redactMRN("mrn #987654 confirmed");
+    expect(redactedText).toContain("[MRN]");
+    expect(redactedText).not.toContain("987654");
+  });
+
+  it("redacts context-based patient id numbers", () => {
+    const { redactedText } = redactMRN("Patient ID: 1234567");
+    expect(redactedText).toContain("[MRN]");
+    expect(redactedText).not.toContain("1234567");
+  });
+});
+
+describe("redactDates", () => {
+  it("redacts MM/DD/YYYY format", () => {
+    const { redactedText, count } = redactDates("Visit on 03/15/2025 was routine.");
+    expect(redactedText).not.toContain("03/15/2025");
+    expect(count).toBe(1);
+  });
+
+  it("redacts YYYY-MM-DD format", () => {
+    const { redactedText } = redactDates("Lab drawn 2025-06-10 normal.");
+    expect(redactedText).not.toContain("2025-06-10");
+    expect(redactedText).toContain("[");
+  });
+
+  it("redacts Month DD, YYYY format", () => {
+    const { redactedText } = redactDates("Started on January 5, 2024 treatment.");
+    expect(redactedText).not.toContain("January 5, 2024");
+  });
+
+  it("computes days-ago when referenceDate provided", () => {
+    const ref = new Date("2025-06-20T00:00:00Z");
+    const { redactedText } = redactDates("Lab drawn 2025-06-10 normal.", ref);
+    expect(redactedText).toContain("days ago");
+  });
+});
+
+describe("redactFacilityNames", () => {
+  it("replaces facility names with [FACILITY]", () => {
+    const { redactedText, count } = redactFacilityNames(
+      "Admitted to Mercy General Hospital yesterday.",
+      ["Mercy General Hospital"],
+    );
+    expect(redactedText).toContain("[FACILITY]");
+    expect(redactedText).not.toContain("Mercy General Hospital");
+    expect(count).toBe(1);
+  });
+});
+
+describe("redactPhones", () => {
+  it("redacts (xxx) xxx-xxxx phone format", () => {
+    const { redactedText, count } = redactPhones("Call (555) 123-4567 for follow-up.");
+    expect(redactedText).toContain("[PHONE]");
+    expect(redactedText).not.toContain("555");
+    expect(count).toBe(1);
+  });
+
+  it("redacts xxx-xxx-xxxx phone format", () => {
+    const { redactedText } = redactPhones("Contact 555-123-4567.");
+    expect(redactedText).toContain("[PHONE]");
+  });
+
+  it("redacts xxx-xxxx short phone format", () => {
+    const { redactedText } = redactPhones("Ext 123-4567 available.");
+    expect(redactedText).toContain("[PHONE]");
+  });
+});
+
+describe("redactAddresses", () => {
+  it("redacts basic US street addresses", () => {
+    const { redactedText, count } = redactAddresses(
+      "Patient lives at 123 Main Street near the park.",
+    );
+    expect(redactedText).toContain("[ADDRESS]");
+    expect(redactedText).not.toContain("123 Main Street");
+    expect(count).toBe(1);
+  });
+
+  it("handles abbreviated suffixes", () => {
+    const { redactedText } = redactAddresses("Home is 456 Oak Ave apartment B.");
+    expect(redactedText).toContain("[ADDRESS]");
+  });
+});
+
+describe("redactClinicalText — full pipeline expansion", () => {
+  it("redacts all PHI categories through the pipeline", () => {
+    const text =
+      "Jane Doe (MRN: 12345678) seen on 03/15/2025 at Mercy General Hospital. " +
+      "Call (555) 123-4567. Address: 789 Elm Drive.";
+    const result = redactClinicalText(text, {
+      patientName: "Jane Doe",
+      facilityNames: ["Mercy General Hospital"],
+    });
+    expect(result.redactedText).not.toContain("Jane Doe");
+    expect(result.redactedText).not.toContain("12345678");
+    expect(result.redactedText).not.toContain("03/15/2025");
+    expect(result.redactedText).not.toContain("Mercy General Hospital");
+    expect(result.redactedText).not.toContain("(555) 123-4567");
+    expect(result.redactedText).not.toContain("789 Elm Drive");
+    expect(result.auditTrail.patientNamesRedacted).toBeGreaterThan(0);
+    expect(result.auditTrail.mrnsRedacted).toBeGreaterThan(0);
+    expect(result.auditTrail.datesRedacted).toBeGreaterThan(0);
+    expect(result.auditTrail.facilitiesRedacted).toBeGreaterThan(0);
+    expect(result.auditTrail.phonesRedacted).toBeGreaterThan(0);
+    expect(result.auditTrail.addressesRedacted).toBeGreaterThan(0);
   });
 });

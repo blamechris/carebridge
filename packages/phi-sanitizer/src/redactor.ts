@@ -15,7 +15,24 @@ export interface AuditTrail {
   providersRedacted: number;
   agesRedacted: number;
   freeTextSanitized: number;
+  patientNamesRedacted: number;
+  mrnsRedacted: number;
+  datesRedacted: number;
+  facilitiesRedacted: number;
+  phonesRedacted: number;
+  addressesRedacted: number;
 }
+
+const MRN_LABELED = /\bMRN[:\s#]*\d{6,12}\b/gi;
+const MRN_CONTEXT = /\b(?:patient|pt|medical\s+record|record|id)\s*(?:#|number|no\.?|:)?\s*(\d{7,10})\b/gi;
+const DATE_MDY = /\b(0?[1-9]|1[0-2])[\/\-](0?[1-9]|[12]\d|3[01])[\/\-](\d{4}|\d{2})\b/g;
+const DATE_ISO = /\b(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])\b/g;
+const DATE_MONTH_NAME =
+  /\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+\d{1,2},?\s+\d{4}\b/gi;
+const PHONE_PAREN = /\(\d{3}\)\s*\d{3}-\d{4}/g;
+const PHONE_DASH = /\b\d{3}-\d{3}-\d{4}\b/g;
+const PHONE_SHORT = /\b\d{3}-\d{4}\b/g;
+const ADDRESS = /\b\d+\s+[A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Boulevard|Blvd|Lane|Ln|Court|Ct|Way)\b\.?/g;
 
 // ChatML / Llama delimiter patterns that could be used for injection
 const INJECTION_PATTERNS = [
@@ -143,6 +160,138 @@ export function redactAgeInFreeText(text: string, age: number): string {
 }
 
 /**
+ * Redact a single patient name (case-insensitive) and simple variants.
+ * Also redacts individual name tokens (first/last) when the full name has
+ * 2+ parts, so references like "Ms. Doe" or "John's labs" are covered.
+ */
+export function redactPatientName(text: string, patientName: string): { redactedText: string; count: number } {
+  if (!patientName || patientName.trim().length === 0) {
+    return { redactedText: text, count: 0 };
+  }
+  const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const parts = patientName.trim().split(/\s+/).filter((p) => p.length >= 2);
+  // Longest first so full name matches before single-token matches
+  const candidates = [patientName.trim(), ...parts].sort((a, b) => b.length - a.length);
+  let result = text;
+  let count = 0;
+  const seen = new Set<string>();
+  for (const cand of candidates) {
+    const key = cand.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const regex = new RegExp(`\\b${escape(cand)}\\b`, "gi");
+    const matches = result.match(regex);
+    if (matches && matches.length > 0) {
+      result = result.replace(regex, "[PATIENT]");
+      count += matches.length;
+    }
+  }
+  return { redactedText: result, count };
+}
+
+/**
+ * Redact MRN patterns (labeled and context-based).
+ */
+export function redactMRN(text: string): { redactedText: string; count: number } {
+  let count = 0;
+  let result = text.replace(MRN_LABELED, () => {
+    count++;
+    return "[MRN]";
+  });
+  result = result.replace(MRN_CONTEXT, (match, digits, offset: number, full: string) => {
+    // Avoid double-replacing content already inside a [MRN] token
+    const prefix = match.slice(0, match.length - String(digits).length);
+    count++;
+    return `${prefix}[MRN]`;
+  });
+  return { redactedText: result, count };
+}
+
+/**
+ * Redact specific date formats with a relative "[DATE]" marker. If a
+ * referenceDate is provided, substitute "[N days ago]" when the match
+ * parses to a real date in the past.
+ */
+export function redactDates(
+  text: string,
+  referenceDate?: Date,
+): { redactedText: string; count: number } {
+  let count = 0;
+  const replaceWith = (matched: string): string => {
+    count++;
+    if (!referenceDate) return "[DATE]";
+    const parsed = new Date(matched);
+    if (isNaN(parsed.getTime())) return "[DATE]";
+    const days = Math.floor(
+      (referenceDate.getTime() - parsed.getTime()) / (24 * 60 * 60 * 1000),
+    );
+    if (days < 0) return "[DATE]";
+    if (days === 0) return "[today]";
+    return `[${days} days ago]`;
+  };
+
+  let result = text.replace(DATE_ISO, (m) => replaceWith(m));
+  result = result.replace(DATE_MONTH_NAME, (m) => replaceWith(m));
+  result = result.replace(DATE_MDY, (m) => replaceWith(m));
+  return { redactedText: result, count };
+}
+
+/**
+ * Redact facility names (case-insensitive, exact substring match).
+ */
+export function redactFacilityNames(
+  text: string,
+  facilityNames: string[],
+): { redactedText: string; count: number } {
+  let result = text;
+  let count = 0;
+  const sorted = [...facilityNames].sort((a, b) => b.length - a.length);
+  for (const name of sorted) {
+    if (!name || name.trim().length === 0) continue;
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(escaped, "gi");
+    const matches = result.match(regex);
+    if (matches && matches.length > 0) {
+      result = result.replace(regex, "[FACILITY]");
+      count += matches.length;
+    }
+  }
+  return { redactedText: result, count };
+}
+
+/**
+ * Redact US phone numbers.
+ */
+export function redactPhones(text: string): { redactedText: string; count: number } {
+  let count = 0;
+  let result = text.replace(PHONE_PAREN, () => {
+    count++;
+    return "[PHONE]";
+  });
+  result = result.replace(PHONE_DASH, () => {
+    count++;
+    return "[PHONE]";
+  });
+  result = result.replace(PHONE_SHORT, () => {
+    count++;
+    return "[PHONE]";
+  });
+  return { redactedText: result, count };
+}
+
+/**
+ * Redact simple US street addresses.
+ */
+export function redactAddresses(text: string): { redactedText: string; count: number } {
+  let count = 0;
+  const result = text.replace(ADDRESS, () => {
+    count++;
+    return "[ADDRESS]";
+  });
+  return { redactedText: result, count };
+}
+
+/**
  * Full redaction pipeline: sanitize free text, redact provider names,
  * band ages, and produce an audit trail.
  */
@@ -151,6 +300,9 @@ export function redactClinicalText(
   options: {
     providerNames?: string[];
     patientAge?: number;
+    patientName?: string;
+    facilityNames?: string[];
+    referenceDate?: Date;
   } = {},
 ): RedactionResult {
   const audit: AuditTrail = {
@@ -158,6 +310,12 @@ export function redactClinicalText(
     providersRedacted: 0,
     agesRedacted: 0,
     freeTextSanitized: 0,
+    patientNamesRedacted: 0,
+    mrnsRedacted: 0,
+    datesRedacted: 0,
+    facilitiesRedacted: 0,
+    phonesRedacted: 0,
+    addressesRedacted: 0,
   };
 
   // Step 1: sanitize free text
@@ -186,8 +344,58 @@ export function redactClinicalText(
     }
   }
 
+  // Step 4: redact patient name
+  if (options.patientName) {
+    const r = redactPatientName(current, options.patientName);
+    current = r.redactedText;
+    audit.patientNamesRedacted = r.count;
+  }
+
+  // Step 5: redact facility names
+  if (options.facilityNames && options.facilityNames.length > 0) {
+    const r = redactFacilityNames(current, options.facilityNames);
+    current = r.redactedText;
+    audit.facilitiesRedacted = r.count;
+  }
+
+  // Step 6: redact MRNs
+  {
+    const r = redactMRN(current);
+    current = r.redactedText;
+    audit.mrnsRedacted = r.count;
+  }
+
+  // Step 7: redact specific dates
+  {
+    const r = redactDates(current, options.referenceDate);
+    current = r.redactedText;
+    audit.datesRedacted = r.count;
+  }
+
+  // Step 8: redact phone numbers
+  {
+    const r = redactPhones(current);
+    current = r.redactedText;
+    audit.phonesRedacted = r.count;
+  }
+
+  // Step 9: redact addresses
+  {
+    const r = redactAddresses(current);
+    current = r.redactedText;
+    audit.addressesRedacted = r.count;
+  }
+
   audit.fieldsRedacted =
-    audit.providersRedacted + audit.agesRedacted + audit.freeTextSanitized;
+    audit.providersRedacted +
+    audit.agesRedacted +
+    audit.freeTextSanitized +
+    audit.patientNamesRedacted +
+    audit.mrnsRedacted +
+    audit.datesRedacted +
+    audit.facilitiesRedacted +
+    audit.phonesRedacted +
+    audit.addressesRedacted;
 
   return {
     redactedText: current,
