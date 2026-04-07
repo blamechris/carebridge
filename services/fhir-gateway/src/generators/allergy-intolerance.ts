@@ -7,14 +7,12 @@
  */
 
 import type { allergies } from "@carebridge/db-schema";
+import type { Coding } from "../types/fhir-r4.js";
 
 type Allergy = typeof allergies.$inferSelect;
 
-interface FhirCoding {
-  system: string;
-  code: string;
-  display?: string;
-}
+// Local alias: AllergyIntolerance codings are always fully populated.
+type FhirCoding = Required<Pick<Coding, "system" | "code">> & Pick<Coding, "display">;
 
 interface FhirReaction {
   substance?: {

@@ -1,4 +1,13 @@
 export type {
+  Coding,
+  CodeableConcept,
+  Quantity,
+  Reference,
+  Period,
+  Identifier,
+  HumanName,
+  Meta,
+  ObservationComponent,
   FhirMeta,
   FhirCoding,
   FhirCodeableConcept,

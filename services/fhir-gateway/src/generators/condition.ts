@@ -7,14 +7,12 @@
  */
 
 import type { diagnoses } from "@carebridge/db-schema";
+import type { Coding } from "../types/fhir-r4.js";
 
 type Diagnosis = typeof diagnoses.$inferSelect;
 
-interface FhirCoding {
-  system: string;
-  code: string;
-  display?: string;
-}
+// Local alias: Condition codings are always fully populated.
+type FhirCoding = Required<Pick<Coding, "system" | "code">> & Pick<Coding, "display">;
 
 interface FhirCondition {
   resourceType: "Condition";
