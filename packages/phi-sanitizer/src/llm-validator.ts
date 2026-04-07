@@ -10,6 +10,7 @@ const VALID_SEVERITIES = ["critical", "warning", "info"] as const;
 const VALID_CATEGORIES = [
   "cross-specialty",
   "drug-interaction",
+  "medication-safety",
   "care-gap",
   "critical-value",
   "trend-concern",
