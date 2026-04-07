@@ -73,6 +73,9 @@ async function main() {
       if (req.url?.startsWith("/trpc/auth.login")) {
         return 5;
       }
+      if (req.url?.startsWith("/trpc/auth.refreshSession")) {
+        return 5;
+      }
       return 100;
     },
     timeWindow: "1 minute",
