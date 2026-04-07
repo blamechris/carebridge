@@ -153,3 +153,30 @@ export const encryptedText = customType<{ data: string; driverData: string }>({
     return decrypt(value, getKey());
   },
 });
+
+/**
+ * Encrypted JSONB custom type. Serializes the JS value to JSON, encrypts the
+ * resulting string with AES-256-GCM, and stores it as text. On read, decrypts
+ * and parses back into a JS value.
+ *
+ * Note: this stores the ciphertext in a `text` column (not `jsonb`) because
+ * ciphertext is not valid JSON. Query operators that rely on JSONB (e.g. ->,
+ * @>) will not work against encrypted columns — callers must read the full
+ * value and filter in application code.
+ */
+export const encryptedJsonb = <T = unknown>() =>
+  customType<{ data: T; driverData: string }>({
+    dataType() {
+      return "text";
+    },
+    toDriver(value: T): string {
+      return encrypt(JSON.stringify(value), getKey());
+    },
+    fromDriver(value: string): T {
+      const previousKey = getPreviousKey();
+      const plaintext = previousKey
+        ? decryptWithFallback(value, getKey(), previousKey)
+        : decrypt(value, getKey());
+      return JSON.parse(plaintext) as T;
+    },
+  });
