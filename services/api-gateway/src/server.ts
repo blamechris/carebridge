@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
 import { fastifyTRPCPlugin } from "@trpc/server/adapters/fastify";
 import Redis from "ioredis";
@@ -61,6 +62,19 @@ async function main() {
     credentials: true,
   });
 
+  // Register @fastify/cookie so request.cookies is populated and
+  // reply.setCookie is available with proper security flags.
+  const cookieSecret = process.env.SESSION_SECRET;
+  if (process.env.NODE_ENV === "production" && !cookieSecret) {
+    throw new Error(
+      "SESSION_SECRET must be set in production for signed session cookies.",
+    );
+  }
+  await server.register(cookie, {
+    secret: cookieSecret ?? "dev-insecure-cookie-secret-do-not-use-in-prod",
+    parseOptions: {},
+  });
+
   // Global rate limit: 100 requests per minute per IP across all API endpoints.
   // Protects PHI endpoints from enumeration and abuse.
   //
@@ -96,6 +110,37 @@ async function main() {
       router: appRouter,
       createContext,
     },
+  });
+
+  // --- Session cookie endpoints ---
+  //
+  // The tRPC auth.login procedure lives in a shared package and cannot touch
+  // Fastify's reply directly, so the client calls POST /auth/session with the
+  // JWT it received from auth.login and we write it into an HttpOnly cookie
+  // with the proper security flags. This prevents XSS from reading the
+  // session token and blocks CSRF via SameSite=strict.
+  const sessionCookieOptions = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict" as const,
+    path: "/",
+  };
+
+  server.post<{ Body: { token?: string } }>(
+    "/auth/session",
+    async (request, reply) => {
+      const token = request.body?.token;
+      if (!token || typeof token !== "string") {
+        return reply.code(400).send({ error: "Missing session token" });
+      }
+      reply.setCookie("session", token, sessionCookieOptions);
+      return { ok: true };
+    },
+  );
+
+  server.post("/auth/session/clear", async (_request, reply) => {
+    reply.clearCookie("session", { path: "/" });
+    return { ok: true };
   });
 
   // --- Health check ---
