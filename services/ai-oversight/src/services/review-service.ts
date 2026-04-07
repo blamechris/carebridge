@@ -11,7 +11,7 @@
 
 import { eq } from "drizzle-orm";
 import { getDb } from "@carebridge/db-schema";
-import { reviewJobs, diagnoses, medications } from "@carebridge/db-schema";
+import { reviewJobs, diagnoses, medications, patients } from "@carebridge/db-schema";
 import type { ClinicalEvent, FlagSource } from "@carebridge/shared-types";
 import {
   CLINICAL_REVIEW_SYSTEM_PROMPT,
@@ -122,10 +122,19 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
       );
     }
 
+    // Fetch patient name so it can be redacted. The DB layer decrypts
+    // `name` transparently on read.
+    const patientRow = await db.query.patients.findFirst({
+      where: eq(patients.id, event.patient_id),
+    });
+
     // Redact PHI from the assembled prompt before sending to the Claude API
     const redactionResult = redactClinicalText(budgetResult.prompt, {
       providerNames: reviewContext.care_team?.map((m) => m.name).filter(Boolean) as string[] | undefined,
       patientAge: reviewContext.patient?.age,
+      patientName: patientRow?.name ?? undefined,
+      facilityNames: [],
+      referenceDate: new Date(),
     });
 
     if (redactionResult.auditTrail.fieldsRedacted > 0) {
