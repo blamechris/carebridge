@@ -2,8 +2,14 @@
 
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { AuthGuard } from "@/lib/auth-guard";
+import {
+  FlagActionModal,
+  type FlagAction,
+  type FlagActionModalFlag,
+} from "@/components/flag-action-modal";
 
 const tabs = [
   { key: "overview", label: "Overview" },
@@ -351,10 +357,58 @@ function MedicationsTab({ patientId }: { patientId: string }) {
 }
 
 function FlagsTab({ patientId }: { patientId: string }) {
+  const utils = trpc.useUtils();
   const flagsQuery = trpc.aiOversight.flags.getByPatient.useQuery({
     patientId,
   });
   const flags = flagsQuery.data ?? [];
+
+  const [activeFlag, setActiveFlag] = useState<FlagActionModalFlag | null>(
+    null,
+  );
+  const [activeAction, setActiveAction] = useState<FlagAction | null>(null);
+
+  const onSuccess = async () => {
+    await utils.aiOversight.flags.getByPatient.invalidate({ patientId });
+    await utils.aiOversight.flags.getOpenCount.invalidate({ patientId });
+    await utils.aiOversight.flags.getAllOpen.invalidate();
+    setActiveFlag(null);
+    setActiveAction(null);
+  };
+
+  const acknowledgeMutation =
+    trpc.aiOversight.flags.acknowledge.useMutation({ onSuccess });
+  const resolveMutation =
+    trpc.aiOversight.flags.resolve.useMutation({ onSuccess });
+  const dismissMutation =
+    trpc.aiOversight.flags.dismiss.useMutation({ onSuccess });
+
+  const isSubmitting =
+    acknowledgeMutation.isPending ||
+    resolveMutation.isPending ||
+    dismissMutation.isPending;
+
+  function openModal(flag: FlagActionModalFlag, action: FlagAction) {
+    setActiveFlag(flag);
+    setActiveAction(action);
+  }
+
+  function handleConfirm(reason: string) {
+    if (!activeFlag || !activeAction) return;
+    if (activeAction === "acknowledge") {
+      acknowledgeMutation.mutate({ flagId: activeFlag.id });
+    } else if (activeAction === "resolve") {
+      resolveMutation.mutate({
+        flagId: activeFlag.id,
+        resolution_note: reason,
+      });
+    } else if (activeAction === "dismiss") {
+      dismissMutation.mutate({
+        flagId: activeFlag.id,
+        dismiss_reason: reason,
+      });
+    }
+  }
 
   if (flagsQuery.isLoading) return <LoadingState label="flags" />;
   if (flagsQuery.isError) return <ErrorState label="flags" />;
@@ -391,12 +445,39 @@ function FlagsTab({ patientId }: { patientId: string }) {
               </div>
             </div>
             <div className="flag-actions">
-              <button className="btn btn-success btn-sm">Acknowledge</button>
-              <button className="btn btn-ghost btn-sm">Dismiss</button>
+              <button
+                className="btn btn-success btn-sm"
+                onClick={() => openModal(flag, "acknowledge")}
+              >
+                Acknowledge
+              </button>
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={() => openModal(flag, "resolve")}
+              >
+                Resolve
+              </button>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={() => openModal(flag, "dismiss")}
+              >
+                Dismiss
+              </button>
             </div>
           </div>
         ))}
       </div>
+      <FlagActionModal
+        flag={activeFlag}
+        action={activeAction}
+        onCancel={() => {
+          if (isSubmitting) return;
+          setActiveFlag(null);
+          setActiveAction(null);
+        }}
+        onConfirm={handleConfirm}
+        isSubmitting={isSubmitting}
+      />
     </div>
   );
 }

@@ -174,6 +174,18 @@ export async function getFlagsByPatient(
 }
 
 /**
+ * Get all open flags across all patients (for the clinician inbox).
+ */
+export async function getAllOpenFlags(): Promise<ClinicalFlag[]> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(clinicalFlags)
+    .where(eq(clinicalFlags.status, "open"));
+  return rows as unknown as ClinicalFlag[];
+}
+
+/**
  * Get count of open flags for a patient.
  */
 export async function getOpenFlagCount(patientId: string): Promise<number> {

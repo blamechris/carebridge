@@ -97,6 +97,11 @@ export const aiOversightRouter = t.router({
         return { success: true };
       }),
 
+    getAllOpen: protectedProcedure
+      .query(async () => {
+        return flagService.getAllOpenFlags();
+      }),
+
     getOpenCount: t.procedure
       .input(z.object({ patientId: z.string().uuid() }))
       .query(async ({ input }) => {
