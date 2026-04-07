@@ -13,6 +13,7 @@ const DEFAULT_MAX_TOKENS = 4096;
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
 const REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_RATE_LIMIT_DELAY_MS = 15_000;
 
 let client: Anthropic | null = null;
 
@@ -70,10 +71,18 @@ export async function reviewPatientRecord(
 
       // Don't sleep after the last attempt
       if (attempt < MAX_RETRIES) {
-        const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1);
-        console.log(
-          `[claude-client] Attempt ${attempt}/${MAX_RETRIES} failed, retrying in ${delay}ms: ${lastError.message}`,
-        );
+        let delay: number;
+        if (isRateLimitError(error)) {
+          delay = getRetryAfterMs(error) ?? DEFAULT_RATE_LIMIT_DELAY_MS;
+          console.log(
+            `[claude-client] Rate-limited (429) on attempt ${attempt}/${MAX_RETRIES}, respecting Retry-After, waiting ${delay}ms: ${lastError.message}`,
+          );
+        } else {
+          delay = BASE_DELAY_MS * Math.pow(2, attempt - 1);
+          console.log(
+            `[claude-client] Attempt ${attempt}/${MAX_RETRIES} failed, retrying in ${delay}ms: ${lastError.message}`,
+          );
+        }
         await sleep(delay);
       }
     }
@@ -90,6 +99,44 @@ function isNonTransientError(error: unknown): boolean {
   if (error instanceof Anthropic.BadRequestError) return true;
   if (error instanceof Anthropic.NotFoundError) return true;
   return false;
+}
+
+function isRateLimitError(error: unknown): boolean {
+  if (
+    typeof Anthropic.RateLimitError === "function" &&
+    error instanceof Anthropic.RateLimitError
+  ) {
+    return true;
+  }
+  if (
+    error &&
+    typeof error === "object" &&
+    "status" in error &&
+    (error as { status?: number }).status === 429
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function getRetryAfterMs(error: unknown): number | null {
+  if (!error || typeof error !== "object") return null;
+  const headers = (error as { headers?: Record<string, string | string[] | undefined> })
+    .headers;
+  if (!headers) return null;
+  const raw = headers["retry-after"] ?? headers["Retry-After"];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.round(seconds * 1000);
+  }
+  const dateMs = Date.parse(value);
+  if (!Number.isNaN(dateMs)) {
+    const diff = dateMs - Date.now();
+    return diff > 0 ? diff : 0;
+  }
+  return null;
 }
 
 function sleep(ms: number): Promise<void> {
