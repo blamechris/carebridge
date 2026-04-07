@@ -23,6 +23,27 @@ import { users } from "@carebridge/db-schema";
 import type { ReviewContext } from "@carebridge/ai-prompts";
 import type { ClinicalEvent } from "@carebridge/shared-types";
 import { calculateDelta } from "@carebridge/medical-logic";
+import { sanitizeFreeText } from "@carebridge/phi-sanitizer";
+
+/**
+ * Recursively sanitize all string values in an arbitrary event-data object
+ * before it is serialized into an LLM prompt. Prevents semantic prompt
+ * injection via patient-controlled free-text fields (note bodies, symptom
+ * descriptions, etc.).
+ */
+function sanitizeEventData(data: unknown): unknown {
+  if (typeof data === "string") return sanitizeFreeText(data);
+  if (Array.isArray(data)) return data.map(sanitizeEventData);
+  if (data && typeof data === "object") {
+    return Object.fromEntries(
+      Object.entries(data as Record<string, unknown>).map(([k, v]) => [
+        k,
+        sanitizeEventData(v),
+      ]),
+    );
+  }
+  return data;
+}
 
 /**
  * Build the full patient context needed for LLM clinical review.
@@ -191,7 +212,7 @@ export async function buildPatientContext(
     triggering_event: {
       type: triggerEvent.type,
       summary: triggerSummary,
-      detail: JSON.stringify(triggerEvent.data, null, 2),
+      detail: `<untrusted_event_data>\n${JSON.stringify(sanitizeEventData(triggerEvent.data), null, 2)}\n</untrusted_event_data>`,
     },
     recent_flags: recentFlags.map((f) => ({
       severity: f.severity,

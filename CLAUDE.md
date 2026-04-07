@@ -62,6 +62,12 @@ The DVT scenario (cancer + VTE + headache → stroke risk flag) is rule ONCO-VTE
 - patient@carebridge.dev (patient)
 - Password for all: password123
 
+## HIPAA Compliance
+Audit log retention and immutability policies are documented in
+`docs/hipaa-retention.md`. The `audit_log` table is append-only at the
+database level (see migration `0012_audit_log_immutability.sql`) and
+records are retained for 7 years.
+
 ## Git Workflow
 
 ### Zero Attribution Policy

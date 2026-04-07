@@ -488,6 +488,9 @@ importers:
       '@carebridge/db-schema':
         specifier: workspace:*
         version: link:../../packages/db-schema
+      '@carebridge/phi-sanitizer':
+        specifier: workspace:*
+        version: link:../../packages/phi-sanitizer
       '@carebridge/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
