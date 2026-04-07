@@ -9,6 +9,25 @@
  */
 
 import crypto from "node:crypto";
+import { vitalRepo, labRepo } from "@carebridge/clinical-data";
+import type { CreateVitalInput, CreateLabPanelInput } from "@carebridge/validators";
+
+type VitalType = CreateVitalInput["type"];
+
+const VITAL_TYPES: readonly VitalType[] = [
+  "blood_pressure",
+  "heart_rate",
+  "o2_sat",
+  "temperature",
+  "weight",
+  "respiratory_rate",
+  "pain_level",
+  "blood_glucose",
+] as const;
+
+function isVitalType(t: string): t is VitalType {
+  return (VITAL_TYPES as readonly string[]).includes(t);
+}
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -136,10 +155,10 @@ export function exportMedications(
  * Import vitals from MedLens devices.
  * Rejects entries below the confidence threshold.
  */
-export function importVitals(
+export async function importVitals(
   tokenStr: string,
   vitals: MedLensVital[],
-): { ok: true; result: ImportResult } | { ok: false; error: string } {
+): Promise<{ ok: true; result: ImportResult } | { ok: false; error: string }> {
   const token = validateToken(tokenStr, "write:vitals");
   if (!token) {
     return { ok: false, error: "Invalid or unauthorized token" };
@@ -157,9 +176,32 @@ export function importVitals(
       result.rejectionReasons.push(
         `${vital.type}: confidence ${vital.confidence} below threshold ${VITAL_CONFIDENCE_THRESHOLD}`,
       );
-    } else {
+      continue;
+    }
+
+    if (!isVitalType(vital.type)) {
+      result.rejected++;
+      result.rejectionReasons.push(
+        `${vital.type}: unsupported vital type`,
+      );
+      continue;
+    }
+
+    try {
+      await vitalRepo.createVital({
+        patient_id: token.patientId,
+        recorded_at: vital.recordedAt,
+        type: vital.type,
+        value_primary: vital.value,
+        unit: vital.unit,
+        notes: `MedLens device ${vital.deviceId} (confidence ${vital.confidence.toFixed(2)})`,
+      });
       result.accepted++;
-      // Stub: in production, insert into vitals table
+    } catch (err) {
+      result.rejected++;
+      result.rejectionReasons.push(
+        `${vital.type}: persistence failed (${err instanceof Error ? err.message : "unknown error"})`,
+      );
     }
   }
 
@@ -170,10 +212,10 @@ export function importVitals(
  * Import lab results from MedLens devices.
  * Rejects entries below the confidence threshold.
  */
-export function importLabs(
+export async function importLabs(
   tokenStr: string,
   labs: MedLensLabResult[],
-): { ok: true; result: ImportResult } | { ok: false; error: string } {
+): Promise<{ ok: true; result: ImportResult } | { ok: false; error: string }> {
   const token = validateToken(tokenStr, "write:labs");
   if (!token) {
     return { ok: false, error: "Invalid or unauthorized token" };
@@ -191,9 +233,32 @@ export function importLabs(
       result.rejectionReasons.push(
         `${lab.testName}: confidence ${lab.confidence} below threshold ${LAB_CONFIDENCE_THRESHOLD}`,
       );
-    } else {
+      continue;
+    }
+
+    try {
+      const panelInput: CreateLabPanelInput = {
+        patient_id: token.patientId,
+        panel_name: `MedLens: ${lab.testName}`,
+        collected_at: lab.collectedAt,
+        reported_at: lab.collectedAt,
+        notes: `MedLens device ${lab.deviceId} (confidence ${lab.confidence.toFixed(2)})`,
+        results: [
+          {
+            test_name: lab.testName,
+            test_code: "00000-0",
+            value: lab.value,
+            unit: lab.unit,
+          },
+        ],
+      };
+      await labRepo.createLabPanel(panelInput);
       result.accepted++;
-      // Stub: in production, insert into lab_results table
+    } catch (err) {
+      result.rejected++;
+      result.rejectionReasons.push(
+        `${lab.testName}: persistence failed (${err instanceof Error ? err.message : "unknown error"})`,
+      );
     }
   }
 

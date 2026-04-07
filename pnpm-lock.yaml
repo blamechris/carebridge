@@ -485,6 +485,9 @@ importers:
 
   services/fhir-gateway:
     dependencies:
+      '@carebridge/clinical-data':
+        specifier: workspace:*
+        version: link:../clinical-data
       '@carebridge/db-schema':
         specifier: workspace:*
         version: link:../../packages/db-schema
@@ -494,6 +497,9 @@ importers:
       '@carebridge/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
+      '@carebridge/validators':
+        specifier: workspace:*
+        version: link:../../packages/validators
       '@trpc/server':
         specifier: ^11.0.0
         version: 11.16.0(typescript@5.9.3)
