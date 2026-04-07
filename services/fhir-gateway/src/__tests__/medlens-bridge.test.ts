@@ -51,9 +51,9 @@ describe("exportMedications", () => {
 });
 
 describe("importVitals", () => {
-  it("rejects vitals with confidence below 0.6", () => {
+  it("rejects vitals with confidence below 0.6", async () => {
     const token = createMedLensToken("patient-1", ["write:vitals"]);
-    const result = importVitals(token.token, [
+    const result = await importVitals(token.token, [
       {
         type: "heart_rate",
         value: 72,
@@ -71,9 +71,9 @@ describe("importVitals", () => {
     }
   });
 
-  it("accepts vitals with confidence >= 0.6", () => {
+  it("accepts vitals with confidence >= 0.6", async () => {
     const token = createMedLensToken("patient-1", ["write:vitals"]);
-    const result = importVitals(token.token, [
+    const result = await importVitals(token.token, [
       {
         type: "heart_rate",
         value: 72,
@@ -91,9 +91,9 @@ describe("importVitals", () => {
     }
   });
 
-  it("accepts vitals at exactly 0.6 threshold", () => {
+  it("accepts vitals at exactly 0.6 threshold", async () => {
     const token = createMedLensToken("patient-1", ["write:vitals"]);
-    const result = importVitals(token.token, [
+    const result = await importVitals(token.token, [
       {
         type: "o2_sat",
         value: 98,
@@ -112,9 +112,9 @@ describe("importVitals", () => {
 });
 
 describe("importLabs", () => {
-  it("rejects labs with confidence below 0.5", () => {
+  it("rejects labs with confidence below 0.5", async () => {
     const token = createMedLensToken("patient-1", ["write:labs"]);
-    const result = importLabs(token.token, [
+    const result = await importLabs(token.token, [
       {
         testName: "Glucose",
         value: 95,
@@ -132,9 +132,9 @@ describe("importLabs", () => {
     }
   });
 
-  it("accepts labs with confidence >= 0.5", () => {
+  it("accepts labs with confidence >= 0.5", async () => {
     const token = createMedLensToken("patient-1", ["write:labs"]);
-    const result = importLabs(token.token, [
+    const result = await importLabs(token.token, [
       {
         testName: "Glucose",
         value: 95,
@@ -153,7 +153,7 @@ describe("importLabs", () => {
 });
 
 describe("revokeToken", () => {
-  it("revoked token is rejected for all operations", () => {
+  it("revoked token is rejected for all operations", async () => {
     const token = createMedLensToken("patient-1", [
       "read:vitals",
       "read:medications",
@@ -165,7 +165,7 @@ describe("revokeToken", () => {
     const exportResult = exportMedications(token.token);
     expect(exportResult.ok).toBe(false);
 
-    const importResult = importVitals(token.token, []);
+    const importResult = await importVitals(token.token, []);
     expect(importResult.ok).toBe(false);
   });
 });
