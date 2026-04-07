@@ -153,8 +153,10 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
     notify_specialties: ["hematology", "oncology"],
   },
   {
-    id: "CHEMO-NEUTRO-FEVER-001",
-    name: "Chemotherapy + neutropenia + fever",
+    // TODO: Add an ANC-aware variant (e.g. CHEMO-NEUTRO-FEVER-001) once
+    // recent_labs parsing can extract ANC values from CBC with differential.
+    id: "CHEMO-FEVER-001",
+    name: "Chemotherapy patient with fever",
     check: (ctx: PatientContext) => {
       const onChemo = ctx.active_medications.some((m) =>
         /chemo|capecitabine|xeloda|cisplatin|carboplatin|doxorubicin|cyclophosphamide|paclitaxel|docetaxel|methotrexate|5-fu|fluorouracil/i.test(m),
@@ -167,13 +169,12 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
     severity: "critical" as const,
     category: "cross-specialty" as const,
     summary:
-      "Chemotherapy patient presenting with fever — evaluate for febrile neutropenia",
+      "Chemotherapy patient presenting with fever — evaluate for febrile neutropenia and infection",
     rationale:
-      "Febrile neutropenia is a medical emergency in chemotherapy patients. Even if neutrophil count " +
-      "is not yet available, fever in a patient on myelosuppressive therapy warrants immediate evaluation " +
-      "including CBC with differential and blood cultures.",
+      "Obtain CBC with differential urgently. If ANC < 1500, treat as febrile neutropenia per protocol. " +
+      "Consider broad-spectrum antibiotics while awaiting results.",
     suggested_action:
-      "Obtain CBC with differential, blood cultures x2, and initiate empiric broad-spectrum antibiotics per institutional protocol if ANC < 500 or expected to decline.",
+      "Obtain CBC with differential urgently. If ANC < 1500, treat as febrile neutropenia per protocol. Consider broad-spectrum antibiotics while awaiting results.",
     notify_specialties: ["oncology", "infectious_disease"],
   },
   {
