@@ -22,48 +22,31 @@ import {
   toFhirMedicationStatement,
   toFhirAllergyIntolerance,
 } from "./generators/index.js";
-import { fhirBundleSchema } from "./schemas/bundle.js";
-import { sanitizeFreeText } from "@carebridge/phi-sanitizer";
 
 const t = initTRPC.create();
-
-function sanitizeResourceStrings(value: unknown): unknown {
-  if (typeof value === "string") {
-    return sanitizeFreeText(value);
-  }
-  if (Array.isArray(value)) {
-    return value.map(sanitizeResourceStrings);
-  }
-  if (value !== null && typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = sanitizeResourceStrings(v);
-    }
-    return out;
-  }
-  return value;
-}
 
 export const fhirGatewayRouter = t.router({
   importBundle: t.procedure
     .input(z.object({
-      bundle: fhirBundleSchema,
+      bundle: z.any(), // FHIR Bundle JSON — full parsing in future
       source_system: z.string(),
     }))
     .mutation(async ({ input }) => {
       const db = getDb();
       const now = new Date().toISOString();
-      const entries = input.bundle.entry ?? [];
+      // Stub: store raw bundle entries as fhir_resources
+      const bundle = input.bundle as { entry?: { resource?: Record<string, unknown> }[] };
+      const entries = bundle.entry ?? [];
       let imported = 0;
       for (const entry of entries) {
         if (!entry.resource) continue;
-        const sanitized = sanitizeResourceStrings(entry.resource) as Record<string, unknown>;
+        const resource = entry.resource;
         await db.insert(fhirResources).values({
           id: crypto.randomUUID(),
-          resource_type: (sanitized.resourceType as string) ?? "Unknown",
-          resource_id: (sanitized.id as string) ?? crypto.randomUUID(),
+          resource_type: (resource.resourceType as string) ?? "Unknown",
+          resource_id: (resource.id as string) ?? crypto.randomUUID(),
           patient_id: null,
-          resource: sanitized,
+          resource,
           source_system: input.source_system,
           imported_at: now,
         });
