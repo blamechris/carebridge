@@ -292,6 +292,50 @@ export function redactAddresses(text: string): { redactedText: string; count: nu
 }
 
 /**
+ * Error thrown when a prompt fails the fail-closed PHI sanitization check.
+ * Carries a list of violation labels (NOT the matching text) so callers can
+ * log diagnostics without re-leaking PHI.
+ */
+export class SanitizationError extends Error {
+  public readonly violations: string[];
+  constructor(violations: string[]) {
+    super(
+      `Prompt failed fail-closed PHI sanitization: ${violations.length} violation(s) [${violations.join(", ")}]`,
+    );
+    this.name = "SanitizationError";
+    this.violations = violations;
+  }
+}
+
+const SANITIZATION_GUARDS: Array<{ label: string; pattern: RegExp }> = [
+  { label: "MRN_LABELED", pattern: MRN_LABELED },
+  { label: "DATE_ISO", pattern: DATE_ISO },
+  { label: "DATE_MDY", pattern: DATE_MDY },
+  { label: "DATE_MONTH_NAME", pattern: DATE_MONTH_NAME },
+  { label: "PHONE_PAREN", pattern: PHONE_PAREN },
+  { label: "PHONE_DASH", pattern: PHONE_DASH },
+  { label: "SSN", pattern: /\b\d{3}-\d{2}-\d{4}\b/g },
+  { label: "ADDRESS", pattern: ADDRESS },
+];
+
+/**
+ * Fail-closed assertion that a prompt has been redacted before being sent
+ * to an external LLM. Throws SanitizationError if any residual PHI-shaped
+ * pattern is detected. The error message never contains the matched text.
+ */
+export function assertPromptSanitized(text: string): void {
+  const violations: string[] = [];
+  for (const { label, pattern } of SANITIZATION_GUARDS) {
+    // Reset stateful regex
+    pattern.lastIndex = 0;
+    if (pattern.test(text)) violations.push(label);
+  }
+  if (violations.length > 0) {
+    throw new SanitizationError(violations);
+  }
+}
+
+/**
  * Full redaction pipeline: sanitize free text, redact provider names,
  * band ages, and produce an audit trail.
  */

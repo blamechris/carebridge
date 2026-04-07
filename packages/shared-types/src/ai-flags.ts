@@ -36,6 +36,13 @@ export interface ClinicalFlag extends BaseRecord {
   dismiss_reason?: string;
   model_id?: string;
   prompt_version?: string;
+  /** LLM-only confidence score 0-100. Undefined for deterministic rule flags. */
+  confidence?: number;
+  /**
+   * If true, the flag must be reviewed by a clinician before any downstream
+   * automation acts on it. Defaults to true for all LLM-sourced flags.
+   */
+  requires_human_review?: boolean;
 }
 
 // ─── Clinical Rules ──────────────────────────────────────────────

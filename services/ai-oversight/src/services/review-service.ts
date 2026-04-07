@@ -52,6 +52,8 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
     rules_evaluated: [],
     rules_fired: [],
     flags_generated: [],
+    redacted_prompt: null,
+    redaction_audit: null,
     created_at: new Date().toISOString(),
   });
 
@@ -147,6 +149,17 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
     }
 
     const userMessage = redactionResult.redactedText;
+
+    // Persist the exact redacted prompt + audit trail for breach forensics
+    // (HIPAA §164.308(a)(6)). Do this BEFORE the API call so we have a record
+    // of what would have been transmitted even if the call fails.
+    await db
+      .update(reviewJobs)
+      .set({
+        redacted_prompt: userMessage,
+        redaction_audit: redactionResult.auditTrail as unknown as Record<string, unknown>,
+      })
+      .where(eq(reviewJobs.id, jobId));
 
     // Step 6: Call Claude API
     const llmResponse = await reviewPatientRecord(

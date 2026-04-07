@@ -19,6 +19,8 @@ export interface PatientContext {
   care_team_specialties: string[];
   /** The triggering clinical event, used by medication-status rules. */
   trigger_event?: ClinicalEvent;
+  /** Recent lab values, used by ANC-aware rules. */
+  recent_labs?: Array<{ name: string; value: number }>;
 }
 
 /** Anticoagulant name pattern shared across rules. */
@@ -39,6 +41,8 @@ interface CrossSpecialtyRule {
   suggested_action: string;
   /** Optional dynamic builder that overrides suggested_action when present. */
   buildSuggestedAction?: (ctx: PatientContext) => string;
+  /** Optional dynamic severity builder. */
+  buildSeverity?: (ctx: PatientContext) => FlagSeverity;
   notify_specialties: string[];
 }
 
@@ -153,10 +157,8 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
     notify_specialties: ["hematology", "oncology"],
   },
   {
-    // TODO: Add an ANC-aware variant (e.g. CHEMO-NEUTRO-FEVER-001) once
-    // recent_labs parsing can extract ANC values from CBC with differential.
     id: "CHEMO-FEVER-001",
-    name: "Chemotherapy patient with fever",
+    name: "Chemotherapy patient with fever (ANC-aware)",
     check: (ctx: PatientContext) => {
       const onChemo = ctx.active_medications.some((m) =>
         /chemo|capecitabine|xeloda|cisplatin|carboplatin|doxorubicin|cyclophosphamide|paclitaxel|docetaxel|methotrexate|5-fu|fluorouracil/i.test(m),
@@ -164,9 +166,20 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       const hasFever = ctx.new_symptoms.some((s) =>
         /fever|febrile|temperature|chills/i.test(s),
       );
-      return onChemo && hasFever;
+      if (!onChemo || !hasFever) return false;
+      const anc = ctx.recent_labs?.find((l) => /^ANC$/i.test(l.name))?.value;
+      // If we have a recent ANC and it's normal, suppress the flag —
+      // avoids the false-confidence alert that the previous version produced.
+      if (anc !== undefined && anc >= 1500) return false;
+      return true;
     },
-    severity: "critical" as const,
+    buildSeverity: (ctx: PatientContext) => {
+      const anc = ctx.recent_labs?.find((l) => /^ANC$/i.test(l.name))?.value;
+      // ANC < 1500 → confirmed febrile neutropenia → critical.
+      // ANC unknown → warning so clinicians review without alert fatigue.
+      return anc !== undefined && anc < 1500 ? "critical" : "warning";
+    },
+    severity: "warning" as const,
     category: "cross-specialty" as const,
     summary:
       "Chemotherapy patient presenting with fever — evaluate for febrile neutropenia and infection",
@@ -257,7 +270,7 @@ export function checkCrossSpecialtyPatterns(
   for (const rule of CROSS_SPECIALTY_RULES) {
     if (rule.check(patientContext)) {
       flags.push({
-        severity: rule.severity,
+        severity: rule.buildSeverity ? rule.buildSeverity(patientContext) : rule.severity,
         category: rule.category,
         summary: rule.summary,
         rationale: rule.rationale,

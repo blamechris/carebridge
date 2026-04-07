@@ -56,6 +56,21 @@ describe("createFlag", () => {
     status: "open" as const,
   };
 
+  it("defaults requires_human_review=true and preserves confidence for ai-review flags", async () => {
+    const aiFlag = {
+      ...baseFlag,
+      source: "ai-review" as const,
+      rule_id: undefined,
+      confidence: 72,
+    };
+    const result = await createFlag(aiFlag);
+    expect(result.requires_human_review).toBe(true);
+    expect(result.confidence).toBe(72);
+    const inserted = mockValues.mock.calls[0]?.[0];
+    expect(inserted.requires_human_review).toBe(1);
+    expect(inserted.confidence).toBe(72);
+  });
+
   it("inserts a new flag when no duplicate exists", async () => {
     // No existing flag found (default mock returns [])
     const result = await createFlag(baseFlag);

@@ -7,6 +7,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+import { assertPromptSanitized } from "@carebridge/phi-sanitizer";
 
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 const DEFAULT_MAX_TOKENS = 4096;
@@ -36,6 +37,10 @@ export async function reviewPatientRecord(
   systemPrompt: string,
   userMessage: string,
 ): Promise<string> {
+  // Fail-closed: refuse to transmit any prompt that hasn't been redacted.
+  // Throws SanitizationError before any network call if residual PHI is found.
+  assertPromptSanitized(userMessage);
+
   const anthropic = getClient();
 
   let lastError: Error | null = null;
