@@ -167,14 +167,14 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
         /fever|febrile|temperature|chills/i.test(s),
       );
       if (!onChemo || !hasFever) return false;
-      const anc = ctx.recent_labs?.find((l) => /^ANC$/i.test(l.name))?.value;
+      const anc = ctx.recent_labs?.find((l) => /\bANC\b/i.test(l.name))?.value;
       // If we have a recent ANC and it's normal, suppress the flag —
       // avoids the false-confidence alert that the previous version produced.
       if (anc !== undefined && anc >= 1500) return false;
       return true;
     },
     buildSeverity: (ctx: PatientContext) => {
-      const anc = ctx.recent_labs?.find((l) => /^ANC$/i.test(l.name))?.value;
+      const anc = ctx.recent_labs?.find((l) => /\bANC\b/i.test(l.name))?.value;
       // ANC < 1500 → confirmed febrile neutropenia → critical.
       // ANC unknown → warning so clinicians review without alert fatigue.
       return anc !== undefined && anc < 1500 ? "critical" : "warning";

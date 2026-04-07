@@ -9,9 +9,16 @@
  * The review_jobs table records every run for auditability.
  */
 
-import { eq } from "drizzle-orm";
+import { eq, desc, gte, and } from "drizzle-orm";
 import { getDb } from "@carebridge/db-schema";
-import { reviewJobs, diagnoses, medications, patients } from "@carebridge/db-schema";
+import {
+  reviewJobs,
+  diagnoses,
+  medications,
+  patients,
+  labPanels,
+  labResults,
+} from "@carebridge/db-schema";
 import type { ClinicalEvent, FlagSource } from "@carebridge/shared-types";
 import {
   CLINICAL_REVIEW_SYSTEM_PROMPT,
@@ -265,31 +272,56 @@ type ClinicalFlagCategory = import("@carebridge/shared-types").FlagCategory;
  * Build a lightweight PatientContext for the deterministic cross-specialty rules.
  * This extracts what the rules need from the database without the full ReviewContext overhead.
  */
-async function buildPatientContextForRules(
+export async function buildPatientContextForRules(
   patientId: string,
   event: ClinicalEvent,
 ): Promise<PatientContext> {
   const db = getDb();
 
-  const [activeDiagnoses, activeMeds] = await Promise.all([
+  // Recent labs window — rules like CHEMO-FEVER-001 (ANC-aware) need lab
+  // values from the last 48h. Keep the window tight so we don't pick up
+  // stale baseline values.
+  const LAB_WINDOW_HOURS = 48;
+  const labCutoff = new Date(
+    Date.now() - LAB_WINDOW_HOURS * 60 * 60 * 1000,
+  ).toISOString();
+
+  const [activeDiagnoses, activeMeds, recentLabRows] = await Promise.all([
+    db.select().from(diagnoses).where(eq(diagnoses.patient_id, patientId)),
+    db.select().from(medications).where(eq(medications.patient_id, patientId)),
+    // Join lab_results → lab_panels → filter by patient and freshness.
+    // Single round-trip, no N+1.
     db
-      .select()
-      .from(diagnoses)
+      .select({
+        test_name: labResults.test_name,
+        value: labResults.value,
+        created_at: labResults.created_at,
+      })
+      .from(labResults)
+      .innerJoin(labPanels, eq(labResults.panel_id, labPanels.id))
       .where(
-        eq(diagnoses.patient_id, patientId),
-      ),
-    db
-      .select()
-      .from(medications)
-      .where(
-        eq(medications.patient_id, patientId),
-      ),
+        and(
+          eq(labPanels.patient_id, patientId),
+          gte(labResults.created_at, labCutoff),
+        ),
+      )
+      .orderBy(desc(labResults.created_at)),
   ]);
 
   // Extract new symptoms from the event data
   const newSymptoms = extractSymptoms(event);
 
   const activeDx = activeDiagnoses.filter((d) => d.status === "active");
+
+  // Dedupe recent labs by test_name, keeping the freshest value per name.
+  // labRows are ordered desc by created_at, so the first occurrence wins.
+  const seenLabs = new Set<string>();
+  const recentLabs: Array<{ name: string; value: number }> = [];
+  for (const row of recentLabRows) {
+    if (seenLabs.has(row.test_name)) continue;
+    seenLabs.add(row.test_name);
+    recentLabs.push({ name: row.test_name, value: row.value });
+  }
 
   return {
     active_diagnoses: activeDx.map((d) => d.description),
@@ -300,6 +332,7 @@ async function buildPatientContextForRules(
     new_symptoms: newSymptoms,
     care_team_specialties: [], // Not needed for current rules, but available for future
     trigger_event: event,
+    recent_labs: recentLabs.length > 0 ? recentLabs : undefined,
   };
 }
 
