@@ -60,8 +60,9 @@ function mapSeverityToCriticality(
 ): "low" | "high" | "unable-to-assess" {
   switch (severity) {
     case "mild":
-    case "moderate":
       return "low";
+    case "moderate":
+      return "high";
     case "severe":
       return "high";
     default:

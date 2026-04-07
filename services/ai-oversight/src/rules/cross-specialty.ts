@@ -153,8 +153,8 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
     notify_specialties: ["hematology", "oncology"],
   },
   {
-    id: "CHEMO-NEUTRO-FEVER-001",
-    name: "Chemotherapy + neutropenia + fever",
+    id: "CHEMO-FEVER-001",
+    name: "Chemotherapy + fever (evaluate for febrile neutropenia)",
     check: (ctx: PatientContext) => {
       const onChemo = ctx.active_medications.some((m) =>
         /chemo|capecitabine|xeloda|cisplatin|carboplatin|doxorubicin|cyclophosphamide|paclitaxel|docetaxel|methotrexate|5-fu|fluorouracil/i.test(m),

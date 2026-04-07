@@ -36,7 +36,7 @@ async function logAccessDenial(
 /*  In-memory TTL cache for care-team lookups                         */
 /* ------------------------------------------------------------------ */
 
-const CACHE_TTL_MS = 60_000; // 60 seconds
+const CACHE_TTL_MS = 5_000; // 5 seconds
 const CACHE_MAX_ENTRIES = 10_000;
 
 interface CacheEntry {
