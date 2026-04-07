@@ -7,14 +7,9 @@
  */
 
 import type { medications } from "@carebridge/db-schema";
+import type { Coding, Period, Reference } from "../types/fhir-r4.js";
 
 type Medication = typeof medications.$inferSelect;
-
-interface FhirCoding {
-  system: string;
-  code: string;
-  display?: string;
-}
 
 interface FhirDosage {
   text?: string;
@@ -24,7 +19,7 @@ interface FhirDosage {
     };
   };
   route?: {
-    coding?: FhirCoding[];
+    coding?: Coding[];
     text: string;
   };
   doseAndRate?: {
@@ -42,20 +37,13 @@ interface FhirMedicationStatement {
   id: string;
   status: string;
   medicationCodeableConcept: {
-    coding: FhirCoding[];
+    coding: Coding[];
     text: string;
   };
-  subject: {
-    reference: string;
-  };
-  effectivePeriod?: {
-    start?: string;
-    end?: string;
-  };
+  subject: Reference;
+  effectivePeriod?: Period;
   dateAsserted?: string;
-  informationSource?: {
-    reference: string;
-  };
+  informationSource?: Reference;
   dosage?: FhirDosage[];
   note?: { text: string }[];
 }
@@ -83,7 +71,7 @@ export function toFhirMedicationStatement(
   medication: Medication,
   patientId: string,
 ): FhirMedicationStatement {
-  const codings: FhirCoding[] = [];
+  const codings: Coding[] = [];
 
   if (medication.rxnorm_code) {
     codings.push({

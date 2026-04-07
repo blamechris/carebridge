@@ -7,22 +7,17 @@
  */
 
 import type { allergies } from "@carebridge/db-schema";
+import type { Coding, Reference } from "../types/fhir-r4.js";
 
 type Allergy = typeof allergies.$inferSelect;
 
-interface FhirCoding {
-  system: string;
-  code: string;
-  display?: string;
-}
-
 interface FhirReaction {
   substance?: {
-    coding: FhirCoding[];
+    coding: Coding[];
     text: string;
   };
   manifestation: {
-    coding: FhirCoding[];
+    coding: Coding[];
     text: string;
   }[];
   severity?: "mild" | "moderate" | "severe";
@@ -32,18 +27,16 @@ interface FhirAllergyIntolerance {
   resourceType: "AllergyIntolerance";
   id: string;
   clinicalStatus: {
-    coding: FhirCoding[];
+    coding: Coding[];
   };
   verificationStatus: {
-    coding: FhirCoding[];
+    coding: Coding[];
   };
   code: {
-    coding: FhirCoding[];
+    coding: Coding[];
     text: string;
   };
-  patient: {
-    reference: string;
-  };
+  patient: Reference;
   recordedDate?: string;
   criticality?: "low" | "high" | "unable-to-assess";
   reaction?: FhirReaction[];
@@ -93,7 +86,7 @@ export function toFhirAllergyIntolerance(
   allergy: Allergy,
   patientId: string,
 ): FhirAllergyIntolerance {
-  const substanceCodings: FhirCoding[] = [];
+  const substanceCodings: Coding[] = [];
 
   if (allergy.snomed_code) {
     substanceCodings.push({

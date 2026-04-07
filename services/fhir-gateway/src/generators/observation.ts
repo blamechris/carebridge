@@ -1,29 +1,12 @@
 import type { Vital, VitalType, LabResult } from "@carebridge/shared-types";
 import { VITAL_LOINC_CODES } from "@carebridge/shared-types";
 
-// ─── FHIR R4 Types (inline to avoid external dependency) ────────
-
-interface Coding {
-  system?: string;
-  code?: string;
-  display?: string;
-}
-
-interface CodeableConcept {
-  coding?: Coding[];
-  text?: string;
-}
-
-interface Quantity {
-  value?: number;
-  unit?: string;
-  system?: string;
-  code?: string;
-}
-
-interface Reference {
-  reference?: string;
-}
+import type {
+  Coding,
+  CodeableConcept,
+  Quantity,
+  Reference,
+} from "../types/fhir-r4.js";
 
 interface ObservationComponent {
   code: CodeableConcept;

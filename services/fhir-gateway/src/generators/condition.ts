@@ -7,37 +7,28 @@
  */
 
 import type { diagnoses } from "@carebridge/db-schema";
+import type { Coding, Reference } from "../types/fhir-r4.js";
 
 type Diagnosis = typeof diagnoses.$inferSelect;
-
-interface FhirCoding {
-  system: string;
-  code: string;
-  display?: string;
-}
 
 interface FhirCondition {
   resourceType: "Condition";
   id: string;
   clinicalStatus: {
-    coding: FhirCoding[];
+    coding: Coding[];
   };
   verificationStatus: {
-    coding: FhirCoding[];
+    coding: Coding[];
   };
   code: {
-    coding: FhirCoding[];
+    coding: Coding[];
     text: string;
   };
-  subject: {
-    reference: string;
-  };
+  subject: Reference;
   onsetDateTime?: string;
   abatementDateTime?: string;
   recordedDate?: string;
-  recorder?: {
-    reference: string;
-  };
+  recorder?: Reference;
 }
 
 const CLINICAL_STATUS_SYSTEM =
@@ -65,7 +56,7 @@ export function toFhirCondition(
   diagnosis: Diagnosis,
   patientId: string,
 ): FhirCondition {
-  const codings: FhirCoding[] = [];
+  const codings: Coding[] = [];
 
   if (diagnosis.icd10_code) {
     codings.push({
