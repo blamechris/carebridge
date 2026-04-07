@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useState } from "react";
 import { useAuth } from "@/lib/auth";
 import { trpcVanilla } from "@/lib/trpc";
 
@@ -28,6 +29,7 @@ export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { user, clearSession, isAuthenticated } = useAuth();
+  const [isOpen, setIsOpen] = useState(false);
 
   async function handleLogout() {
     try {
@@ -42,54 +44,77 @@ export function Sidebar() {
   if (!isAuthenticated) return null;
 
   return (
-    <aside className="sidebar">
-      <div className="sidebar-header">
-        <div className="sidebar-logo">
+    <>
+      <button
+        type="button"
+        className="sidebar-toggle"
+        aria-label="Toggle navigation menu"
+        aria-expanded={isOpen}
+        onClick={() => setIsOpen((prev) => !prev)}
+      >
+        <span className="sidebar-toggle-icon">{isOpen ? "\u2715" : "\u2630"}</span>
+        <span className="sidebar-toggle-label">
           Care<span>Bridge</span>
-        </div>
-        <div className="sidebar-subtitle">Clinician Portal</div>
-      </div>
+        </span>
+      </button>
 
-      <nav className="sidebar-nav">
-        {navItems.map((item) => {
-          const isActive =
-            item.href === "/"
-              ? pathname === "/"
-              : pathname.startsWith(item.href);
+      {isOpen && (
+        <div
+          className="sidebar-backdrop"
+          onClick={() => setIsOpen(false)}
+          aria-hidden="true"
+        />
+      )}
 
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`nav-link ${isActive ? "active" : ""}`}
-            >
-              <span className="nav-icon">{item.icon}</span>
-              {item.label}
-            </Link>
-          );
-        })}
-      </nav>
-
-      <div className="sidebar-footer">
-        <div className="provider-info">
-          <div className="provider-avatar">
-            {user ? getInitials(user.name) : "?"}
+      <aside className={`sidebar ${isOpen ? "sidebar-open" : ""}`}>
+        <div className="sidebar-header">
+          <div className="sidebar-logo">
+            Care<span>Bridge</span>
           </div>
-          <div>
-            <div className="provider-name">{user?.name ?? "Unknown"}</div>
-            <div className="provider-role">
-              {user?.specialty ?? user?.role ?? ""}
+          <div className="sidebar-subtitle">Clinician Portal</div>
+        </div>
+
+        <nav className="sidebar-nav" onClick={() => setIsOpen(false)}>
+          {navItems.map((item) => {
+            const isActive =
+              item.href === "/"
+                ? pathname === "/"
+                : pathname.startsWith(item.href);
+
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`nav-link ${isActive ? "active" : ""}`}
+              >
+                <span className="nav-icon">{item.icon}</span>
+                {item.label}
+              </Link>
+            );
+          })}
+        </nav>
+
+        <div className="sidebar-footer">
+          <div className="provider-info">
+            <div className="provider-avatar">
+              {user ? getInitials(user.name) : "?"}
+            </div>
+            <div>
+              <div className="provider-name">{user?.name ?? "Unknown"}</div>
+              <div className="provider-role">
+                {user?.specialty ?? user?.role ?? ""}
+              </div>
             </div>
           </div>
+          <button
+            onClick={handleLogout}
+            className="btn btn-ghost btn-sm"
+            style={{ marginTop: 8, width: "100%", textAlign: "center" }}
+          >
+            Sign Out
+          </button>
         </div>
-        <button
-          onClick={handleLogout}
-          className="btn btn-ghost btn-sm"
-          style={{ marginTop: 8, width: "100%", textAlign: "center" }}
-        >
-          Sign Out
-        </button>
-      </div>
-    </aside>
+      </aside>
+    </>
   );
 }
