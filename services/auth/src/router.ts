@@ -113,7 +113,21 @@ const protectedProcedure = t.procedure.use(isAuthenticated);
 
 // ---------- Helpers ----------
 
-const REFRESH_TOKEN_HMAC_KEY = process.env.REFRESH_TOKEN_HMAC_KEY ?? process.env.SESSION_SECRET ?? "carebridge-dev-hmac-key";
+function resolveRefreshTokenHmacKey(): string {
+  const key = process.env.REFRESH_TOKEN_HMAC_KEY ?? process.env.SESSION_SECRET;
+  if (key) return key;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "REFRESH_TOKEN_HMAC_KEY (or SESSION_SECRET) environment variable is required in production."
+    );
+  }
+  console.warn(
+    "[auth] REFRESH_TOKEN_HMAC_KEY and SESSION_SECRET not set; using insecure development fallback."
+  );
+  return "carebridge-dev-hmac-key";
+}
+
+const REFRESH_TOKEN_HMAC_KEY = resolveRefreshTokenHmacKey();
 
 /**
  * Hash a refresh token with HMAC-SHA256 before storing it in the database.
