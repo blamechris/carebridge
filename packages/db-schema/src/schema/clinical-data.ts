@@ -1,11 +1,12 @@
 import { pgTable, text, real, index, jsonb } from "drizzle-orm/pg-core";
+import { encryptedText } from "../encryption.js";
 import { patients } from "./patients.js";
 
 export const medications = pgTable("medications", {
   id: text("id").primaryKey(),
   patient_id: text("patient_id").notNull().references(() => patients.id),
-  name: text("name").notNull(),
-  brand_name: text("brand_name"),
+  name: encryptedText("name").notNull(),
+  brand_name: encryptedText("brand_name"),
   dose_amount: real("dose_amount"),
   dose_unit: text("dose_unit"),
   route: text("route"),
@@ -14,7 +15,7 @@ export const medications = pgTable("medications", {
   started_at: text("started_at"),
   ended_at: text("ended_at"),
   prescribed_by: text("prescribed_by"),
-  notes: text("notes"),
+  notes: encryptedText("notes"),
   rxnorm_code: text("rxnorm_code"),
   ordering_provider_id: text("ordering_provider_id"),
   encounter_id: text("encounter_id"),
@@ -47,7 +48,7 @@ export const vitals = pgTable("vitals", {
   value_primary: real("value_primary").notNull(),
   value_secondary: real("value_secondary"),
   unit: text("unit").notNull(),
-  notes: text("notes"),
+  notes: encryptedText("notes"),
   provider_id: text("provider_id"),
   encounter_id: text("encounter_id"),
   source_system: text("source_system").default("internal"),
@@ -82,7 +83,7 @@ export const labResults = pgTable("lab_results", {
   reference_low: real("reference_low"),
   reference_high: real("reference_high"),
   flag: text("flag"),
-  notes: text("notes"),
+  notes: encryptedText("notes"),
   created_at: text("created_at").notNull(),
 }, (table) => [
   index("idx_lab_results_panel").on(table.panel_id),
@@ -100,7 +101,7 @@ export const procedures = pgTable("procedures", {
   performed_by: text("performed_by"),
   provider_id: text("provider_id"),
   encounter_id: text("encounter_id"),
-  notes: text("notes"),
+  notes: encryptedText("notes"),
   source_system: text("source_system").default("internal"),
   created_at: text("created_at").notNull(),
 }, (table) => [

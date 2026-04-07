@@ -1,5 +1,11 @@
-import { pgTable, text, integer, real, jsonb, index } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, real, index } from "drizzle-orm/pg-core";
+import { encryptedJsonb } from "../encryption.js";
 import { patients } from "./patients.js";
+
+// NoteSection[] stored encrypted at rest. Ciphertext lives in a text column
+// because encrypted bytes are not valid JSON; JSONB operators are unavailable
+// on this column.
+const encryptedSections = encryptedJsonb<unknown>();
 
 export const clinicalNotes = pgTable("clinical_notes", {
   id: text("id").primaryKey(),
@@ -7,7 +13,7 @@ export const clinicalNotes = pgTable("clinical_notes", {
   provider_id: text("provider_id").notNull(),
   encounter_id: text("encounter_id"),
   template_type: text("template_type").notNull(), // soap, progress, h_and_p, discharge, consult
-  sections: jsonb("sections").notNull(), // NoteSection[]
+  sections: encryptedSections("sections").notNull(), // NoteSection[] — encrypted at rest
   version: integer("version").notNull().default(1),
   status: text("status").notNull().default("draft"), // draft, signed, cosigned, amended
   signed_at: text("signed_at"),
@@ -27,7 +33,7 @@ export const noteVersions = pgTable("note_versions", {
   id: text("id").primaryKey(),
   note_id: text("note_id").notNull().references(() => clinicalNotes.id),
   version: integer("version").notNull(),
-  sections: jsonb("sections").notNull(),
+  sections: encryptedSections("sections").notNull(),
   saved_at: text("saved_at").notNull(),
   saved_by: text("saved_by").notNull(),
 }, (table) => [
