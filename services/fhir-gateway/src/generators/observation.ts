@@ -1,6 +1,34 @@
 import type { Vital, VitalType, LabResult } from "@carebridge/shared-types";
 import { VITAL_LOINC_CODES } from "@carebridge/shared-types";
 
+const UNIT_TO_UCUM: Record<string, string> = {
+  "K/uL": "10*3/uL",
+  "M/uL": "10*6/uL",
+  "g/dL": "g/dL",
+  "mg/dL": "mg/dL",
+  "ng/mL": "ng/mL",
+  "pg/mL": "pg/mL",
+  "mEq/L": "meq/L",
+  "mmol/L": "mmol/L",
+  "IU/L": "[iU]/L",
+  "U/L": "U/L",
+  "%": "%",
+  "sec": "s",
+  "mm/hr": "mm/h",
+  "bpm": "/min",
+  "breaths/min": "/min",
+  "mmHg": "mm[Hg]",
+  "kg": "kg",
+  "lbs": "[lb_av]",
+  "cm": "cm",
+  "in": "[in_i]",
+};
+
+function toUcumCode(unit: string | null): string {
+  if (!unit) return "{unknown}";
+  return UNIT_TO_UCUM[unit] ?? unit;
+}
+
 // ─── FHIR R4 Types (inline to avoid external dependency) ────────
 
 interface Coding {
@@ -199,7 +227,7 @@ export function toFhirLabObservation(
         value: labResult.reference_low,
         unit: labResult.unit,
         system: "http://unitsofmeasure.org",
-        code: labResult.unit,
+        code: toUcumCode(labResult.unit),
       };
     }
     if (labResult.reference_high != null) {
@@ -207,7 +235,7 @@ export function toFhirLabObservation(
         value: labResult.reference_high,
         unit: labResult.unit,
         system: "http://unitsofmeasure.org",
-        code: labResult.unit,
+        code: toUcumCode(labResult.unit),
       };
     }
     observation.referenceRange = [range];
