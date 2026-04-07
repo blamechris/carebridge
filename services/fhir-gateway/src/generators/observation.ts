@@ -1,5 +1,12 @@
 import type { Vital, VitalType, LabResult } from "@carebridge/shared-types";
 import { VITAL_LOINC_CODES } from "@carebridge/shared-types";
+import type {
+  Coding,
+  CodeableConcept,
+  Quantity,
+  Reference,
+  ObservationComponent,
+} from "../types/fhir-r4.js";
 
 const UNIT_TO_UCUM: Record<string, string> = {
   "K/uL": "10*3/uL",
@@ -27,35 +34,6 @@ const UNIT_TO_UCUM: Record<string, string> = {
 function toUcumCode(unit: string | null): string {
   if (!unit) return "{unknown}";
   return UNIT_TO_UCUM[unit] ?? unit;
-}
-
-// ─── FHIR R4 Types (inline to avoid external dependency) ────────
-
-interface Coding {
-  system?: string;
-  code?: string;
-  display?: string;
-}
-
-interface CodeableConcept {
-  coding?: Coding[];
-  text?: string;
-}
-
-interface Quantity {
-  value?: number;
-  unit?: string;
-  system?: string;
-  code?: string;
-}
-
-interface Reference {
-  reference?: string;
-}
-
-interface ObservationComponent {
-  code: CodeableConcept;
-  valueQuantity?: Quantity;
 }
 
 interface ObservationReferenceRange {

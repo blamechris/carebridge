@@ -7,8 +7,12 @@
  */
 
 import type { medications } from "@carebridge/db-schema";
+import type { Coding } from "../types/fhir-r4.js";
 
 type Medication = typeof medications.$inferSelect;
+
+// Local alias: MedicationStatement uses fully-populated Coding entries.
+type FhirCoding = Required<Pick<Coding, "system" | "code">> & Pick<Coding, "display">;
 
 const ROUTE_SNOMED: Record<string, { code: string; display: string }> = {
   oral: { code: "26643006", display: "Oral route" },
@@ -20,12 +24,6 @@ const ROUTE_SNOMED: Record<string, { code: string; display: string }> = {
   rectal: { code: "37161004", display: "Rectal route" },
   other: { code: "284009009", display: "Route of administration" },
 };
-
-interface FhirCoding {
-  system: string;
-  code: string;
-  display?: string;
-}
 
 interface FhirDosage {
   text?: string;
