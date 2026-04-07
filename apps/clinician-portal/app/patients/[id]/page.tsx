@@ -10,6 +10,7 @@ import {
   type FlagAction,
   type FlagActionModalFlag,
 } from "@/components/flag-action-modal";
+import { VitalsTrendChart } from "@/components/vitals-trend-chart";
 
 const tabs = [
   { key: "overview", label: "Overview" },
@@ -128,13 +129,20 @@ function OverviewTab({ patientId }: { patientId: string }) {
 }
 
 function VitalsTab({ patientId }: { patientId: string }) {
-  const vitalsQuery = trpc.clinicalData.vitals.getLatest.useQuery({ patientId });
-  const vitals = vitalsQuery.data ?? [];
+  const latestQuery = trpc.clinicalData.vitals.getLatest.useQuery({ patientId });
+  const historyQuery = trpc.clinicalData.vitals.getByPatient.useQuery({
+    patientId,
+  });
 
-  if (vitalsQuery.isLoading) return <LoadingState label="vitals" />;
-  if (vitalsQuery.isError) return <ErrorState label="vitals" />;
+  const latest = latestQuery.data ?? [];
+  const history = historyQuery.data ?? [];
 
-  if (vitals.length === 0) {
+  if (latestQuery.isLoading || historyQuery.isLoading)
+    return <LoadingState label="vitals" />;
+  if (latestQuery.isError || historyQuery.isError)
+    return <ErrorState label="vitals" />;
+
+  if (latest.length === 0) {
     return (
       <div className="empty-state">
         <div className="empty-state-text">No vitals recorded for this patient</div>
@@ -143,21 +151,33 @@ function VitalsTab({ patientId }: { patientId: string }) {
   }
 
   return (
-    <div className="detail-grid">
-      {vitals.map((vital, i) => (
-        <div key={i} className="stat-card">
-          <span className="stat-label">{vital.type}</span>
-          <span
-            className="stat-value"
-            style={{ fontSize: 24, color: "var(--text-primary)" }}
-          >
-            {vital.value_primary} {vital.unit}
-          </span>
-          <span className="stat-detail">
-            {new Date(vital.recorded_at).toLocaleString()}
-          </span>
-        </div>
-      ))}
+    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+      <div className="detail-grid">
+        {latest.map((vital, i) => (
+          <div key={i} className="stat-card">
+            <span className="stat-label">{vital.type}</span>
+            <span
+              className="stat-value"
+              style={{ fontSize: 24, color: "var(--text-primary)" }}
+            >
+              {vital.value_primary} {vital.unit}
+            </span>
+            <span className="stat-detail">
+              {new Date(vital.recorded_at).toLocaleString()}
+            </span>
+          </div>
+        ))}
+      </div>
+      <VitalsTrendChart
+        vitals={history.map((v) => ({
+          id: v.id,
+          recorded_at: v.recorded_at,
+          type: v.type,
+          value_primary: v.value_primary,
+          value_secondary: v.value_secondary ?? null,
+          unit: v.unit,
+        }))}
+      />
     </div>
   );
 }
