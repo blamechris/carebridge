@@ -23,9 +23,19 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body>
         <Providers>
+          <a href="#main-content" className="skip-to-main">
+            Skip to main content
+          </a>
           <div className="app-layout">
             <Sidebar />
-            <main className="main-content">{children}</main>
+            <main
+              id="main-content"
+              className="main-content"
+              tabIndex={-1}
+              role="main"
+            >
+              {children}
+            </main>
           </div>
         </Providers>
       </body>

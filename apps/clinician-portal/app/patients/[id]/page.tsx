@@ -251,6 +251,8 @@ function LabsTab({ patientId }: { patientId: string }) {
                                 ? "badge-critical"
                                 : "badge-warning"
                             }`}
+                            role={flag === "critical" ? "alert" : "status"}
+                            aria-label={`Lab value flag: ${flag}`}
                           >
                             {flag.toUpperCase()}
                           </span>
@@ -449,12 +451,22 @@ function FlagsTab({ patientId }: { patientId: string }) {
       <div className="table-header">
         <span className="table-title">AI Flags</span>
       </div>
-      <div className="flag-list">
+      <div
+        className="flag-list"
+        role="list"
+        aria-live="polite"
+        aria-label="Patient AI flags"
+      >
         {flags.map((flag) => (
-          <div key={flag.id} className="flag-item">
+          <div key={flag.id} className="flag-item" role="listitem">
             <div className="flag-severity">
-              <span className={`badge badge-${flag.severity}`}>
-                {flag.severity.toUpperCase()}
+              <span
+                className={`badge badge-${flag.severity}`}
+                role={flag.severity === "critical" ? "alert" : "status"}
+                aria-label={`Severity: ${flag.severity}`}
+              >
+                <span aria-hidden="true">{flag.severity.toUpperCase()}</span>
+                <span className="sr-only">{flag.severity} severity</span>
               </span>
             </div>
             <div className="flag-content">
