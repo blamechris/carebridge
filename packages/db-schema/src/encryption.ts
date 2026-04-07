@@ -114,14 +114,28 @@ export function decryptWithFallback(encrypted: string, currentKey: string | Buff
  * In production these should be separate keys.
  */
 export function hmacForIndex(value: string): string {
-  const key = process.env.PHI_HMAC_KEY ?? process.env.PHI_ENCRYPTION_KEY;
-  if (!key) {
-    throw new Error(
-      "Neither PHI_HMAC_KEY nor PHI_ENCRYPTION_KEY environment variable is set. " +
-        "At least one is required to compute HMAC indexes."
+  const hmacKey = process.env.PHI_HMAC_KEY;
+  if (!hmacKey) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        "PHI_HMAC_KEY environment variable is required in production. " +
+          "It must be a dedicated key distinct from PHI_ENCRYPTION_KEY."
+      );
+    }
+    const fallback = process.env.PHI_ENCRYPTION_KEY;
+    if (!fallback) {
+      throw new Error(
+        "Neither PHI_HMAC_KEY nor PHI_ENCRYPTION_KEY environment variable is set. " +
+          "At least one is required to compute HMAC indexes."
+      );
+    }
+    console.warn(
+      "[encryption] PHI_HMAC_KEY not set; falling back to PHI_ENCRYPTION_KEY. " +
+        "This is only permitted outside production."
     );
+    return createHmac("sha256", fallback).update(value).digest("hex");
   }
-  return createHmac("sha256", key).update(value).digest("hex");
+  return createHmac("sha256", hmacKey).update(value).digest("hex");
 }
 
 export const encryptedText = customType<{ data: string; driverData: string }>({
