@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
+import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import { fastifyTRPCPlugin } from "@trpc/server/adapters/fastify";
 import Redis from "ioredis";
@@ -57,6 +58,18 @@ async function main() {
   });
 
   // --- Plugins ---
+  // Security headers. This is a JSON API, not an HTML app, so CSP and COEP
+  // are disabled — they only make sense for browser-rendered documents.
+  // HSTS is only meaningful over HTTPS, so we gate it on production.
+  await server.register(helmet, {
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+    hsts:
+      process.env.NODE_ENV === "production"
+        ? { maxAge: 31536000, includeSubDomains: true }
+        : false,
+  });
+
   await server.register(cors, {
     origin: corsOrigins,
     credentials: true,
