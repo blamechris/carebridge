@@ -58,10 +58,14 @@ const VERIFICATION_STATUS_SYSTEM =
 function mapSeverityToCriticality(
   severity: string | null,
 ): "low" | "high" | "unable-to-assess" {
+  // Clinical rationale: FHIR criticality represents the risk of a future
+  // life-threatening reaction, not the observed severity. Moderate reactions
+  // can escalate unpredictably to anaphylaxis, so we conservatively map
+  // moderate -> "high" to prompt clinician caution on subsequent exposures.
   switch (severity) {
     case "mild":
-    case "moderate":
       return "low";
+    case "moderate":
     case "severe":
       return "high";
     default:
