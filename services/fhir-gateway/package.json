@@ -10,6 +10,7 @@
   "dependencies": {
     "@carebridge/shared-types": "workspace:*",
     "@carebridge/db-schema": "workspace:*",
+    "@carebridge/phi-sanitizer": "workspace:*",
     "@trpc/server": "^11.0.0",
     "drizzle-orm": "^0.38.0",
     "zod": "^3.24.0"
