@@ -80,11 +80,11 @@ export async function authMiddleware(
   }
 
   if (!sessionId) {
-    // Simple cookie parsing (no @fastify/cookie dependency needed).
-    const cookieHeader = request.headers.cookie ?? "";
-    const match = cookieHeader.match(/(?:^|;\s*)session=([^;]+)/);
-    if (match) {
-      sessionId = match[1];
+    // Parsed by @fastify/cookie plugin registered in server.ts.
+    const cookies = (request as unknown as { cookies?: Record<string, string> })
+      .cookies;
+    if (cookies?.session) {
+      sessionId = cookies.session;
     }
   }
 
