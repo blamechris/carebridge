@@ -244,7 +244,8 @@ function SessionExpiredToast({ onDismiss }: { onDismiss: () => void }) {
   return (
     <div
       role="alert"
-      aria-live="polite"
+      aria-live="assertive"
+      aria-atomic="true"
       style={{
         position: "fixed",
         top: 20,

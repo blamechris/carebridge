@@ -52,7 +52,9 @@ export function Sidebar() {
         aria-expanded={isOpen}
         onClick={() => setIsOpen((prev) => !prev)}
       >
-        <span className="sidebar-toggle-icon">{isOpen ? "\u2715" : "\u2630"}</span>
+        <span className="sidebar-toggle-icon" aria-hidden="true">
+          {isOpen ? "\u2715" : "\u2630"}
+        </span>
         <span className="sidebar-toggle-label">
           Care<span>Bridge</span>
         </span>
@@ -66,7 +68,10 @@ export function Sidebar() {
         />
       )}
 
-      <aside className={`sidebar ${isOpen ? "sidebar-open" : ""}`}>
+      <aside
+        className={`sidebar ${isOpen ? "sidebar-open" : ""}`}
+        aria-label="Primary sidebar"
+      >
         <div className="sidebar-header">
           <div className="sidebar-logo">
             Care<span>Bridge</span>
@@ -74,7 +79,11 @@ export function Sidebar() {
           <div className="sidebar-subtitle">Clinician Portal</div>
         </div>
 
-        <nav className="sidebar-nav" onClick={() => setIsOpen(false)}>
+        <nav
+          className="sidebar-nav"
+          aria-label="Primary navigation"
+          onClick={() => setIsOpen(false)}
+        >
           {navItems.map((item) => {
             const isActive =
               item.href === "/"
@@ -86,8 +95,12 @@ export function Sidebar() {
                 key={item.href}
                 href={item.href}
                 className={`nav-link ${isActive ? "active" : ""}`}
+                aria-label={item.label}
+                aria-current={isActive ? "page" : undefined}
               >
-                <span className="nav-icon">{item.icon}</span>
+                <span className="nav-icon" aria-hidden="true">
+                  {item.icon}
+                </span>
                 {item.label}
               </Link>
             );

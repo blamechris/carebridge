@@ -53,6 +53,51 @@ a {
   text-decoration: none;
 }
 
+/* ───── Accessibility: focus indicators ───── */
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-to-main {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 10100;
+  background: var(--accent);
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: 0 0 var(--radius-sm) 0;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.skip-to-main:focus {
+  left: 0;
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
 /* ───── Layout ───── */
 
 .app-layout {

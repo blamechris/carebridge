@@ -192,12 +192,26 @@ function InboxContent() {
             </div>
           </div>
         ) : sorted.length > 0 ? (
-          <div className="flag-list">
+          <div
+            className="flag-list"
+            role="list"
+            aria-live="polite"
+            aria-label="Open AI flags"
+          >
             {sorted.map((flag) => (
-              <div key={flag.id} className="flag-item">
+              <div key={flag.id} className="flag-item" role="listitem">
                 <div className="flag-severity">
-                  <span className={`badge badge-${flag.severity}`}>
-                    {flag.severity.toUpperCase()}
+                  <span
+                    className={`badge badge-${flag.severity}`}
+                    role={flag.severity === "critical" ? "alert" : "status"}
+                    aria-label={`Severity: ${flag.severity}`}
+                  >
+                    <span aria-hidden="true">
+                      {flag.severity.toUpperCase()}
+                    </span>
+                    <span className="sr-only">
+                      {flag.severity} severity
+                    </span>
                   </span>
                 </div>
                 <div className="flag-content">
