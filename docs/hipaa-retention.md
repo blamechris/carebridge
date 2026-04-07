@@ -1,0 +1,48 @@
+# HIPAA Audit Log Retention Policy
+
+## Retention Period
+
+CareBridge retains audit log records for **7 years** from the date of the
+recorded event. This exceeds the HIPAA Security Rule minimum of 6 years
+(45 CFR 164.316(b)(2)(i)) by one year as a safety buffer to absorb
+off-by-one errors, archival lag, and jurisdictional variance (some state
+laws require longer retention).
+
+## Immutability
+
+The `audit_log` table is append-only. PostgreSQL triggers
+(`audit_log_no_update`, `audit_log_no_delete`, migration
+`0012_audit_log_immutability.sql`) raise an exception on any UPDATE or
+DELETE against the table. This provides database-level tamper protection
+independent of application code.
+
+## Archival Plan (future work)
+
+To keep the hot `audit_log` table fast while preserving long-term
+retention, logs will be archived on the following schedule:
+
+1. Records newer than 1 year live in the primary `audit_log` table.
+2. Records between 1 and 7 years old are moved nightly to cold storage
+   (e.g. an archival partition or object-storage export). The archive
+   inherits the same immutability guarantees.
+3. Records older than 7 years are eligible for deletion **only** after
+   the legal hold release process below.
+
+The archival job is not yet implemented. Until it ships, all audit log
+records remain in the primary table.
+
+## Deletion / Legal Hold Release
+
+Audit log records may only be deleted after a documented legal hold
+release process:
+
+1. Written request from the Privacy Officer or General Counsel
+   identifying the records and justification.
+2. Confirmation that no active legal hold, litigation, investigation,
+   audit, or regulatory inquiry covers the records.
+3. Approval recorded in the compliance tracking system.
+4. Deletion performed by a DBA with the trigger temporarily disabled
+   inside a transaction, then re-enabled. The deletion itself is logged
+   to a separate compliance audit trail.
+
+Routine operational deletion of audit log records is prohibited.
