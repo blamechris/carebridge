@@ -36,7 +36,11 @@ async function logAccessDenial(
 /*  In-memory TTL cache for care-team lookups                         */
 /* ------------------------------------------------------------------ */
 
-const CACHE_TTL_MS = 60_000; // 60 seconds
+// Trade-off: shorter TTL means more DB load but fresher revocation of care-team
+// access. 5s bounds worst-case staleness for revoked access while still absorbing
+// bursty per-request lookups. Proper fix is a Redis-backed cache with PUBSUB
+// invalidation so revocations propagate instantly across replicas (follow-up issue).
+const CACHE_TTL_MS = 5_000; // 5 seconds
 const CACHE_MAX_ENTRIES = 10_000;
 
 interface CacheEntry {
