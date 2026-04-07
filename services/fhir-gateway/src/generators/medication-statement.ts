@@ -10,6 +10,17 @@ import type { medications } from "@carebridge/db-schema";
 
 type Medication = typeof medications.$inferSelect;
 
+const ROUTE_SNOMED: Record<string, { code: string; display: string }> = {
+  oral: { code: "26643006", display: "Oral route" },
+  IV: { code: "47625008", display: "Intravenous route" },
+  IM: { code: "78421000", display: "Intramuscular route" },
+  subcutaneous: { code: "34206005", display: "Subcutaneous route" },
+  topical: { code: "6064005", display: "Topical route" },
+  inhaled: { code: "418730005", display: "Inhalation route" },
+  rectal: { code: "37161004", display: "Rectal route" },
+  other: { code: "284009009", display: "Route of administration" },
+};
+
 interface FhirCoding {
   system: string;
   code: string;
@@ -150,7 +161,17 @@ export function toFhirMedicationStatement(
   }
 
   if (medication.route) {
+    const snomed = ROUTE_SNOMED[medication.route];
     dosage.route = {
+      coding: snomed
+        ? [
+            {
+              system: "http://snomed.info/sct",
+              code: snomed.code,
+              display: snomed.display,
+            },
+          ]
+        : undefined,
       text: medication.route,
     };
     hasDosage = true;
