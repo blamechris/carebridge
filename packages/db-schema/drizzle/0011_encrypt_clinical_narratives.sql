@@ -29,9 +29,18 @@
 -- format produced by encrypt()). A one-time re-encryption script must run
 -- against the live database to rewrite every existing row through the
 -- encryption pipeline before application reads will succeed.
--- See tooling/scripts/ for the re-encryption migration (to be added
--- separately) — do not deploy this migration to an environment with
--- existing PHI data without running it.
+--
+-- Run the re-encryption script AFTER applying this migration and BEFORE
+-- any application reads against the affected tables:
+--
+--   DATABASE_URL=postgres://... \
+--   PHI_ENCRYPTION_KEY=<64-hex> \
+--     pnpm --filter @carebridge/db-schema encrypt:0011
+--
+-- Script source: packages/db-schema/src/encrypt-clinical-narratives.ts
+-- Supports --dry-run and --table <name> flags; safe to re-run (idempotent).
+-- Do not deploy this migration to an environment with existing PHI data
+-- without running the script.
 
 ALTER TABLE "clinical_notes"
   ALTER COLUMN "sections" SET DATA TYPE text USING "sections"::text;

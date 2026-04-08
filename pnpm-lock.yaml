@@ -150,6 +150,9 @@ importers:
         specifier: ^3.4.0
         version: 3.4.8
     devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
       drizzle-kit:
         specifier: ^0.30.0
         version: 0.30.6
@@ -159,6 +162,9 @@ importers:
       typescript:
         specifier: ^5.7.0
         version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@22.19.17)(tsx@4.21.0)
 
   packages/medical-logic:
     dependencies:

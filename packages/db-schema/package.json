@@ -14,8 +14,10 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "generate": "drizzle-kit generate",
     "migrate": "tsx src/migrate.ts",
+    "encrypt:0011": "tsx src/encrypt-clinical-narratives.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {
@@ -24,8 +26,10 @@
     "postgres": "^3.4.0"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
     "drizzle-kit": "^0.30.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
   }
 }
