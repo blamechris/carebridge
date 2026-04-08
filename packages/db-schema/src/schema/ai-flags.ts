@@ -1,4 +1,4 @@
-import { pgTable, text, integer, jsonb, index } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, boolean, jsonb, index } from "drizzle-orm/pg-core";
 import { patients } from "./patients.js";
 
 export const clinicalFlags = pgTable("clinical_flags", {
@@ -8,7 +8,7 @@ export const clinicalFlags = pgTable("clinical_flags", {
   rule_id: text("rule_id"),
   severity: text("severity").notNull(), // critical, warning, info
   confidence: integer("confidence"), // 0-100, LLM-only
-  requires_human_review: integer("requires_human_review").notNull().default(1),
+  requires_human_review: boolean("requires_human_review").notNull().default(true),
   category: text("category").notNull(), // cross-specialty, drug-interaction, etc.
   summary: text("summary").notNull(),
   rationale: text("rationale").notNull(),
