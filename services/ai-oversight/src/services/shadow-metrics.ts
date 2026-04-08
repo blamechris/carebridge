@@ -85,6 +85,43 @@ export function getMetricsSnapshot(): MetricsSnapshot {
   return { byRule: ruleSnap, bySource: sourceSnap };
 }
 
+function escapeLabel(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
+}
+
+export function formatPrometheus(snapshot: MetricsSnapshot): string {
+  const lines: string[] = [];
+
+  const counters: Array<{
+    name: string;
+    help: string;
+    field: "created" | "dismissed" | "resolved";
+  }> = [
+    { name: "carebridge_flag_created_total", help: "Number of clinical flags created", field: "created" },
+    { name: "carebridge_flag_dismissed_total", help: "Number of clinical flags dismissed", field: "dismissed" },
+    { name: "carebridge_flag_resolved_total", help: "Number of clinical flags resolved", field: "resolved" },
+  ];
+
+  for (const c of counters) {
+    lines.push(`# HELP ${c.name} ${c.help}`);
+    lines.push(`# TYPE ${c.name} counter`);
+    for (const [ruleId, counts] of Object.entries(snapshot.byRule)) {
+      lines.push(`${c.name}{rule_id="${escapeLabel(ruleId)}"} ${counts[c.field]}`);
+    }
+    for (const [source, counts] of Object.entries(snapshot.bySource)) {
+      lines.push(`${c.name}{source="${escapeLabel(source)}"} ${counts[c.field]}`);
+    }
+  }
+
+  lines.push(`# HELP carebridge_flag_dismiss_rate Ratio of dismissed flags to created flags per rule`);
+  lines.push(`# TYPE carebridge_flag_dismiss_rate gauge`);
+  for (const [ruleId, snap] of Object.entries(snapshot.byRule)) {
+    lines.push(`carebridge_flag_dismiss_rate{rule_id="${escapeLabel(ruleId)}"} ${snap.dismissRate}`);
+  }
+
+  return lines.join("\n") + "\n";
+}
+
 export function resetMetrics(): void {
   byRule.clear();
   bySource.clear();
