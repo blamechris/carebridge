@@ -1,4 +1,16 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// Mock clinical-data so tests don't try to connect to a real DB or Redis
+// (the underlying repos emit BullMQ events on every write).
+vi.mock("@carebridge/clinical-data", () => ({
+  vitalRepo: {
+    createVital: vi.fn().mockResolvedValue({ id: "vital-stub" }),
+  },
+  labRepo: {
+    createLabPanel: vi.fn().mockResolvedValue({ id: "panel-stub" }),
+  },
+}));
+
 import {
   createMedLensToken,
   exportMedications,
