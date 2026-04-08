@@ -58,3 +58,30 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
+
+  phi-readiness:
+    name: PHI readiness gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Phase D hardening gate. Blocks merge if any of the kill-switch,
+    # PHI redactor, migration 0011, or secret-hygiene invariants regress.
+    # See docs/phi-readiness.md for the full check list.
+    needs: [test]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need git history for `git ls-files` checks — but depth 1 is fine,
+          # ls-files reports the working tree, not history.
+          fetch-depth: 1
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Run static PHI readiness checks
+        run: pnpm phi:gate
+      - name: Run phi-readiness unit tests
+        run: pnpm --filter @carebridge/scripts test

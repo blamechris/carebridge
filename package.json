@@ -11,6 +11,8 @@
     "db:generate": "pnpm --filter @carebridge/db-schema generate",
     "db:migrate": "pnpm --filter @carebridge/db-schema migrate",
     "db:seed": "tsx tooling/seed/index.ts",
+    "phi:gate": "pnpm --filter @carebridge/scripts phi:readiness:static",
+    "phi:gate:runtime": "pnpm --filter @carebridge/scripts phi:readiness:runtime",
     "clean": "turbo clean"
   },
   "devDependencies": {

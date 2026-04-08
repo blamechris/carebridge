@@ -42,5 +42,19 @@ as PHI for compliance purposes.
 ## Until BAA Is in Place
 
 The LLM review path must be disabled in any environment with real PHI.
-Set `AI_OVERSIGHT_LLM_ENABLED=false` to short-circuit the Claude call;
-deterministic rules continue to fire.
+The Phase D kill-switch uses two env vars that both default to failing
+closed:
+
+- `AI_OVERSIGHT_LLM_ENABLED=false` — operator-facing feature flag
+- `AI_OVERSIGHT_BAA_ACKNOWLEDGED=false` — legal prerequisite flag
+
+Both must be `"true"` for the worker to send prompts to Claude. If
+either is unset or not `"true"`, the worker gracefully degrades to
+deterministic rules and logs `LLMDisabledError` through the review-job
+status. The split lets ops enable the feature without inadvertently
+bypassing the BAA gate.
+
+The PHI readiness gate (`pnpm phi:gate:runtime`) verifies that these
+env vars are explicitly set and that `AI_OVERSIGHT_LLM_ENABLED=true`
+is accompanied by `AI_OVERSIGHT_BAA_ACKNOWLEDGED=true`. See
+`docs/phi-readiness.md` for the full check list.
