@@ -7,6 +7,7 @@
 
 import { createServer } from "node:http";
 import { startReviewWorker } from "./workers/review-worker.js";
+import { formatPrometheus, getMetricsSnapshot } from "./services/shadow-metrics.js";
 
 const HEALTH_PORT = Number(process.env.HEALTH_PORT ?? 4001);
 
@@ -64,6 +65,9 @@ const healthServer = createServer((req, res) => {
           }),
         );
       });
+  } else if (req.url === "/metrics" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "text/plain; version=0.0.4" });
+    res.end(formatPrometheus(getMetricsSnapshot()));
   } else {
     res.writeHead(404);
     res.end();
