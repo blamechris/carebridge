@@ -40,6 +40,7 @@ import type { RuleFlag } from "../rules/critical-values.js";
 import { buildPatientContext } from "../workers/context-builder.js";
 import { isLLMEnabled, reviewPatientRecord, LLMDisabledError } from "./claude-client.js";
 import { createFlag } from "./flag-service.js";
+import { extractNote } from "../extractors/note-extractor.js";
 
 /**
  * Process a clinical event through the full review pipeline.
@@ -113,6 +114,31 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
         status: "open",
       });
       flagIds.push(flag.id);
+    }
+
+    // Step 3b: Phase A1 note extraction. Fires on note.signed only.
+    // Runs as a non-blocking side-effect: extractor failures must NOT
+    // break the review job. The extractor has its own kill-switch gate,
+    // its own PHI sanitization, and persists its own failure rows to
+    // note_assertions, so we don't need to replicate any of that logic
+    // here — we just log that it ran.
+    if (event.type === "note.signed") {
+      const noteId = event.data.resourceId;
+      if (typeof noteId === "string" && noteId.length > 0) {
+        try {
+          const extraction = await extractNote({ noteId });
+          console.log(
+            `[review-service] Note extraction for ${noteId}: status=${extraction.status} ` +
+              `(${extraction.processing_time_ms}ms)`,
+          );
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(
+            `[review-service] Note extraction failed for ${noteId}: ${msg}`,
+          );
+          // Swallow — the review job continues regardless.
+        }
+      }
     }
 
     // Step 4: LLM review path — gated on the kill-switch. When disabled,

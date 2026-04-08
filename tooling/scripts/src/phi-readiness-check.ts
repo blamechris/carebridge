@@ -31,6 +31,7 @@ import {
   checkMigration0011Applied,
   checkNoEnvFilesTracked,
   checkNoHardcodedHexKeys,
+  checkNoteExtractorGates,
   checkPhiEncryptionKey,
   checkPhiHmacKey,
   checkReEncryptionScript,
@@ -98,6 +99,10 @@ async function runStaticChecks(): Promise<CheckResult[]> {
     REPO_ROOT,
     "packages/db-schema/src/encrypt-clinical-narratives.ts",
   );
+  const noteExtractorPath = join(
+    REPO_ROOT,
+    "services/ai-oversight/src/extractors/note-extractor.ts",
+  );
 
   const claudeClient = readIfExists(claudeClientPath);
   const reviewService = readIfExists(reviewServicePath);
@@ -107,6 +112,7 @@ async function runStaticChecks(): Promise<CheckResult[]> {
   const gitignore = readIfExists(gitignorePath);
   const migration = readIfExists(migrationPath);
   const reEncryptScript = readIfExists(reEncryptScriptPath);
+  const noteExtractor = readIfExists(noteExtractorPath);
 
   if (claudeClient === null) {
     results.push({
@@ -171,6 +177,16 @@ async function runStaticChecks(): Promise<CheckResult[]> {
 
   results.push(checkMigration0011(migration));
   results.push(checkReEncryptionScript(reEncryptScript));
+
+  if (noteExtractor === null) {
+    results.push({
+      ok: false,
+      name: "phase-a: note-extractor gates",
+      reason: `File not found: ${noteExtractorPath}`,
+    });
+  } else {
+    results.push(checkNoteExtractorGates(noteExtractor));
+  }
 
   const trackedFiles = listTrackedFiles();
   results.push(checkNoEnvFilesTracked(trackedFiles));

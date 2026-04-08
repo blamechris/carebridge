@@ -12,6 +12,7 @@ import {
   checkMigration0011Applied,
   checkNoEnvFilesTracked,
   checkNoHardcodedHexKeys,
+  checkNoteExtractorGates,
   checkPhiEncryptionKey,
   checkPhiHmacKey,
   checkReEncryptionScript,
@@ -89,6 +90,44 @@ describe("checkBootTimeStatusLog", () => {
     const result = checkBootTimeStatusLog("// no status log");
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toMatch(/logLLMStatus/);
+  });
+});
+
+describe("checkNoteExtractorGates", () => {
+  it("passes when all required guards are referenced", () => {
+    const source = `
+      import { redactClinicalText, SanitizationError, assertPromptSanitized } from "@carebridge/phi-sanitizer";
+      import { isLLMEnabled } from "../services/claude-client.js";
+    `;
+    expect(checkNoteExtractorGates(source).ok).toBe(true);
+  });
+
+  it("fails when redactClinicalText is missing", () => {
+    const source = `assertPromptSanitized isLLMEnabled SanitizationError`;
+    const result = checkNoteExtractorGates(source);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/redactClinicalText/);
+  });
+
+  it("fails when assertPromptSanitized is missing", () => {
+    const source = `redactClinicalText isLLMEnabled SanitizationError`;
+    const result = checkNoteExtractorGates(source);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/assertPromptSanitized/);
+  });
+
+  it("fails when isLLMEnabled is missing (kill-switch removed)", () => {
+    const source = `redactClinicalText assertPromptSanitized SanitizationError`;
+    const result = checkNoteExtractorGates(source);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/isLLMEnabled/);
+  });
+
+  it("fails when SanitizationError is missing (defensive catch removed)", () => {
+    const source = `redactClinicalText assertPromptSanitized isLLMEnabled`;
+    const result = checkNoteExtractorGates(source);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toMatch(/SanitizationError/);
   });
 });
 

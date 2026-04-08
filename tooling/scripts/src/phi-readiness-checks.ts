@@ -113,6 +113,35 @@ export function checkBootTimeStatusLog(
 }
 
 /**
+ * The Phase A1 note-extractor must route its LLM call through the same
+ * defense-in-depth stack as clinical review: PHI redaction via
+ * redactClinicalText, fail-closed assertPromptSanitized, and the
+ * kill-switch (isLLMEnabled / assertLLMEnabled). Dropping any of these
+ * would silently weaken the protection on the highest-volume source of
+ * PHI in the system (signed clinical notes).
+ */
+export function checkNoteExtractorGates(
+  noteExtractorSource: string,
+): CheckResult {
+  const required = [
+    "redactClinicalText",
+    "assertPromptSanitized",
+    "isLLMEnabled",
+    "SanitizationError",
+  ];
+  const missing = required.filter((id) => !noteExtractorSource.includes(id));
+  if (missing.length > 0) {
+    return fail(
+      "phase-a: note-extractor gates",
+      `note-extractor.ts is missing required guards: ${missing.join(", ")}. ` +
+        `The extractor must redact PHI, run the fail-closed sanitization check, ` +
+        `and honour the LLM kill-switch before any Claude call.`,
+    );
+  }
+  return pass("phase-a: note-extractor gates");
+}
+
+/**
  * The PHI redactor must export the Phase D expanded functions. If any
  * are missing, the redactor has regressed and diagnosis codes / SSNs
  * may leak to Claude.

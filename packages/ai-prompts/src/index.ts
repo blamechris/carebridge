@@ -7,6 +7,19 @@ export {
 export type { ReviewContext, LLMFlagOutput } from "./clinical-review.js";
 
 export {
+  NOTE_EXTRACTION_PROMPT_VERSION,
+  NOTE_EXTRACTION_SYSTEM_PROMPT,
+  buildNoteExtractionPrompt,
+  renderNoteBodyForExtraction,
+  parseNoteExtractionResponse,
+  EMPTY_NOTE_ASSERTIONS,
+} from "./note-extraction.js";
+export type {
+  NoteExtractionInput,
+  ParseResult as NoteExtractionParseResult,
+} from "./note-extraction.js";
+
+export {
   estimateTokens,
   enforceTokenBudget,
   DEFAULT_TOKEN_BUDGET,
