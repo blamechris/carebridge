@@ -9,7 +9,7 @@
  */
 import { z } from "zod";
 import { TRPCError, initTRPC } from "@trpc/server";
-import { fhirGatewayRouter } from "@carebridge/fhir-gateway";
+import { fhirGatewayRouter, fhirBundleSchema } from "@carebridge/fhir-gateway";
 import type { Context } from "../context.js";
 import { assertCareTeamAccess } from "../middleware/rbac.js";
 
@@ -70,7 +70,7 @@ export const fhirRbacRouter = t.router({
   importBundle: protectedProcedure
     .input(
       z.object({
-        bundle: z.any(),
+        bundle: fhirBundleSchema,
         source_system: z.string(),
       }),
     )

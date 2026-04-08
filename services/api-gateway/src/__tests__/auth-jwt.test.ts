@@ -197,7 +197,10 @@ describe("authMiddleware — JWT verification", () => {
     userRows = [activeUser];
 
     const request = makeRequest({
-      headers: { cookie: "session=cookie-jwt-token; other=value" },
+      headers: {},
+      // @fastify/cookie populates request.cookies; the middleware reads it
+      // from there now, not from the raw header.
+      cookies: { session: "cookie-jwt-token", other: "value" },
     });
     const reply = makeReply();
 
