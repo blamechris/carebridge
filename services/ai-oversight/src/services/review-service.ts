@@ -38,7 +38,7 @@ import type { PatientContext } from "../rules/cross-specialty.js";
 import { checkDrugInteractions } from "../rules/drug-interactions.js";
 import type { RuleFlag } from "../rules/critical-values.js";
 import { buildPatientContext } from "../workers/context-builder.js";
-import { reviewPatientRecord } from "./claude-client.js";
+import { isLLMEnabled, reviewPatientRecord, LLMDisabledError } from "./claude-client.js";
 import { createFlag } from "./flag-service.js";
 
 /**
@@ -115,7 +115,30 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
       flagIds.push(flag.id);
     }
 
-    // Step 4: Build patient context for LLM review
+    // Step 4: LLM review path — gated on the kill-switch. When disabled,
+    // deterministic rules still fire above; we just skip the LLM step and
+    // mark the job completed. This is the operator's failsafe: disabling
+    // LLM review must NEVER break the review pipeline.
+    if (!isLLMEnabled()) {
+      const processingTime = Date.now() - startTime;
+      await db
+        .update(reviewJobs)
+        .set({
+          status: "completed",
+          rules_evaluated: rulesEvaluated,
+          rules_fired: rulesFired,
+          flags_generated: flagIds,
+          processing_time_ms: processingTime,
+          completed_at: new Date().toISOString(),
+        })
+        .where(eq(reviewJobs.id, jobId));
+      console.log(
+        `[review-service] Job ${jobId} completed in ${processingTime}ms (rules-only; LLM kill-switch engaged). ` +
+          `Rules fired: ${rulesFired.length}, Total flags: ${flagIds.length}`,
+      );
+      return;
+    }
+
     const reviewContext = await buildPatientContext(event.patient_id, event);
 
     // Step 5: Build LLM prompt and enforce token budget
@@ -147,11 +170,21 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
     });
 
     if (redactionResult.auditTrail.fieldsRedacted > 0) {
+      const a = redactionResult.auditTrail;
       console.info(
-        `[review-service] PHI redaction: ${redactionResult.auditTrail.fieldsRedacted} field(s) redacted ` +
-          `(providers: ${redactionResult.auditTrail.providersRedacted}, ` +
-          `ages: ${redactionResult.auditTrail.agesRedacted}, ` +
-          `free-text: ${redactionResult.auditTrail.freeTextSanitized})`,
+        `[review-service] PHI redaction: ${a.fieldsRedacted} field(s) redacted ` +
+          `(providers: ${a.providersRedacted}, ` +
+          `ages: ${a.agesRedacted}, ` +
+          `free-text: ${a.freeTextSanitized}, ` +
+          `patient-names: ${a.patientNamesRedacted}, ` +
+          `mrns: ${a.mrnsRedacted}, ` +
+          `dates: ${a.datesRedacted}, ` +
+          `facilities: ${a.facilitiesRedacted}, ` +
+          `phones: ${a.phonesRedacted}, ` +
+          `addresses: ${a.addressesRedacted}, ` +
+          `ssns: ${a.ssnsRedacted}, ` +
+          `icd10: ${a.icd10CodesRedacted}, ` +
+          `snomed: ${a.snomedCodesRedacted})`,
       );
     }
 
@@ -168,11 +201,36 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
       })
       .where(eq(reviewJobs.id, jobId));
 
-    // Step 6: Call Claude API
-    const llmResponse = await reviewPatientRecord(
-      CLINICAL_REVIEW_SYSTEM_PROMPT,
-      userMessage,
-    );
+    // Step 6: Call Claude API. If the kill-switch flipped between the gate
+    // check at Step 4 and here (env var race), gracefully complete as
+    // rules-only rather than failing the job.
+    let llmResponse: string;
+    try {
+      llmResponse = await reviewPatientRecord(
+        CLINICAL_REVIEW_SYSTEM_PROMPT,
+        userMessage,
+      );
+    } catch (err) {
+      if (err instanceof LLMDisabledError) {
+        const processingTime = Date.now() - startTime;
+        await db
+          .update(reviewJobs)
+          .set({
+            status: "completed",
+            rules_evaluated: rulesEvaluated,
+            rules_fired: rulesFired,
+            flags_generated: flagIds,
+            processing_time_ms: processingTime,
+            completed_at: new Date().toISOString(),
+          })
+          .where(eq(reviewJobs.id, jobId));
+        console.warn(
+          `[review-service] Job ${jobId} completed as rules-only after LLM kill-switch engaged mid-job: ${err.reason}`,
+        );
+        return;
+      }
+      throw err;
+    }
 
     // Step 7: Validate and parse LLM response
     const validationResult = validateLLMResponse(llmResponse);

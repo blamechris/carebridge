@@ -11,6 +11,7 @@ import type { Job } from "bullmq";
 import type { ClinicalEvent } from "@carebridge/shared-types";
 import { getRedisConnection } from "@carebridge/redis-config";
 import { processReviewJob } from "../services/review-service.js";
+import { logLLMStatus } from "../services/claude-client.js";
 
 const QUEUE_NAME = "clinical-events";
 const DLQ_NAME = "clinical-events-failed";
@@ -29,6 +30,10 @@ const dlq = new Queue(DLQ_NAME, {
  * Create and start the clinical events review worker.
  */
 export function startReviewWorker(): Worker {
+  // Surface the kill-switch state at boot so config issues are obvious
+  // without waiting for the first event to arrive.
+  logLLMStatus();
+
   const worker = new Worker(
     QUEUE_NAME,
     async (job: Job) => {

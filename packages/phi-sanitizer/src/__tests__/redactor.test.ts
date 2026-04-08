@@ -12,6 +12,9 @@ import {
   redactFacilityNames,
   redactPhones,
   redactAddresses,
+  redactSSNs,
+  redactICD10Codes,
+  redactSNOMEDCodes,
 } from "../redactor.js";
 
 describe("redactProviderNames", () => {
@@ -394,5 +397,115 @@ describe("redactClinicalText — full pipeline expansion", () => {
     expect(result.auditTrail.facilitiesRedacted).toBeGreaterThan(0);
     expect(result.auditTrail.phonesRedacted).toBeGreaterThan(0);
     expect(result.auditTrail.addressesRedacted).toBeGreaterThan(0);
+  });
+
+  it("redacts SSN, ICD-10 and SNOMED codes through the pipeline", () => {
+    const text =
+      "SSN 123-45-6789. Active Dx: I26.09 (pulmonary embolism). SNOMED CT: 444226006.";
+    const result = redactClinicalText(text);
+    expect(result.redactedText).not.toContain("123-45-6789");
+    expect(result.redactedText).not.toContain("I26.09");
+    expect(result.redactedText).not.toContain("444226006");
+    expect(result.auditTrail.ssnsRedacted).toBe(1);
+    expect(result.auditTrail.icd10CodesRedacted).toBeGreaterThan(0);
+    expect(result.auditTrail.snomedCodesRedacted).toBe(1);
+  });
+});
+
+describe("redactSSNs", () => {
+  it("redacts standard SSN format", () => {
+    const { redactedText, count } = redactSSNs("SSN on file: 123-45-6789");
+    expect(redactedText).toContain("[SSN]");
+    expect(redactedText).not.toContain("123-45-6789");
+    expect(count).toBe(1);
+  });
+
+  it("does not redact phone numbers or other 3-2-4 digit patterns with wrong grouping", () => {
+    const { redactedText } = redactSSNs("Call 555-123-4567");
+    // Phone dash format (3-3-4) should not match SSN (3-2-4)
+    expect(redactedText).toContain("555-123-4567");
+  });
+});
+
+describe("redactICD10Codes", () => {
+  it("redacts dotted ICD-10 codes", () => {
+    const { redactedText, count } = redactICD10Codes(
+      "Active: I26.09 pulmonary embolism, C50.911 breast cancer.",
+    );
+    expect(redactedText).not.toContain("I26.09");
+    expect(redactedText).not.toContain("C50.911");
+    expect(redactedText).toContain("[ICD-CODE]");
+    expect(count).toBe(2);
+  });
+
+  it("redacts ICD-10 codes with letter extension", () => {
+    const { redactedText } = redactICD10Codes("Fracture code S72.001A healing.");
+    expect(redactedText).not.toContain("S72.001A");
+    expect(redactedText).toContain("[ICD-CODE]");
+  });
+
+  it("redacts labeled non-dotted codes", () => {
+    const { redactedText } = redactICD10Codes("ICD-10: Z79 long term med use.");
+    expect(redactedText).not.toMatch(/\bZ79\b/);
+    expect(redactedText).toContain("[ICD-CODE]");
+  });
+
+  it("redacts Dx shorthand", () => {
+    const { redactedText } = redactICD10Codes("Dx: G43.109 migraine");
+    expect(redactedText).not.toContain("G43.109");
+  });
+
+  it("does not redact lab names like A1C, B12, T4", () => {
+    const { redactedText } = redactICD10Codes(
+      "Labs: A1C 7.2, B12 450, T4 1.8, TSH 2.1 — all within range.",
+    );
+    expect(redactedText).toContain("A1C");
+    expect(redactedText).toContain("B12");
+    expect(redactedText).toContain("T4");
+  });
+
+  it("does not redact version strings or decimals without letter prefix", () => {
+    const { redactedText } = redactICD10Codes(
+      "Version 1.2 running, creatinine 2.1, BP 120/80.",
+    );
+    expect(redactedText).toContain("1.2");
+    expect(redactedText).toContain("2.1");
+  });
+
+  it("handles multiple codes in one string", () => {
+    const { redactedText, count } = redactICD10Codes(
+      "I50.23, E11.9, N18.3, G43.109 all active.",
+    );
+    expect(count).toBe(4);
+    expect(redactedText).not.toContain("I50.23");
+    expect(redactedText).not.toContain("E11.9");
+    expect(redactedText).not.toContain("N18.3");
+    expect(redactedText).not.toContain("G43.109");
+  });
+});
+
+describe("redactSNOMEDCodes", () => {
+  it("redacts SNOMED CT labeled codes", () => {
+    const { redactedText, count } = redactSNOMEDCodes(
+      "Concept: SNOMED CT 444226006 venous thromboembolism.",
+    );
+    expect(redactedText).not.toContain("444226006");
+    expect(redactedText).toContain("[SNOMED-CODE]");
+    expect(count).toBe(1);
+  });
+
+  it("redacts SCT shorthand", () => {
+    const { redactedText } = redactSNOMEDCodes("Mapped to SCT: 73211009");
+    expect(redactedText).not.toContain("73211009");
+    expect(redactedText).toContain("[SNOMED-CODE]");
+  });
+
+  it("does not redact random numeric values without label", () => {
+    const { redactedText, count } = redactSNOMEDCodes(
+      "Patient weight 180 lbs. Lab value 444226006 reported.",
+    );
+    expect(redactedText).toContain("180");
+    // Unlabeled numeric is NOT redacted — this is intentional (ambiguous)
+    expect(count).toBe(0);
   });
 });

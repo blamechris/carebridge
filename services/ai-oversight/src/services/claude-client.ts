@@ -4,6 +4,13 @@
  * This module handles the actual LLM call with retry logic and timeouts.
  * It uses claude-sonnet-4-6 by default — fast enough for near-real-time review,
  * capable enough for clinical pattern recognition.
+ *
+ * Fail-closed gates (checked in order before any network call):
+ *   1. PHI sanitization (assertPromptSanitized) — refuses unredacted prompts
+ *   2. LLM enablement (assertLLMEnabled) — refuses calls unless the operator
+ *      has explicitly enabled AI_OVERSIGHT_LLM_ENABLED *and* acknowledged the
+ *      Anthropic BAA via AI_OVERSIGHT_BAA_ACKNOWLEDGED. This is the runtime
+ *      kill-switch referenced in docs/anthropic-baa.md.
  */
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -15,6 +22,78 @@ const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
 const REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_RATE_LIMIT_DELAY_MS = 15_000;
+
+/**
+ * Error thrown when the LLM kill-switch is engaged. Distinct from
+ * SanitizationError and SDK errors so callers (e.g. review-service) can
+ * continue with rule-only processing instead of failing the whole job.
+ */
+export class LLMDisabledError extends Error {
+  public readonly reason: string;
+  constructor(reason: string) {
+    super(`AI oversight LLM is disabled: ${reason}`);
+    this.name = "LLMDisabledError";
+    this.reason = reason;
+  }
+}
+
+/**
+ * Check whether the LLM review path is enabled. Fails closed: any missing
+ * or non-"true" value disables the LLM. Both flags must be explicitly set.
+ *
+ * The double-flag design forces the operator to distinguish "I've enabled
+ * the feature" from "I've confirmed the BAA is in place" — a single flag
+ * would let a well-meaning developer flip it without the legal prerequisite.
+ */
+export function isLLMEnabled(): boolean {
+  return (
+    process.env.AI_OVERSIGHT_LLM_ENABLED === "true" &&
+    process.env.AI_OVERSIGHT_BAA_ACKNOWLEDGED === "true"
+  );
+}
+
+/**
+ * Fail-closed assertion that the LLM review path is enabled. Throws
+ * LLMDisabledError with a specific reason so operators can diagnose
+ * misconfiguration without triaging a generic failure.
+ */
+export function assertLLMEnabled(): void {
+  if (process.env.AI_OVERSIGHT_LLM_ENABLED !== "true") {
+    throw new LLMDisabledError(
+      "AI_OVERSIGHT_LLM_ENABLED is not 'true' (kill-switch engaged)",
+    );
+  }
+  if (process.env.AI_OVERSIGHT_BAA_ACKNOWLEDGED !== "true") {
+    throw new LLMDisabledError(
+      "AI_OVERSIGHT_BAA_ACKNOWLEDGED is not 'true' (BAA prerequisite not confirmed)",
+    );
+  }
+}
+
+/**
+ * Log the current kill-switch state at worker startup so misconfiguration
+ * is obvious in boot logs without needing to wait for the first event.
+ */
+export function logLLMStatus(): void {
+  if (isLLMEnabled()) {
+    console.log(
+      "[claude-client] LLM review ENABLED (AI_OVERSIGHT_LLM_ENABLED=true, BAA acknowledged)",
+    );
+  } else {
+    const missing: string[] = [];
+    if (process.env.AI_OVERSIGHT_LLM_ENABLED !== "true") {
+      missing.push("AI_OVERSIGHT_LLM_ENABLED");
+    }
+    if (process.env.AI_OVERSIGHT_BAA_ACKNOWLEDGED !== "true") {
+      missing.push("AI_OVERSIGHT_BAA_ACKNOWLEDGED");
+    }
+    console.warn(
+      `[claude-client] LLM review DISABLED — kill-switch engaged. Missing or non-'true': ${missing.join(", ")}. ` +
+        `Deterministic rules will still run. To enable LLM review, confirm the Anthropic BAA is in place ` +
+        `(see docs/anthropic-baa.md) and set both env vars to 'true'.`,
+    );
+  }
+}
 
 let client: Anthropic | null = null;
 
@@ -37,9 +116,15 @@ export async function reviewPatientRecord(
   systemPrompt: string,
   userMessage: string,
 ): Promise<string> {
-  // Fail-closed: refuse to transmit any prompt that hasn't been redacted.
+  // Fail-closed gate 1: refuse to transmit any prompt that hasn't been redacted.
   // Throws SanitizationError before any network call if residual PHI is found.
   assertPromptSanitized(userMessage);
+
+  // Fail-closed gate 2: refuse to call the API unless the kill-switch is off
+  // and the BAA is acknowledged. Throws LLMDisabledError — distinct from
+  // SanitizationError so review-service can gracefully fall back to rule-only
+  // processing instead of failing the whole job.
+  assertLLMEnabled();
 
   const anthropic = getClient();
 

@@ -21,10 +21,17 @@ export interface AuditTrail {
   facilitiesRedacted: number;
   phonesRedacted: number;
   addressesRedacted: number;
+  ssnsRedacted: number;
+  icd10CodesRedacted: number;
+  snomedCodesRedacted: number;
 }
 
 const MRN_LABELED = /\bMRN[:\s#]*\d{6,12}\b/gi;
-const MRN_CONTEXT = /\b(?:patient|pt|medical\s+record|record|id)\s*(?:#|number|no\.?|:)?\s*(\d{7,10})\b/gi;
+// MRN in context: a patient-identifier word followed by any number of
+// separator tokens (#, "number", "no", ":"), then the digits. The separator
+// group is repeatable so phrases like "Patient Number: 12345678" — which
+// chain two separators — still match.
+const MRN_CONTEXT = /\b(?:patient|pt|medical\s+record|record|id)(?:\s*(?:#|number|no\.?|:))*\s*(\d{7,10})\b/gi;
 const DATE_MDY = /\b(0?[1-9]|1[0-2])[\/\-](0?[1-9]|[12]\d|3[01])[\/\-](\d{4}|\d{2})\b/g;
 const DATE_ISO = /\b(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])\b/g;
 const DATE_MONTH_NAME =
@@ -33,6 +40,18 @@ const PHONE_PAREN = /\(\d{3}\)\s*\d{3}-\d{4}/g;
 const PHONE_DASH = /\b\d{3}-\d{3}-\d{4}\b/g;
 const PHONE_SHORT = /\b\d{3}-\d{4}\b/g;
 const ADDRESS = /\b\d+\s+[A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Boulevard|Blvd|Lane|Ln|Court|Ct|Way)\b\.?/g;
+const SSN = /\b\d{3}-\d{2}-\d{4}\b/g;
+// ICD-10-CM codes in their distinctive dotted form: letter + 2 digits +
+// decimal + 1-4 alphanumeric (e.g., I26.09, C50.911, G43.109). The dotted
+// form is specific enough to avoid false positives on things like "v1.2" or
+// lab reference ranges. Non-dotted ICD codes are only matched in labeled
+// context below to avoid clobbering lab names like "A1C" or "B12".
+const ICD10_DOTTED = /\b[A-Z]\d{2}\.\d{1,4}[A-Z]?\b/g;
+const ICD10_LABELED =
+  /\b(?:ICD[-\s]?10(?:-CM)?|ICD|Dx|Diagnosis\s+code)[:\s#]*([A-Z]\d{2}(?:\.\d{1,4}[A-Z]?)?)\b/gi;
+// SNOMED CT codes are pure numeric (6-18 digits) and indistinguishable from
+// other numbers, so we only match them in explicit labeled context.
+const SNOMED_LABELED = /\b(?:SNOMED(?:[-\s]?CT)?|SCT)[:\s#]*(\d{6,18})\b/gi;
 
 // ChatML / Llama delimiter patterns that could be used for injection
 const INJECTION_PATTERNS = [
@@ -292,6 +311,65 @@ export function redactAddresses(text: string): { redactedText: string; count: nu
 }
 
 /**
+ * Redact US Social Security Number patterns (xxx-xx-xxxx).
+ */
+export function redactSSNs(text: string): { redactedText: string; count: number } {
+  let count = 0;
+  const result = text.replace(SSN, () => {
+    count++;
+    return "[SSN]";
+  });
+  return { redactedText: result, count };
+}
+
+/**
+ * Redact ICD-10 diagnosis codes.
+ *
+ * Two strategies:
+ *   1. Dotted form (e.g., "I26.09", "C50.911") — specific enough to match
+ *      without a label; distinctive punctuation makes false positives rare.
+ *   2. Labeled form (e.g., "ICD-10: I26", "Dx: C50") — the label provides
+ *      the signal, so we accept non-dotted codes too.
+ *
+ * The semantic diagnosis text (e.g., "pulmonary embolism") is still passed
+ * to the LLM via the structured prompt sections, so removing the code
+ * identifier does not reduce clinical reasoning capability — it only
+ * removes a direct patient-correlation identifier.
+ */
+export function redactICD10Codes(text: string): { redactedText: string; count: number } {
+  let count = 0;
+  // Labeled form first so the label itself is preserved cleanly.
+  let result = text.replace(ICD10_LABELED, (_match, code: string, ...rest) => {
+    count++;
+    // Preserve the label prefix (everything before the captured code)
+    const offset = rest[rest.length - 2] as number;
+    const fullMatch = _match as string;
+    const prefix = fullMatch.slice(0, fullMatch.length - code.length);
+    return `${prefix}[ICD-CODE]`;
+  });
+  // Then catch any remaining dotted-form codes in free text.
+  result = result.replace(ICD10_DOTTED, () => {
+    count++;
+    return "[ICD-CODE]";
+  });
+  return { redactedText: result, count };
+}
+
+/**
+ * Redact SNOMED CT codes. Labeled context only — naked numeric sequences
+ * are too ambiguous to safely match without a label.
+ */
+export function redactSNOMEDCodes(text: string): { redactedText: string; count: number } {
+  let count = 0;
+  const result = text.replace(SNOMED_LABELED, (match: string, code: string) => {
+    count++;
+    const prefix = match.slice(0, match.length - code.length);
+    return `${prefix}[SNOMED-CODE]`;
+  });
+  return { redactedText: result, count };
+}
+
+/**
  * Error thrown when a prompt fails the fail-closed PHI sanitization check.
  * Carries a list of violation labels (NOT the matching text) so callers can
  * log diagnostics without re-leaking PHI.
@@ -309,13 +387,16 @@ export class SanitizationError extends Error {
 
 const SANITIZATION_GUARDS: Array<{ label: string; pattern: RegExp }> = [
   { label: "MRN_LABELED", pattern: MRN_LABELED },
+  { label: "MRN_CONTEXT", pattern: MRN_CONTEXT },
   { label: "DATE_ISO", pattern: DATE_ISO },
   { label: "DATE_MDY", pattern: DATE_MDY },
   { label: "DATE_MONTH_NAME", pattern: DATE_MONTH_NAME },
   { label: "PHONE_PAREN", pattern: PHONE_PAREN },
   { label: "PHONE_DASH", pattern: PHONE_DASH },
-  { label: "SSN", pattern: /\b\d{3}-\d{2}-\d{4}\b/g },
+  { label: "SSN", pattern: SSN },
   { label: "ADDRESS", pattern: ADDRESS },
+  { label: "ICD10_DOTTED", pattern: ICD10_DOTTED },
+  { label: "SNOMED_LABELED", pattern: SNOMED_LABELED },
 ];
 
 /**
@@ -360,6 +441,9 @@ export function redactClinicalText(
     facilitiesRedacted: 0,
     phonesRedacted: 0,
     addressesRedacted: 0,
+    ssnsRedacted: 0,
+    icd10CodesRedacted: 0,
+    snomedCodesRedacted: 0,
   };
 
   // Step 1: sanitize free text
@@ -430,6 +514,27 @@ export function redactClinicalText(
     audit.addressesRedacted = r.count;
   }
 
+  // Step 10: redact SSNs
+  {
+    const r = redactSSNs(current);
+    current = r.redactedText;
+    audit.ssnsRedacted = r.count;
+  }
+
+  // Step 11: redact ICD-10 diagnosis codes
+  {
+    const r = redactICD10Codes(current);
+    current = r.redactedText;
+    audit.icd10CodesRedacted = r.count;
+  }
+
+  // Step 12: redact SNOMED CT codes
+  {
+    const r = redactSNOMEDCodes(current);
+    current = r.redactedText;
+    audit.snomedCodesRedacted = r.count;
+  }
+
   audit.fieldsRedacted =
     audit.providersRedacted +
     audit.agesRedacted +
@@ -439,7 +544,10 @@ export function redactClinicalText(
     audit.datesRedacted +
     audit.facilitiesRedacted +
     audit.phonesRedacted +
-    audit.addressesRedacted;
+    audit.addressesRedacted +
+    audit.ssnsRedacted +
+    audit.icd10CodesRedacted +
+    audit.snomedCodesRedacted;
 
   return {
     redactedText: current,
