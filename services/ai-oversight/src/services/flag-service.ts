@@ -85,7 +85,7 @@ export async function createFlag(
   const record = {
     id,
     ...flag,
-    requires_human_review: requiresHumanReview ? 1 : 0,
+    requires_human_review: requiresHumanReview,
     created_at: now,
   };
 
@@ -93,7 +93,7 @@ export async function createFlag(
 
   recordFlagCreated({ rule_id: flag.rule_id, source: flag.source });
 
-  return { ...record, requires_human_review: requiresHumanReview } as unknown as ClinicalFlag;
+  return record as ClinicalFlag;
 }
 
 /**

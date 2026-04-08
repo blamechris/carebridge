@@ -67,7 +67,7 @@ describe("createFlag", () => {
     expect(result.requires_human_review).toBe(true);
     expect(result.confidence).toBe(72);
     const inserted = mockValues.mock.calls[0]?.[0];
-    expect(inserted.requires_human_review).toBe(1);
+    expect(inserted.requires_human_review).toBe(true);
     expect(inserted.confidence).toBe(72);
   });
 
