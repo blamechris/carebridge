@@ -127,7 +127,7 @@ export async function resolveFlag(
   const db = getDb();
   const now = new Date().toISOString();
 
-  await db
+  const rows = await db
     .update(clinicalFlags)
     .set({
       status: "resolved",
@@ -135,16 +135,12 @@ export async function resolveFlag(
       resolved_at: now,
       resolution_note: note,
     })
-    .where(eq(clinicalFlags.id, flagId));
-
-  const row = await db
-    .select({ rule_id: clinicalFlags.rule_id, source: clinicalFlags.source })
-    .from(clinicalFlags)
     .where(eq(clinicalFlags.id, flagId))
-    .limit(1);
+    .returning({ rule_id: clinicalFlags.rule_id, source: clinicalFlags.source });
+
   recordFlagResolved({
-    rule_id: row[0]?.rule_id ?? undefined,
-    source: row[0]?.source as ClinicalFlag["source"] | undefined,
+    rule_id: rows[0]?.rule_id ?? undefined,
+    source: rows[0]?.source as ClinicalFlag["source"] | undefined,
   });
 }
 
@@ -159,7 +155,7 @@ export async function dismissFlag(
   const db = getDb();
   const now = new Date().toISOString();
 
-  await db
+  const rows = await db
     .update(clinicalFlags)
     .set({
       status: "dismissed",
@@ -167,16 +163,12 @@ export async function dismissFlag(
       dismissed_at: now,
       dismiss_reason: reason,
     })
-    .where(eq(clinicalFlags.id, flagId));
-
-  const row = await db
-    .select({ rule_id: clinicalFlags.rule_id, source: clinicalFlags.source })
-    .from(clinicalFlags)
     .where(eq(clinicalFlags.id, flagId))
-    .limit(1);
+    .returning({ rule_id: clinicalFlags.rule_id, source: clinicalFlags.source });
+
   recordFlagDismissed({
-    rule_id: row[0]?.rule_id ?? undefined,
-    source: row[0]?.source as ClinicalFlag["source"] | undefined,
+    rule_id: rows[0]?.rule_id ?? undefined,
+    source: rows[0]?.source as ClinicalFlag["source"] | undefined,
   });
 }
 
