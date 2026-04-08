@@ -10,6 +10,11 @@ import { eq, and, gte, sql } from "drizzle-orm";
 import { getDb } from "@carebridge/db-schema";
 import { clinicalFlags } from "@carebridge/db-schema";
 import type { ClinicalFlag, FlagStatus } from "@carebridge/shared-types";
+import {
+  recordFlagCreated,
+  recordFlagDismissed,
+  recordFlagResolved,
+} from "./shadow-metrics.js";
 
 // 24 hours in milliseconds — window for LLM flag deduplication
 const LLM_DEDUP_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -74,15 +79,21 @@ export async function createFlag(
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
 
+  const requiresHumanReview =
+    flag.requires_human_review ?? flag.source === "ai-review";
+
   const record = {
     id,
     ...flag,
+    requires_human_review: requiresHumanReview ? 1 : 0,
     created_at: now,
   };
 
   await db.insert(clinicalFlags).values(record);
 
-  return { ...record } as ClinicalFlag;
+  recordFlagCreated({ rule_id: flag.rule_id, source: flag.source });
+
+  return { ...record, requires_human_review: requiresHumanReview } as unknown as ClinicalFlag;
 }
 
 /**
@@ -125,6 +136,16 @@ export async function resolveFlag(
       resolution_note: note,
     })
     .where(eq(clinicalFlags.id, flagId));
+
+  const row = await db
+    .select({ rule_id: clinicalFlags.rule_id, source: clinicalFlags.source })
+    .from(clinicalFlags)
+    .where(eq(clinicalFlags.id, flagId))
+    .limit(1);
+  recordFlagResolved({
+    rule_id: row[0]?.rule_id ?? undefined,
+    source: row[0]?.source as ClinicalFlag["source"] | undefined,
+  });
 }
 
 /**
@@ -147,6 +168,16 @@ export async function dismissFlag(
       dismiss_reason: reason,
     })
     .where(eq(clinicalFlags.id, flagId));
+
+  const row = await db
+    .select({ rule_id: clinicalFlags.rule_id, source: clinicalFlags.source })
+    .from(clinicalFlags)
+    .where(eq(clinicalFlags.id, flagId))
+    .limit(1);
+  recordFlagDismissed({
+    rule_id: row[0]?.rule_id ?? undefined,
+    source: row[0]?.source as ClinicalFlag["source"] | undefined,
+  });
 }
 
 /**

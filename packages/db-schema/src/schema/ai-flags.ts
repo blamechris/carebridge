@@ -7,6 +7,8 @@ export const clinicalFlags = pgTable("clinical_flags", {
   source: text("source").notNull(), // rules, ai-review
   rule_id: text("rule_id"),
   severity: text("severity").notNull(), // critical, warning, info
+  confidence: integer("confidence"), // 0-100, LLM-only
+  requires_human_review: integer("requires_human_review").notNull().default(1),
   category: text("category").notNull(), // cross-specialty, drug-interaction, etc.
   summary: text("summary").notNull(),
   rationale: text("rationale").notNull(),
@@ -54,6 +56,8 @@ export const reviewJobs = pgTable("review_jobs", {
   rules_fired: jsonb("rules_fired").$type<string[]>().default([]),
   llm_request_tokens: integer("llm_request_tokens"),
   llm_response_tokens: integer("llm_response_tokens"),
+  redacted_prompt: text("redacted_prompt"),
+  redaction_audit: jsonb("redaction_audit"),
   flags_generated: jsonb("flags_generated").$type<string[]>().default([]),
   processing_time_ms: integer("processing_time_ms"),
   error: text("error"),

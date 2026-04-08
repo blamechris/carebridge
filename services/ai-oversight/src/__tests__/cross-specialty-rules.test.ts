@@ -8,6 +8,43 @@ import {
   type PatientContext,
 } from "../rules/cross-specialty.js";
 
+describe("CHEMO-FEVER-001 — ANC-aware behavior", () => {
+  const baseCtx = (overrides: Partial<PatientContext> = {}): PatientContext => ({
+    active_diagnoses: ["Breast cancer"],
+    active_diagnosis_codes: ["C50.9"],
+    active_medications: ["Cisplatin"],
+    new_symptoms: ["fever"],
+    care_team_specialties: ["oncology"],
+    ...overrides,
+  });
+
+  it("fires CRITICAL when ANC < 1500 (febrile neutropenia)", () => {
+    const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 800 }] });
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "CHEMO-FEVER-001",
+    );
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("critical");
+  });
+
+  it("fires only WARNING when ANC is unknown (no recent labs)", () => {
+    const ctx = baseCtx({ recent_labs: [] });
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "CHEMO-FEVER-001",
+    );
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("warning");
+  });
+
+  it("does NOT fire when ANC is normal (>= 1500)", () => {
+    const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 3200 }] });
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "CHEMO-FEVER-001",
+    );
+    expect(flag).toBeUndefined();
+  });
+});
+
 describe("ONCO-VTE-NEURO-001 — Cancer + VTE + neurological symptom", () => {
   it("fires for cancer + VTE + neurological symptom", () => {
     const ctx: PatientContext = {
