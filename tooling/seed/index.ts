@@ -10,6 +10,7 @@ import postgres from "postgres";
 import * as schema from "@carebridge/db-schema";
 import { hmacForIndex } from "@carebridge/db-schema";
 import crypto from "node:crypto";
+import { seedCheckInTemplates } from "./checkin-templates.js";
 
 const connectionString = process.env.DATABASE_URL
   ?? "postgresql://carebridge:carebridge_dev@localhost:5432/carebridge";
@@ -237,6 +238,14 @@ async function seed() {
     { id: uuid(), patient_id: patient2Id, name: "Metformin", dose_amount: 500, dose_unit: "mg", route: "oral", frequency: "twice daily", status: "active", started_at: daysAgo(60), prescribed_by: "Dr. Smith", ordering_provider_id: drSmith, source_system: "internal", created_at: daysAgo(60), updated_at: daysAgo(60) },
     { id: uuid(), patient_id: patient2Id, name: "Lisinopril", dose_amount: 10, dose_unit: "mg", route: "oral", frequency: "once daily", status: "active", started_at: daysAgo(60), prescribed_by: "Dr. Smith", ordering_provider_id: drSmith, source_system: "internal", created_at: daysAgo(60), updated_at: daysAgo(60) },
   ]);
+
+  // ─── Check-in templates (Phase B1) ──────────────────────────────
+  // Idempotent — skips any (slug, version) already present so reseeds
+  // don't create duplicate rows.
+  await seedCheckInTemplates(
+    db as unknown as Parameters<typeof seedCheckInTemplates>[0],
+    now(),
+  );
 
   console.log("Seed complete.");
   console.log(`  DVT scenario patient: ${dvtPatientId} (Margaret Chen, MRN: MCH-2026-0042)`);

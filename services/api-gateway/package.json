@@ -19,6 +19,7 @@
     "@carebridge/patient-records": "workspace:*",
     "@carebridge/clinical-data": "workspace:*",
     "@carebridge/clinical-notes": "workspace:*",
+    "@carebridge/checkins": "workspace:*",
     "@carebridge/ai-oversight": "workspace:*",
     "@carebridge/notifications": "workspace:*",
     "@carebridge/fhir-gateway": "workspace:*",

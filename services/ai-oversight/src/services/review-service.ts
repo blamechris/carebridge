@@ -22,6 +22,8 @@ import {
   noteAssertions,
   users,
   vitals,
+  checkIns,
+  checkInTemplates,
 } from "@carebridge/db-schema";
 import type {
   ClinicalEvent,
@@ -49,6 +51,11 @@ import {
   checkNoteCorrelation,
   type NoteCorrelationContext,
 } from "../rules/note-correlation.js";
+import {
+  checkCheckInRedFlags,
+  type CheckInRuleContext,
+  type PriorCheckInSummary,
+} from "../rules/checkin-redflags.js";
 import { buildPatientContext } from "../workers/context-builder.js";
 import { isLLMEnabled, reviewPatientRecord, LLMDisabledError } from "./claude-client.js";
 import { createFlag } from "./flag-service.js";
@@ -224,6 +231,69 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
           const msg = err instanceof Error ? err.message : String(err);
           console.error(
             `[review-service] Note extraction failed for ${noteId}: ${msg}`,
+          );
+          // Swallow — the review job continues regardless.
+        }
+      }
+    }
+
+    // Step 3c: Phase B4 check-in red-flag rules. Fires on
+    // checkin.submitted only. Runs as a non-blocking side effect: a
+    // rule evaluation failure here must NOT demote the job to failed —
+    // the check-in row still exists and patient-voice data is not
+    // lost. We reload the check-in row from the DB rather than
+    // trusting the event payload to carry responses, because the
+    // event payload is intentionally PHI-free (see Phase B1 service
+    // docs) and because defence-in-depth against a stale/forged event.
+    if (event.type === "checkin.submitted") {
+      const checkinId = event.data.resourceId;
+      if (typeof checkinId === "string" && checkinId.length > 0) {
+        try {
+          const checkinCtx = await buildCheckInRuleContext(
+            checkinId,
+            event.patient_id,
+          );
+          if (checkinCtx) {
+            rulesEvaluated.push("checkin-redflags");
+            const checkinFlags = checkCheckInRedFlags(checkinCtx);
+            if (checkinFlags.length > 0) {
+              rulesFired.push("checkin-redflags");
+              for (const ruleFlag of checkinFlags) {
+                const flag = await createFlag({
+                  patient_id: event.patient_id,
+                  source: "rules" as FlagSource,
+                  rule_id: ruleFlag.rule_id,
+                  severity: ruleFlag.severity,
+                  category: ruleFlag.category,
+                  summary: ruleFlag.summary,
+                  rationale: ruleFlag.rationale,
+                  suggested_action: ruleFlag.suggested_action,
+                  notify_specialties: ruleFlag.notify_specialties,
+                  trigger_event_ids: [event.id],
+                  status: "open",
+                });
+                flagIds.push(flag.id);
+                allRuleFlags.push(ruleFlag);
+                flagRoutingPayloads.push({
+                  flag_id: flag.id,
+                  patient_id: event.patient_id,
+                  severity: ruleFlag.severity,
+                  category: ruleFlag.category,
+                  summary: ruleFlag.summary,
+                  notify_specialties: ruleFlag.notify_specialties,
+                  rule_id: ruleFlag.rule_id,
+                });
+              }
+              console.log(
+                `[review-service] Check-in red-flags for ${checkinId}: ` +
+                  `${checkinFlags.length} flag(s) created`,
+              );
+            }
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(
+            `[review-service] Check-in rule evaluation failed for ${checkinId}: ${msg}`,
           );
           // Swallow — the review job continues regardless.
         }
@@ -732,6 +802,153 @@ export async function buildNoteCorrelationContext(
     active_medication_names: activeMedRows.map((m) => m.name),
     now: new Date(),
   };
+}
+
+/**
+ * Build a CheckInRuleContext from the database for a newly-submitted
+ * check-in. Returns null if the check-in or its template can't be
+ * loaded.
+ *
+ * The rule engine is pure — this is where we materialise the one
+ * authoritative view of: the current check-in row, its template's
+ * metadata (target_condition, slug), recent prior submissions for the
+ * streak rule, and the patient's active diagnoses / medications.
+ *
+ * Windows:
+ *   - prior_checkins: last 14 days before the current submission,
+ *     max 50 rows. Bounded so the context never blows up for a
+ *     hyperactive family caregiver.
+ */
+export async function buildCheckInRuleContext(
+  checkinId: string,
+  patientId: string,
+): Promise<CheckInRuleContext | null> {
+  const db = getDb();
+
+  const [row] = await db
+    .select()
+    .from(checkIns)
+    .where(eq(checkIns.id, checkinId))
+    .limit(1);
+  if (!row) return null;
+
+  const [template] = await db
+    .select({
+      slug: checkInTemplates.slug,
+      target_condition: checkInTemplates.target_condition,
+    })
+    .from(checkInTemplates)
+    .where(eq(checkInTemplates.id, row.template_id))
+    .limit(1);
+  if (!template) return null;
+
+  // Bound prior submissions to the 14-day window ending just before
+  // the current submission.
+  const PRIOR_WINDOW_DAYS = 14;
+  const PRIOR_MAX_ROWS = 50;
+  const currentMs = new Date(row.submitted_at).getTime();
+  const windowStart = new Date(
+    currentMs - PRIOR_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
+
+  const [priorRows, activeDx, activeMeds] = await Promise.all([
+    db
+      .select({
+        id: checkIns.id,
+        template_id: checkIns.template_id,
+        template_version: checkIns.template_version,
+        red_flag_hits: checkIns.red_flag_hits,
+        submitted_at: checkIns.submitted_at,
+      })
+      .from(checkIns)
+      .where(
+        and(
+          eq(checkIns.patient_id, patientId),
+          gte(checkIns.submitted_at, windowStart),
+        ),
+      )
+      .orderBy(desc(checkIns.submitted_at))
+      .limit(PRIOR_MAX_ROWS),
+    db.select().from(diagnoses).where(eq(diagnoses.patient_id, patientId)),
+    db.select().from(medications).where(eq(medications.patient_id, patientId)),
+  ]);
+
+  // For each prior row, resolve the template snapshot (slug +
+  // target_condition) so rules can key off it. Batched to avoid N+1.
+  const priorTemplateIds = Array.from(
+    new Set(priorRows.map((r) => r.template_id)),
+  );
+  const templateById = new Map<
+    string,
+    { slug: string; target_condition: string }
+  >();
+  if (priorTemplateIds.length > 0) {
+    const templates = await db
+      .select({
+        id: checkInTemplates.id,
+        slug: checkInTemplates.slug,
+        target_condition: checkInTemplates.target_condition,
+      })
+      .from(checkInTemplates);
+    for (const t of templates) {
+      templateById.set(t.id, {
+        slug: t.slug,
+        target_condition: t.target_condition,
+      });
+    }
+  }
+
+  const priorCheckins: PriorCheckInSummary[] = [];
+  for (const r of priorRows) {
+    if (r.id === row.id) continue;
+    const tpl = templateById.get(r.template_id);
+    if (!tpl) continue;
+    priorCheckins.push({
+      id: r.id,
+      template_slug: tpl.slug,
+      template_version: r.template_version,
+      target_condition: tpl.target_condition,
+      red_flag_hits: safeParseStringArrayColumn(r.red_flag_hits),
+      submitted_at: r.submitted_at,
+    });
+  }
+
+  const activeDxRows = activeDx.filter((d) => d.status === "active");
+
+  return {
+    current: {
+      id: row.id,
+      template_slug: template.slug,
+      template_version: row.template_version,
+      target_condition: template.target_condition,
+      red_flag_hits: safeParseStringArrayColumn(row.red_flag_hits),
+      submitted_at: row.submitted_at,
+      submitted_by_relationship: row.submitted_by_relationship,
+    },
+    active_diagnoses: activeDxRows.map((d) => d.description),
+    active_diagnosis_codes: activeDxRows.map((d) => d.icd10_code ?? ""),
+    active_medications: activeMeds
+      .filter((m) => m.status === "active")
+      .map((m) => m.name),
+    prior_checkins: priorCheckins,
+    now: new Date(),
+  };
+}
+
+/**
+ * Parse the `red_flag_hits` JSON text column defensively — a corrupt
+ * value should not take the review pipeline down.
+ */
+function safeParseStringArrayColumn(raw: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.every((v) => typeof v === "string")) {
+      return parsed as string[];
+    }
+  } catch {
+    // fall through
+  }
+  return [];
 }
 
 /**

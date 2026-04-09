@@ -5,6 +5,7 @@ import { notificationsRouter } from "@carebridge/notifications";
 import { patientRecordsRbacRouter } from "./routers/patient-records.js";
 import { clinicalDataRbacRouter } from "./routers/clinical-data.js";
 import { clinicalNotesRbacRouter } from "./routers/clinical-notes.js";
+import { checkinsRbacRouter } from "./routers/checkins.js";
 import { fhirRbacRouter } from "./routers/fhir.js";
 
 export const appRouter = router({
@@ -19,6 +20,7 @@ export const appRouter = router({
   patients: patientRecordsRbacRouter,
   clinicalData: clinicalDataRbacRouter,
   notes: clinicalNotesRbacRouter,
+  checkins: checkinsRbacRouter,
   aiOversight: aiOversightRouter,
   notifications: notificationsRouter,
   fhir: fhirRbacRouter,
