@@ -9,7 +9,7 @@
  * The review_jobs table records every run for auditability.
  */
 
-import { eq, desc, gte, and } from "drizzle-orm";
+import { eq, desc, gte, lte, and } from "drizzle-orm";
 import { getDb } from "@carebridge/db-schema";
 import {
   reviewJobs,
@@ -18,8 +18,16 @@ import {
   patients,
   labPanels,
   labResults,
+  clinicalNotes,
+  noteAssertions,
+  users,
+  vitals,
 } from "@carebridge/db-schema";
-import type { ClinicalEvent, FlagSource } from "@carebridge/shared-types";
+import type {
+  ClinicalEvent,
+  FlagSource,
+  NoteAssertionsPayload,
+} from "@carebridge/shared-types";
 import {
   CLINICAL_REVIEW_SYSTEM_PROMPT,
   PROMPT_VERSION,
@@ -37,6 +45,10 @@ import { checkCrossSpecialtyPatterns } from "../rules/cross-specialty.js";
 import type { PatientContext } from "../rules/cross-specialty.js";
 import { checkDrugInteractions } from "../rules/drug-interactions.js";
 import type { RuleFlag } from "../rules/critical-values.js";
+import {
+  checkNoteCorrelation,
+  type NoteCorrelationContext,
+} from "../rules/note-correlation.js";
 import { buildPatientContext } from "../workers/context-builder.js";
 import { isLLMEnabled, reviewPatientRecord, LLMDisabledError } from "./claude-client.js";
 import { createFlag } from "./flag-service.js";
@@ -116,12 +128,12 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
       flagIds.push(flag.id);
     }
 
-    // Step 3b: Phase A1 note extraction. Fires on note.signed only.
-    // Runs as a non-blocking side-effect: extractor failures must NOT
-    // break the review job. The extractor has its own kill-switch gate,
-    // its own PHI sanitization, and persists its own failure rows to
-    // note_assertions, so we don't need to replicate any of that logic
-    // here — we just log that it ran.
+    // Step 3b: Phase A1 note extraction + Phase A2 note-correlation rules.
+    // Fires on note.signed only. Runs as a non-blocking side-effect:
+    // extractor or correlation failures must NOT break the review job.
+    // The extractor has its own kill-switch gate, PHI sanitization, and
+    // failure-row persistence, so errors there are already observable
+    // from the note_assertions table.
     if (event.type === "note.signed") {
       const noteId = event.data.resourceId;
       if (typeof noteId === "string" && noteId.length > 0) {
@@ -131,6 +143,56 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
             `[review-service] Note extraction for ${noteId}: status=${extraction.status} ` +
               `(${extraction.processing_time_ms}ms)`,
           );
+
+          // Phase A2: only run correlation rules when the extraction
+          // succeeded. For failed extractions there's nothing to reason
+          // about — the failure mode is captured in note_assertions
+          // and has its own visibility path.
+          if (extraction.status === "success") {
+            try {
+              const correlationCtx = await buildNoteCorrelationContext(
+                noteId,
+                extraction.payload,
+              );
+              if (correlationCtx) {
+                rulesEvaluated.push("note-correlation");
+                const correlationFlags = checkNoteCorrelation(correlationCtx);
+                if (correlationFlags.length > 0) {
+                  rulesFired.push("note-correlation");
+                  for (const ruleFlag of correlationFlags) {
+                    const flag = await createFlag({
+                      patient_id: event.patient_id,
+                      source: "rules" as FlagSource,
+                      rule_id: ruleFlag.rule_id,
+                      severity: ruleFlag.severity,
+                      category: ruleFlag.category,
+                      summary: ruleFlag.summary,
+                      rationale: ruleFlag.rationale,
+                      suggested_action: ruleFlag.suggested_action,
+                      notify_specialties: ruleFlag.notify_specialties,
+                      trigger_event_ids: [event.id],
+                      status: "open",
+                    });
+                    flagIds.push(flag.id);
+                    allRuleFlags.push(ruleFlag);
+                  }
+                  console.log(
+                    `[review-service] Note correlation for ${noteId}: ` +
+                      `${correlationFlags.length} flag(s) created`,
+                  );
+                }
+              }
+            } catch (correlationErr) {
+              const msg =
+                correlationErr instanceof Error
+                  ? correlationErr.message
+                  : String(correlationErr);
+              console.error(
+                `[review-service] Note correlation failed for ${noteId}: ${msg}`,
+              );
+              // Swallow — extraction is valuable even without correlation.
+            }
+          }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           console.error(
@@ -417,6 +479,168 @@ export async function buildPatientContextForRules(
     care_team_specialties: [], // Not needed for current rules, but available for future
     trigger_event: event,
     recent_labs: recentLabs.length > 0 ? recentLabs : undefined,
+  };
+}
+
+/**
+ * Build a NoteCorrelationContext from the database for a newly-signed
+ * note. Returns null if the note cannot be loaded or is missing its
+ * signed_at timestamp (correlation is meaningless for unsigned drafts).
+ *
+ * Called from review-service after a successful extraction.
+ *
+ * Windows:
+ *   - prior_notes: last 7 days before signing (inclusive), excluding the
+ *     current note and any prior note from the same provider_id.
+ *   - recent_vitals: ±24h around signed_at.
+ *   - subsequent_panels: 0–14 days after signing (ORDERED-NOT-RESULTED).
+ */
+export async function buildNoteCorrelationContext(
+  noteId: string,
+  currentPayload: NoteAssertionsPayload,
+): Promise<NoteCorrelationContext | null> {
+  const db = getDb();
+
+  const note = await db.query.clinicalNotes.findFirst({
+    where: eq(clinicalNotes.id, noteId),
+  });
+  if (!note || !note.signed_at) return null;
+
+  const signedAtMs = new Date(note.signed_at).getTime();
+  if (Number.isNaN(signedAtMs)) return null;
+
+  const LOOKBACK_DAYS = 7;
+  const PANEL_WINDOW_DAYS = 14;
+  const VITAL_WINDOW_HOURS = 24;
+
+  const lookbackCutoff = new Date(
+    signedAtMs - LOOKBACK_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const vitalWindowStart = new Date(
+    signedAtMs - VITAL_WINDOW_HOURS * 60 * 60 * 1000,
+  ).toISOString();
+  const vitalWindowEnd = new Date(
+    signedAtMs + VITAL_WINDOW_HOURS * 60 * 60 * 1000,
+  ).toISOString();
+  const panelWindowEnd = new Date(
+    signedAtMs + PANEL_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
+
+  // Kick off the independent DB reads in parallel. The prior-notes path
+  // is serial because it needs the current note's metadata first, but
+  // everything else is independent.
+  const [currentProvider, priorNoteRows, vitalRows, panelRows, activeMedRows] =
+    await Promise.all([
+      note.provider_id
+        ? db.query.users.findFirst({ where: eq(users.id, note.provider_id) })
+        : Promise.resolve(null),
+      db
+        .select()
+        .from(clinicalNotes)
+        .where(
+          and(
+            eq(clinicalNotes.patient_id, note.patient_id),
+            gte(clinicalNotes.signed_at, lookbackCutoff),
+          ),
+        )
+        .orderBy(desc(clinicalNotes.signed_at)),
+      db
+        .select()
+        .from(vitals)
+        .where(
+          and(
+            eq(vitals.patient_id, note.patient_id),
+            gte(vitals.recorded_at, vitalWindowStart),
+            lte(vitals.recorded_at, vitalWindowEnd),
+          ),
+        )
+        .orderBy(desc(vitals.recorded_at)),
+      db
+        .select()
+        .from(labPanels)
+        .where(
+          and(
+            eq(labPanels.patient_id, note.patient_id),
+            gte(labPanels.created_at, note.signed_at),
+            lte(labPanels.created_at, panelWindowEnd),
+          ),
+        ),
+      db
+        .select()
+        .from(medications)
+        .where(
+          and(
+            eq(medications.patient_id, note.patient_id),
+            eq(medications.status, "active"),
+          ),
+        ),
+    ]);
+
+  // For each prior note, fetch the freshest successful assertions row
+  // and resolve the prior provider's specialty. Parallelized per-note.
+  const priorNotes: NoteCorrelationContext["prior_notes"] = [];
+  const priorCandidates = priorNoteRows.filter(
+    (n) => n.id !== noteId && n.signed_at !== null,
+  );
+  const priorResults = await Promise.all(
+    priorCandidates.map(async (priorNote) => {
+      const [assertionsRows, providerRow] = await Promise.all([
+        db
+          .select()
+          .from(noteAssertions)
+          .where(
+            and(
+              eq(noteAssertions.note_id, priorNote.id),
+              eq(noteAssertions.extraction_status, "success"),
+            ),
+          )
+          .orderBy(desc(noteAssertions.created_at))
+          .limit(1),
+        priorNote.provider_id
+          ? db.query.users.findFirst({
+              where: eq(users.id, priorNote.provider_id),
+            })
+          : Promise.resolve(null),
+      ]);
+      if (assertionsRows.length === 0) return null;
+      return {
+        id: priorNote.id,
+        provider_id: priorNote.provider_id,
+        provider_specialty: providerRow?.specialty ?? null,
+        signed_at: priorNote.signed_at as string,
+        payload: assertionsRows[0].payload as NoteAssertionsPayload,
+      };
+    }),
+  );
+  for (const entry of priorResults) {
+    if (entry) priorNotes.push(entry);
+  }
+
+  return {
+    current_note: {
+      id: note.id,
+      patient_id: note.patient_id,
+      provider_id: note.provider_id,
+      provider_specialty: currentProvider?.specialty ?? null,
+      signed_at: note.signed_at,
+      payload: currentPayload,
+    },
+    prior_notes: priorNotes,
+    recent_vitals: vitalRows.map((v) => ({
+      type: v.type,
+      value_primary: v.value_primary,
+      value_secondary: v.value_secondary,
+      unit: v.unit,
+      recorded_at: v.recorded_at,
+    })),
+    subsequent_panels: panelRows.map((p) => ({
+      panel_name: p.panel_name,
+      ordered_at: p.collected_at,
+      reported_at: p.reported_at,
+      created_at: p.created_at,
+    })),
+    active_medication_names: activeMedRows.map((m) => m.name),
+    now: new Date(),
   };
 }
 
