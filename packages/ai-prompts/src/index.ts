@@ -4,7 +4,13 @@ export {
   buildReviewPrompt,
   parseReviewResponse,
 } from "./clinical-review.js";
-export type { ReviewContext, LLMFlagOutput } from "./clinical-review.js";
+export type {
+  ReviewContext,
+  LLMFlagOutput,
+  TimelineEvent,
+  TemporalCluster,
+  GapDetected,
+} from "./clinical-review.js";
 
 export {
   NOTE_EXTRACTION_PROMPT_VERSION,

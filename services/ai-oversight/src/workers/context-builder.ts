@@ -6,7 +6,7 @@
  * the triggering event in isolation.
  */
 
-import { eq, and, desc, inArray } from "drizzle-orm";
+import { eq, and, desc, gte, inArray } from "drizzle-orm";
 import { getDb } from "@carebridge/db-schema";
 import {
   patients,
@@ -18,12 +18,20 @@ import {
   clinicalFlags,
   careTeamMembers,
   allergies,
+  clinicalNotes,
+  encounters,
 } from "@carebridge/db-schema";
 import { users } from "@carebridge/db-schema";
 import type { ReviewContext } from "@carebridge/ai-prompts";
 import type { ClinicalEvent } from "@carebridge/shared-types";
 import { calculateDelta } from "@carebridge/medical-logic";
 import { sanitizeFreeText } from "@carebridge/phi-sanitizer";
+import {
+  assembleTimeline,
+  detectTemporalClusters,
+  detectGaps,
+  TIMELINE_WINDOW_MS,
+} from "./timeline-builder.js";
 
 /**
  * Recursively sanitize all string values in an arbitrary event-data object
@@ -54,6 +62,15 @@ export async function buildPatientContext(
 ): Promise<ReviewContext> {
   const db = getDb();
 
+  // Phase A3: 30-day temporal window. Anything inside this window also
+  // feeds the unified timeline; outside of it we still keep enough
+  // recent rows for the legacy "latest snapshot" sections. Using an
+  // ISO string lets us reuse the same boundary across every query
+  // without worrying about DB server clock skew.
+  const windowStartIso = new Date(
+    Date.now() - TIMELINE_WINDOW_MS,
+  ).toISOString();
+
   // Run all queries in parallel for speed
   const [
     patientRow,
@@ -61,7 +78,10 @@ export async function buildPatientContext(
     patientAllergies,
     activeMeds,
     latestVitals,
+    windowVitals,
     recentPanels,
+    windowNotes,
+    windowEncounters,
     recentFlags,
     careTeam,
   ] = await Promise.all([
@@ -93,12 +113,48 @@ export async function buildPatientContext(
       .where(eq(vitals.patient_id, patientId))
       .orderBy(desc(vitals.recorded_at))
       .limit(20),
+    // Windowed vitals feed the timeline + stale-data gap detection.
+    // Bounded by a hard cap so a firehose patient can't blow the
+    // prompt budget before token-budget trimming kicks in.
+    db
+      .select()
+      .from(vitals)
+      .where(
+        and(
+          eq(vitals.patient_id, patientId),
+          gte(vitals.recorded_at, windowStartIso),
+        ),
+      )
+      .orderBy(desc(vitals.recorded_at))
+      .limit(200),
     db
       .select()
       .from(labPanels)
       .where(eq(labPanels.patient_id, patientId))
       .orderBy(desc(labPanels.collected_at))
       .limit(5),
+    db
+      .select()
+      .from(clinicalNotes)
+      .where(
+        and(
+          eq(clinicalNotes.patient_id, patientId),
+          gte(clinicalNotes.created_at, windowStartIso),
+        ),
+      )
+      .orderBy(desc(clinicalNotes.created_at))
+      .limit(50),
+    db
+      .select()
+      .from(encounters)
+      .where(
+        and(
+          eq(encounters.patient_id, patientId),
+          gte(encounters.start_time, windowStartIso),
+        ),
+      )
+      .orderBy(desc(encounters.start_time))
+      .limit(50),
     db
       .select()
       .from(clinicalFlags)
@@ -157,12 +213,23 @@ export async function buildPatientContext(
 
   // Fetch lab results for recent panels
   let recentLabResults: ReviewContext["recent_labs"] = [];
+  // abnormal_count per panel id, used to annotate the timeline entry.
+  const abnormalByPanel = new Map<string, number>();
   if (recentPanels.length > 0) {
     const panelIds = recentPanels.map((p) => p.id);
     const allResults = await db
       .select()
       .from(labResults)
       .where(inArray(labResults.panel_id, panelIds));
+
+    for (const r of allResults) {
+      if (r.flag && r.flag !== "N") {
+        abnormalByPanel.set(
+          r.panel_id,
+          (abnormalByPanel.get(r.panel_id) ?? 0) + 1,
+        );
+      }
+    }
 
     recentLabResults = allResults.map((r) => ({
       test_name: r.test_name,
@@ -193,6 +260,52 @@ export async function buildPatientContext(
   // Build trigger event summary
   const triggerSummary = buildEventSummary(triggerEvent);
 
+  // Phase A3: assemble the 30-day unified timeline + cluster detection
+  // + deterministic gap pre-pass. The timeline inputs are intentionally
+  // minimal projections of the drizzle rows — no encrypted free-text
+  // fields leak in here, which keeps the prompt PHI surface flat.
+  const timeline = assembleTimeline({
+    vitals: windowVitals.map((v) => ({
+      recorded_at: v.recorded_at,
+      type: v.type,
+      value_primary: v.value_primary,
+      unit: v.unit,
+    })),
+    lab_panels: recentPanels.map((p) => ({
+      collected_at: p.collected_at,
+      panel_name: p.panel_name,
+      abnormal_count: abnormalByPanel.get(p.id) ?? 0,
+    })),
+    medications: activeMeds.map((m) => ({
+      started_at: m.started_at,
+      name: m.name,
+      dose_amount: m.dose_amount,
+      dose_unit: m.dose_unit,
+      status: m.status,
+    })),
+    notes: windowNotes.map((n) => ({
+      created_at: n.created_at,
+      signed_at: n.signed_at,
+      template_type: n.template_type,
+      status: n.status,
+    })),
+    encounters: windowEncounters.map((e) => ({
+      start_time: e.start_time,
+      encounter_type: e.encounter_type,
+      reason: e.reason,
+    })),
+  });
+
+  const clusters = detectTemporalClusters(timeline);
+
+  const latestVitalAt = windowVitals[0]?.recorded_at ?? null;
+  const latestNoteAt = windowNotes[0]?.created_at ?? null;
+  const gaps = detectGaps({
+    active_diagnoses_count: activeDiagnoses.length,
+    latest_vital_at: latestVitalAt,
+    latest_note_at: latestNoteAt,
+  });
+
   return {
     patient: {
       age,
@@ -209,6 +322,9 @@ export async function buildPatientContext(
     })),
     latest_vitals: latestVitalsByType,
     recent_labs: recentLabResults.length > 0 ? recentLabResults : undefined,
+    timeline_30d: timeline,
+    temporal_clusters: clusters,
+    gaps_detected: gaps,
     triggering_event: {
       type: triggerEvent.type,
       summary: triggerSummary,

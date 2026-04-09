@@ -15,6 +15,10 @@ export const PROMPT_SECTIONS = {
   LABS: "Recent Lab Results",
   CARE_TEAM: "Care Team",
   FLAGS: "Recent Open Flags",
+  // Phase A3 — temporal context window
+  TIMELINE: "30-Day Event Timeline",
+  CLUSTERS: "Temporal Clusters",
+  GAPS: "Detected Care Gaps",
   TRIGGERING_EVENT: "TRIGGERING EVENT",
 } as const;
 

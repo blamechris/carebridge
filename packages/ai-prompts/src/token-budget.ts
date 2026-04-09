@@ -32,10 +32,16 @@ export interface TruncationResult {
 // ─── Section markers used by buildReviewPrompt ─────────────────────
 
 const SECTION_PATTERNS: { name: string; regex: RegExp }[] = [
-  { name: "recent_labs", regex: new RegExp(`${PROMPT_SECTIONS.LABS}:\\n([\\s\\S]*?)(?=\\n\\n|\\n${PROMPT_SECTIONS.CARE_TEAM}:|\\n${PROMPT_SECTIONS.TRIGGERING_EVENT})`) },
-  { name: "latest_vitals", regex: new RegExp(`${PROMPT_SECTIONS.VITALS}:\\n([\\s\\S]*?)(?=\\n\\n|\\n${PROMPT_SECTIONS.LABS}:|\\n${PROMPT_SECTIONS.CARE_TEAM}:)`) },
+  { name: "recent_labs", regex: new RegExp(`${PROMPT_SECTIONS.LABS}:\\n([\\s\\S]*?)(?=\\n\\n|\\n${PROMPT_SECTIONS.TIMELINE}:|\\n${PROMPT_SECTIONS.CLUSTERS}:|\\n${PROMPT_SECTIONS.GAPS}:|\\n${PROMPT_SECTIONS.CARE_TEAM}:|\\n${PROMPT_SECTIONS.TRIGGERING_EVENT})`) },
+  { name: "latest_vitals", regex: new RegExp(`${PROMPT_SECTIONS.VITALS}:\\n([\\s\\S]*?)(?=\\n\\n|\\n${PROMPT_SECTIONS.LABS}:|\\n${PROMPT_SECTIONS.TIMELINE}:|\\n${PROMPT_SECTIONS.CARE_TEAM}:)`) },
   { name: "active_medications", regex: new RegExp(`${PROMPT_SECTIONS.MEDICATIONS}:\\n([\\s\\S]*?)(?=\\n\\n|\\n${PROMPT_SECTIONS.VITALS}:)`) },
   { name: "recent_flags", regex: new RegExp(`${PROMPT_SECTIONS.FLAGS}:\\n([\\s\\S]*?)(?=\\n\\n|\\n${PROMPT_SECTIONS.TRIGGERING_EVENT})`) },
+  // Phase A3: new 30-day sections. Timeline is the biggest of the new
+  // blocks and gets the most aggressive trim; clusters and gaps are
+  // bounded-small so they only need a light touch.
+  { name: "timeline_30d", regex: new RegExp(`${PROMPT_SECTIONS.TIMELINE}:\\n([\\s\\S]*?)(?=\\n\\n|\\n${PROMPT_SECTIONS.CLUSTERS}:|\\n${PROMPT_SECTIONS.GAPS}:|\\n${PROMPT_SECTIONS.CARE_TEAM}:|\\n${PROMPT_SECTIONS.TRIGGERING_EVENT})`) },
+  { name: "temporal_clusters", regex: new RegExp(`${PROMPT_SECTIONS.CLUSTERS}:\\n([\\s\\S]*?)(?=\\n\\n|\\n${PROMPT_SECTIONS.GAPS}:|\\n${PROMPT_SECTIONS.CARE_TEAM}:|\\n${PROMPT_SECTIONS.TRIGGERING_EVENT})`) },
+  { name: "gaps_detected", regex: new RegExp(`${PROMPT_SECTIONS.GAPS}:\\n([\\s\\S]*?)(?=\\n\\n|\\n${PROMPT_SECTIONS.CARE_TEAM}:|\\n${PROMPT_SECTIONS.TRIGGERING_EVENT})`) },
 ];
 
 /**
@@ -67,7 +73,11 @@ function trimSectionItems(
  *   2. Trim older vitals — keep last 10
  *   3. Trim medication history — keep last 15
  *   4. Trim recent flags — keep last 5
- *   5. If still over budget, hard-truncate the prompt with an ellipsis marker
+ *   5. Trim 30-day timeline — keep last 40 events (bigger block,
+ *      but the closing events are most clinically relevant)
+ *   6. Trim temporal clusters — keep last 10
+ *   7. Trim gaps — keep last 10
+ *   8. If still over budget, hard-truncate the prompt with an ellipsis marker
  */
 export function enforceTokenBudget(
   prompt: string,
@@ -88,12 +98,16 @@ export function enforceTokenBudget(
   let current = prompt;
   const sectionsRemoved: string[] = [];
 
-  // Trim sections in priority order (least important first)
+  // Trim sections in priority order (least important first).
+  // Indices align with SECTION_PATTERNS defined above.
   const TRIM_PRIORITY = [
-    { section: SECTION_PATTERNS[0], keepCount: 5 },
-    { section: SECTION_PATTERNS[1], keepCount: 10 },
-    { section: SECTION_PATTERNS[2], keepCount: 15 },
-    { section: SECTION_PATTERNS[3], keepCount: 5 },
+    { section: SECTION_PATTERNS[0], keepCount: 5 }, // recent_labs
+    { section: SECTION_PATTERNS[1], keepCount: 10 }, // latest_vitals
+    { section: SECTION_PATTERNS[2], keepCount: 15 }, // active_medications
+    { section: SECTION_PATTERNS[3], keepCount: 5 }, // recent_flags
+    { section: SECTION_PATTERNS[4], keepCount: 40 }, // timeline_30d
+    { section: SECTION_PATTERNS[5], keepCount: 10 }, // temporal_clusters
+    { section: SECTION_PATTERNS[6], keepCount: 10 }, // gaps_detected
   ];
 
   for (const { section, keepCount } of TRIM_PRIORITY) {

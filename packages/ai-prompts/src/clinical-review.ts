@@ -34,6 +34,58 @@ If you find no concerns, return an empty array: []
 
 Respond ONLY with valid JSON. No markdown, no explanation outside the JSON.`;
 
+/**
+ * A single event in the unified 30-day patient timeline. Every modality
+ * (vitals, labs, meds, notes, encounters) normalises into this shape so
+ * the LLM can reason about sequence and clustering rather than only
+ * modality-siloed snapshots.
+ *
+ * `detail` is a short, already-sanitized human-readable summary — never
+ * the raw record. Patient identifiers are stripped upstream in the
+ * context builder so this type is safe to drop into a prompt verbatim.
+ */
+export interface TimelineEvent {
+  at: string; // ISO 8601 timestamp, used for sort + cluster detection
+  category:
+    | "vital"
+    | "lab"
+    | "medication"
+    | "note"
+    | "encounter"
+    | "diagnosis"
+    | "procedure";
+  detail: string;
+  specialty?: string;
+  severity?: "info" | "warning" | "critical";
+}
+
+/**
+ * A window in which several events occurred in close temporal
+ * proximity. Clusters are the LLM's hint to look for causal chains
+ * ("ED visit → new meds → lab drop three days later") that individual
+ * snapshots can hide.
+ */
+export interface TemporalCluster {
+  window: "same_day" | "same_week";
+  start: string; // ISO 8601
+  end: string; // ISO 8601
+  event_count: number;
+  categories: TimelineEvent["category"][];
+  summary: string;
+}
+
+/**
+ * A care gap surfaced by the deterministic pre-pass before the LLM
+ * runs. These are explicit nudges ("no vitals recorded in 12 days")
+ * rather than conclusions — the LLM decides whether the gap is
+ * clinically meaningful in context.
+ */
+export interface GapDetected {
+  description: string;
+  since: string; // ISO 8601 of the last relevant activity, or gap start
+  severity: "info" | "warning" | "critical";
+}
+
 export interface ReviewContext {
   patient: {
     age: number;
@@ -62,6 +114,23 @@ export interface ReviewContext {
     trend?: "rising" | "falling" | "stable";
     collected_at: string;
   }[];
+  /**
+   * Phase A3: unified 30-day event stream across modalities, sorted
+   * oldest → newest so the LLM reads the patient's recent story in
+   * chronological order. Undefined on legacy callers that have not
+   * been migrated to the temporal context builder.
+   */
+  timeline_30d?: TimelineEvent[];
+  /**
+   * Phase A3: same-day / same-week event bursts detected over
+   * `timeline_30d`. Empty array when no clustering is observed.
+   */
+  temporal_clusters?: TemporalCluster[];
+  /**
+   * Phase A3: deterministic pre-pass gap findings (e.g., "no vitals
+   * in 12 days"). Empty array when no gaps are detected.
+   */
+  gaps_detected?: GapDetected[];
   triggering_event: {
     type: string;
     summary: string;
@@ -81,6 +150,10 @@ export interface ReviewContext {
 }
 
 export function buildReviewPrompt(context: ReviewContext): string {
+  const timelineSection = renderTimelineSection(context.timeline_30d);
+  const clustersSection = renderClustersSection(context.temporal_clusters);
+  const gapsSection = renderGapsSection(context.gaps_detected);
+
   return `PATIENT CLINICAL CONTEXT
 ========================
 
@@ -100,7 +173,7 @@ ${Object.entries(context.latest_vitals).map(([type, v]) => `  - ${type}: ${v.val
 
 ${context.recent_labs ? `${PROMPT_SECTIONS.LABS}:
 ${context.recent_labs.map((l) => `  - ${l.test_name}: ${l.value} ${l.unit}${l.flag ? ` [${l.flag}]` : ""}${l.trend ? ` (${l.trend})` : ""} (${l.collected_at})`).join("\n")}` : ""}
-
+${timelineSection}${clustersSection}${gapsSection}
 ${PROMPT_SECTIONS.CARE_TEAM}:
 ${context.care_team.map((c) => `  - ${c.name} (${c.specialty})${c.recent_note_date ? ` — last note: ${c.recent_note_date}` : ""}`).join("\n") || "  Not documented"}
 
@@ -115,6 +188,44 @@ Detail:
 ${context.triggering_event.detail}
 
 Review this patient's record for clinical concerns, paying special attention to the triggering event in the context of the full clinical picture.`;
+}
+
+/**
+ * Render the 30-day timeline as a chronological bulleted list. Returns
+ * an empty string when the timeline is absent (legacy callers) or
+ * empty, so the surrounding prompt template collapses cleanly.
+ */
+function renderTimelineSection(timeline: TimelineEvent[] | undefined): string {
+  if (!timeline || timeline.length === 0) return "";
+  const lines = timeline
+    .map((e) => {
+      const sev = e.severity ? ` [${e.severity}]` : "";
+      const spec = e.specialty ? ` (${e.specialty})` : "";
+      return `  - ${e.at} ${e.category}${spec}${sev}: ${e.detail}`;
+    })
+    .join("\n");
+  return `\n${PROMPT_SECTIONS.TIMELINE}:\n${lines}\n`;
+}
+
+function renderClustersSection(
+  clusters: TemporalCluster[] | undefined,
+): string {
+  if (!clusters || clusters.length === 0) return "";
+  const lines = clusters
+    .map(
+      (c) =>
+        `  - [${c.window}] ${c.start} → ${c.end}: ${c.event_count} events across ${c.categories.join(", ")} — ${c.summary}`,
+    )
+    .join("\n");
+  return `\n${PROMPT_SECTIONS.CLUSTERS}:\n${lines}\n`;
+}
+
+function renderGapsSection(gaps: GapDetected[] | undefined): string {
+  if (!gaps || gaps.length === 0) return "";
+  const lines = gaps
+    .map((g) => `  - [${g.severity}] ${g.description} (since ${g.since})`)
+    .join("\n");
+  return `\n${PROMPT_SECTIONS.GAPS}:\n${lines}\n`;
 }
 
 export interface LLMFlagOutput {
