@@ -88,7 +88,7 @@ describe("cleanupExpiredSessions", () => {
     expect(hardCapCondition.col).toBe("sessions.created_at");
   });
 
-  it("uses correct idle timeout of 15 minutes", async () => {
+  it("uses correct idle timeout of 10 minutes (HIPAA guidance)", async () => {
     const before = Date.now();
     await cleanupExpiredSessions();
     const after = Date.now();
@@ -103,11 +103,11 @@ describe("cleanupExpiredSessions", () => {
       args: { op: string; col: string; val: string }[];
     };
     const idleThreshold = new Date(idleCondition.args[1].val).getTime();
-    const fifteenMinutes = 15 * 60 * 1000;
+    const tenMinutes = 10 * 60 * 1000;
 
-    // The threshold should be approximately now - 15 minutes.
-    expect(idleThreshold).toBeGreaterThanOrEqual(before - fifteenMinutes - 100);
-    expect(idleThreshold).toBeLessThanOrEqual(after - fifteenMinutes + 100);
+    // The threshold should be approximately now - 10 minutes.
+    expect(idleThreshold).toBeGreaterThanOrEqual(before - tenMinutes - 100);
+    expect(idleThreshold).toBeLessThanOrEqual(after - tenMinutes + 100);
   });
 
   it("uses correct hard cap of 48 hours", async () => {

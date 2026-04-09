@@ -1,7 +1,10 @@
 import { getDb, sessions } from "@carebridge/db-schema";
 import { lt, or, and, isNotNull } from "drizzle-orm";
 
-const IDLE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+// HIPAA guidance recommends idle session timeouts of 10 minutes or less for
+// workstations with access to ePHI. The previous 15-minute window exceeded
+// that guidance; see docs/hipaa-retention.md and the Phase D P1 plan item #6.
+const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const HARD_CAP_MS = 48 * 60 * 60 * 1000; // 48 hours
 
 /**
@@ -9,7 +12,7 @@ const HARD_CAP_MS = 48 * 60 * 60 * 1000; // 48 hours
  *
  * Criteria (any match triggers deletion):
  *  1. `expires_at` is in the past (absolute expiry)
- *  2. `last_active_at` is non-null AND older than 15 minutes (idle timeout)
+ *  2. `last_active_at` is non-null AND older than the idle timeout
  *  3. `created_at` is older than 48 hours (hard cap)
  *
  * Returns the number of deleted sessions.

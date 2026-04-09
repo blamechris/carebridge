@@ -9,6 +9,7 @@ import { appRouter } from "./router.js";
 import { createContext } from "./context.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { auditMiddleware } from "./middleware/audit.js";
+import { initCareTeamCacheInvalidation } from "./middleware/rbac.js";
 
 const API_PORT = Number(process.env.API_PORT) || 4000;
 const API_HOST = process.env.API_HOST ?? "0.0.0.0";
@@ -50,6 +51,14 @@ function resolveCorsOrigins(): string[] {
 async function main() {
   const corsOrigins = resolveCorsOrigins();
   const redisClient = createRedisClient();
+
+  // Phase D P1 #7: dedicated subscriber connection for care-team cache
+  // invalidation. ioredis does not allow a subscribed connection to be
+  // used for other commands, so this is a separate client from the one
+  // the rate limiter and publisher share. The connection is lazy; it
+  // only opens when the first subscribe() call runs.
+  const rbacInvalidationSub = createRedisClient();
+  initCareTeamCacheInvalidation(redisClient, rbacInvalidationSub);
 
   const server = Fastify({
     logger: {

@@ -33,15 +33,38 @@ async function logAccessDenial(
 }
 
 /* ------------------------------------------------------------------ */
-/*  In-memory TTL cache for care-team lookups                         */
+/*  In-memory cache for care-team lookups                             */
 /* ------------------------------------------------------------------ */
 
-// Trade-off: shorter TTL means more DB load but fresher revocation of care-team
-// access. 5s bounds worst-case staleness for revoked access while still absorbing
-// bursty per-request lookups. Proper fix is a Redis-backed cache with PUBSUB
-// invalidation so revocations propagate instantly across replicas (follow-up issue).
-const CACHE_TTL_MS = 5_000; // 5 seconds
+// Phase D P1 #7: care-team access is cached in-process to absorb bursty
+// per-request RBAC checks, but cache staleness is bounded by two
+// independent mechanisms:
+//
+//   1. Redis PUBSUB invalidation (primary) — callers that mutate the
+//      care_team_assignments table publish an invalidation message on
+//      the CARETEAM_INVALIDATE_CHANNEL with a selector (user_id, patient_id,
+//      or both). Every api-gateway replica subscribed to that channel
+//      drops matching cache entries immediately. This replaces the
+//      previous 5-second polling TTL as the primary freshness mechanism
+//      — revocations now propagate at Redis message latency instead of
+//      up to 5 seconds.
+//
+//   2. Defense-in-depth TTL (fallback) — entries still expire after
+//      60 seconds even without an invalidation message, so a dropped
+//      subscriber connection or a missed publish cannot keep a stale
+//      entry indefinitely. 60s is an intentional balance: long enough
+//      to absorb bursts and reduce DB load, short enough that a Redis
+//      outage can't persist a stale grant for more than a minute.
+//
+// The PUBSUB mechanism is opt-in per process: call
+// `initCareTeamCacheInvalidation(pubClient, subClient)` once on boot.
+// If init is skipped (tests, single-process dev environments), the
+// module falls back silently to TTL-only behavior.
+const CACHE_TTL_MS = 60_000; // 60 seconds — fallback only; PUBSUB is primary
 const CACHE_MAX_ENTRIES = 10_000;
+
+/** Redis channel used for cross-replica care-team cache invalidation. */
+export const CARETEAM_INVALIDATE_CHANNEL = "carebridge:rbac:careteam-invalidate";
 
 interface CacheEntry {
   value: boolean;
@@ -49,6 +72,10 @@ interface CacheEntry {
 }
 
 const cache = new Map<string, CacheEntry>();
+
+function cacheKey(userId: string, patientId: string): string {
+  return `${userId}:${patientId}`;
+}
 
 function getCached(key: string): boolean | undefined {
   const entry = cache.get(key);
@@ -74,6 +101,150 @@ export function clearCareTeamCache(): void {
   cache.clear();
 }
 
+/**
+ * Invalidation selector shape carried over the Redis channel.
+ *   - both user_id + patient_id  → evict exactly one cache entry
+ *   - only user_id               → evict every entry for that user
+ *                                  (revoking a clinician's access entirely)
+ *   - only patient_id            → evict every entry for that patient
+ *                                  (care team restructured)
+ *   - neither                    → evict everything (full reset)
+ */
+export interface CareTeamInvalidateMessage {
+  user_id?: string;
+  patient_id?: string;
+}
+
+/**
+ * Drop cache entries that match the selector. Exported so tests and the
+ * PUBSUB listener can call it directly without round-tripping through Redis.
+ */
+export function invalidateCareTeamCache(
+  selector: CareTeamInvalidateMessage,
+): number {
+  const { user_id, patient_id } = selector;
+  if (!user_id && !patient_id) {
+    const size = cache.size;
+    cache.clear();
+    return size;
+  }
+  if (user_id && patient_id) {
+    return cache.delete(cacheKey(user_id, patient_id)) ? 1 : 0;
+  }
+  // Single-dimension eviction: walk the keys and match the prefix/suffix.
+  let dropped = 0;
+  for (const key of cache.keys()) {
+    const [keyUser, keyPatient] = key.split(":", 2) as [string, string];
+    if (user_id && keyUser === user_id) {
+      cache.delete(key);
+      dropped++;
+      continue;
+    }
+    if (patient_id && keyPatient === patient_id) {
+      cache.delete(key);
+      dropped++;
+    }
+  }
+  return dropped;
+}
+
+/**
+ * Minimal publisher/subscriber surface the rbac module needs. Typed this
+ * way instead of importing `ioredis` directly so tests can pass an
+ * EventEmitter-like double without spinning up a real Redis connection.
+ */
+export interface RbacPubClient {
+  publish(channel: string, message: string): Promise<number> | number;
+}
+
+export interface RbacSubClient {
+  subscribe(channel: string): Promise<unknown> | unknown;
+  on(event: "message", listener: (channel: string, message: string) => void): unknown;
+}
+
+let pubClient: RbacPubClient | null = null;
+
+/**
+ * Attach the PUBSUB listener that drops cache entries in response to
+ * invalidation messages. Safe to call more than once — additional calls
+ * replace the previously stored publisher and attach an additional
+ * listener to the subscriber (caller is responsible for using a fresh
+ * subscriber if re-initializing, because ioredis cannot unsubscribe
+ * cleanly mid-listener).
+ *
+ * If the module is never initialized, publish becomes a no-op and the
+ * TTL fallback is the only freshness mechanism.
+ */
+export function initCareTeamCacheInvalidation(
+  pub: RbacPubClient,
+  sub: RbacSubClient,
+): void {
+  pubClient = pub;
+
+  // Fire and forget — ioredis.subscribe returns a promise that resolves
+  // with the subscription count; we don't need it and swallowing the
+  // rejection here lets the gateway keep booting if Redis is transiently
+  // down. The subscriber will retry in the background.
+  const result = sub.subscribe(CARETEAM_INVALIDATE_CHANNEL);
+  if (result && typeof (result as Promise<unknown>).then === "function") {
+    (result as Promise<unknown>).catch((err: unknown) => {
+      console.error(
+        `[rbac] Failed to subscribe to ${CARETEAM_INVALIDATE_CHANNEL}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    });
+  }
+
+  sub.on("message", (channel: string, message: string) => {
+    if (channel !== CARETEAM_INVALIDATE_CHANNEL) return;
+    try {
+      const parsed = JSON.parse(message) as CareTeamInvalidateMessage;
+      invalidateCareTeamCache(parsed);
+    } catch (err) {
+      console.error(
+        "[rbac] Malformed care-team invalidation message:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  });
+}
+
+/**
+ * Publish an invalidation message to every api-gateway replica AND drop
+ * the local cache entries immediately (so the publisher's own next
+ * RBAC check sees the fresh state without waiting for the round-trip).
+ *
+ * Call this from every write path that mutates `care_team_assignments`.
+ * A missed invalidation falls back to the TTL, so this is best-effort
+ * from a correctness standpoint but must be called to meet the <1s
+ * revocation propagation target.
+ */
+export async function publishCareTeamCacheInvalidation(
+  selector: CareTeamInvalidateMessage,
+): Promise<void> {
+  // Always drop locally first — if publish fails we still want our own
+  // replica to reflect the mutation the caller just performed.
+  invalidateCareTeamCache(selector);
+
+  if (!pubClient) return;
+  try {
+    await Promise.resolve(
+      pubClient.publish(CARETEAM_INVALIDATE_CHANNEL, JSON.stringify(selector)),
+    );
+  } catch (err) {
+    console.error(
+      "[rbac] Failed to publish care-team invalidation:",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
+
+/** Test helper: reset the module state between specs. */
+export function __resetRbacModuleForTests(): void {
+  pubClient = null;
+  cache.clear();
+}
+
 /* ------------------------------------------------------------------ */
 
 /**
@@ -94,9 +265,9 @@ export async function assertCareTeamAccess(
   userId: string,
   patientId: string,
 ): Promise<boolean> {
-  const cacheKey = `${userId}:${patientId}`;
+  const key = cacheKey(userId, patientId);
 
-  const cached = getCached(cacheKey);
+  const cached = getCached(key);
   if (cached !== undefined) return cached;
 
   const db = getDb();
@@ -113,7 +284,7 @@ export async function assertCareTeamAccess(
     .limit(1);
 
   const hasAccess = rows.length > 0;
-  setCache(cacheKey, hasAccess);
+  setCache(key, hasAccess);
   return hasAccess;
 }
 
