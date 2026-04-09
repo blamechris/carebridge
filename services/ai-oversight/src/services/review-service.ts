@@ -53,6 +53,10 @@ import { buildPatientContext } from "../workers/context-builder.js";
 import { isLLMEnabled, reviewPatientRecord, LLMDisabledError } from "./claude-client.js";
 import { createFlag } from "./flag-service.js";
 import { extractNote } from "../extractors/note-extractor.js";
+import {
+  routeFlagsToCareTeam,
+  type FlagRoutingPayload,
+} from "./notification-router.js";
 
 /**
  * Process a clinical event through the full review pipeline.
@@ -82,6 +86,10 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
     const rulesEvaluated: string[] = [];
     const rulesFired: string[] = [];
     const flagIds: string[] = [];
+    // Phase C3: every flag we create here gets fan-out routed to the
+    // relevant care-team members at job completion. Collecting payloads
+    // lets us batch the routing into a single DB round-trip per job.
+    const flagRoutingPayloads: FlagRoutingPayload[] = [];
 
     // Step 2: Run deterministic rules
 
@@ -126,6 +134,15 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
         status: "open",
       });
       flagIds.push(flag.id);
+      flagRoutingPayloads.push({
+        flag_id: flag.id,
+        patient_id: event.patient_id,
+        severity: ruleFlag.severity,
+        category: ruleFlag.category,
+        summary: ruleFlag.summary,
+        notify_specialties: ruleFlag.notify_specialties,
+        rule_id: ruleFlag.rule_id,
+      });
     }
 
     // Step 3b: Phase A1 note extraction + Phase A2 note-correlation rules.
@@ -175,6 +192,15 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
                     });
                     flagIds.push(flag.id);
                     allRuleFlags.push(ruleFlag);
+                    flagRoutingPayloads.push({
+                      flag_id: flag.id,
+                      patient_id: event.patient_id,
+                      severity: ruleFlag.severity,
+                      category: ruleFlag.category,
+                      summary: ruleFlag.summary,
+                      notify_specialties: ruleFlag.notify_specialties,
+                      rule_id: ruleFlag.rule_id,
+                    });
                   }
                   console.log(
                     `[review-service] Note correlation for ${noteId}: ` +
@@ -208,6 +234,7 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
     // mark the job completed. This is the operator's failsafe: disabling
     // LLM review must NEVER break the review pipeline.
     if (!isLLMEnabled()) {
+      await safeRouteFlagsToCareTeam(flagRoutingPayloads);
       const processingTime = Date.now() - startTime;
       await db
         .update(reviewJobs)
@@ -300,6 +327,7 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
       );
     } catch (err) {
       if (err instanceof LLMDisabledError) {
+        await safeRouteFlagsToCareTeam(flagRoutingPayloads);
         const processingTime = Date.now() - startTime;
         await db
           .update(reviewJobs)
@@ -363,7 +391,21 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
         prompt_version: PROMPT_VERSION,
       });
       flagIds.push(flag.id);
+      flagRoutingPayloads.push({
+        flag_id: flag.id,
+        patient_id: event.patient_id,
+        severity: finding.severity,
+        category: finding.category,
+        summary: finding.summary,
+        notify_specialties: finding.notify_specialties,
+        rule_id: null,
+      });
     }
+
+    // Step 8b: Fan out notifications to the care team. Done after all
+    // flag inserts so the batch can share DB round-trips; errors here
+    // are swallowed — a routing failure must not mark the job failed.
+    await safeRouteFlagsToCareTeam(flagRoutingPayloads);
 
     // Step 9: Update review_jobs record — completed
     const processingTime = Date.now() - startTime;
@@ -413,6 +455,25 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
 
 // Type alias for readability
 type ClinicalFlagCategory = import("@carebridge/shared-types").FlagCategory;
+
+/**
+ * Dispatch care-team routing without letting routing failures propagate.
+ * Notification fan-out is best-effort: a routing error should never
+ * demote a successfully-reviewed job to "failed" — the flags already
+ * live in clinical_flags and will still surface in the inbox tab on the
+ * patient chart.
+ */
+async function safeRouteFlagsToCareTeam(
+  payloads: FlagRoutingPayload[],
+): Promise<void> {
+  if (payloads.length === 0) return;
+  try {
+    await routeFlagsToCareTeam(payloads);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[review-service] Care-team routing failed: ${msg}`);
+  }
+}
 
 /**
  * Build a lightweight PatientContext for the deterministic cross-specialty rules.
