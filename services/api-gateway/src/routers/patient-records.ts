@@ -19,6 +19,7 @@ import {
 import { createPatientSchema, updatePatientSchema } from "@carebridge/validators";
 import { eq } from "drizzle-orm";
 import crypto from "node:crypto";
+import { problemListService } from "@carebridge/patient-records";
 import type { Context } from "../context.js";
 import { assertCareTeamAccess } from "../middleware/rbac.js";
 
@@ -167,6 +168,15 @@ export const patientRecordsRbacRouter = t.router({
           .select()
           .from(careTeamMembers)
           .where(eq(careTeamMembers.patient_id, input.patientId));
+      }),
+  }),
+
+  problemList: t.router({
+    getByPatient: protectedProcedure
+      .input(z.object({ patientId: z.string() }))
+      .query(async ({ ctx, input }) => {
+        await enforcePatientAccess(ctx.user, input.patientId);
+        return problemListService.getProblemListByPatient(input.patientId);
       }),
   }),
 });

@@ -47,6 +47,12 @@ export const clinicalNotesRouter = t.router({
       return noteService.getNotesByPatient(input.patientId);
     }),
 
+  timelineByPatient: t.procedure
+    .input(z.object({ patientId: z.string().uuid() }))
+    .query(async ({ input }) => {
+      return noteService.getTimelineByPatient(input.patientId);
+    }),
+
   getById: t.procedure
     .input(z.object({ id: z.string().uuid() }))
     .query(async ({ input }) => {

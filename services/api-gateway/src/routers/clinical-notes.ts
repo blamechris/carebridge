@@ -132,6 +132,13 @@ export const clinicalNotesRbacRouter = t.router({
       return noteService.getNotesByPatient(input.patientId);
     }),
 
+  timelineByPatient: protectedProcedure
+    .input(z.object({ patientId: z.string().uuid() }))
+    .query(async ({ ctx, input }) => {
+      await enforcePatientAccess(ctx.user, input.patientId);
+      return noteService.getTimelineByPatient(input.patientId);
+    }),
+
   getById: protectedProcedure
     .input(z.object({ id: z.string().uuid() }))
     .query(async ({ ctx, input }) => {

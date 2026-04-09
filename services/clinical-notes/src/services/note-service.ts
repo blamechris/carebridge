@@ -1,7 +1,19 @@
-import { eq, desc } from "drizzle-orm";
-import { getDb, clinicalNotes, noteVersions } from "@carebridge/db-schema";
+import { eq, desc, inArray, and } from "drizzle-orm";
+import {
+  getDb,
+  clinicalNotes,
+  noteVersions,
+  noteAssertions,
+  users,
+} from "@carebridge/db-schema";
 import type { CreateNoteInput, UpdateNoteInput } from "@carebridge/validators";
-import type { ClinicalNote, NoteVersion } from "@carebridge/shared-types";
+import type {
+  ClinicalNote,
+  NoteVersion,
+  NoteTimelineEntry,
+  NoteAssertionsPayload,
+  NoteTemplateType,
+} from "@carebridge/shared-types";
 import { emitClinicalEvent } from "../events.js";
 
 /**
@@ -195,6 +207,138 @@ export async function getNotesByPatient(patientId: string): Promise<ClinicalNote
     source_system: row.source_system ?? undefined,
     created_at: row.created_at,
   }));
+}
+
+/**
+ * Phase C2 — cross-team note timeline.
+ *
+ * Returns a lean projection of every note for a patient, joined with
+ * provider name/specialty from the `users` table and a short preview
+ * built from the most recent successful Phase A1 assertion extraction.
+ *
+ * Sort order: newest first, using signed_at when present (so signed
+ * notes sort by clinical time of record) and created_at as a fallback
+ * for drafts.
+ *
+ * This does NOT decrypt the full `sections` column — the clinician
+ * portal's timeline tab renders from this projection and only the
+ * detail view fetches the full note. Keeps round-trips cheap.
+ */
+export async function getTimelineByPatient(
+  patientId: string,
+): Promise<NoteTimelineEntry[]> {
+  const db = getDb();
+
+  const noteRows = await db
+    .select({
+      id: clinicalNotes.id,
+      patient_id: clinicalNotes.patient_id,
+      provider_id: clinicalNotes.provider_id,
+      template_type: clinicalNotes.template_type,
+      status: clinicalNotes.status,
+      version: clinicalNotes.version,
+      signed_at: clinicalNotes.signed_at,
+      cosigned_at: clinicalNotes.cosigned_at,
+      created_at: clinicalNotes.created_at,
+      copy_forward_score: clinicalNotes.copy_forward_score,
+    })
+    .from(clinicalNotes)
+    .where(eq(clinicalNotes.patient_id, patientId))
+    .orderBy(desc(clinicalNotes.created_at));
+
+  if (noteRows.length === 0) return [];
+
+  const providerIds = Array.from(
+    new Set(noteRows.map((n) => n.provider_id).filter(Boolean)),
+  );
+  const noteIds = noteRows.map((n) => n.id);
+
+  const [providerRows, assertionRows] = await Promise.all([
+    providerIds.length > 0
+      ? db
+          .select({
+            id: users.id,
+            name: users.name,
+            specialty: users.specialty,
+          })
+          .from(users)
+          .where(inArray(users.id, providerIds))
+      : Promise.resolve([] as { id: string; name: string; specialty: string | null }[]),
+    db
+      .select({
+        note_id: noteAssertions.note_id,
+        payload: noteAssertions.payload,
+        created_at: noteAssertions.created_at,
+      })
+      .from(noteAssertions)
+      .where(
+        and(
+          inArray(noteAssertions.note_id, noteIds),
+          eq(noteAssertions.extraction_status, "success"),
+        ),
+      )
+      .orderBy(desc(noteAssertions.created_at)),
+  ]);
+
+  const providerById = new Map<
+    string,
+    { name: string; specialty: string | null }
+  >();
+  for (const row of providerRows) {
+    providerById.set(row.id, { name: row.name, specialty: row.specialty });
+  }
+
+  // Keep only the freshest assertion row per note (rows are sorted desc).
+  const assertionByNoteId = new Map<string, NoteAssertionsPayload>();
+  for (const row of assertionRows) {
+    if (!assertionByNoteId.has(row.note_id)) {
+      assertionByNoteId.set(row.note_id, row.payload as NoteAssertionsPayload);
+    }
+  }
+
+  const entries: NoteTimelineEntry[] = noteRows.map((row) => {
+    const provider = providerById.get(row.provider_id) ?? null;
+    const payload = assertionByNoteId.get(row.id) ?? null;
+
+    let assertion_preview: NoteTimelineEntry["assertion_preview"] = null;
+    if (payload) {
+      assertion_preview = {
+        one_line_summary: payload.one_line_summary ?? "",
+        assessment_problems: (payload.assessments ?? [])
+          .slice(0, 3)
+          .map((a) => a.problem),
+        top_plan_actions: (payload.plan_items ?? [])
+          .slice(0, 3)
+          .map((p) => p.action),
+      };
+    }
+
+    return {
+      id: row.id,
+      patient_id: row.patient_id,
+      provider_id: row.provider_id,
+      provider_name: provider?.name ?? null,
+      provider_specialty: provider?.specialty ?? null,
+      template_type: row.template_type as NoteTemplateType,
+      status: row.status as NoteTimelineEntry["status"],
+      version: row.version,
+      signed_at: row.signed_at ?? null,
+      cosigned_at: row.cosigned_at ?? null,
+      created_at: row.created_at,
+      copy_forward_score: row.copy_forward_score ?? null,
+      assertion_preview,
+    };
+  });
+
+  // Secondary sort: newest signed_at wins among rows with identical
+  // created_at buckets. Drafts without signed_at fall back to created_at.
+  entries.sort((a, b) => {
+    const aKey = a.signed_at ?? a.created_at;
+    const bKey = b.signed_at ?? b.created_at;
+    return bKey.localeCompare(aKey);
+  });
+
+  return entries;
 }
 
 /**

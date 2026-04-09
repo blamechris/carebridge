@@ -5,6 +5,7 @@ import { patients, diagnoses, allergies, careTeamMembers } from "@carebridge/db-
 import { createPatientSchema, updatePatientSchema } from "@carebridge/validators";
 import { eq } from "drizzle-orm";
 import crypto from "node:crypto";
+import * as problemListService from "./services/problem-list-service.js";
 
 const t = initTRPC.create();
 
@@ -60,6 +61,14 @@ export const patientRecordsRouter = t.router({
       const db = getDb();
       return db.select().from(careTeamMembers).where(eq(careTeamMembers.patient_id, input.patientId));
     }),
+  }),
+
+  problemList: t.router({
+    getByPatient: t.procedure
+      .input(z.object({ patientId: z.string() }))
+      .query(async ({ input }) => {
+        return problemListService.getProblemListByPatient(input.patientId);
+      }),
   }),
 });
 

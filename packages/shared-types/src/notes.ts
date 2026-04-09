@@ -55,6 +55,38 @@ export interface NoteVersion {
   saved_by: string;
 }
 
+/**
+ * Phase C2 — cross-team note timeline entry.
+ *
+ * Lean projection of a ClinicalNote that the clinician portal's "All Notes"
+ * timeline tab renders without decrypting or downloading full note bodies.
+ * One entry per note, ordered by the server newest-first.
+ *
+ * provider_name / provider_specialty are resolved from the users table.
+ * assertion_preview is populated from the most recent successful
+ * note_assertions row for this note (Phase A1 extraction); it is null when
+ * extraction failed, has not yet run, or the note has no signed version.
+ */
+export interface NoteTimelineEntry {
+  id: string;
+  patient_id: string;
+  provider_id: string;
+  provider_name: string | null;
+  provider_specialty: string | null;
+  template_type: NoteTemplateType;
+  status: "draft" | "signed" | "cosigned" | "amended";
+  version: number;
+  signed_at: string | null;
+  cosigned_at: string | null;
+  created_at: string;
+  copy_forward_score: number | null;
+  assertion_preview: {
+    one_line_summary: string;
+    assessment_problems: string[];
+    top_plan_actions: string[];
+  } | null;
+}
+
 // ─── Review of Systems ───────────────────────────────────────────
 
 export const ROS_SYSTEMS = [

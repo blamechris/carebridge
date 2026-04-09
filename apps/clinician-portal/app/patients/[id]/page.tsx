@@ -14,6 +14,8 @@ import { VitalsTrendChart } from "@/components/vitals-trend-chart";
 
 const tabs = [
   { key: "overview", label: "Overview" },
+  { key: "problems", label: "Problem List" },
+  { key: "notes", label: "All Notes" },
   { key: "vitals", label: "Vitals" },
   { key: "labs", label: "Labs" },
   { key: "medications", label: "Medications" },
@@ -378,6 +380,364 @@ function MedicationsTab({ patientId }: { patientId: string }) {
   );
 }
 
+function ProblemsTab({ patientId }: { patientId: string }) {
+  const problemsQuery = trpc.patients.problemList.getByPatient.useQuery({
+    patientId,
+  });
+  const problems = problemsQuery.data ?? [];
+
+  if (problemsQuery.isLoading) return <LoadingState label="problem list" />;
+  if (problemsQuery.isError) return <ErrorState label="problem list" />;
+
+  if (problems.length === 0) {
+    return (
+      <div className="empty-state">
+        <div className="empty-state-text">
+          No active problems recorded for this patient
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div
+        style={{
+          padding: "12px 16px",
+          background: "rgba(255,255,255,0.03)",
+          border: "1px solid var(--border)",
+          borderRadius: 8,
+          fontSize: 12,
+          color: "var(--text-muted)",
+          lineHeight: 1.5,
+        }}
+      >
+        Unified view across every specialty on the care team. Problems
+        with no recent activity are highlighted to surface orphaned care.
+      </div>
+      {problems.map((problem) => {
+        const isStale = problem.stale_days >= 30;
+        const hasOpenFlags = problem.open_flag_count > 0;
+        return (
+          <div
+            key={problem.diagnosis_id}
+            className="detail-card"
+            style={{
+              borderLeft: isStale
+                ? "3px solid var(--warning)"
+                : "3px solid var(--success)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                gap: 12,
+                marginBottom: 12,
+              }}
+            >
+              <div style={{ flex: 1 }}>
+                <div className="detail-card-title" style={{ marginBottom: 4 }}>
+                  {problem.description}
+                </div>
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "var(--text-muted)",
+                    fontFamily: "monospace",
+                  }}
+                >
+                  {problem.icd10_code ? `ICD-10 ${problem.icd10_code}` : null}
+                  {problem.icd10_code && problem.snomed_code ? " · " : null}
+                  {problem.snomed_code
+                    ? `SNOMED ${problem.snomed_code}`
+                    : null}
+                  {problem.onset_date
+                    ? ` · onset ${problem.onset_date}`
+                    : null}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <span
+                  className={`badge ${
+                    problem.status === "active"
+                      ? "badge-success"
+                      : problem.status === "chronic"
+                      ? "badge-warning"
+                      : ""
+                  }`}
+                >
+                  {problem.status}
+                </span>
+                {hasOpenFlags && (
+                  <span
+                    className="badge badge-critical"
+                    aria-label={`${problem.open_flag_count} open AI flags`}
+                  >
+                    {problem.open_flag_count} open flag
+                    {problem.open_flag_count === 1 ? "" : "s"}
+                  </span>
+                )}
+                {isStale && (
+                  <span
+                    className="badge badge-warning"
+                    aria-label="Stale problem — no recent activity"
+                  >
+                    {problem.stale_days}d stale
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="detail-row">
+              <span className="detail-label">Managing specialists</span>
+              <span className="detail-value">
+                {problem.managing_specialists.length > 0
+                  ? problem.managing_specialists
+                      .map(
+                        (s) =>
+                          `${s.specialty ?? s.role} (${s.provider_id.slice(
+                            0,
+                            8,
+                          )})`,
+                      )
+                      .join(", ")
+                  : "None assigned"}
+              </span>
+            </div>
+
+            <div className="detail-row">
+              <span className="detail-label">Most recent note</span>
+              <span className="detail-value">
+                {problem.most_recent_note ? (
+                  <>
+                    {problem.most_recent_note.provider_specialty ??
+                      "unattributed"}{" "}
+                    · {problem.most_recent_note.template_type}
+                    {problem.most_recent_note.signed_at
+                      ? ` · ${new Date(
+                          problem.most_recent_note.signed_at,
+                        ).toLocaleDateString()}`
+                      : ""}
+                  </>
+                ) : (
+                  "No signed notes yet"
+                )}
+              </span>
+            </div>
+
+            <div className="detail-row">
+              <span className="detail-label">Last touched</span>
+              <span className="detail-value">
+                {new Date(problem.last_touched_at).toLocaleDateString()}
+              </span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function NotesTimelineTab({ patientId }: { patientId: string }) {
+  const timelineQuery = trpc.notes.timelineByPatient.useQuery({
+    patientId,
+  });
+  const entries = timelineQuery.data ?? [];
+
+  if (timelineQuery.isLoading) return <LoadingState label="note timeline" />;
+  if (timelineQuery.isError) return <ErrorState label="note timeline" />;
+
+  if (entries.length === 0) {
+    return (
+      <div className="empty-state">
+        <div className="empty-state-text">
+          No clinical notes recorded for this patient
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div
+        style={{
+          padding: "12px 16px",
+          background: "rgba(255,255,255,0.03)",
+          border: "1px solid var(--border)",
+          borderRadius: 8,
+          fontSize: 12,
+          color: "var(--text-muted)",
+          lineHeight: 1.5,
+        }}
+      >
+        Every note from every specialty, newest first. Click through for
+        the full text. AI-extracted highlights come from the Phase A1
+        note-extractor and may lag the most recent save.
+      </div>
+      {entries.map((entry) => {
+        const displayDate = entry.signed_at ?? entry.created_at;
+        const isDraft = entry.status === "draft";
+        return (
+          <Link
+            key={entry.id}
+            href={`/notes/${entry.id}`}
+            style={{
+              textDecoration: "none",
+              color: "inherit",
+              display: "block",
+            }}
+          >
+            <div
+              className="detail-card"
+              style={{
+                cursor: "pointer",
+                borderLeft: isDraft
+                  ? "3px solid var(--text-muted)"
+                  : "3px solid var(--success)",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  gap: 12,
+                  marginBottom: 8,
+                }}
+              >
+                <div style={{ flex: 1 }}>
+                  <div
+                    style={{
+                      fontSize: 14,
+                      fontWeight: 600,
+                      color: "var(--text-primary)",
+                    }}
+                  >
+                    {entry.template_type.toUpperCase()} ·{" "}
+                    {entry.provider_specialty ?? "unattributed specialty"}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: "var(--text-muted)",
+                      marginTop: 2,
+                    }}
+                  >
+                    {entry.provider_name ?? entry.provider_id.slice(0, 8)} ·{" "}
+                    {new Date(displayDate).toLocaleString()}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <span
+                    className={`badge ${
+                      entry.status === "signed" ||
+                      entry.status === "cosigned"
+                        ? "badge-success"
+                        : "badge-warning"
+                    }`}
+                  >
+                    {entry.status}
+                  </span>
+                  <span
+                    className="badge"
+                    style={{
+                      background: "rgba(255,255,255,0.05)",
+                      color: "var(--text-muted)",
+                      border: "1px solid var(--border)",
+                    }}
+                  >
+                    v{entry.version}
+                  </span>
+                  {entry.copy_forward_score !== null &&
+                    entry.copy_forward_score >= 70 && (
+                      <span
+                        className="badge badge-warning"
+                        aria-label="High copy-forward score"
+                      >
+                        {Math.round(entry.copy_forward_score)}% carried
+                      </span>
+                    )}
+                </div>
+              </div>
+              {entry.assertion_preview ? (
+                <div
+                  style={{
+                    borderTop: "1px solid var(--border)",
+                    paddingTop: 8,
+                    marginTop: 4,
+                  }}
+                >
+                  {entry.assertion_preview.one_line_summary && (
+                    <div
+                      style={{
+                        fontSize: 13,
+                        color: "var(--text-secondary)",
+                        marginBottom: 6,
+                        fontStyle: "italic",
+                      }}
+                    >
+                      &ldquo;{entry.assertion_preview.one_line_summary}&rdquo;
+                    </div>
+                  )}
+                  {entry.assertion_preview.assessment_problems.length > 0 && (
+                    <div style={{ fontSize: 12, marginBottom: 2 }}>
+                      <span
+                        style={{
+                          color: "var(--text-muted)",
+                          marginRight: 6,
+                        }}
+                      >
+                        Problems:
+                      </span>
+                      <span style={{ color: "var(--text-secondary)" }}>
+                        {entry.assertion_preview.assessment_problems.join(
+                          " · ",
+                        )}
+                      </span>
+                    </div>
+                  )}
+                  {entry.assertion_preview.top_plan_actions.length > 0 && (
+                    <div style={{ fontSize: 12 }}>
+                      <span
+                        style={{
+                          color: "var(--text-muted)",
+                          marginRight: 6,
+                        }}
+                      >
+                        Plan:
+                      </span>
+                      <span style={{ color: "var(--text-secondary)" }}>
+                        {entry.assertion_preview.top_plan_actions.join(
+                          " · ",
+                        )}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "var(--text-muted)",
+                    fontStyle: "italic",
+                    borderTop: "1px solid var(--border)",
+                    paddingTop: 8,
+                    marginTop: 4,
+                  }}
+                >
+                  AI extraction pending
+                </div>
+              )}
+            </div>
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
+
 function FlagsTab({ patientId }: { patientId: string }) {
   const utils = trpc.useUtils();
   const flagsQuery = trpc.aiOversight.flags.getByPatient.useQuery({
@@ -580,6 +940,8 @@ function PatientChartContent() {
           </div>
 
           {activeTab === "overview" && <OverviewTab patientId={patientId} />}
+          {activeTab === "problems" && <ProblemsTab patientId={patientId} />}
+          {activeTab === "notes" && <NotesTimelineTab patientId={patientId} />}
           {activeTab === "vitals" && <VitalsTab patientId={patientId} />}
           {activeTab === "labs" && <LabsTab patientId={patientId} />}
           {activeTab === "medications" && (
