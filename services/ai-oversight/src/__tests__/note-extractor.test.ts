@@ -10,12 +10,18 @@ const fakeState = {
   notes: new Map<string, Record<string, unknown>>(),
   patients: new Map<string, Record<string, unknown>>(),
   inserted: [] as Record<string, unknown>[],
+  // Phase D P1: patient_ai_consent rows. By default tests stage an active
+  // grant so existing happy-path tests still reach the LLM call; the
+  // consent_required test overrides this to exercise the default-deny
+  // branch.
+  consents: [] as Record<string, unknown>[],
 };
 
 function resetFakeState() {
   fakeState.notes.clear();
   fakeState.patients.clear();
   fakeState.inserted = [];
+  fakeState.consents = [];
 }
 
 const fakeDb = {
@@ -41,6 +47,21 @@ const fakeDb = {
       fakeState.inserted.push(row);
     }),
   })),
+  // Phase D P1: minimal select() chain for the consent lookup. The
+  // consent-service calls:
+  //   db.select().from(patientAiConsent).where(...).orderBy(...).limit(1)
+  // We ignore the actual predicate and just return whatever the test
+  // staged into fakeState.consents that looks "active".
+  select: vi.fn(() => ({
+    from: () => ({
+      where: () => ({
+        orderBy: () => ({
+          limit: async () =>
+            fakeState.consents.filter((c) => c.revoked_at === null),
+        }),
+      }),
+    }),
+  })),
 };
 
 vi.mock("@carebridge/db-schema", () => ({
@@ -48,6 +69,13 @@ vi.mock("@carebridge/db-schema", () => ({
   clinicalNotes: { id: "clinical_notes.id" } as const,
   patients: { id: "patients.id" } as const,
   noteAssertions: { id: "note_assertions.id" } as const,
+  patientAiConsent: {
+    id: "patient_ai_consent.id",
+    patient_id: "patient_ai_consent.patient_id",
+    scope: "patient_ai_consent.scope",
+    granted_at: "patient_ai_consent.granted_at",
+    revoked_at: "patient_ai_consent.revoked_at",
+  } as const,
 }));
 
 // ─── Import extractor AFTER mocks are registered ─────────────────
@@ -112,6 +140,23 @@ function stageNote(overrides: Partial<Record<string, unknown>> = {}) {
     name: "Test Patient",
     date_of_birth: "1960-01-15",
     mrn: "12345678",
+  });
+  // Default: stage an active llm_review consent so existing tests that
+  // exercise the LLM path are not blocked by the Phase D P1 consent gate.
+  // Tests that specifically exercise the consent-required branch clear
+  // fakeState.consents before calling extractNote.
+  fakeState.consents.push({
+    id: "consent-1",
+    patient_id: PATIENT_ID,
+    scope: "llm_review",
+    policy_version: "ai-consent-v1.0",
+    granted_by_user_id: "user-patient",
+    granted_by_relationship: "self",
+    granted_at: "2026-03-15T00:00:00.000Z",
+    revoked_at: null,
+    revoked_by_user_id: null,
+    revocation_reason: null,
+    created_at: "2026-03-15T00:00:00.000Z",
   });
 }
 
@@ -288,6 +333,54 @@ describe("extractNote", () => {
 
     expect(result.status).toBe("llm_disabled");
     expect(result.error).toMatch(/race condition/);
+  });
+
+  it("persists consent_required and does NOT call the LLM when the patient has no active AI consent", async () => {
+    stageNote();
+    // Clear the default consent staged by stageNote().
+    fakeState.consents = [];
+    const llmCaller = vi.fn(async () => VALID_RESPONSE);
+
+    const result = await extractNote({ noteId: NOTE_ID, llmCaller });
+
+    expect(llmCaller).not.toHaveBeenCalled();
+    expect(result.status).toBe("consent_required");
+    expect(result.error).toMatch(/consent/i);
+    expect(fakeState.inserted).toHaveLength(1);
+    expect(fakeState.inserted[0].extraction_status).toBe("consent_required");
+    expect(result.payload).toEqual({
+      symptoms_reported: [],
+      symptoms_denied: [],
+      assessments: [],
+      plan_items: [],
+      referenced_results: [],
+      one_line_summary: "",
+    });
+  });
+
+  it("persists consent_required when the only consent row has been revoked", async () => {
+    stageNote();
+    fakeState.consents = [
+      {
+        id: "revoked-1",
+        patient_id: PATIENT_ID,
+        scope: "llm_review",
+        policy_version: "ai-consent-v1.0",
+        granted_by_user_id: "user-patient",
+        granted_by_relationship: "self",
+        granted_at: "2026-03-01T00:00:00.000Z",
+        revoked_at: "2026-03-10T00:00:00.000Z",
+        revoked_by_user_id: "user-patient",
+        revocation_reason: "patient withdrew",
+        created_at: "2026-03-01T00:00:00.000Z",
+      },
+    ];
+    const llmCaller = vi.fn(async () => VALID_RESPONSE);
+
+    const result = await extractNote({ noteId: NOTE_ID, llmCaller });
+
+    expect(llmCaller).not.toHaveBeenCalled();
+    expect(result.status).toBe("consent_required");
   });
 
   it("throws when the note does not exist", async () => {

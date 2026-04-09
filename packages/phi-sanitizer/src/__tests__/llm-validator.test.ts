@@ -114,3 +114,149 @@ describe("validateLLMResponse", () => {
     }
   });
 });
+
+describe("validateLLMResponse — residual PHI scan (Phase D P1)", () => {
+  // Phase D P1 guard: any flag whose free-text fields contain PHI-shaped
+  // patterns is dropped with a warning. The symmetry with
+  // assertPromptSanitized() is intentional — patterns we refuse to send
+  // are also patterns we refuse to receive.
+
+  it("drops a flag whose summary contains an ISO date", () => {
+    const clean = makeFlag();
+    const contaminated = makeFlag({
+      summary: "Patient seen on 2026-03-15 for worsening symptoms",
+    });
+    const result = validateLLMResponse(
+      JSON.stringify([clean, contaminated]),
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.flags).toHaveLength(1);
+      expect(result.flags[0]!.summary).toBe("Test finding");
+      expect(
+        result.warnings.some(
+          (w) => w.includes("Flag[1]") && w.includes("summary:DATE_ISO"),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("drops a flag whose rationale contains an MRN label", () => {
+    const contaminated = makeFlag({
+      rationale: "MRN: 12345678 shows a history of prior admissions.",
+    });
+    const result = validateLLMResponse(JSON.stringify([contaminated]));
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.flags).toHaveLength(0);
+      expect(
+        result.warnings.some((w) => w.includes("rationale:MRN_LABELED")),
+      ).toBe(true);
+    }
+  });
+
+  it("drops a flag whose suggested_action contains an SSN", () => {
+    const contaminated = makeFlag({
+      suggested_action: "Verify identity against 123-45-6789 on file.",
+    });
+    const result = validateLLMResponse(JSON.stringify([contaminated]));
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.flags).toHaveLength(0);
+      expect(
+        result.warnings.some((w) => w.includes("suggested_action:SSN")),
+      ).toBe(true);
+    }
+  });
+
+  it("drops a flag whose rationale cites a dotted ICD-10 code", () => {
+    const contaminated = makeFlag({
+      rationale: "Evidence supports diagnosis I21.4 from last admission.",
+    });
+    const result = validateLLMResponse(JSON.stringify([contaminated]));
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.flags).toHaveLength(0);
+      expect(
+        result.warnings.some((w) =>
+          w.includes("rationale:ICD10_DOTTED"),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("drops a flag containing a phone number in suggested_action", () => {
+    const contaminated = makeFlag({
+      suggested_action: "Call patient at (555) 123-4567 for follow-up.",
+    });
+    const result = validateLLMResponse(JSON.stringify([contaminated]));
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.flags).toHaveLength(0);
+      expect(
+        result.warnings.some((w) => w.includes("suggested_action:PHONE")),
+      ).toBe(true);
+    }
+  });
+
+  it("keeps clean flags and drops only the contaminated ones", () => {
+    const flags = [
+      makeFlag({ summary: "Clean finding one" }),
+      makeFlag({ summary: "Seen 03/15/2026 for chest pain" }), // DATE_MDY
+      makeFlag({ summary: "Clean finding two" }),
+    ];
+    const result = validateLLMResponse(JSON.stringify(flags));
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.flags).toHaveLength(2);
+      expect(result.flags[0]!.summary).toBe("Clean finding one");
+      expect(result.flags[1]!.summary).toBe("Clean finding two");
+      expect(
+        result.warnings.some(
+          (w) => w.includes("Flag[1]") && w.includes("DATE_MDY"),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("reports multiple violation labels when a flag contains several patterns", () => {
+    const contaminated = makeFlag({
+      summary: "Admitted on 2026-03-15",
+      rationale: "MRN: 99887766 with history",
+    });
+    const result = validateLLMResponse(JSON.stringify([contaminated]));
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.flags).toHaveLength(0);
+      const warning = result.warnings.find((w) =>
+        w.includes("residual PHI patterns"),
+      );
+      expect(warning).toBeDefined();
+      expect(warning).toContain("summary:DATE_ISO");
+      expect(warning).toContain("rationale:MRN_LABELED");
+    }
+  });
+
+  it("does not drop a flag whose free text is free of PHI patterns", () => {
+    const clean = makeFlag({
+      summary: "Elevated anticoagulant risk in patient with active malignancy",
+      rationale: "Recent imaging shows lower extremity findings consistent with VTE.",
+      suggested_action:
+        "Consider neuro assessment and notify hematology on-call.",
+    });
+    const result = validateLLMResponse(JSON.stringify([clean]));
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.flags).toHaveLength(1);
+      expect(result.warnings).toHaveLength(0);
+    }
+  });
+});

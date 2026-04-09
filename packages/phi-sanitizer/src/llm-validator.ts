@@ -2,9 +2,15 @@
  * LLM Response Validator — validates and sanitizes the JSON output
  * from the Claude clinical review before it enters the flag pipeline.
  *
- * Catches malformed JSON, invalid schemas, suspicious output, and
- * enforces output limits.
+ * Catches malformed JSON, invalid schemas, suspicious output, enforces
+ * output limits, and (Phase D P1) rejects individual flags whose free-text
+ * fields contain PHI-shaped patterns. A PHI-bearing response is the
+ * signature of either LLM hallucination of real-looking identifiers or,
+ * more worryingly, training-data leakage; neither should land in a
+ * clinician's inbox.
  */
+
+import { SANITIZATION_GUARDS } from "./redactor.js";
 
 const VALID_SEVERITIES = ["critical", "warning", "info"] as const;
 const VALID_CATEGORIES = [
@@ -19,6 +25,47 @@ const VALID_CATEGORIES = [
 
 const MAX_FLAGS = 20;
 const SUSPICIOUS_FLAG_THRESHOLD = 15;
+
+/**
+ * Scan a string for any residual PHI pattern. Reuses the same guard list
+ * the outbound assertPromptSanitized() check uses, so a pattern we refuse
+ * to SEND is also a pattern we refuse to RECEIVE back from the LLM.
+ *
+ * Returns the list of violation labels (NOT the matching text) so callers
+ * can log diagnostics without re-leaking PHI.
+ */
+function scanForPhiPatterns(text: string): string[] {
+  const violations: string[] = [];
+  for (const { label, pattern } of SANITIZATION_GUARDS) {
+    pattern.lastIndex = 0;
+    if (pattern.test(text)) violations.push(label);
+  }
+  return violations;
+}
+
+/**
+ * Scan every free-text field of a flag for PHI. Returns an empty array
+ * if the flag is clean.
+ */
+function scanFlagForPhi(flag: {
+  summary: unknown;
+  rationale: unknown;
+  suggested_action: unknown;
+}): string[] {
+  const violations = new Set<string>();
+  const fields: Array<{ name: string; value: unknown }> = [
+    { name: "summary", value: flag.summary },
+    { name: "rationale", value: flag.rationale },
+    { name: "suggested_action", value: flag.suggested_action },
+  ];
+  for (const { name, value } of fields) {
+    if (typeof value !== "string") continue;
+    for (const v of scanForPhiPatterns(value)) {
+      violations.add(`${name}:${v}`);
+    }
+  }
+  return Array.from(violations);
+}
 
 export interface LLMFlag {
   severity: (typeof VALID_SEVERITIES)[number];
@@ -183,5 +230,22 @@ export function validateLLMResponse(raw: string): ValidationResult {
     );
   }
 
-  return { ok: true, flags: capped, warnings };
+  // Phase D P1: scan free-text fields of each flag for residual PHI
+  // patterns. Drop any flag that looks like it contains leaked identifiers
+  // and warn. We keep the rest — a single contaminated flag should not
+  // suppress the other findings from the same batch.
+  const clean: LLMFlag[] = [];
+  for (let i = 0; i < capped.length; i++) {
+    const flag = capped[i];
+    const violations = scanFlagForPhi(flag);
+    if (violations.length > 0) {
+      warnings.push(
+        `Flag[${i}] dropped due to residual PHI patterns: ${violations.join(", ")}`,
+      );
+      continue;
+    }
+    clean.push(flag);
+  }
+
+  return { ok: true, flags: clean, warnings };
 }

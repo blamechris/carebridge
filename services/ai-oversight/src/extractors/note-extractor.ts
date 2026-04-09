@@ -61,6 +61,7 @@ import {
   isLLMEnabled,
   reviewPatientRecord,
 } from "../services/claude-client.js";
+import { hasActiveAiConsent } from "../services/consent-service.js";
 
 const MODEL_ID = "claude-sonnet-4-6";
 
@@ -164,6 +165,26 @@ export async function extractNote(
       patient_id: note.patient_id,
       status: "llm_disabled",
       error: "LLM review disabled at extraction time (kill-switch engaged)",
+      payload: EMPTY_NOTE_ASSERTIONS,
+      processing_time_ms: Date.now() - started,
+    });
+  }
+
+  // Step 5b: patient consent gate. Note extraction sends derived note
+  // text to Anthropic under the BAA — the patient must have explicitly
+  // opted in to the `llm_review` scope. Unlike llm_disabled, consent
+  // absence is a per-patient state, not a global ops state, so we
+  // persist it as its own extraction_status for clarity.
+  const patientConsents = await hasActiveAiConsent(
+    note.patient_id,
+    "llm_review",
+  );
+  if (!patientConsents) {
+    return persist(db, {
+      note_id: note.id,
+      patient_id: note.patient_id,
+      status: "consent_required",
+      error: "No active patient AI consent for note extraction",
       payload: EMPTY_NOTE_ASSERTIONS,
       processing_time_ms: Date.now() - started,
     });

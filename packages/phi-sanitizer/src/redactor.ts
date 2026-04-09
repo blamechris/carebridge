@@ -385,7 +385,7 @@ export class SanitizationError extends Error {
   }
 }
 
-const SANITIZATION_GUARDS: Array<{ label: string; pattern: RegExp }> = [
+export const SANITIZATION_GUARDS: Array<{ label: string; pattern: RegExp }> = [
   { label: "MRN_LABELED", pattern: MRN_LABELED },
   { label: "MRN_CONTEXT", pattern: MRN_CONTEXT },
   { label: "DATE_ISO", pattern: DATE_ISO },

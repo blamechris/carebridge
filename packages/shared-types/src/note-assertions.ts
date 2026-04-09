@@ -138,4 +138,5 @@ export type NoteExtractionStatus =
   | "parse_failed"
   | "llm_disabled"
   | "llm_failed"
-  | "sanitization_failed";
+  | "sanitization_failed"
+  | "consent_required";

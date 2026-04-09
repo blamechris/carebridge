@@ -57,6 +57,7 @@ import {
   routeFlagsToCareTeam,
   type FlagRoutingPayload,
 } from "./notification-router.js";
+import { hasActiveAiConsent } from "./consent-service.js";
 
 /**
  * Process a clinical event through the full review pipeline.
@@ -249,6 +250,34 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
         .where(eq(reviewJobs.id, jobId));
       console.log(
         `[review-service] Job ${jobId} completed in ${processingTime}ms (rules-only; LLM kill-switch engaged). ` +
+          `Rules fired: ${rulesFired.length}, Total flags: ${flagIds.length}`,
+      );
+      return;
+    }
+
+    // Step 4b: Patient AI consent gate. The kill-switch is a global ops
+    // control; the consent gate is a per-patient opt-in. Both must pass
+    // before we send any derived context to Claude. Missing consent
+    // degrades gracefully to rules-only — the patient still gets
+    // deterministic coverage, they just don't participate in the LLM
+    // review path until they explicitly opt in.
+    const hasConsent = await hasActiveAiConsent(event.patient_id, "llm_review");
+    if (!hasConsent) {
+      await safeRouteFlagsToCareTeam(flagRoutingPayloads);
+      const processingTime = Date.now() - startTime;
+      await db
+        .update(reviewJobs)
+        .set({
+          status: "completed",
+          rules_evaluated: rulesEvaluated,
+          rules_fired: rulesFired,
+          flags_generated: flagIds,
+          processing_time_ms: processingTime,
+          completed_at: new Date().toISOString(),
+        })
+        .where(eq(reviewJobs.id, jobId));
+      console.log(
+        `[review-service] Job ${jobId} completed in ${processingTime}ms (rules-only; no active AI consent for patient ${event.patient_id}). ` +
           `Rules fired: ${rulesFired.length}, Total flags: ${flagIds.length}`,
       );
       return;
