@@ -98,7 +98,8 @@ export type ClinicalEventType =
   | "note.signed"
   | "procedure.completed"
   | "diagnosis.added"
-  | "fhir.imported";
+  | "fhir.imported"
+  | "patient.observation";
 
 export interface ClinicalEvent {
   id: string;
