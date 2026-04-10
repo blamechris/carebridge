@@ -36,6 +36,7 @@ import { checkCriticalValues } from "../rules/critical-values.js";
 import { checkCrossSpecialtyPatterns } from "../rules/cross-specialty.js";
 import type { PatientContext } from "../rules/cross-specialty.js";
 import { checkDrugInteractions } from "../rules/drug-interactions.js";
+import { screenPatientMessage } from "../rules/message-screening.js";
 import type { RuleFlag } from "../rules/critical-values.js";
 import { buildPatientContext } from "../workers/context-builder.js";
 import { reviewPatientRecord } from "./claude-client.js";
@@ -95,6 +96,16 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
     if (drugFlags.length > 0) {
       rulesFired.push("drug-interactions");
       allRuleFlags.push(...drugFlags);
+    }
+
+    // 2d. Patient message screening (only for message.received events)
+    if (event.type === "message.received") {
+      rulesEvaluated.push("message-screening");
+      const messageFlags = screenPatientMessage(event);
+      if (messageFlags.length > 0) {
+        rulesFired.push("message-screening");
+        allRuleFlags.push(...messageFlags);
+      }
     }
 
     // Step 3: Create flags for rule matches
