@@ -322,6 +322,9 @@ importers:
       '@carebridge/patient-records':
         specifier: workspace:*
         version: link:../patient-records
+      '@carebridge/scheduling':
+        specifier: workspace:*
+        version: link:../scheduling
       '@carebridge/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
@@ -559,6 +562,31 @@ importers:
       '@carebridge/validators':
         specifier: workspace:*
         version: link:../../packages/validators
+      '@trpc/server':
+        specifier: ^11.0.0
+        version: 11.16.0(typescript@5.9.3)
+      drizzle-orm:
+        specifier: ^0.38.0
+        version: 0.38.4(@types/react@19.2.14)(postgres@3.4.8)(react@19.2.4)
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  services/scheduling:
+    dependencies:
+      '@carebridge/db-schema':
+        specifier: workspace:*
+        version: link:../../packages/db-schema
+      '@carebridge/shared-types':
+        specifier: workspace:*
+        version: link:../../packages/shared-types
       '@trpc/server':
         specifier: ^11.0.0
         version: 11.16.0(typescript@5.9.3)
