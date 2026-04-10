@@ -15,6 +15,7 @@ import {
   recordFlagDismissed,
   recordFlagResolved,
 } from "./shadow-metrics.js";
+import { emitNotificationEvent } from "@carebridge/notifications";
 
 // 24 hours in milliseconds — window for LLM flag deduplication
 const LLM_DEDUP_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -92,6 +93,21 @@ export async function createFlag(
   await db.insert(clinicalFlags).values(record);
 
   recordFlagCreated({ rule_id: flag.rule_id, source: flag.source });
+
+  // Emit notification event for the new flag
+  if (flag.notify_specialties && flag.notify_specialties.length > 0) {
+    await emitNotificationEvent({
+      flag_id: id,
+      patient_id: flag.patient_id,
+      severity: flag.severity,
+      category: flag.category,
+      summary: flag.summary,
+      suggested_action: flag.suggested_action,
+      notify_specialties: flag.notify_specialties,
+      source: flag.source,
+      created_at: now,
+    });
+  }
 
   return record as ClinicalFlag;
 }
