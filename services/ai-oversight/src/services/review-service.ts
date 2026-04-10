@@ -16,6 +16,7 @@ import {
   diagnoses,
   medications,
   patients,
+  allergies,
   labPanels,
   labResults,
 } from "@carebridge/db-schema";
@@ -36,6 +37,7 @@ import { checkCriticalValues } from "../rules/critical-values.js";
 import { checkCrossSpecialtyPatterns } from "../rules/cross-specialty.js";
 import type { PatientContext } from "../rules/cross-specialty.js";
 import { checkDrugInteractions } from "../rules/drug-interactions.js";
+import { checkAllergyMedication } from "../rules/allergy-medication.js";
 import type { RuleFlag } from "../rules/critical-values.js";
 import { buildPatientContext } from "../workers/context-builder.js";
 import { reviewPatientRecord } from "./claude-client.js";
@@ -95,6 +97,14 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
     if (drugFlags.length > 0) {
       rulesFired.push("drug-interactions");
       allRuleFlags.push(...drugFlags);
+    }
+
+    // 2d. Allergy-medication cross-check
+    rulesEvaluated.push("allergy-medication");
+    const allergyFlags = checkAllergyMedication(patientContext);
+    if (allergyFlags.length > 0) {
+      rulesFired.push("allergy-medication");
+      allRuleFlags.push(...allergyFlags);
     }
 
     // Step 3: Create flags for rule matches
@@ -286,9 +296,10 @@ export async function buildPatientContextForRules(
     Date.now() - LAB_WINDOW_HOURS * 60 * 60 * 1000,
   ).toISOString();
 
-  const [activeDiagnoses, activeMeds, recentLabRows] = await Promise.all([
+  const [activeDiagnoses, activeMeds, patientAllergies, recentLabRows] = await Promise.all([
     db.select().from(diagnoses).where(eq(diagnoses.patient_id, patientId)),
     db.select().from(medications).where(eq(medications.patient_id, patientId)),
+    db.select().from(allergies).where(eq(allergies.patient_id, patientId)),
     // Join lab_results → lab_panels → filter by patient and freshness.
     // Single round-trip, no N+1.
     db
@@ -323,14 +334,21 @@ export async function buildPatientContextForRules(
     recentLabs.push({ name: row.test_name, value: row.value });
   }
 
+  const activeMedsList = activeMeds.filter((m) => m.status === "active");
+
   return {
     active_diagnoses: activeDx.map((d) => d.description),
     active_diagnosis_codes: activeDx.map((d) => d.icd10_code ?? ""),
-    active_medications: activeMeds
-      .filter((m) => m.status === "active")
-      .map((m) => m.name),
+    active_medications: activeMedsList.map((m) => m.name),
+    active_medication_rxnorm_codes: activeMedsList.map((m) => m.rxnorm_code),
     new_symptoms: newSymptoms,
     care_team_specialties: [], // Not needed for current rules, but available for future
+    allergies: patientAllergies.map((a) => ({
+      allergen: a.allergen,
+      rxnorm_code: a.rxnorm_code,
+      severity: a.severity,
+      reaction: a.reaction,
+    })),
     trigger_event: event,
     recent_labs: recentLabs.length > 0 ? recentLabs : undefined,
   };
