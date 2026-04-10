@@ -5,4 +5,5 @@ export * from "./notes.js";
 export * from "./ai-flags.js";
 export * from "./auth.js";
 export * from "./notifications.js";
+export * from "./emergency-access.js";
 export * from "./fhir.js";
