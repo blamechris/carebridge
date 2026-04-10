@@ -1,6 +1,7 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
 import type { User } from "@carebridge/shared-types";
 import { getDb, careTeamAssignments, auditLog } from "@carebridge/db-schema";
+import { getFamilyRelationship } from "@carebridge/auth";
 import { eq, and, isNull } from "drizzle-orm";
 import crypto from "node:crypto";
 
@@ -331,6 +332,22 @@ export async function assertPatientAccess(
     });
     reply.code(403).send({ error: "Access denied: patients may only access their own records" });
     return false;
+  }
+
+  // Family caregivers must have an active relationship with the patient.
+  if (user.role === "family_caregiver") {
+    const rel = await getFamilyRelationship(user.id, patientId);
+    if (!rel) {
+      await logAccessDenial(request, user.id, "family_relationship_not_found", {
+        requested_patient_id: patientId,
+        role: user.role,
+      });
+      reply.code(403).send({
+        error: "Access denied: no active family relationship for this patient",
+      });
+      return false;
+    }
+    return true;
   }
 
   // Clinicians (physician, specialist, nurse) must be on the care team.

@@ -9,3 +9,4 @@ export * from "./notifications.js";
 export * from "./fhir.js";
 export * from "./patient-ai-consent.js";
 export * from "./checkins.js";
+export * from "./family-access.js";

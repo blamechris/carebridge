@@ -1,6 +1,6 @@
 import type { MutableRecord } from "./base.js";
 
-export type UserRole = "patient" | "nurse" | "physician" | "specialist" | "admin";
+export type UserRole = "patient" | "nurse" | "physician" | "specialist" | "admin" | "family_caregiver";
 
 export interface User extends MutableRecord {
   email: string;
@@ -98,5 +98,18 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     "read:notes", "write:notes", "sign:notes",
     "read:flags", "write:flags", "acknowledge:flags",
     "admin:users", "admin:rules",
+  ],
+  /**
+   * Family caregivers get read-only access to patient summary data plus
+   * the ability to submit check-ins on the patient's behalf. Individual
+   * scopes are further refined by the `access_scopes` column on the
+   * `family_relationships` row — these permissions represent the maximum
+   * possible set; the RBAC middleware intersects them with the granted scopes.
+   */
+  family_caregiver: [
+    "read:patients",
+    "read:vitals",
+    "read:medications",
+    "read:flags",
   ],
 };

@@ -41,6 +41,10 @@ export const auditLog = pgTable("audit_log", {
   patient_id: text("patient_id"), // explicit patient ID for HIPAA audit trails
   details: text("details"), // JSON string of additional context
   ip_address: text("ip_address"),
+  /** Phase B3: caregiver relationship when acting on behalf of a patient. */
+  actor_relationship: text("actor_relationship"), // self, spouse, adult_child, parent, healthcare_poa, other
+  /** Phase B3: the patient the actor is acting on behalf of (for family caregiver audit trail). */
+  on_behalf_of_patient_id: text("on_behalf_of_patient_id"),
   timestamp: text("timestamp").notNull(),
 }, (table) => [
   index("idx_audit_user").on(table.user_id, table.timestamp),

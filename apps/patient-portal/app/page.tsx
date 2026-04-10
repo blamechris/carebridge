@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useAuth } from "@/lib/auth";
 import { trpc } from "@/lib/trpc";
 
@@ -172,10 +173,25 @@ function PatientDashboard() {
           )}
         </Card>
 
-        <Card title="Messages">
-          <p style={{ margin: 0, color: "#999", fontSize: "0.875rem" }}>
-            Messaging features coming soon.
+        <Card title="Check-Ins">
+          <p style={{ margin: "0 0 0.75rem", color: "#999", fontSize: "0.875rem" }}>
+            Complete your health check-ins so your care team stays informed.
           </p>
+          <Link
+            href="/checkins"
+            style={{
+              display: "inline-block",
+              padding: "8px 16px",
+              backgroundColor: "#3b82f6",
+              color: "white",
+              borderRadius: "6px",
+              fontSize: "0.8rem",
+              textDecoration: "none",
+              fontWeight: 500,
+            }}
+          >
+            Go to Check-Ins
+          </Link>
         </Card>
       </div>
     </main>

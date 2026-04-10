@@ -26,6 +26,7 @@ import {
   submitCheckInSchema,
   type CheckInRelationship,
 } from "@carebridge/validators";
+import { getFamilyRelationship } from "@carebridge/auth";
 import type { Context } from "../context.js";
 import { assertCareTeamAccess } from "../middleware/rbac.js";
 
@@ -52,6 +53,7 @@ const protectedProcedure = t.procedure.use(isAuthenticated);
 async function enforcePatientAccess(
   user: NonNullable<Context["user"]>,
   patientId: string,
+  requiredScope?: string,
 ): Promise<void> {
   if (user.role === "admin") return;
 
@@ -60,6 +62,24 @@ async function enforcePatientAccess(
       throw new TRPCError({
         code: "FORBIDDEN",
         message: "Access denied: patients may only access their own check-ins",
+      });
+    }
+    return;
+  }
+
+  // Family caregivers must have an active relationship with the required scope.
+  if (user.role === "family_caregiver") {
+    const rel = await getFamilyRelationship(user.id, patientId);
+    if (!rel) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "Access denied: no active family relationship for this patient",
+      });
+    }
+    if (requiredScope && !rel.access_scopes.includes(requiredScope)) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: `Access denied: missing required scope '${requiredScope}'`,
       });
     }
     return;
@@ -88,16 +108,19 @@ async function enforcePatientAccess(
  * simply can't reach this procedure because no RBAC path grants them
  * access.
  */
-function resolveSubmitterRelationship(
+async function resolveSubmitterRelationship(
   user: NonNullable<Context["user"]>,
   patientId: string,
-): CheckInRelationship {
+): Promise<CheckInRelationship> {
   if (user.role === "patient" && user.id === patientId) {
     return "self";
   }
-  // Clinician-assisted submission during a visit. Phase B3 will
-  // replace this branch with a lookup against `family_relationships`
-  // when the submitter is a family user.
+  // Family caregiver — look up the relationship type from the grant.
+  if (user.role === "family_caregiver") {
+    const rel = await getFamilyRelationship(user.id, patientId);
+    if (rel) return rel.relationship as CheckInRelationship;
+  }
+  // Clinician-assisted submission during a visit.
   return "other";
 }
 
@@ -125,8 +148,8 @@ export const checkinsRbacRouter = t.router({
   submit: protectedProcedure
     .input(submitCheckInSchema)
     .mutation(async ({ ctx, input }) => {
-      await enforcePatientAccess(ctx.user, input.patient_id);
-      const relationship = resolveSubmitterRelationship(
+      await enforcePatientAccess(ctx.user, input.patient_id, "submit_checkins");
+      const relationship = await resolveSubmitterRelationship(
         ctx.user,
         input.patient_id,
       );
@@ -146,7 +169,7 @@ export const checkinsRbacRouter = t.router({
         }),
       )
       .query(async ({ ctx, input }) => {
-        await enforcePatientAccess(ctx.user, input.patient_id);
+        await enforcePatientAccess(ctx.user, input.patient_id, "view_checkins_history");
         return checkinsCaller.history.byPatient(input);
       }),
   }),

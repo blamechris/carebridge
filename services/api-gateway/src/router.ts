@@ -7,6 +7,7 @@ import { clinicalDataRbacRouter } from "./routers/clinical-data.js";
 import { clinicalNotesRbacRouter } from "./routers/clinical-notes.js";
 import { checkinsRbacRouter } from "./routers/checkins.js";
 import { fhirRbacRouter } from "./routers/fhir.js";
+import { familyAccessRouter } from "./routers/family-access.js";
 
 export const appRouter = router({
   healthCheck: publicProcedure.query(() => {
@@ -24,6 +25,7 @@ export const appRouter = router({
   aiOversight: aiOversightRouter,
   notifications: notificationsRouter,
   fhir: fhirRbacRouter,
+  familyAccess: familyAccessRouter,
 });
 
 export type AppRouter = typeof appRouter;
