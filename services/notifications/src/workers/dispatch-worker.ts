@@ -13,8 +13,18 @@ import { getRedisConnection } from "@carebridge/redis-config";
 import { getDb } from "@carebridge/db-schema";
 import { notifications, users } from "@carebridge/db-schema";
 import { eq, and, inArray } from "drizzle-orm";
+import Redis from "ioredis";
 import crypto from "node:crypto";
 import type { NotificationEvent } from "../queue.js";
+
+/** Redis publisher client for SSE real-time delivery. */
+const redisPublisher = new Redis({
+  host: process.env.REDIS_HOST ?? "localhost",
+  port: Number(process.env.REDIS_PORT ?? 6379),
+  ...(process.env.REDIS_PASSWORD ? { password: process.env.REDIS_PASSWORD } : {}),
+  ...(process.env.REDIS_TLS === "true" ? { tls: {} } : {}),
+  lazyConnect: true,
+});
 
 const QUEUE_NAME = "notifications";
 const DLQ_NAME = "notifications-failed";
@@ -147,6 +157,20 @@ async function processNotificationJob(event: NotificationEvent): Promise<number>
 
   // Batch insert all notifications
   await db.insert(notifications).values(notificationRecords);
+
+  // Publish to Redis pub/sub for real-time SSE delivery
+  for (const record of notificationRecords) {
+    const channel = `notifications:${record.user_id}`;
+    await redisPublisher.publish(channel, JSON.stringify({
+      id: record.id,
+      type: record.type,
+      title: record.title,
+      body: record.body,
+      link: record.link,
+      related_flag_id: record.related_flag_id,
+      created_at: record.created_at,
+    }));
+  }
 
   console.log(
     `[dispatch-worker] Created ${notificationRecords.length} notifications ` +
