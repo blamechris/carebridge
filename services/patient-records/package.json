@@ -11,7 +11,9 @@
     "@carebridge/shared-types": "workspace:*",
     "@carebridge/validators": "workspace:*",
     "@carebridge/db-schema": "workspace:*",
+    "@carebridge/redis-config": "workspace:*",
     "@trpc/server": "^11.0.0",
+    "bullmq": "^5.0.0",
     "drizzle-orm": "^0.38.0",
     "zod": "^3.24.0"
   },
