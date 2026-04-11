@@ -8,6 +8,10 @@
  * Closes the IDOR in the raw ai-oversight router (issue #270) where
  * flags.getByPatient, flags.getOpenCount and reviews.getByPatient were
  * previously exposed as unauthenticated tRPC procedures.
+ *
+ * Also closes issue #272: flags.acknowledge / resolve / dismiss accept
+ * only a flagId, so the wrapper loads the flag first to retrieve its
+ * patient_id and enforces patient access before allowing the mutation.
  */
 import { z } from "zod";
 import { TRPCError, initTRPC } from "@trpc/server";
@@ -99,6 +103,11 @@ export const aiOversightRbacRouter = t.router({
     acknowledge: protectedProcedure
       .input(z.object({ flagId: z.string().uuid() }))
       .mutation(async ({ ctx, input }) => {
+        const flag = await flagService.getFlagById(input.flagId);
+        if (!flag) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Flag not found" });
+        }
+        await enforcePatientAccess(ctx.user, flag.patient_id);
         await flagService.acknowledgeFlag(input.flagId, ctx.user.id);
         return { success: true };
       }),
@@ -111,6 +120,11 @@ export const aiOversightRbacRouter = t.router({
         }),
       )
       .mutation(async ({ ctx, input }) => {
+        const flag = await flagService.getFlagById(input.flagId);
+        if (!flag) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Flag not found" });
+        }
+        await enforcePatientAccess(ctx.user, flag.patient_id);
         await flagService.resolveFlag(
           input.flagId,
           ctx.user.id,
@@ -127,6 +141,11 @@ export const aiOversightRbacRouter = t.router({
         }),
       )
       .mutation(async ({ ctx, input }) => {
+        const flag = await flagService.getFlagById(input.flagId);
+        if (!flag) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Flag not found" });
+        }
+        await enforcePatientAccess(ctx.user, flag.patient_id);
         await flagService.dismissFlag(
           input.flagId,
           ctx.user.id,

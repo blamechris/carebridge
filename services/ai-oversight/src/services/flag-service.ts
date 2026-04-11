@@ -189,6 +189,25 @@ export async function dismissFlag(
 }
 
 /**
+ * Get a single flag by its id.
+ *
+ * Used by the gateway RBAC wrapper to look up a flag's patient_id before
+ * enforcing patient access on mutations that accept only a flagId
+ * (acknowledge / resolve / dismiss).
+ */
+export async function getFlagById(
+  flagId: string,
+): Promise<ClinicalFlag | null> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(clinicalFlags)
+    .where(eq(clinicalFlags.id, flagId))
+    .limit(1);
+  return (rows[0] ?? null) as ClinicalFlag | null;
+}
+
+/**
  * Get flags for a patient, optionally filtered by status.
  */
 export async function getFlagsByPatient(

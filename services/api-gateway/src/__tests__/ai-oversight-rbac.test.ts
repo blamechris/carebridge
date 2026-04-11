@@ -24,6 +24,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mocks = vi.hoisted(() => ({
   getFlagsByPatient: vi.fn(),
   getOpenFlagCount: vi.fn(),
+  getFlagById: vi.fn(),
+  acknowledgeFlag: vi.fn(),
+  resolveFlag: vi.fn(),
+  dismissFlag: vi.fn(),
   getReviewJobsByPatient: vi.fn(),
   assertCareTeamAccess: vi.fn(),
 }));
@@ -33,9 +37,10 @@ vi.mock("@carebridge/ai-oversight", () => ({
     getFlagsByPatient: mocks.getFlagsByPatient,
     getOpenFlagCount: mocks.getOpenFlagCount,
     getAllOpenFlags: vi.fn(),
-    acknowledgeFlag: vi.fn(),
-    resolveFlag: vi.fn(),
-    dismissFlag: vi.fn(),
+    getFlagById: mocks.getFlagById,
+    acknowledgeFlag: mocks.acknowledgeFlag,
+    resolveFlag: mocks.resolveFlag,
+    dismissFlag: mocks.dismissFlag,
   },
   getReviewJobsByPatient: mocks.getReviewJobsByPatient,
 }));
@@ -173,5 +178,79 @@ describe("aiOversightRbacRouter — issue #270 IDOR regression", () => {
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
 
     expect(mocks.getReviewJobsByPatient).not.toHaveBeenCalled();
+  });
+});
+
+describe("aiOversightRbacRouter — issue #272 flag-mutation patient-access", () => {
+  const flagOwnedByPatientB = {
+    id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    patient_id: patientBId,
+    rule_id: "TEST-RULE",
+    status: "open",
+    source: "rule",
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("rejects flags.acknowledge when caller is a different patient", async () => {
+    mocks.getFlagById.mockResolvedValueOnce(flagOwnedByPatientB);
+
+    await expect(
+      caller(makeContext(patientA)).flags.acknowledge({
+        flagId: flagOwnedByPatientB.id,
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    expect(mocks.getFlagById).toHaveBeenCalledWith(flagOwnedByPatientB.id);
+    expect(mocks.acknowledgeFlag).not.toHaveBeenCalled();
+  });
+
+  it("rejects flags.resolve when clinician has no care-team relationship", async () => {
+    mocks.getFlagById.mockResolvedValueOnce(flagOwnedByPatientB);
+    mocks.assertCareTeamAccess.mockResolvedValueOnce(false);
+
+    await expect(
+      caller(makeContext(physician)).flags.resolve({
+        flagId: flagOwnedByPatientB.id,
+        resolution_note: "test",
+      }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    expect(mocks.assertCareTeamAccess).toHaveBeenCalledWith(
+      physician.id,
+      patientBId,
+    );
+    expect(mocks.resolveFlag).not.toHaveBeenCalled();
+  });
+
+  it("rejects flags.dismiss when the flag does not exist with NOT_FOUND", async () => {
+    mocks.getFlagById.mockResolvedValueOnce(null);
+
+    await expect(
+      caller(makeContext(physician)).flags.dismiss({
+        flagId: flagOwnedByPatientB.id,
+        dismiss_reason: "test",
+      }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    expect(mocks.dismissFlag).not.toHaveBeenCalled();
+  });
+
+  it("allows flags.acknowledge for a clinician on the patient's care team", async () => {
+    mocks.getFlagById.mockResolvedValueOnce(flagOwnedByPatientB);
+    mocks.assertCareTeamAccess.mockResolvedValueOnce(true);
+    mocks.acknowledgeFlag.mockResolvedValueOnce(undefined);
+
+    const result = await caller(makeContext(physician)).flags.acknowledge({
+      flagId: flagOwnedByPatientB.id,
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(mocks.acknowledgeFlag).toHaveBeenCalledWith(
+      flagOwnedByPatientB.id,
+      physician.id,
+    );
   });
 });
