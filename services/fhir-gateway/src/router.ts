@@ -81,6 +81,38 @@ const isAdmin = t.middleware(({ ctx, next }) => {
 const protectedProcedure = t.procedure.use(isAuthenticated);
 const adminProcedure = t.procedure.use(isAdmin);
 
+/**
+ * Defense-in-depth patient-access guard for the raw router.
+ *
+ * The api-gateway wrapper at services/api-gateway/src/routers/fhir.ts is
+ * the canonical RBAC enforcement point and runs the full care-team check.
+ * This helper exists so that if the raw router is consumed directly
+ * (internal callers, tests, dev-mode), it still rejects cross-patient
+ * access. Per Copilot review on PR #379.
+ *
+ * Allowed:
+ *   - admin role: full access
+ *   - patient role: self-access only (user.id === patientId)
+ *
+ * Clinicians (physician/specialist/nurse) are deliberately NOT allowed
+ * through the raw router — they MUST go through the gateway wrapper which
+ * runs the care-team membership check. The raw router cannot do that
+ * check without coupling to gateway concerns, so we fail closed here.
+ */
+function assertRawPatientAccess(
+  user: User,
+  patientId: string,
+): void {
+  if (user.role === "admin") return;
+  if (user.role === "patient" && user.id === patientId) return;
+  throw new TRPCError({
+    code: "FORBIDDEN",
+    message:
+      "Access denied: raw FHIR router only permits admin or patient self-access. " +
+      "Route through the api-gateway wrapper for care-team-based access.",
+  });
+}
+
 function sanitizeResourceStrings(value: unknown): unknown {
   if (typeof value === "string") {
     return sanitizeFreeText(value);
@@ -128,7 +160,8 @@ export const fhirGatewayRouter = t.router({
 
   getByPatient: protectedProcedure
     .input(z.object({ patientId: z.string(), resourceType: z.string().optional() }))
-    .query(async ({ input }) => {
+    .query(async ({ ctx, input }) => {
+      assertRawPatientAccess(ctx.user, input.patientId);
       const db = getDb();
       return db.select().from(fhirResources)
         .where(eq(fhirResources.patient_id, input.patientId));
@@ -136,7 +169,8 @@ export const fhirGatewayRouter = t.router({
 
   exportPatient: protectedProcedure
     .input(z.object({ patientId: z.string() }))
-    .query(async ({ input }) => {
+    .query(async ({ ctx, input }) => {
+      assertRawPatientAccess(ctx.user, input.patientId);
       const db = getDb();
       const { patientId } = input;
 

@@ -122,4 +122,48 @@ describe("fhirGatewayRouter raw auth (defense-in-depth)", () => {
       ).rejects.toBeInstanceOf(TRPCError);
     });
   });
+
+  describe("getByPatient / exportPatient defense-in-depth (PR #379 Copilot review)", () => {
+    it("rejects a patient requesting another patient's resources via getByPatient", async () => {
+      const caller = fhirGatewayRouter.createCaller({ user: patientUser });
+      await expect(
+        caller.getByPatient({ patientId: "some-other-patient" }),
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
+
+    it("rejects a patient requesting another patient's bundle via exportPatient", async () => {
+      const caller = fhirGatewayRouter.createCaller({ user: patientUser });
+      await expect(
+        caller.exportPatient({ patientId: "some-other-patient" }),
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
+
+    it("rejects a clinician through the raw router (must use the gateway wrapper)", async () => {
+      const physicianUser = {
+        ...patientUser,
+        id: "user-physician-1",
+        role: "physician" as const,
+        specialty: "Hematology/Oncology",
+      };
+      const caller = fhirGatewayRouter.createCaller({ user: physicianUser });
+      await expect(
+        caller.getByPatient({ patientId: "user-patient-1" }),
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
+
+    it("allows a patient to read their own resources via getByPatient (self-access)", async () => {
+      const caller = fhirGatewayRouter.createCaller({ user: patientUser });
+      // No throw — DB select mock returns []
+      await expect(
+        caller.getByPatient({ patientId: patientUser.id }),
+      ).resolves.toEqual([]);
+    });
+
+    it("allows an admin to read any patient via getByPatient", async () => {
+      const caller = fhirGatewayRouter.createCaller({ user: adminUser });
+      await expect(
+        caller.getByPatient({ patientId: "any-patient" }),
+      ).resolves.toEqual([]);
+    });
+  });
 });
