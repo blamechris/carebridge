@@ -1,10 +1,24 @@
 import { initTRPC } from "@trpc/server";
 import { z } from "zod";
 import { getDb, hmacForIndex } from "@carebridge/db-schema";
-import { patients, diagnoses, allergies, careTeamMembers } from "@carebridge/db-schema";
+import { patients, diagnoses, allergies, careTeamMembers, patientObservations } from "@carebridge/db-schema";
 import { createPatientSchema, updatePatientSchema } from "@carebridge/validators";
-import { eq } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
+import { Queue } from "bullmq";
+import { getRedisConnection } from "@carebridge/redis-config";
 import crypto from "node:crypto";
+
+const connection = getRedisConnection();
+
+const clinicalEventsQueue = new Queue("clinical-events", {
+  connection,
+  defaultJobOptions: {
+    attempts: 5,
+    backoff: { type: "exponential", delay: 2000 },
+    removeOnComplete: { count: 1000 },
+    removeOnFail: { count: 10000 },
+  },
+});
 
 const t = initTRPC.create();
 
@@ -60,6 +74,71 @@ export const patientRecordsRouter = t.router({
       const db = getDb();
       return db.select().from(careTeamMembers).where(eq(careTeamMembers.patient_id, input.patientId));
     }),
+  }),
+
+  observations: t.router({
+    /** List observations for a patient, most recent first. */
+    getByPatient: t.procedure
+      .input(z.object({ patientId: z.string(), limit: z.number().optional().default(20) }))
+      .query(async ({ input }) => {
+        const db = getDb();
+        return db.select().from(patientObservations)
+          .where(eq(patientObservations.patient_id, input.patientId))
+          .orderBy(desc(patientObservations.created_at))
+          .limit(input.limit);
+      }),
+
+    /** Create a new patient observation. Emits patient.observation event for AI oversight. */
+    create: t.procedure
+      .input(z.object({
+        patientId: z.string(),
+        observationType: z.enum(["pain", "neurological", "gastrointestinal", "respiratory", "skin", "cardiovascular", "general", "medication_side_effect"]),
+        description: z.string().min(1),
+        structuredData: z.object({
+          location: z.string().optional(),
+          severity: z.number().min(1).max(10),
+          duration: z.string().optional(),
+          frequency: z.string().optional(),
+          associated_activities: z.string().optional(),
+        }).optional(),
+        severitySelfAssessment: z.enum(["mild", "moderate", "severe"]).optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const db = getDb();
+        const now = new Date().toISOString();
+        const id = crypto.randomUUID();
+
+        const observation = {
+          id,
+          patient_id: input.patientId,
+          observation_type: input.observationType,
+          description: input.description,
+          structured_data: input.structuredData ?? null,
+          severity_self_assessment: input.severitySelfAssessment ?? null,
+          created_at: now,
+          updated_at: now,
+        };
+
+        await db.insert(patientObservations).values(observation);
+
+        // Emit patient.observation event for AI oversight screening.
+        // IMPORTANT: Do NOT include description (PHI) in the event payload.
+        // The AI oversight worker reads the observation from DB where Drizzle
+        // handles transparent decryption of the encrypted description field.
+        await clinicalEventsQueue.add("patient.observation", {
+          id: crypto.randomUUID(),
+          type: "patient.observation",
+          patient_id: input.patientId,
+          data: {
+            observation_id: id,
+            observation_type: input.observationType,
+            severity_self_assessment: input.severitySelfAssessment,
+          },
+          timestamp: now,
+        });
+
+        return observation;
+      }),
   }),
 });
 

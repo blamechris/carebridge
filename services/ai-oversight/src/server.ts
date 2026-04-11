@@ -7,11 +7,14 @@
 
 import { createServer } from "node:http";
 import { startReviewWorker } from "./workers/review-worker.js";
+import { setupEscalationQueue, startEscalationWorker } from "./workers/escalation-worker.js";
 import { formatPrometheus, getMetricsSnapshot } from "./services/shadow-metrics.js";
 
 const HEALTH_PORT = Number(process.env.HEALTH_PORT ?? 4001);
 
 const worker = startReviewWorker();
+const escalationQueue = setupEscalationQueue();
+const escalationWorker = startEscalationWorker();
 
 const REDIS_PING_TIMEOUT_MS = 2_000;
 
@@ -85,6 +88,8 @@ async function shutdown(signal: string) {
 
   healthServer.close();
   await worker.close();
+  await escalationWorker.close();
+  await escalationQueue.close();
 
   console.log("[ai-oversight] Shutdown complete");
   process.exit(0);

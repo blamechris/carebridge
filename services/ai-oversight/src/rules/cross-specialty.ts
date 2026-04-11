@@ -10,13 +10,24 @@
 import type { FlagSeverity, FlagCategory, ClinicalEvent } from "@carebridge/shared-types";
 import type { RuleFlag } from "./critical-values.js";
 
+export interface PatientAllergy {
+  allergen: string;
+  rxnorm_code?: string | null;
+  severity?: string | null; // mild, moderate, severe
+  reaction?: string | null;
+}
+
 export interface PatientContext {
   active_diagnoses: string[];
   /** ICD-10 codes for active diagnoses (parallel to active_diagnoses). */
   active_diagnosis_codes: string[];
   active_medications: string[];
+  /** RxNorm codes for active medications (parallel to active_medications). */
+  active_medication_rxnorm_codes?: (string | null)[];
   new_symptoms: string[];
   care_team_specialties: string[];
+  /** Patient allergies for cross-checking against medications. */
+  allergies?: PatientAllergy[];
   /** The triggering clinical event, used by medication-status rules. */
   trigger_event?: ClinicalEvent;
   /** Recent lab values, used by ANC-aware rules. */
