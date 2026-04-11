@@ -21,14 +21,19 @@ describe("clinician-portal next.config headers()", () => {
     // headers() is defined above; guarded by previous test
     const headers = await nextConfig.headers!();
 
-    // At least one entry must match every route
-    const globalEntry = headers.find((h) => h.source === "/(.*)");
-    expect(globalEntry).toBeDefined();
+    // Look for any catch-all entry that sets Referrer-Policy: no-referrer.
+    // Both `/:path*` (path-to-regexp catch-all) and `/(.*)` (raw regex)
+    // are valid Next.js source patterns; assert on the behavior, not the
+    // specific syntax.
+    const globalEntry = headers.find((entry) => {
+      const isGlobalRoute =
+        entry.source === "/:path*" || entry.source === "/(.*)";
+      const referrerHeader = entry.headers.find(
+        (h) => h.key.toLowerCase() === "referrer-policy",
+      );
+      return isGlobalRoute && referrerHeader?.value === "no-referrer";
+    });
 
-    const referrerHeader = globalEntry!.headers.find(
-      (h) => h.key.toLowerCase() === "referrer-policy",
-    );
-    expect(referrerHeader).toBeDefined();
-    expect(referrerHeader!.value).toBe("no-referrer");
+    expect(globalEntry).toBeDefined();
   });
 });
