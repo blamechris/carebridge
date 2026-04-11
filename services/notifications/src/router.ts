@@ -1,7 +1,7 @@
 import { initTRPC } from "@trpc/server";
 import { z } from "zod";
 import { getDb } from "@carebridge/db-schema";
-import { notifications } from "@carebridge/db-schema";
+import { notifications, notificationPreferences } from "@carebridge/db-schema";
 import { eq, and, desc } from "drizzle-orm";
 import crypto from "node:crypto";
 
@@ -50,6 +50,64 @@ export const notificationsRouter = t.router({
       };
       await db.insert(notifications).values(notification);
       return notification;
+    }),
+  getPreferences: t.procedure
+    .input(z.object({ userId: z.string() }))
+    .query(async ({ input }) => {
+      const db = getDb();
+      return db.select().from(notificationPreferences)
+        .where(eq(notificationPreferences.user_id, input.userId));
+    }),
+
+  updatePreference: t.procedure
+    .input(z.object({
+      userId: z.string(),
+      notificationType: z.string(),
+      channel: z.string(),
+      enabled: z.boolean(),
+      quietHoursStart: z.string().nullable().optional(),
+      quietHoursEnd: z.string().nullable().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const db = getDb();
+      const now = new Date().toISOString();
+
+      // Check if preference exists
+      const [existing] = await db.select().from(notificationPreferences)
+        .where(
+          and(
+            eq(notificationPreferences.user_id, input.userId),
+            eq(notificationPreferences.notification_type, input.notificationType),
+            eq(notificationPreferences.channel, input.channel),
+          ),
+        );
+
+      if (existing) {
+        await db.update(notificationPreferences)
+          .set({
+            enabled: input.enabled,
+            quiet_hours_start: input.quietHoursStart ?? null,
+            quiet_hours_end: input.quietHoursEnd ?? null,
+            updated_at: now,
+          })
+          .where(eq(notificationPreferences.id, existing.id));
+        return { ...existing, enabled: input.enabled, updated_at: now };
+      }
+
+      const pref = {
+        id: crypto.randomUUID(),
+        user_id: input.userId,
+        notification_type: input.notificationType,
+        channel: input.channel,
+        enabled: input.enabled,
+        quiet_hours_start: input.quietHoursStart ?? null,
+        quiet_hours_end: input.quietHoursEnd ?? null,
+        created_at: now,
+        updated_at: now,
+      };
+
+      await db.insert(notificationPreferences).values(pref);
+      return pref;
     }),
 });
 
