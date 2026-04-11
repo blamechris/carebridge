@@ -78,6 +78,18 @@ describe("audit middleware — HTTP status / success indicator", () => {
     expect(row.success).toBe(true);
   });
 
+  it("treats 304 Not Modified (3xx) as a successful response", async () => {
+    // Per Copilot review on PR #376 — 3xx responses are not failures and
+    // should not be logged with success=false / a non-null error_message.
+    await auditMiddleware(makeRequest(), makeReply(304));
+
+    expect(insertedRows).toHaveLength(1);
+    const row = insertedRows[0]!;
+    expect(row.http_status_code).toBe(304);
+    expect(row.success).toBe(true);
+    expect(row.error_message).toBeNull();
+  });
+
   it("records success=false and 401 for UNAUTHORIZED responses", async () => {
     await auditMiddleware(makeRequest(), makeReply(401));
 

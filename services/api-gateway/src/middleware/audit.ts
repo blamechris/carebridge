@@ -197,7 +197,10 @@ export async function auditMiddleware(
   const patientId = extractPatientId(request.body);
 
   const statusCode = reply.statusCode;
-  const success = statusCode >= 200 && statusCode < 300;
+  // Treat 2xx and 3xx as success — redirects/304s are not failures and the
+  // schema's error_message column is for "short failure reason for non-2xx"
+  // failures only. Per Copilot review on PR #376.
+  const success = statusCode >= 200 && statusCode < 400;
   const errorMessage = success ? null : statusCodeToMessage(statusCode);
 
   const db = getDb();
