@@ -13,7 +13,7 @@ import {
 } from "@carebridge/db-schema";
 import { eq } from "drizzle-orm";
 import crypto from "node:crypto";
-import type { Vital, LabResult } from "@carebridge/shared-types";
+import type { Vital, LabResult, User } from "@carebridge/shared-types";
 import {
   toFhirPatient,
   toFhirVitalObservation,
@@ -25,7 +25,61 @@ import {
 import { fhirBundleSchema } from "./schemas/bundle.js";
 import { sanitizeFreeText } from "@carebridge/phi-sanitizer";
 
-const t = initTRPC.create();
+/**
+ * Context for the raw FHIR gateway router.
+ *
+ * Defense-in-depth: even when this router is consumed directly (e.g. unit
+ * tests, dev mode, other internal callers) rather than through the
+ * api-gateway RBAC wrapper, all procedures require an authenticated user.
+ * The wrapper at services/api-gateway/src/routers/fhir.ts performs the
+ * full RBAC enforcement (care-team access, patient self-access, etc.); this
+ * raw router only guarantees that there IS an authenticated user and that
+ * importBundle is admin-only.
+ */
+export interface Context {
+  user: User | null;
+}
+
+const t = initTRPC.context<Context>().create();
+
+const isAuthenticated = t.middleware(({ ctx, next }) => {
+  if (!ctx.user) {
+    throw new TRPCError({
+      code: "UNAUTHORIZED",
+      message: "Authentication required",
+    });
+  }
+  return next({
+    ctx: {
+      ...ctx,
+      user: ctx.user,
+    },
+  });
+});
+
+const isAdmin = t.middleware(({ ctx, next }) => {
+  if (!ctx.user) {
+    throw new TRPCError({
+      code: "UNAUTHORIZED",
+      message: "Authentication required",
+    });
+  }
+  if (ctx.user.role !== "admin") {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "importBundle requires admin role",
+    });
+  }
+  return next({
+    ctx: {
+      ...ctx,
+      user: ctx.user,
+    },
+  });
+});
+
+const protectedProcedure = t.procedure.use(isAuthenticated);
+const adminProcedure = t.procedure.use(isAdmin);
 
 function sanitizeResourceStrings(value: unknown): unknown {
   if (typeof value === "string") {
@@ -45,7 +99,7 @@ function sanitizeResourceStrings(value: unknown): unknown {
 }
 
 export const fhirGatewayRouter = t.router({
-  importBundle: t.procedure
+  importBundle: adminProcedure
     .input(z.object({
       bundle: fhirBundleSchema,
       source_system: z.string(),
@@ -72,7 +126,7 @@ export const fhirGatewayRouter = t.router({
       return { imported };
     }),
 
-  getByPatient: t.procedure
+  getByPatient: protectedProcedure
     .input(z.object({ patientId: z.string(), resourceType: z.string().optional() }))
     .query(async ({ input }) => {
       const db = getDb();
@@ -80,7 +134,7 @@ export const fhirGatewayRouter = t.router({
         .where(eq(fhirResources.patient_id, input.patientId));
     }),
 
-  exportPatient: t.procedure
+  exportPatient: protectedProcedure
     .input(z.object({ patientId: z.string() }))
     .query(async ({ input }) => {
       const db = getDb();

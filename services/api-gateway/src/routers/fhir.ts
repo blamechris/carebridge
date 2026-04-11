@@ -49,22 +49,25 @@ async function enforcePatientAccess(
   }
 }
 
-// Delegate to the underlying fhir-gateway router via a context-less caller.
-const fhirCaller = fhirGatewayRouter.createCaller({});
-
+// Delegate to the underlying fhir-gateway router. The raw router now
+// requires an authenticated user in its own context as defense-in-depth
+// (see services/fhir-gateway/src/router.ts), so we thread ctx.user through
+// on every call rather than using a single module-level caller.
 export const fhirRbacRouter = t.router({
   exportPatient: protectedProcedure
     .input(z.object({ patientId: z.string() }))
     .query(async ({ ctx, input }) => {
       await enforcePatientAccess(ctx.user, input.patientId);
-      return fhirCaller.exportPatient(input);
+      const caller = fhirGatewayRouter.createCaller({ user: ctx.user });
+      return caller.exportPatient(input);
     }),
 
   getByPatient: protectedProcedure
     .input(z.object({ patientId: z.string(), resourceType: z.string().optional() }))
     .query(async ({ ctx, input }) => {
       await enforcePatientAccess(ctx.user, input.patientId);
-      return fhirCaller.getByPatient(input);
+      const caller = fhirGatewayRouter.createCaller({ user: ctx.user });
+      return caller.getByPatient(input);
     }),
 
   importBundle: protectedProcedure
@@ -81,6 +84,7 @@ export const fhirRbacRouter = t.router({
           message: "Access denied: importBundle requires admin role",
         });
       }
-      return fhirCaller.importBundle(input);
+      const caller = fhirGatewayRouter.createCaller({ user: ctx.user });
+      return caller.importBundle(input);
     }),
 });
