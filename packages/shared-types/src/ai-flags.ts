@@ -100,7 +100,8 @@ export type ClinicalEventType =
   | "procedure.completed"
   | "diagnosis.added"
   | "fhir.imported"
-  | "message.received";
+  | "message.received"
+  | "patient.observation";
 
 export interface ClinicalEvent {
   id: string;
