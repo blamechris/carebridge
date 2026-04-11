@@ -109,6 +109,17 @@ export const clinicalNotesRbacRouter = t.router({
   sign: protectedProcedure
     .input(z.object({ noteId: z.string().uuid() }).merge(signNoteSchema))
     .mutation(async ({ ctx, input }) => {
+      // Only physicians, specialists, and admins hold the `sign:notes`
+      // permission in ROLE_PERMISSIONS (packages/shared-types/src/auth.ts).
+      // Enforce that gate explicitly here so a nurse with care-team access
+      // cannot forge a physician signature. (HIPAA / issue #271)
+      if (!["physician", "specialist", "admin"].includes(ctx.user.role)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Access denied: role not permitted to sign clinical notes",
+        });
+      }
+
       const db = getDb();
       const [existing] = await db
         .select({ patient_id: clinicalNotes.patient_id })

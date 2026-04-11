@@ -1,0 +1,162 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { User } from "@carebridge/shared-types";
+
+// ---------------------------------------------------------------------------
+// Mocks
+// ---------------------------------------------------------------------------
+
+const NOTE_ID = "11111111-1111-4111-8111-111111111111";
+const PATIENT_ID = "22222222-2222-4222-8222-222222222222";
+const ROLE_IDS: Record<string, string> = {
+  nurse: "33333333-3333-4333-8333-333333333333",
+  physician: "44444444-4444-4444-8444-444444444444",
+  specialist: "55555555-5555-4555-8555-555555555555",
+  admin: "66666666-6666-4666-8666-666666666666",
+  patient: PATIENT_ID,
+};
+
+// Mock DB: every select returns the note row so access checks never 404.
+function makeSelectChain() {
+  const chain: Record<string, unknown> = {};
+  chain.from = vi.fn(() => chain);
+  chain.where = vi.fn(() => chain);
+  chain.limit = vi.fn(async () => [{ patient_id: PATIENT_ID }]);
+  return chain;
+}
+
+const mockDb = {
+  select: vi.fn(() => makeSelectChain()),
+};
+
+vi.mock("@carebridge/db-schema", () => ({
+  getDb: () => mockDb,
+  clinicalNotes: {
+    id: "clinical_notes.id",
+    patient_id: "clinical_notes.patient_id",
+  },
+}));
+
+vi.mock("drizzle-orm", () => ({
+  eq: (col: unknown, val: unknown) => ({ col, val }),
+}));
+
+// Always grant care-team access so the only gate under test is the role check.
+vi.mock("../middleware/rbac.js", () => ({
+  assertCareTeamAccess: vi.fn(async () => true),
+}));
+
+// Stub the note service so signNote does not touch a real DB.
+vi.mock("@carebridge/clinical-notes", () => ({
+  noteService: {
+    createNote: vi.fn(),
+    updateNote: vi.fn(),
+    signNote: vi.fn(async (noteId: string, signedBy: string) => ({
+      id: noteId,
+      signed_by: signedBy,
+      signed_at: new Date().toISOString(),
+    })),
+    getNotesByPatient: vi.fn(),
+    getNoteById: vi.fn(),
+  },
+  createSOAPTemplate: () => ({}),
+  createProgressTemplate: () => ({}),
+}));
+
+import { noteService } from "@carebridge/clinical-notes";
+import { clinicalNotesRbacRouter } from "../routers/clinical-notes.js";
+import type { Context } from "../context.js";
+
+const signNoteMock = vi.mocked(noteService.signNote);
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function makeUser(role: User["role"], id = ROLE_IDS[role]!): User {
+  return {
+    id,
+    email: `${role}@carebridge.dev`,
+    name: `Test ${role}`,
+    role,
+    is_active: true,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function makeContext(user: User | null): Context {
+  return {
+    db: mockDb as unknown as Context["db"],
+    user,
+    sessionId: "session-1",
+    requestId: "req-1",
+  };
+}
+
+function callerFor(user: User | null) {
+  return clinicalNotesRbacRouter.createCaller(makeContext(user));
+}
+
+const signInput = {
+  noteId: NOTE_ID,
+  signed_by: ROLE_IDS.physician!,
+};
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe("clinicalNotesRbacRouter.sign — role enforcement", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    signNoteMock.mockClear();
+  });
+
+  it("rejects a nurse attempting to sign a note (FORBIDDEN)", async () => {
+    const caller = callerFor(makeUser("nurse"));
+
+    await expect(caller.sign(signInput)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    expect(signNoteMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a patient attempting to sign a note (FORBIDDEN)", async () => {
+    const caller = callerFor(makeUser("patient", PATIENT_ID));
+
+    await expect(caller.sign(signInput)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    expect(signNoteMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unauthenticated caller (UNAUTHORIZED)", async () => {
+    const caller = callerFor(null);
+
+    await expect(caller.sign(signInput)).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+    });
+    expect(signNoteMock).not.toHaveBeenCalled();
+  });
+
+  it("allows a physician to sign a note", async () => {
+    const caller = callerFor(makeUser("physician"));
+
+    await expect(caller.sign(signInput)).resolves.toBeDefined();
+    expect(signNoteMock).toHaveBeenCalledWith(NOTE_ID, signInput.signed_by);
+  });
+
+  it("allows a specialist to sign a note", async () => {
+    const caller = callerFor(makeUser("specialist"));
+
+    await expect(caller.sign(signInput)).resolves.toBeDefined();
+    expect(signNoteMock).toHaveBeenCalledWith(NOTE_ID, signInput.signed_by);
+  });
+
+  it("allows an admin to sign a note", async () => {
+    const caller = callerFor(makeUser("admin"));
+
+    await expect(caller.sign(signInput)).resolves.toBeDefined();
+    expect(signNoteMock).toHaveBeenCalledWith(NOTE_ID, signInput.signed_by);
+  });
+});
