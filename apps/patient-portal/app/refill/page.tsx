@@ -69,7 +69,6 @@ export default function RefillPage() {
       const convo = await createConvoMutation.mutateAsync({
         patientId: myRecord.id,
         subject: `Refill Request: ${med.name}`,
-        createdBy: user.id,
         participantIds: [recipientId],
       });
 
@@ -83,7 +82,6 @@ export default function RefillPage() {
 
       await sendMutation.mutateAsync({
         conversationId: convo.id,
-        senderId: user.id,
         body,
         messageType: "refill_request",
       });

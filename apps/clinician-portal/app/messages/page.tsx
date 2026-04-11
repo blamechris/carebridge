@@ -22,7 +22,7 @@ function MessagesContent() {
   const utils = trpc.useUtils();
 
   const conversationsQuery = trpc.messaging.listConversations.useQuery(
-    { userId: user?.id ?? "" },
+    undefined,
     { enabled: !!user },
   );
 
@@ -30,7 +30,7 @@ function MessagesContent() {
   const [replyText, setReplyText] = useState("");
 
   const messagesQuery = trpc.messaging.listMessages.useQuery(
-    { conversationId: selectedConvoId ?? "", userId: user?.id ?? "", limit: 50 },
+    { conversationId: selectedConvoId ?? "", limit: 50 },
     { enabled: !!selectedConvoId && !!user },
   );
 
@@ -49,7 +49,6 @@ function MessagesContent() {
     if (!selectedConvoId || !user || !replyText.trim()) return;
     sendMutation.mutate({
       conversationId: selectedConvoId,
-      senderId: user.id,
       body: replyText.trim(),
     });
   }

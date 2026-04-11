@@ -340,6 +340,9 @@ importers:
       '@carebridge/patient-records':
         specifier: workspace:*
         version: link:../patient-records
+      '@carebridge/redis-config':
+        specifier: workspace:*
+        version: link:../../packages/redis-config
       '@carebridge/scheduling':
         specifier: workspace:*
         version: link:../scheduling
@@ -364,6 +367,9 @@ importers:
       '@trpc/server':
         specifier: ^11.0.0
         version: 11.16.0(typescript@5.9.3)
+      bullmq:
+        specifier: ^5.0.0
+        version: 5.73.0
       drizzle-orm:
         specifier: ^0.38.0
         version: 0.38.4(@types/react@19.2.14)(postgres@3.4.8)(react@19.2.4)

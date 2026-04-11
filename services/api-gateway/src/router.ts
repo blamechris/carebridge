@@ -1,12 +1,13 @@
 import { router, publicProcedure } from "./trpc.js";
-import { authRouter, emergencyAccessRouter } from "@carebridge/auth";
+import { authRouter } from "@carebridge/auth";
 import { aiOversightRouter } from "@carebridge/ai-oversight";
 import { notificationsRouter } from "@carebridge/notifications";
-import { messagingRouter } from "@carebridge/messaging";
-import { schedulingRouter } from "@carebridge/scheduling";
 import { patientRecordsRbacRouter } from "./routers/patient-records.js";
 import { clinicalDataRbacRouter } from "./routers/clinical-data.js";
 import { clinicalNotesRbacRouter } from "./routers/clinical-notes.js";
+import { messagingRbacRouter } from "./routers/messaging.js";
+import { schedulingRbacRouter } from "./routers/scheduling.js";
+import { emergencyAccessRbacRouter } from "./routers/emergency-access.js";
 import { fhirRbacRouter } from "./routers/fhir.js";
 
 export const appRouter = router({
@@ -18,14 +19,14 @@ export const appRouter = router({
     };
   }),
   auth: authRouter,
-  emergencyAccess: emergencyAccessRouter,
+  emergencyAccess: emergencyAccessRbacRouter,
   patients: patientRecordsRbacRouter,
   clinicalData: clinicalDataRbacRouter,
   notes: clinicalNotesRbacRouter,
   aiOversight: aiOversightRouter,
   notifications: notificationsRouter,
-  messaging: messagingRouter,
-  scheduling: schedulingRouter,
+  messaging: messagingRbacRouter,
+  scheduling: schedulingRbacRouter,
   fhir: fhirRbacRouter,
 });
 

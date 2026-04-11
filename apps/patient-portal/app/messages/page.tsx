@@ -28,7 +28,7 @@ export default function PatientMessagesPage() {
   ) ?? patientsQuery.data?.[0];
 
   const conversationsQuery = trpc.messaging.listConversations.useQuery(
-    { userId: user?.id ?? "" },
+    undefined,
     { enabled: !!user },
   );
 
@@ -45,7 +45,7 @@ export default function PatientMessagesPage() {
   const [composeRecipient, setComposeRecipient] = useState("");
 
   const messagesQuery = trpc.messaging.listMessages.useQuery(
-    { conversationId: selectedConvoId ?? "", userId: user?.id ?? "", limit: 50 },
+    { conversationId: selectedConvoId ?? "", limit: 50 },
     { enabled: !!selectedConvoId && !!user },
   );
 
@@ -68,7 +68,7 @@ export default function PatientMessagesPage() {
       if (user && composeBody.trim()) {
         sendMutation.mutate({
           conversationId: data.id,
-          senderId: user.id,
+
           body: composeBody.trim(),
         });
       }
@@ -89,7 +89,6 @@ export default function PatientMessagesPage() {
     if (!selectedConvoId || !user || !replyText.trim()) return;
     sendMutation.mutate({
       conversationId: selectedConvoId,
-      senderId: user.id,
       body: replyText.trim(),
     });
   }
@@ -99,7 +98,6 @@ export default function PatientMessagesPage() {
     createConvoMutation.mutate({
       patientId: myRecord.id,
       subject: composeSubject.trim(),
-      createdBy: user.id,
       participantIds: [composeRecipient],
     });
   }
