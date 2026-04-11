@@ -121,7 +121,10 @@ export const patientRecordsRouter = t.router({
 
         await db.insert(patientObservations).values(observation);
 
-        // Emit patient.observation event for AI oversight screening
+        // Emit patient.observation event for AI oversight screening.
+        // IMPORTANT: Do NOT include description (PHI) in the event payload.
+        // The AI oversight worker reads the observation from DB where Drizzle
+        // handles transparent decryption of the encrypted description field.
         await clinicalEventsQueue.add("patient.observation", {
           id: crypto.randomUUID(),
           type: "patient.observation",
@@ -129,9 +132,7 @@ export const patientRecordsRouter = t.router({
           data: {
             observation_id: id,
             observation_type: input.observationType,
-            description: input.description,
             severity_self_assessment: input.severitySelfAssessment,
-            structured_data: input.structuredData,
           },
           timestamp: now,
         });
