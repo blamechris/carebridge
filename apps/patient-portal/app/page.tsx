@@ -172,6 +172,26 @@ function PatientDashboard() {
           )}
         </Card>
 
+        <Card title="Lab Results">
+          <p style={{ margin: 0, color: "#999", fontSize: "0.875rem", marginBottom: "0.75rem" }}>
+            View your lab test results and reference ranges.
+          </p>
+          <button
+            onClick={() => router.push("/labs")}
+            style={{
+              padding: "6px 14px",
+              backgroundColor: "#2563eb",
+              border: "none",
+              borderRadius: 6,
+              color: "#fff",
+              cursor: "pointer",
+              fontSize: "0.8rem",
+            }}
+          >
+            View Lab Results
+          </button>
+        </Card>
+
         <Card title="Messages">
           <p style={{ margin: 0, color: "#999", fontSize: "0.875rem" }}>
             Messaging features coming soon.
