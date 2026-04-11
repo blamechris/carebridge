@@ -12,6 +12,7 @@ import { emergencyAccess, auditLog } from "@carebridge/db-schema";
 import { eq, and, gt, isNull, desc } from "drizzle-orm";
 import crypto from "node:crypto";
 import type { Context } from "../context.js";
+import { assertPermission } from "../middleware/rbac.js";
 
 const t = initTRPC.context<Context>().create();
 
@@ -94,9 +95,9 @@ export const emergencyAccessRbacRouter = t.router({
   revoke: protectedProcedure
     .input(z.object({ accessId: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      if (ctx.user.role !== "admin") {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Only admins can revoke emergency access" });
-      }
+      // Centralized RBAC: `admin:users` is only granted to the admin role
+      // in ROLE_PERMISSIONS, so this replaces the previous inline role check.
+      assertPermission(ctx.user, "admin:users");
       const db = getDb();
       await db.update(emergencyAccess)
         .set({ revoked_at: new Date().toISOString(), revoked_by: ctx.user.id })

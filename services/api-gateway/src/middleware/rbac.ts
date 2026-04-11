@@ -1,8 +1,28 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
+import { TRPCError } from "@trpc/server";
 import type { User } from "@carebridge/shared-types";
+import { hasPermission } from "@carebridge/shared-types";
 import { getDb, careTeamAssignments, auditLog } from "@carebridge/db-schema";
 import { eq, and, isNull } from "drizzle-orm";
 import crypto from "node:crypto";
+
+/**
+ * tRPC-side RBAC enforcement: throws `FORBIDDEN` when the user's role
+ * does not grant the requested permission per `ROLE_PERMISSIONS`.
+ *
+ * Prefer this over inline `user.role !== "admin"` checks so that all
+ * permission logic flows through a single source of truth. Extending
+ * a role's capabilities is then a one-line change in `ROLE_PERMISSIONS`
+ * rather than a grep-and-edit across every router.
+ */
+export function assertPermission(user: User, permission: string): void {
+  if (!hasPermission(user, permission)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: `Access denied: missing permission "${permission}"`,
+    });
+  }
+}
 
 /**
  * Log an RBAC access denial to the audit trail.

@@ -1,5 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { assertCareTeamAccess, clearCareTeamCache } from "./rbac.js";
+import { TRPCError } from "@trpc/server";
+import type { User } from "@carebridge/shared-types";
+import { hasPermission } from "@carebridge/shared-types";
+import { assertCareTeamAccess, assertPermission, clearCareTeamCache } from "./rbac.js";
+
+function makeUser(role: User["role"]): User {
+  return {
+    id: `user-${role}`,
+    email: `${role}@example.test`,
+    name: `${role} user`,
+    role,
+    is_active: true,
+    created_at: "2026-04-01T00:00:00.000Z",
+    updated_at: "2026-04-01T00:00:00.000Z",
+  };
+}
 
 // Mock the db-schema module so we never hit a real database.
 const selectMock = vi.fn();
@@ -101,5 +116,40 @@ describe("care-team cache", () => {
     expect(a).toBe(true);
     expect(b).toBe(false);
     expect(selectMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("hasPermission", () => {
+  it("returns true when the role's grant list contains the permission", () => {
+    expect(hasPermission(makeUser("physician"), "sign:notes")).toBe(true);
+  });
+
+  it("returns false when the role does not have the permission", () => {
+    expect(hasPermission(makeUser("nurse"), "sign:notes")).toBe(false);
+  });
+
+  it("returns false for patient users attempting clinician permissions", () => {
+    expect(hasPermission(makeUser("patient"), "sign:notes")).toBe(false);
+  });
+
+  it("returns false for unknown permission strings", () => {
+    expect(hasPermission(makeUser("admin"), "launch:missiles")).toBe(false);
+  });
+});
+
+describe("assertPermission", () => {
+  it("throws TRPCError(FORBIDDEN) when the user lacks the permission", () => {
+    let caught: unknown;
+    try {
+      assertPermission(makeUser("nurse"), "sign:notes");
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(TRPCError);
+    expect((caught as TRPCError).code).toBe("FORBIDDEN");
+  });
+
+  it("does not throw when the user has the permission", () => {
+    expect(() => assertPermission(makeUser("physician"), "sign:notes")).not.toThrow();
   });
 });
