@@ -12,12 +12,21 @@ const insertMock = vi.fn((table: unknown) => ({
   }),
 }));
 
+// db.transaction(callback) → invokes the callback with a `tx` whose
+// `insert()` mirrors the top-level mock so the existing assertions still
+// see every row that the wrapped block writes.
+const transactionMock = vi.fn(
+  async (cb: (tx: { insert: typeof insertMock }) => Promise<unknown>) => {
+    return cb({ insert: insertMock });
+  },
+);
+
 // Sentinels so the test can distinguish tables without needing real drizzle defs.
 const fhirResourcesTable = { __name: "fhir_resources" };
 const auditLogTable = { __name: "audit_log" };
 
 vi.mock("@carebridge/db-schema", () => ({
-  getDb: () => ({ insert: insertMock }),
+  getDb: () => ({ insert: insertMock, transaction: transactionMock }),
   fhirResources: fhirResourcesTable,
   auditLog: auditLogTable,
   // The router also imports these, so they need to exist on the mock even
@@ -37,6 +46,7 @@ const { fhirGatewayRouter } = await import("../router.js");
 beforeEach(() => {
   insertCalls.length = 0;
   insertMock.mockClear();
+  transactionMock.mockClear();
 });
 
 describe("importBundle audit logging", () => {
