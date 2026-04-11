@@ -2,9 +2,13 @@
  * BullMQ worker that dispatches notifications to relevant users.
  *
  * When a clinical flag is created, this worker:
- * 1. Looks up the patient's care team members with matching specialties
- * 2. Creates a notification record for each relevant provider
- * 3. Falls back to all active care team members if no specialty match
+ * 1. Looks up the patient's care team members
+ * 2. Filters the recipient set by specialty when `notify_specialties`
+ *    is non-empty (HIPAA minimum-necessary, § 164.502(b))
+ * 3. Creates notification records only for matched recipients
+ *
+ * When `notify_specialties` is empty/null the notification falls back to
+ * every active care team provider for the patient.
  */
 
 import { Worker, Queue } from "bullmq";
@@ -16,6 +20,8 @@ import { eq, and, inArray } from "drizzle-orm";
 import Redis from "ioredis";
 import crypto from "node:crypto";
 import type { NotificationEvent } from "../queue.js";
+import { filterRecipientsBySpecialty } from "./specialty-filter.js";
+import type { CandidateRecipient } from "./specialty-filter.js";
 
 /** Redis publisher client for SSE real-time delivery. */
 const redisPublisher = new Redis({
@@ -43,9 +49,14 @@ const dlq = new Queue(DLQ_NAME, {
  * Find provider user IDs who should receive a notification for a given flag.
  *
  * Strategy:
- * 1. Look up the patient's care team members
- * 2. Filter by notify_specialties if specified
- * 3. Fall back to all active care team providers for the patient if no specialty match
+ * 1. Look up active care team members for the patient
+ * 2. Load their user rows (id, specialty, role, is_active)
+ * 3. If `notify_specialties` is non-empty, use `filterRecipientsBySpecialty`
+ *    to keep only providers whose specialty matches (plus admins).
+ *    We do NOT silently fall back to the entire care team when the match
+ *    set is empty — that would re-disclose PHI to unrelated providers.
+ * 4. If `notify_specialties` is empty, notify every active care team
+ *    provider (legacy behaviour for flags without a targeted specialty).
  */
 async function findNotificationRecipients(
   patientId: string,
@@ -71,28 +82,13 @@ async function findNotificationRecipients(
 
   const providerIds = teamMembers.map((m) => m.provider_id);
 
-  // If specialties specified, filter providers by specialty
-  if (notifySpecialties.length > 0) {
-    const matchingProviders = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(
-        and(
-          inArray(users.id, providerIds),
-          inArray(users.specialty!, notifySpecialties),
-          eq(users.is_active, true),
-        ),
-      );
-
-    // If we found specialty matches, use those; otherwise fall back to all team members
-    if (matchingProviders.length > 0) {
-      return matchingProviders.map((p) => p.id);
-    }
-  }
-
-  // Fallback: notify all active care team providers (not patients)
+  // Load all active providers on the care team with their specialty + role
   const activeProviders = await db
-    .select({ id: users.id })
+    .select({
+      id: users.id,
+      specialty: users.specialty,
+      role: users.role,
+    })
     .from(users)
     .where(
       and(
@@ -101,8 +97,13 @@ async function findNotificationRecipients(
       ),
     );
 
-  return activeProviders
-    .map((p) => p.id);
+  const candidates: CandidateRecipient[] = activeProviders.map((p) => ({
+    id: p.id,
+    specialty: p.specialty,
+    role: p.role,
+  }));
+
+  return filterRecipientsBySpecialty(candidates, notifySpecialties);
 }
 
 /**
