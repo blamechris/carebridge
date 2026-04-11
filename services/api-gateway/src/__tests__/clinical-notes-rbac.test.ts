@@ -99,7 +99,6 @@ function callerFor(user: User | null) {
 
 const signInput = {
   noteId: NOTE_ID,
-  signed_by: ROLE_IDS.physician!,
 };
 
 // ---------------------------------------------------------------------------
@@ -139,24 +138,46 @@ describe("clinicalNotesRbacRouter.sign — role enforcement", () => {
     expect(signNoteMock).not.toHaveBeenCalled();
   });
 
-  it("allows a physician to sign a note", async () => {
-    const caller = callerFor(makeUser("physician"));
+  it("allows a physician to sign a note (signer = ctx.user.id)", async () => {
+    const physician = makeUser("physician");
+    const caller = callerFor(physician);
 
     await expect(caller.sign(signInput)).resolves.toBeDefined();
-    expect(signNoteMock).toHaveBeenCalledWith(NOTE_ID, signInput.signed_by);
+    expect(signNoteMock).toHaveBeenCalledWith(NOTE_ID, physician.id);
   });
 
-  it("allows a specialist to sign a note", async () => {
-    const caller = callerFor(makeUser("specialist"));
+  it("allows a specialist to sign a note (signer = ctx.user.id)", async () => {
+    const specialist = makeUser("specialist");
+    const caller = callerFor(specialist);
 
     await expect(caller.sign(signInput)).resolves.toBeDefined();
-    expect(signNoteMock).toHaveBeenCalledWith(NOTE_ID, signInput.signed_by);
+    expect(signNoteMock).toHaveBeenCalledWith(NOTE_ID, specialist.id);
   });
 
-  it("allows an admin to sign a note", async () => {
-    const caller = callerFor(makeUser("admin"));
+  it("allows an admin to sign a note (signer = ctx.user.id)", async () => {
+    const admin = makeUser("admin");
+    const caller = callerFor(admin);
 
     await expect(caller.sign(signInput)).resolves.toBeDefined();
-    expect(signNoteMock).toHaveBeenCalledWith(NOTE_ID, signInput.signed_by);
+    expect(signNoteMock).toHaveBeenCalledWith(NOTE_ID, admin.id);
+  });
+
+  it("ignores client-supplied signed_by — signature uses ctx.user.id only", async () => {
+    const physicianA = makeUser("physician");
+    const caller = callerFor(physicianA);
+
+    // Even if a client sneaks in an extra `signed_by` field, the wrapper's
+    // input schema strips it and the mutation always passes ctx.user.id to
+    // noteService.signNote. This is the regression guard for the spoofing
+    // bug Copilot flagged on PR #372.
+    await expect(
+      caller.sign({
+        noteId: NOTE_ID,
+        // @ts-expect-error — schema deliberately rejects extra fields at
+        // type level; runtime strips them.
+        signed_by: "00000000-0000-0000-0000-aaaaaaaaaaaa",
+      }),
+    ).resolves.toBeDefined();
+    expect(signNoteMock).toHaveBeenCalledWith(NOTE_ID, physicianA.id);
   });
 });

@@ -12,7 +12,6 @@ import { TRPCError, initTRPC } from "@trpc/server";
 import {
   createNoteSchema,
   updateNoteSchema,
-  signNoteSchema,
   noteTemplateTypeSchema,
 } from "@carebridge/validators";
 import type { NoteTemplateType } from "@carebridge/shared-types";
@@ -107,7 +106,11 @@ export const clinicalNotesRbacRouter = t.router({
     }),
 
   sign: protectedProcedure
-    .input(z.object({ noteId: z.string().uuid() }).merge(signNoteSchema))
+    // Deliberately do NOT merge signNoteSchema here — the signer is always
+    // ctx.user.id (see comment below). Accepting a client-supplied signed_by
+    // would let any permitted role (physician/specialist/admin) forge another
+    // user's signature by sending a different UUID.
+    .input(z.object({ noteId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
       // Only physicians, specialists, and admins hold the `sign:notes`
       // permission in ROLE_PERMISSIONS (packages/shared-types/src/auth.ts).
@@ -133,7 +136,11 @@ export const clinicalNotesRbacRouter = t.router({
 
       await enforcePatientAccess(ctx.user, existing.patient_id);
 
-      return noteService.signNote(input.noteId, input.signed_by);
+      // Signer is always the authenticated caller — never a client-supplied
+      // value. The signNoteSchema's `signed_by` field is intentionally
+      // ignored at the gateway boundary so signature spoofing is impossible
+      // even for permitted roles.
+      return noteService.signNote(input.noteId, ctx.user.id);
     }),
 
   getByPatient: protectedProcedure
