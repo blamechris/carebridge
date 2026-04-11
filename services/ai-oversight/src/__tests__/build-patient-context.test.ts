@@ -3,9 +3,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Mock db-schema BEFORE importing the module under test.
 const diagnosesSelect = vi.fn();
 const medicationsSelect = vi.fn();
+const allergiesSelect = vi.fn();
 const labsSelect = vi.fn();
 
-// The real module uses three parallel select() calls inside Promise.all.
+// The real module uses four parallel select() calls inside Promise.all.
 // We return a different chain per call via mockImplementation sequencing.
 const selectMock = vi
   .fn()
@@ -17,7 +18,11 @@ const selectMock = vi
   .mockImplementationOnce(() => ({
     from: () => ({ where: () => medicationsSelect() }),
   }))
-  // Call 3: lab_results JOIN lab_panels
+  // Call 3: allergies
+  .mockImplementationOnce(() => ({
+    from: () => ({ where: () => allergiesSelect() }),
+  }))
+  // Call 4: lab_results JOIN lab_panels
   .mockImplementationOnce(() => ({
     from: () => ({
       innerJoin: () => ({
@@ -32,6 +37,7 @@ vi.mock("@carebridge/db-schema", () => ({
   getDb: () => ({ select: selectMock }),
   diagnoses: {},
   medications: {},
+  allergies: { patient_id: "patient_id" },
   patients: {},
   labPanels: { id: "id", patient_id: "patient_id" },
   labResults: {
@@ -61,7 +67,11 @@ describe("buildPatientContextForRules — recent_labs wiring", () => {
     selectMock.mockClear();
     diagnosesSelect.mockClear();
     medicationsSelect.mockClear();
+    allergiesSelect.mockClear();
     labsSelect.mockClear();
+
+    // Default: empty allergies. Tests that care about allergies override.
+    allergiesSelect.mockResolvedValue([]);
 
     // Re-prime the sequenced mock implementations (they are consumed per call).
     selectMock
@@ -70,6 +80,9 @@ describe("buildPatientContextForRules — recent_labs wiring", () => {
       }))
       .mockImplementationOnce(() => ({
         from: () => ({ where: () => medicationsSelect() }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({ where: () => allergiesSelect() }),
       }))
       .mockImplementationOnce(() => ({
         from: () => ({
