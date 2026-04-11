@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { trpc } from "@/lib/trpc";
+import { useMyPatientRecord } from "@/lib/use-my-patient";
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -26,12 +27,7 @@ function PatientDashboard() {
   const router = useRouter();
 
   const healthQuery = trpc.healthCheck.useQuery();
-  const patientsQuery = trpc.patients.list.useQuery();
-
-  // Find the patient record matching this logged-in user (by name match or first patient)
-  const myRecord = patientsQuery.data?.find(
-    (p) => p.name === user?.name,
-  ) ?? patientsQuery.data?.[0];
+  const { patient: myRecord, isLoading: patientLoading } = useMyPatientRecord();
 
   const medsQuery = trpc.clinicalData.medications.getByPatient.useQuery(
     { patientId: myRecord?.id ?? "" },
@@ -111,7 +107,7 @@ function PatientDashboard() {
                 <span>{myRecord.biological_sex}</span>
               </div>
             </div>
-          ) : patientsQuery.isLoading ? (
+          ) : patientLoading ? (
             <p style={{ margin: 0, color: "#999", fontSize: "0.875rem" }}>Loading...</p>
           ) : (
             <p style={{ margin: 0, color: "#999", fontSize: "0.875rem" }}>

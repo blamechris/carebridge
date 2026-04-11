@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { trpc } from "@/lib/trpc";
+import { useMyPatientRecord } from "@/lib/use-my-patient";
 
 function formatRelative(iso: string): string {
   const then = new Date(iso).getTime();
@@ -22,10 +23,7 @@ export default function PatientMessagesPage() {
   const router = useRouter();
   const utils = trpc.useUtils();
 
-  const patientsQuery = trpc.patients.list.useQuery();
-  const myRecord = patientsQuery.data?.find(
-    (p) => p.name === user?.name,
-  ) ?? patientsQuery.data?.[0];
+  const { patient: myRecord, isLoading: patientLoading } = useMyPatientRecord();
 
   const conversationsQuery = trpc.messaging.listConversations.useQuery(
     undefined,

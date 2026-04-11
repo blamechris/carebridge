@@ -7,6 +7,7 @@ export const users = pgTable("users", {
   password_hash: text("password_hash").notNull(),
   name: text("name").notNull(),
   role: text("role").notNull(), // patient, nurse, physician, specialist, admin
+  patient_id: text("patient_id"), // links patient users to their patient record
   specialty: text("specialty"),
   department: text("department"),
   is_active: boolean("is_active").notNull().default(true),
