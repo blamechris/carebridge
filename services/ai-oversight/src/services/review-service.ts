@@ -18,6 +18,7 @@ import {
   patients,
   allergies,
   messages,
+  patientObservations,
   labPanels,
   labResults,
 } from "@carebridge/db-schema";
@@ -129,6 +130,30 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
         if (messageFlags.length > 0) {
           rulesFired.push("message-screening");
           allRuleFlags.push(...messageFlags);
+        }
+      }
+    }
+
+    // 2f. Patient observation screening (only for patient.observation events)
+    // Same keyword patterns as message screening, applied to observation descriptions.
+    // Ensures the symptom journal has deterministic safety coverage even when LLM is unavailable.
+    if (event.type === "patient.observation" && event.data.observation_id) {
+      rulesEvaluated.push("observation-screening");
+
+      const [obs] = await db.select({ description: patientObservations.description })
+        .from(patientObservations)
+        .where(eq(patientObservations.id, event.data.observation_id as string))
+        .limit(1);
+
+      if (obs?.description) {
+        const enrichedEvent = {
+          ...event,
+          data: { ...event.data, message_text: obs.description, sender_role: "patient" },
+        };
+        const obsFlags = screenPatientMessage(enrichedEvent);
+        if (obsFlags.length > 0) {
+          rulesFired.push("observation-screening");
+          allRuleFlags.push(...obsFlags);
         }
       }
     }
