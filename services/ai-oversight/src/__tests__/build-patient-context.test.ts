@@ -1,37 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock db-schema BEFORE importing the module under test.
+//
+// The real module uses four parallel select() calls inside Promise.all
+// (diagnoses, medications, allergies, recent labs join). We return a
+// different chain per call via sequenced mockImplementationOnce primings
+// inside beforeEach — the top-level selectMock starts empty and is primed
+// fresh per test so unconsumed implementations never bleed across tests.
 const diagnosesSelect = vi.fn();
 const medicationsSelect = vi.fn();
+const allergiesSelect = vi.fn();
 const labsSelect = vi.fn();
-
-// The real module uses three parallel select() calls inside Promise.all.
-// We return a different chain per call via mockImplementation sequencing.
-const selectMock = vi
-  .fn()
-  // Call 1: diagnoses
-  .mockImplementationOnce(() => ({
-    from: () => ({ where: () => diagnosesSelect() }),
-  }))
-  // Call 2: medications
-  .mockImplementationOnce(() => ({
-    from: () => ({ where: () => medicationsSelect() }),
-  }))
-  // Call 3: lab_results JOIN lab_panels
-  .mockImplementationOnce(() => ({
-    from: () => ({
-      innerJoin: () => ({
-        where: () => ({
-          orderBy: () => labsSelect(),
-        }),
-      }),
-    }),
-  }));
+const selectMock = vi.fn();
 
 vi.mock("@carebridge/db-schema", () => ({
   getDb: () => ({ select: selectMock }),
-  diagnoses: {},
-  medications: {},
+  diagnoses: { patient_id: "patient_id" },
+  medications: { patient_id: "patient_id" },
+  allergies: { patient_id: "patient_id" },
   patients: {},
   labPanels: { id: "id", patient_id: "patient_id" },
   labResults: {
@@ -58,10 +44,17 @@ const stubEvent: ClinicalEvent = {
 
 describe("buildPatientContextForRules — recent_labs wiring", () => {
   beforeEach(() => {
-    selectMock.mockClear();
-    diagnosesSelect.mockClear();
-    medicationsSelect.mockClear();
-    labsSelect.mockClear();
+    // mockReset (not mockClear) — clears the mockImplementationOnce queue too,
+    // so each test starts from an empty implementation sequence and tests
+    // can't bleed unconsumed implementations into each other.
+    selectMock.mockReset();
+    diagnosesSelect.mockReset();
+    medicationsSelect.mockReset();
+    allergiesSelect.mockReset();
+    labsSelect.mockReset();
+
+    // Default: empty allergies. Tests that care about allergies override.
+    allergiesSelect.mockResolvedValue([]);
 
     // Re-prime the sequenced mock implementations (they are consumed per call).
     selectMock
@@ -70,6 +63,9 @@ describe("buildPatientContextForRules — recent_labs wiring", () => {
       }))
       .mockImplementationOnce(() => ({
         from: () => ({ where: () => medicationsSelect() }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({ where: () => allergiesSelect() }),
       }))
       .mockImplementationOnce(() => ({
         from: () => ({
