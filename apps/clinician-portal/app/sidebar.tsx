@@ -10,6 +10,7 @@ const navItems = [
   { href: "/", label: "Dashboard", icon: "\u25A3" },
   { href: "/patients", label: "Patients", icon: "\u2302" },
   { href: "/inbox", label: "Inbox (AI Flags)", icon: "\u26A0" },
+  { href: "/messages", label: "Messages", icon: "\u2709" },
   { href: "/notes", label: "Notes", icon: "\u270E" },
   { href: "/schedule", label: "Schedule", icon: "\u25F7" },
   { href: "/settings", label: "Settings", icon: "\u2699" },
