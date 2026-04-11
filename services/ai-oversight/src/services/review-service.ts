@@ -17,6 +17,7 @@ import {
   medications,
   patients,
   allergies,
+  messages,
   labPanels,
   labResults,
 } from "@carebridge/db-schema";
@@ -109,12 +110,26 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
     }
 
     // 2e. Patient message screening (only for message.received events)
-    if (event.type === "message.received") {
+    // Read message body from DB (encrypted at rest, Drizzle decrypts transparently)
+    // rather than from the event payload (which correctly omits PHI).
+    if (event.type === "message.received" && event.data.message_id) {
       rulesEvaluated.push("message-screening");
-      const messageFlags = screenPatientMessage(event);
-      if (messageFlags.length > 0) {
-        rulesFired.push("message-screening");
-        allRuleFlags.push(...messageFlags);
+
+      const [msg] = await db.select({ body: messages.body })
+        .from(messages)
+        .where(eq(messages.id, event.data.message_id as string))
+        .limit(1);
+
+      if (msg?.body) {
+        const enrichedEvent = {
+          ...event,
+          data: { ...event.data, message_text: msg.body },
+        };
+        const messageFlags = screenPatientMessage(enrichedEvent);
+        if (messageFlags.length > 0) {
+          rulesFired.push("message-screening");
+          allRuleFlags.push(...messageFlags);
+        }
       }
     }
 
