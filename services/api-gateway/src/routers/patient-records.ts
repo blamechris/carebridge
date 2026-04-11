@@ -17,6 +17,10 @@ import {
   careTeamMembers,
 } from "@carebridge/db-schema";
 import { createPatientSchema, updatePatientSchema } from "@carebridge/validators";
+import {
+  listObservationsByPatient,
+  createObservation,
+} from "@carebridge/patient-records";
 import { eq } from "drizzle-orm";
 import crypto from "node:crypto";
 import type { Context } from "../context.js";
@@ -167,6 +171,54 @@ export const patientRecordsRbacRouter = t.router({
           .select()
           .from(careTeamMembers)
           .where(eq(careTeamMembers.patient_id, input.patientId));
+      }),
+  }),
+
+  observations: t.router({
+    getByPatient: protectedProcedure
+      .input(
+        z.object({
+          patientId: z.string(),
+          limit: z.number().optional().default(20),
+        }),
+      )
+      .query(async ({ ctx, input }) => {
+        await enforcePatientAccess(ctx.user, input.patientId);
+        return listObservationsByPatient(input.patientId, input.limit);
+      }),
+
+    create: protectedProcedure
+      .input(
+        z.object({
+          patientId: z.string(),
+          observationType: z.enum([
+            "pain",
+            "neurological",
+            "gastrointestinal",
+            "respiratory",
+            "skin",
+            "cardiovascular",
+            "general",
+            "medication_side_effect",
+          ]),
+          description: z.string().min(1),
+          structuredData: z
+            .object({
+              location: z.string().optional(),
+              severity: z.number().min(1).max(10),
+              duration: z.string().optional(),
+              frequency: z.string().optional(),
+              associated_activities: z.string().optional(),
+            })
+            .optional(),
+          severitySelfAssessment: z
+            .enum(["mild", "moderate", "severe"])
+            .optional(),
+        }),
+      )
+      .mutation(async ({ ctx, input }) => {
+        await enforcePatientAccess(ctx.user, input.patientId);
+        return createObservation(input);
       }),
   }),
 });

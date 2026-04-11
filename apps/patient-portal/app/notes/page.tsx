@@ -63,7 +63,30 @@ export default function NotesPage() {
 
       {visibleNotes.map((note) => {
         const isExpanded = expandedId === note.id;
-        const sections = (note.sections ?? []) as Array<{ heading: string; content: string }>;
+        // The persisted note schema stores each section as
+        // { label, key, fields[], free_text? }. The patient view only renders
+        // a section heading and a flattened text body, so map the structured
+        // shape into the simple { heading, content } pairs the markup below
+        // expects.
+        const rawSections = note.sections ?? [];
+        const sections = rawSections.map((section) => {
+          const fieldText = section.fields
+            .filter(
+              (f) =>
+                f.value !== null && f.value !== undefined && f.value !== "",
+            )
+            .map((f) => {
+              const rendered = Array.isArray(f.value)
+                ? f.value.join(", ")
+                : String(f.value);
+              return `${f.label}: ${rendered}`;
+            })
+            .join("\n");
+          const content = [section.free_text, fieldText]
+            .filter((part) => part && part.length > 0)
+            .join("\n\n");
+          return { heading: section.label, content };
+        });
 
         return (
           <div
