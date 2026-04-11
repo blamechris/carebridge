@@ -15,11 +15,21 @@ import crypto from "node:crypto";
  * a role's capabilities is then a one-line change in `ROLE_PERMISSIONS`
  * rather than a grep-and-edit across every router.
  */
-export function assertPermission(user: User, permission: string): void {
+export function assertPermission(
+  user: User,
+  permission: string,
+  message = "Access denied",
+): void {
   if (!hasPermission(user, permission)) {
+    // Default message is intentionally generic — exposing the raw
+    // permission key in the user-facing error leaks RBAC internals.
+    // Callers can pass a domain-appropriate message (e.g. "Only admins
+    // can revoke emergency access") to improve UX without revealing
+    // the underlying permission identifier.
+    // Per Copilot review on PR #381.
     throw new TRPCError({
       code: "FORBIDDEN",
-      message: `Access denied: missing permission "${permission}"`,
+      message,
     });
   }
 }

@@ -97,7 +97,13 @@ export const emergencyAccessRbacRouter = t.router({
     .mutation(async ({ ctx, input }) => {
       // Centralized RBAC: `admin:users` is only granted to the admin role
       // in ROLE_PERMISSIONS, so this replaces the previous inline role check.
-      assertPermission(ctx.user, "admin:users");
+      // Pass the original human-readable message so the FORBIDDEN response
+      // doesn't leak the internal permission identifier.
+      assertPermission(
+        ctx.user,
+        "admin:users",
+        "Only admins can revoke emergency access",
+      );
       const db = getDb();
       await db.update(emergencyAccess)
         .set({ revoked_at: new Date().toISOString(), revoked_by: ctx.user.id })

@@ -152,4 +152,29 @@ describe("assertPermission", () => {
   it("does not throw when the user has the permission", () => {
     expect(() => assertPermission(makeUser("physician"), "sign:notes")).not.toThrow();
   });
+
+  it("defaults to a generic message that does not leak the permission key (PR #381 Copilot review)", () => {
+    try {
+      assertPermission(makeUser("nurse"), "admin:users");
+    } catch (err) {
+      const msg = (err as TRPCError).message;
+      // Generic default — does NOT contain the internal permission identifier.
+      expect(msg).toBe("Access denied");
+      expect(msg).not.toContain("admin:users");
+    }
+  });
+
+  it("honours an explicit domain-appropriate message when provided", () => {
+    try {
+      assertPermission(
+        makeUser("nurse"),
+        "admin:users",
+        "Only admins can revoke emergency access",
+      );
+    } catch (err) {
+      expect((err as TRPCError).message).toBe(
+        "Only admins can revoke emergency access",
+      );
+    }
+  });
 });
