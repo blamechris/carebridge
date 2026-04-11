@@ -152,9 +152,19 @@ export async function reviewPatientRecord(
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
 
-      // Don't retry on non-transient errors
+      // Don't retry on non-transient errors. Wrap the original error in a
+      // sanitized one — the SDK error's .message can echo back prompt
+      // fragments / response bodies that contain PHI, and downstream
+      // callers (e.g. review-service) log and persist `error.message`.
+      // Per Copilot review on PR #374. Same shape as the exhausted-retries
+      // throw below so all exit paths are PHI-safe.
       if (isNonTransientError(error)) {
-        throw lastError;
+        const redacted = redactErrorForLog(error);
+        throw new Error(
+          `Claude API call failed (non-transient): ${redacted.name}${
+            redacted.status ? ` status=${redacted.status}` : ""
+          }`,
+        );
       }
 
       // Don't sleep after the last attempt
