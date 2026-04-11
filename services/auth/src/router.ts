@@ -618,7 +618,16 @@ export const authRouter = t.router({
     const recoveryCodes = generateRecoveryCodes();
     const hashedCodes = recoveryCodes.map(hashRecoveryCode);
 
-    // Store secret and hashed recovery codes, but don't enable MFA yet.
+    // Build the URI and generate the QR code BEFORE persisting any MFA
+    // material. If buildOTPAuthQRCode rejects (e.g. encoder error) after
+    // the DB write, the user would have a stored secret they can never
+    // see — non-idempotent partial state. Per Copilot review on PR #380.
+    const uri = buildOTPAuthURI(secret, ctx.user.email);
+    // Generate the QR code locally so the TOTP secret never leaves the
+    // server via a third-party QR image URL. See issue #280.
+    const qrCodeDataUrl = await buildOTPAuthQRCode(uri);
+
+    // Now persist secret and hashed recovery codes (MFA still not enabled).
     await db
       .update(users)
       .set({
@@ -627,11 +636,6 @@ export const authRouter = t.router({
         updated_at: new Date().toISOString(),
       })
       .where(eq(users.id, ctx.user.id));
-
-    const uri = buildOTPAuthURI(secret, ctx.user.email);
-    // Generate the QR code locally so the TOTP secret never leaves the
-    // server via a third-party QR image URL. See issue #280.
-    const qrCodeDataUrl = await buildOTPAuthQRCode(uri);
 
     return {
       secret,
