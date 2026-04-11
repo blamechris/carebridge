@@ -4,15 +4,13 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { trpc } from "@/lib/trpc";
+import { useMyPatientRecord } from "@/lib/use-my-patient";
 
 export default function RefillPage() {
   const { user } = useAuth();
   const router = useRouter();
 
-  const patientsQuery = trpc.patients.list.useQuery();
-  const myRecord = patientsQuery.data?.find(
-    (p) => p.name === user?.name,
-  ) ?? patientsQuery.data?.[0];
+  const { patient: myRecord, isLoading: patientLoading } = useMyPatientRecord();
 
   const medsQuery = trpc.clinicalData.medications.getByPatient.useQuery(
     { patientId: myRecord?.id ?? "" },

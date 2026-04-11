@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { trpc } from "@/lib/trpc";
+import { useMyPatientRecord } from "@/lib/use-my-patient";
 
 function flagColor(flag?: string | null): string {
   switch (flag) {
@@ -22,10 +23,7 @@ export default function LabsPage() {
   const { user } = useAuth();
   const router = useRouter();
 
-  const patientsQuery = trpc.patients.list.useQuery();
-  const myRecord = patientsQuery.data?.find(
-    (p) => p.name === user?.name,
-  ) ?? patientsQuery.data?.[0];
+  const { patient: myRecord, isLoading: patientLoading } = useMyPatientRecord();
 
   const labsQuery = trpc.clinicalData.labs.getByPatient.useQuery(
     { patientId: myRecord?.id ?? "" },

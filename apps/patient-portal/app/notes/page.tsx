@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { trpc } from "@/lib/trpc";
+import { useMyPatientRecord } from "@/lib/use-my-patient";
 
 const NOTE_TYPE_LABELS: Record<string, string> = {
   soap: "SOAP Note",
@@ -18,10 +19,7 @@ export default function NotesPage() {
   const router = useRouter();
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  const patientsQuery = trpc.patients.list.useQuery();
-  const myRecord = patientsQuery.data?.find(
-    (p) => p.name === user?.name,
-  ) ?? patientsQuery.data?.[0];
+  const { patient: myRecord, isLoading: patientLoading } = useMyPatientRecord();
 
   const notesQuery = trpc.notes.getByPatient.useQuery(
     { patientId: myRecord?.id ?? "" },

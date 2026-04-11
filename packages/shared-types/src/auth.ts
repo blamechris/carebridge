@@ -6,6 +6,7 @@ export interface User extends MutableRecord {
   email: string;
   name: string;
   role: UserRole;
+  patient_id?: string; // links patient-role users to their patient record
   specialty?: string; // for physicians/specialists
   department?: string;
   is_active: boolean;

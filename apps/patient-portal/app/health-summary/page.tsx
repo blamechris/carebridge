@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { trpc } from "@/lib/trpc";
+import { useMyPatientRecord } from "@/lib/use-my-patient";
 
 function severityColor(severity?: string | null): string {
   switch (severity) {
@@ -26,10 +27,7 @@ export default function HealthSummaryPage() {
   const { user } = useAuth();
   const router = useRouter();
 
-  const patientsQuery = trpc.patients.list.useQuery();
-  const myRecord = patientsQuery.data?.find(
-    (p) => p.name === user?.name,
-  ) ?? patientsQuery.data?.[0];
+  const { patient: myRecord, isLoading: patientLoading } = useMyPatientRecord();
 
   const diagnosesQuery = trpc.patients.diagnoses.getByPatient.useQuery(
     { patientId: myRecord?.id ?? "" },
