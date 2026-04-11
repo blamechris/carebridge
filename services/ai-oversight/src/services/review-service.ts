@@ -36,6 +36,7 @@ import { checkCriticalValues } from "../rules/critical-values.js";
 import { checkCrossSpecialtyPatterns } from "../rules/cross-specialty.js";
 import type { PatientContext } from "../rules/cross-specialty.js";
 import { checkDrugInteractions } from "../rules/drug-interactions.js";
+import { checkMedicationReconciliation } from "../rules/medication-reconciliation.js";
 import type { RuleFlag } from "../rules/critical-values.js";
 import { buildPatientContext } from "../workers/context-builder.js";
 import { reviewPatientRecord } from "./claude-client.js";
@@ -95,6 +96,16 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
     if (drugFlags.length > 0) {
       rulesFired.push("drug-interactions");
       allRuleFlags.push(...drugFlags);
+    }
+
+    // 2d. Medication reconciliation (encounter transitions)
+    if (event.data.encounter_id && event.data.new_status === "finished") {
+      rulesEvaluated.push("medication-reconciliation");
+      const reconFlags = await checkMedicationReconciliation(event);
+      if (reconFlags.length > 0) {
+        rulesFired.push("medication-reconciliation");
+        allRuleFlags.push(...reconFlags);
+      }
     }
 
     // Step 3: Create flags for rule matches
