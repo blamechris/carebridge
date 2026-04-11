@@ -1,4 +1,4 @@
-import { pgTable, text, boolean, index } from "drizzle-orm/pg-core";
+import { pgTable, text, boolean, integer, index } from "drizzle-orm/pg-core";
 import { encryptedText } from "../encryption.js";
 
 export const users = pgTable("users", {
@@ -42,9 +42,13 @@ export const auditLog = pgTable("audit_log", {
   patient_id: text("patient_id"), // explicit patient ID for HIPAA audit trails
   details: text("details"), // JSON string of additional context
   ip_address: text("ip_address"),
+  http_status_code: integer("http_status_code"), // HTTP response status (200, 401, 403, 500, ...)
+  success: boolean("success"), // true for 2xx responses, false otherwise
+  error_message: text("error_message"), // short failure reason for non-2xx responses
   timestamp: text("timestamp").notNull(),
 }, (table) => [
   index("idx_audit_user").on(table.user_id, table.timestamp),
   index("idx_audit_resource").on(table.resource_type, table.resource_id),
   index("idx_audit_patient").on(table.patient_id, table.timestamp),
+  index("idx_audit_success_timestamp").on(table.success, table.timestamp),
 ]);
