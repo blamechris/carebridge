@@ -11,7 +11,8 @@ export type FlagCategory =
   | "care-gap"
   | "critical-value"
   | "trend-concern"
-  | "documentation-discrepancy";
+  | "documentation-discrepancy"
+  | "patient-reported";
 export type FlagStatus = "open" | "acknowledged" | "resolved" | "dismissed" | "escalated";
 
 export interface ClinicalFlag extends BaseRecord {
@@ -99,6 +100,7 @@ export type ClinicalEventType =
   | "procedure.completed"
   | "diagnosis.added"
   | "fhir.imported"
+  | "message.received"
   | "patient.observation";
 
 export interface ClinicalEvent {

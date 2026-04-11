@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/lib/auth";
 import { AuthGuard } from "@/lib/auth-guard";
@@ -94,9 +95,9 @@ function DashboardContent() {
       <div className="table-container">
         <div className="table-header">
           <span className="table-title">Recent Patients</span>
-          <a href="/patients" className="btn btn-ghost btn-sm">
+          <Link href="/patients" className="btn btn-ghost btn-sm">
             View All
-          </a>
+          </Link>
         </div>
         {patientsQuery.isLoading ? (
           <div style={{ padding: 24, color: "var(--text-muted)" }}>
