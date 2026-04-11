@@ -99,8 +99,11 @@ export const notificationsRbacRouter = t.router({
     .input(z.object({ id: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const db = getDb();
+      // Select only the ownership column. notifications.title and .body are
+      // encryptedText, so a SELECT * would unnecessarily decrypt PHI just to
+      // perform an ownership check. Per Copilot review on PR #373.
       const [existing] = await db
-        .select()
+        .select({ user_id: notifications.user_id })
         .from(notifications)
         .where(eq(notifications.id, input.id))
         .limit(1);
@@ -178,9 +181,14 @@ export const notificationsRbacRouter = t.router({
             updated_at: now,
           })
           .where(eq(notificationPreferences.id, existing.id));
+        // Reflect ALL updated fields in the response, not just enabled.
+        // Per Copilot review on PR #373 — the previous response leaked the
+        // pre-update quiet_hours_start/end from `existing`.
         return {
           ...existing,
           enabled: input.enabled,
+          quiet_hours_start: input.quietHoursStart ?? null,
+          quiet_hours_end: input.quietHoursEnd ?? null,
           updated_at: now,
         };
       }
