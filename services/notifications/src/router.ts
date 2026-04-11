@@ -36,6 +36,7 @@ export const notificationsRouter = t.router({
       type: z.string(),
       title: z.string(),
       body: z.string().optional(),
+      summary_safe: z.string().optional(),
       link: z.string().optional(),
       related_flag_id: z.string().optional(),
     }))
