@@ -1,0 +1,74 @@
+# /full-review
+
+Run a complete review pipeline: agent-review first, then check-pr. The agent-review pass provides thorough review while check-pr addresses any inline comments.
+
+## Arguments
+
+- `$ARGUMENTS` - PR number (optional, defaults to current branch's PR)
+
+## Instructions
+
+### Phase 1: Agent Review
+
+Run the `/agent-review` skill on the PR. This is a deep expert review using the CareBridge Inspector persona that:
+- Reads CLAUDE.md and the full PR diff
+- Reviews against project-specific code quality, architecture, and testing criteria
+- Posts a review comment on the PR
+- Creates follow-up issues for deferred suggestions
+- Reconciles any from-review issues resolved by this PR
+
+**Capture the results:** verdict, findings counts, issues created/closed.
+
+### Phase 2: Check-PR
+
+After agent-review completes, run the `/check-pr` skill on the same PR. This skill:
+- Processes every review comment (human + agent-review findings if inline)
+- Fixes, dismisses, or defers each comment with inline replies
+- Pushes all fixes and verifies every thread has a reply
+- Cross-references fixes against open from-review issues
+
+No Copilot delay concern — Copilot review is not configured for this repo.
+
+**Capture the results:** comments processed, fixes committed, issues created/closed.
+
+### Phase 2.5: Verify CI (Optional)
+
+If check-pr pushed any fix commits in Phase 2, CI needs to pass on the new HEAD before merge. Concurrency groups commonly cancel the in-progress run when fixes are pushed, leaving CI stale.
+
+1. Check if any commits were pushed in Phase 2 (check-pr fixes)
+2. If yes, run `/fix-ci` on the same PR
+3. Common outcome: retriggering a cancelled run after concurrency cancellation
+4. If no commits were pushed, skip this phase (CI is still valid from before)
+
+**Capture the results:** CI status, any action taken (retrigger/fix/escalate).
+
+### Phase 3: Combined Summary
+
+Output a **single combined summary table** covering both phases. This is the PRIMARY output.
+
+```markdown
+| PR | Review | Check-PR | CI | Changes | Issues |
+|----|--------|----------|----|---------|--------|
+| #XX | Verdict (N critical, M suggestions) | P comments → Q fixed | PASS (after retrigger) | brief change 1, change 2 | Created: #A, #B. Closed: #C, #D |
+```
+
+**Column guide:**
+- **Review:** Verdict + finding counts from agent-review
+- **Check-PR:** `N comments → M fixed` (add `, X false pos` / `, Y deferred` if any)
+- **CI:** Status from Phase 2.5. `PASS` / `PASS (after retrigger)` / `PASS (after fix)` / `ESCALATED` / `—` (if Phase 2.5 was skipped because no commits were pushed)
+- **Changes:** Comma-separated brief descriptions of what changed (2-5 words each, from check-pr fixes)
+- **Issues:** Combined from both phases. `Created: #X` for new follow-ups. `Closed: #Y` for resolved issues. Deduplicate (agent-review may create issues that check-pr then closes).
+
+Then below the table:
+- Full commit hashes for each fix
+- Reasons for any false positives
+- URLs for all created/closed issues
+- PR ready for re-review: Yes/No
+
+## Execution Notes
+
+- **Sequential, not parallel.** Agent-review MUST complete before check-pr starts.
+- **Same branch.** Both skills operate on the same PR branch. Check-pr may commit fixes on top of the reviewed code.
+- **Deduplication.** If agent-review creates a follow-up issue and check-pr's fixes resolve it, close the issue in Phase 2 with a PR cross-reference.
+- **Attribution.** Follow Zero Attribution Policy throughout — no AI mentions in commits, replies, or issues.
+<!-- skill-templates: full-review manual-deploy 2026-04-10 -->

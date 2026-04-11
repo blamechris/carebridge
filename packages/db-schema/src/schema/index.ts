@@ -5,5 +5,6 @@ export * from "./notes.js";
 export * from "./ai-flags.js";
 export * from "./auth.js";
 export * from "./notifications.js";
-export * from "./notification-preferences.js";
+export * from "./messaging.js";
+export * from "./patient-observations.js";
 export * from "./fhir.js";
