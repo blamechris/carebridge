@@ -10,6 +10,7 @@ import { createContext } from "./context.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { auditMiddleware } from "./middleware/audit.js";
 import { registerNotificationSSE } from "./routes/notifications-sse.js";
+import { startBackgroundWorkers } from "./workers.js";
 
 const API_PORT = Number(process.env.API_PORT) || 4000;
 const API_HOST = process.env.API_HOST ?? "0.0.0.0";
@@ -171,6 +172,11 @@ async function main() {
       service: "api-gateway",
     };
   });
+
+  // --- Background workers ---
+  // Must run before listen() so the session cleanup worker is enforcing the
+  // 15-minute idle timeout the moment the gateway starts accepting traffic.
+  await startBackgroundWorkers();
 
   // --- Start ---
   await server.listen({ port: API_PORT, host: API_HOST });
