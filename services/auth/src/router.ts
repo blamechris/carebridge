@@ -19,6 +19,7 @@ import {
   hashRecoveryCode,
   verifyRecoveryCode,
   buildOTPAuthURI,
+  buildOTPAuthQRCode,
 } from "./totp.js";
 import {
   checkMFARateLimit,
@@ -628,10 +629,14 @@ export const authRouter = t.router({
       .where(eq(users.id, ctx.user.id));
 
     const uri = buildOTPAuthURI(secret, ctx.user.email);
+    // Generate the QR code locally so the TOTP secret never leaves the
+    // server via a third-party QR image URL. See issue #280.
+    const qrCodeDataUrl = await buildOTPAuthQRCode(uri);
 
     return {
       secret,
       uri,
+      qrCodeDataUrl,
       recoveryCodes,
     };
   }),
