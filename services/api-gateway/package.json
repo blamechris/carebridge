@@ -21,7 +21,11 @@
     "@carebridge/clinical-notes": "workspace:*",
     "@carebridge/ai-oversight": "workspace:*",
     "@carebridge/notifications": "workspace:*",
+<<<<<<< HEAD
     "@carebridge/scheduling": "workspace:*",
+=======
+    "@carebridge/messaging": "workspace:*",
+>>>>>>> origin/main
     "@carebridge/fhir-gateway": "workspace:*",
     "fastify": "^5.2.0",
     "@fastify/cookie": "^11.0.0",
