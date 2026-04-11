@@ -317,11 +317,16 @@ export const authRouter = t.router({
       const db = getDb();
       const pending = await getPendingMFASession(input.mfaSessionId);
 
+      // Use a single generic error for both "no pending session" and
+      // "pending session references a deleted user" so an attacker cannot
+      // distinguish deleted accounts from expired challenges (issue #278).
+      const genericMfaChallengeError = new TRPCError({
+        code: "UNAUTHORIZED",
+        message: "Invalid or expired MFA challenge. Please log in again.",
+      });
+
       if (!pending) {
-        throw new TRPCError({
-          code: "UNAUTHORIZED",
-          message: "MFA session expired or invalid. Please log in again.",
-        });
+        throw genericMfaChallengeError;
       }
 
       // Look up the user
@@ -333,10 +338,7 @@ export const authRouter = t.router({
 
       if (userRows.length === 0) {
         await deletePendingMFASession(input.mfaSessionId);
-        throw new TRPCError({
-          code: "UNAUTHORIZED",
-          message: "User not found.",
-        });
+        throw genericMfaChallengeError;
       }
 
       const row = userRows[0]!;
