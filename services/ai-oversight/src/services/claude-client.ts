@@ -9,6 +9,89 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { assertPromptSanitized } from "@carebridge/phi-sanitizer";
 
+/**
+ * Allow-listed, non-PHI fields extracted from an error for structured logging.
+ *
+ * SECURITY: API error objects from the Anthropic SDK can carry request/response
+ * fragments that include the original prompt — which in our case contains
+ * patient clinical context. Never log the raw error, its `request`, `response`,
+ * `body`, `messages`, `headers`, or `stack`. Only the fields below are safe.
+ */
+interface RedactedErrorInfo {
+  name: string;
+  status?: number;
+  errorType?: string;
+  code?: string;
+  message: string;
+}
+
+/**
+ * Exact-match allow list of short, generic error messages that by construction
+ * contain no request/response content. Anything not on this list is replaced
+ * with a category label so we never risk logging an SDK error whose `.message`
+ * includes echoed prompt fragments (which for us would be patient context).
+ *
+ * The list is deliberately small and exact — adding loose patterns (e.g.
+ * `/^rate limit.*$/`) would defeat the purpose because upstream services
+ * commonly append request payload excerpts to otherwise-generic messages.
+ */
+const SAFE_MESSAGES: ReadonlySet<string> = new Set([
+  "unauthorized",
+  "forbidden",
+  "not found",
+  "rate limit exceeded",
+  "rate limited",
+  "request timed out",
+  "network error",
+  "bad request",
+  "internal server error",
+  "service unavailable",
+  "bad gateway",
+  "gateway timeout",
+  "connection refused",
+  "connection reset",
+]);
+
+function sanitizeMessage(message: unknown): string {
+  if (typeof message !== "string") return "<non-string message>";
+  const trimmed = message.trim();
+  if (trimmed.length === 0) return "<empty message>";
+  if (SAFE_MESSAGES.has(trimmed.toLowerCase())) return trimmed;
+  return "<redacted: non-allow-listed message>";
+}
+
+/**
+ * Extract an allow-listed, PHI-free view of an error object suitable for
+ * structured logging. No nested objects, no request/response bodies, no
+ * headers, no stack traces.
+ */
+export function redactErrorForLog(error: unknown): RedactedErrorInfo {
+  if (!error || typeof error !== "object") {
+    return { name: "UnknownError", message: "<non-object error>" };
+  }
+  const err = error as {
+    name?: unknown;
+    status?: unknown;
+    code?: unknown;
+    message?: unknown;
+    error?: unknown;
+  };
+  const info: RedactedErrorInfo = {
+    name: typeof err.name === "string" ? err.name : "Error",
+    message: sanitizeMessage(err.message),
+  };
+  if (typeof err.status === "number") info.status = err.status;
+  if (typeof err.code === "string") info.code = err.code;
+  // Anthropic SDK wraps API errors as { error: { type, message } }.
+  // We only read the `type` tag (e.g. "rate_limit_error"), never the message,
+  // because the API may echo fragments of the request in `error.message`.
+  if (err.error && typeof err.error === "object") {
+    const inner = err.error as { type?: unknown };
+    if (typeof inner.type === "string") info.errorType = inner.type;
+  }
+  return info;
+}
+
 const DEFAULT_MODEL = "claude-sonnet-4-6";
 const DEFAULT_MAX_TOKENS = 4096;
 const MAX_RETRIES = 3;
@@ -77,24 +160,36 @@ export async function reviewPatientRecord(
       // Don't sleep after the last attempt
       if (attempt < MAX_RETRIES) {
         let delay: number;
+        const redacted = redactErrorForLog(error);
         if (isRateLimitError(error)) {
           delay = getRetryAfterMs(error) ?? DEFAULT_RATE_LIMIT_DELAY_MS;
-          console.log(
-            `[claude-client] Rate-limited (429) on attempt ${attempt}/${MAX_RETRIES}, respecting Retry-After, waiting ${delay}ms: ${lastError.message}`,
-          );
+          console.log("[claude-client] rate_limited_retry", {
+            attempt,
+            maxRetries: MAX_RETRIES,
+            delayMs: delay,
+            error: redacted,
+          });
         } else {
           delay = BASE_DELAY_MS * Math.pow(2, attempt - 1);
-          console.log(
-            `[claude-client] Attempt ${attempt}/${MAX_RETRIES} failed, retrying in ${delay}ms: ${lastError.message}`,
-          );
+          console.log("[claude-client] transient_error_retry", {
+            attempt,
+            maxRetries: MAX_RETRIES,
+            delayMs: delay,
+            error: redacted,
+          });
         }
         await sleep(delay);
       }
     }
   }
 
+  const finalRedacted = lastError ? redactErrorForLog(lastError) : null;
   throw new Error(
-    `Claude API call failed after ${MAX_RETRIES} attempts: ${lastError?.message}`,
+    `Claude API call failed after ${MAX_RETRIES} attempts: ${
+      finalRedacted
+        ? `${finalRedacted.name}${finalRedacted.status ? ` status=${finalRedacted.status}` : ""}`
+        : "unknown error"
+    }`,
   );
 }
 
