@@ -193,9 +193,23 @@ function PatientDashboard() {
         </Card>
 
         <Card title="Messages">
-          <p style={{ margin: 0, color: "#999", fontSize: "0.875rem" }}>
-            Messaging features coming soon.
+          <p style={{ margin: 0, color: "#999", fontSize: "0.875rem", marginBottom: "0.75rem" }}>
+            Send secure messages to your care team.
           </p>
+          <button
+            onClick={() => router.push("/messages")}
+            style={{
+              padding: "6px 14px",
+              backgroundColor: "#2563eb",
+              border: "none",
+              borderRadius: 6,
+              color: "#fff",
+              cursor: "pointer",
+              fontSize: "0.8rem",
+            }}
+          >
+            Open Messages
+          </button>
         </Card>
       </div>
     </main>
