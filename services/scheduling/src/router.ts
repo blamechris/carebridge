@@ -61,37 +61,39 @@ export const schedulingRouter = t.router({
         const db = getDb();
         const now = new Date().toISOString();
 
-        // Check for overlapping appointments (double-booking prevention)
-        const overlapping = await db.select().from(appointments)
-          .where(
-            and(
-              eq(appointments.provider_id, input.providerId),
-              ne(appointments.status, "cancelled"),
-              lte(appointments.start_time, input.endTime),
-              gte(appointments.end_time, input.startTime),
-            ),
-          );
+        // Wrap check+insert in a transaction to prevent TOCTOU race on double-booking
+        return db.transaction(async (tx) => {
+          const overlapping = await tx.select().from(appointments)
+            .where(
+              and(
+                eq(appointments.provider_id, input.providerId),
+                ne(appointments.status, "cancelled"),
+                lte(appointments.start_time, input.endTime),
+                gte(appointments.end_time, input.startTime),
+              ),
+            );
 
-        if (overlapping.length > 0) {
-          throw new Error("Time slot conflicts with an existing appointment");
-        }
+          if (overlapping.length > 0) {
+            throw new Error("Time slot conflicts with an existing appointment");
+          }
 
-        const appointment = {
-          id: crypto.randomUUID(),
-          patient_id: input.patientId,
-          provider_id: input.providerId,
-          appointment_type: input.appointmentType,
-          start_time: input.startTime,
-          end_time: input.endTime,
-          status: "scheduled",
-          location: input.location ?? null,
-          reason: input.reason ?? null,
-          created_at: now,
-          updated_at: now,
-        };
+          const appointment = {
+            id: crypto.randomUUID(),
+            patient_id: input.patientId,
+            provider_id: input.providerId,
+            appointment_type: input.appointmentType,
+            start_time: input.startTime,
+            end_time: input.endTime,
+            status: "scheduled",
+            location: input.location ?? null,
+            reason: input.reason ?? null,
+            created_at: now,
+            updated_at: now,
+          };
 
-        await db.insert(appointments).values(appointment);
-        return appointment;
+          await tx.insert(appointments).values(appointment);
+          return appointment;
+        });
       }),
 
     /** Cancel an appointment with reason. */
