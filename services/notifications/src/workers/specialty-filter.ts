@@ -103,10 +103,13 @@ export function filterRecipientsBySpecialty(
     }
   }
 
-  // If every entry was empty after normalization, degenerate to
-  // "no targeting" rather than silently dropping all recipients.
+  // If every entry was empty after normalization the flag was scoped to
+  // *something* but the requested specialties were all blank/whitespace.
+  // Treat this as a misconfigured-but-scoped flag and return admins only —
+  // NEVER fall back to fan-out, which would re-introduce the #293 PHI
+  // over-disclosure bug. Per Copilot review on PR #377.
   if (requestedTokens.size === 0) {
-    return candidates.map((c) => c.id);
+    return candidates.filter((c) => c.role === "admin").map((c) => c.id);
   }
 
   const matched: string[] = [];

@@ -143,4 +143,27 @@ describe("filterRecipientsBySpecialty", () => {
     );
     expect(result.sort()).toEqual(["user-neuro", "user-onco"].sort());
   });
+
+  it("returns only admins when notify_specialties is non-empty but all entries normalize to empty (regression: PR #377 Copilot review)", () => {
+    // notify_specialties was scoped to *something* but every entry was
+    // blank/whitespace. Treat this as a misconfigured scoped flag — return
+    // admins only, NEVER fall back to fan-out which would re-introduce
+    // the #293 PHI over-disclosure bug.
+    const result = filterRecipientsBySpecialty(
+      [onco, cards, neuro, admin],
+      ["", "  ", "\t"],
+    );
+    expect(result).toEqual(["user-admin"]);
+    expect(result).not.toContain("user-onco");
+    expect(result).not.toContain("user-cards");
+    expect(result).not.toContain("user-neuro");
+  });
+
+  it("returns an empty list when scoped-but-blank specialties target a candidate set with no admins", () => {
+    const result = filterRecipientsBySpecialty(
+      [onco, cards, neuro],
+      ["", "   "],
+    );
+    expect(result).toEqual([]);
+  });
 });
