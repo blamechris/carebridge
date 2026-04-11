@@ -1,5 +1,5 @@
 import { router, publicProcedure } from "./trpc.js";
-import { authRouter } from "@carebridge/auth";
+import { authRouter, emergencyAccessRouter } from "@carebridge/auth";
 import { aiOversightRouter } from "@carebridge/ai-oversight";
 import { notificationsRouter } from "@carebridge/notifications";
 <<<<<<< HEAD
@@ -21,6 +21,7 @@ export const appRouter = router({
     };
   }),
   auth: authRouter,
+  emergencyAccess: emergencyAccessRouter,
   patients: patientRecordsRbacRouter,
   clinicalData: clinicalDataRbacRouter,
   notes: clinicalNotesRbacRouter,
