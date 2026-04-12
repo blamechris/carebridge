@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import * as OTPAuth from "otpauth";
+import QRCode from "qrcode";
 
 // ---------- TOTP (via otpauth library) ----------
 
@@ -109,4 +110,21 @@ export function buildOTPAuthURI(secret: string, email: string): string {
   });
 
   return totp.toString();
+}
+
+/**
+ * Render an otpauth:// URI as a PNG data URL (`data:image/png;base64,...`)
+ * using a local, no-network QR code library.
+ *
+ * This exists because the TOTP shared secret is embedded in the otpauth URI,
+ * so it MUST NOT be sent to any third-party QR service (e.g. api.qrserver.com
+ * or chart.googleapis.com). See issue #280.
+ */
+export async function buildOTPAuthQRCode(uri: string): Promise<string> {
+  return QRCode.toDataURL(uri, {
+    errorCorrectionLevel: "M",
+    type: "image/png",
+    margin: 2,
+    width: 240,
+  });
 }

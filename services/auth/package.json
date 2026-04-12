@@ -28,10 +28,12 @@
     "ioredis": "^5.6.0",
     "jose": "^6.0.0",
     "otpauth": "^9.4.0",
+    "qrcode": "^1.5.4",
     "zod": "^3.24.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/qrcode": "^1.5.6",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   }
