@@ -25,6 +25,14 @@ vi.mock("@carebridge/db-schema", () => ({
   },
 }));
 
+// Stub @carebridge/notifications so importing flag-service does not pull in
+// BullMQ + Redis at module-load time. Without this mock the import-time
+// notification queue connection ECONNREFUSEs in CI (no Redis service) and the
+// tests time out at 5s.
+vi.mock("@carebridge/notifications", () => ({
+  emitNotificationEvent: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { createFlag } from "../services/flag-service.js";
 
 beforeEach(() => {

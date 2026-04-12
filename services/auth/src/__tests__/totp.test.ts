@@ -7,6 +7,7 @@ import {
   hashRecoveryCode,
   verifyRecoveryCode,
   buildOTPAuthURI,
+  buildOTPAuthQRCode,
 } from "../totp.js";
 
 describe("TOTP generation", () => {
@@ -169,5 +170,45 @@ describe("OTP Auth URI", () => {
     expect(uri).toContain("algorithm=SHA1");
     expect(uri).toContain("digits=6");
     expect(uri).toContain("period=30");
+  });
+});
+
+describe("OTP Auth QR code (local generation)", () => {
+  // Regression test for issue #280: the TOTP secret must never be sent to a
+  // third-party QR service. The server now generates the QR image locally and
+  // returns it as a data URL; the client renders it directly.
+  it("returns a PNG data URL for the otpauth URI", async () => {
+    const uri = buildOTPAuthURI("JBSWY3DPEHPK3PXP", "dr.smith@carebridge.dev");
+    const qr = await buildOTPAuthQRCode(uri);
+
+    expect(qr).toMatch(/^data:image\/png;base64,/);
+    // Must be large enough to represent an actual QR code payload.
+    expect(qr.length).toBeGreaterThan(200);
+  });
+
+  it("does not leak the secret to any third-party QR service URL", async () => {
+    const secret = "JBSWY3DPEHPK3PXP";
+    const uri = buildOTPAuthURI(secret, "dr.smith@carebridge.dev");
+    const qr = await buildOTPAuthQRCode(uri);
+
+    // The returned value must be a self-contained data URL, not a pointer
+    // to a remote QR generator. Scan the full payload for any known leak
+    // vectors or the raw otpauth URI itself.
+    const payload = JSON.stringify({ uri: undefined, qrCodeDataUrl: qr });
+    expect(payload).not.toContain("api.qrserver.com");
+    expect(payload).not.toContain("chart.googleapis.com");
+    expect(payload).not.toContain("chart.apis.google.com");
+    expect(payload).not.toContain("quickchart.io");
+    expect(payload).not.toContain("http://");
+    // The data URL itself is base64, so it must not contain the raw secret.
+    expect(qr).not.toContain(secret);
+    expect(qr).not.toContain("otpauth://");
+  });
+
+  it("produces deterministic output for the same input", async () => {
+    const uri = buildOTPAuthURI("JBSWY3DPEHPK3PXP", "dr.smith@carebridge.dev");
+    const a = await buildOTPAuthQRCode(uri);
+    const b = await buildOTPAuthQRCode(uri);
+    expect(a).toBe(b);
   });
 });

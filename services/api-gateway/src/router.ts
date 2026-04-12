@@ -1,9 +1,9 @@
 import { router, publicProcedure } from "./trpc.js";
 import { authRouter } from "@carebridge/auth";
-import { aiOversightRouter } from "@carebridge/ai-oversight";
 import { patientRecordsRbacRouter } from "./routers/patient-records.js";
 import { clinicalDataRbacRouter } from "./routers/clinical-data.js";
 import { clinicalNotesRbacRouter } from "./routers/clinical-notes.js";
+import { aiOversightRbacRouter } from "./routers/ai-oversight.js";
 import { messagingRbacRouter } from "./routers/messaging.js";
 import { schedulingRbacRouter } from "./routers/scheduling.js";
 import { emergencyAccessRbacRouter } from "./routers/emergency-access.js";
@@ -23,7 +23,7 @@ export const appRouter = router({
   patients: patientRecordsRbacRouter,
   clinicalData: clinicalDataRbacRouter,
   notes: clinicalNotesRbacRouter,
-  aiOversight: aiOversightRouter,
+  aiOversight: aiOversightRbacRouter,
   notifications: notificationsRbacRouter,
   messaging: messagingRbacRouter,
   scheduling: schedulingRbacRouter,

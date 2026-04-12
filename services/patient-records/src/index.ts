@@ -1,1 +1,7 @@
-export { patientRecordsRouter, type PatientRecordsRouter } from "./router.js";
+export {
+  patientRecordsRouter,
+  type PatientRecordsRouter,
+  listObservationsByPatient,
+  createObservation,
+  type ObservationCreateInput,
+} from "./router.js";
