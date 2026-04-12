@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getDb } from "@carebridge/db-schema";
 import {
   fhirResources,
+  auditLog,
   patients,
   vitals,
   labPanels,
@@ -135,6 +136,14 @@ export const fhirGatewayRouter = t.router({
     .input(z.object({
       bundle: fhirBundleSchema,
       source_system: z.string(),
+      /**
+       * ID of the user performing the import. Required for HIPAA
+       * § 164.312(b) audit completeness — every imported resource is
+       * recorded in audit_log attributed to this user. The api-gateway
+       * RBAC wrapper supplies this from ctx.user.id.
+       */
+      user_id: z.string(),
+      bundle_id: z.string().optional(),
     }))
     .mutation(async ({ input }) => {
       const db = getDb();
@@ -144,15 +153,47 @@ export const fhirGatewayRouter = t.router({
       for (const entry of entries) {
         if (!entry.resource) continue;
         const sanitized = sanitizeResourceStrings(entry.resource) as Record<string, unknown>;
-        await db.insert(fhirResources).values({
-          id: crypto.randomUUID(),
-          resource_type: (sanitized.resourceType as string) ?? "Unknown",
-          resource_id: (sanitized.id as string) ?? crypto.randomUUID(),
-          patient_id: null,
-          resource: sanitized,
-          source_system: input.source_system,
-          imported_at: now,
+        const resourceType = (sanitized.resourceType as string) ?? "Unknown";
+        const resourceId = (sanitized.id as string) ?? crypto.randomUUID();
+
+        // Persist the resource and its audit trail in a single transaction
+        // so the pair commits or rolls back atomically. Without this, a
+        // crash or audit_log outage between the two inserts could leave
+        // imported PHI in fhir_resources with no audit row, defeating the
+        // HIPAA § 164.312(b) audit completeness goal.
+        // Per Copilot review on PR #378.
+        await db.transaction(async (tx) => {
+          await tx.insert(fhirResources).values({
+            id: crypto.randomUUID(),
+            resource_type: resourceType,
+            resource_id: resourceId,
+            patient_id: null,
+            resource: sanitized,
+            source_system: input.source_system,
+            imported_at: now,
+          });
+
+          // HIPAA § 164.312(b): record who imported which PHI. One audit_log
+          // row per resource so the bulk import path leaves the same trail
+          // as a normal per-resource write through the clinical-data router.
+          await tx.insert(auditLog).values({
+            id: crypto.randomUUID(),
+            user_id: input.user_id,
+            action: "fhir_import",
+            resource_type: resourceType,
+            resource_id: resourceId,
+            procedure_name: "fhir.importBundle",
+            patient_id: null,
+            details: JSON.stringify({
+              source: "fhir_bundle",
+              source_system: input.source_system,
+              bundle_id: input.bundle_id ?? null,
+            }),
+            ip_address: null,
+            timestamp: now,
+          });
         });
+
         imported++;
       }
       return { imported };

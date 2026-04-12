@@ -127,13 +127,61 @@ function extractPatientId(body: unknown): string | null {
 }
 
 /**
+ * Map an HTTP status code to a short, human-readable reason phrase.
+ *
+ * HIPAA § 164.312(b) requires audit controls sufficient to distinguish
+ * successful access from denials and failures. Storing both the numeric
+ * status and a short phrase makes it cheap to query for attack patterns
+ * (e.g. repeated 401/403 probes from the same user) without having to
+ * re-derive meaning from the integer alone.
+ */
+function statusCodeToMessage(statusCode: number): string | null {
+  if (statusCode < 400) return null;
+  switch (statusCode) {
+    case 400:
+      return "Bad Request";
+    case 401:
+      return "Unauthorized";
+    case 403:
+      return "Forbidden";
+    case 404:
+      return "Not Found";
+    case 405:
+      return "Method Not Allowed";
+    case 409:
+      return "Conflict";
+    case 412:
+      return "Precondition Failed";
+    case 422:
+      return "Unprocessable Entity";
+    case 429:
+      return "Too Many Requests";
+    case 500:
+      return "Internal Server Error";
+    case 502:
+      return "Bad Gateway";
+    case 503:
+      return "Service Unavailable";
+    case 504:
+      return "Gateway Timeout";
+    default:
+      if (statusCode >= 500) return "Server Error";
+      return "Client Error";
+  }
+}
+
+/**
  * Fastify onResponse hook that writes an entry to the audit_log table.
  *
  * Runs after the response has been sent so it does not block the client.
+ * The Fastify tRPC plugin surfaces tRPC error codes as standard HTTP
+ * status codes on `reply.statusCode` (UNAUTHORIZED -> 401, FORBIDDEN -> 403,
+ * NOT_FOUND -> 404, etc.), so we can record the outcome uniformly for
+ * both tRPC and REST routes.
  */
 export async function auditMiddleware(
   request: FastifyRequest,
-  _reply: FastifyReply,
+  reply: FastifyReply,
 ): Promise<void> {
   // Skip health-check noise.
   if (request.url === "/health") {
@@ -148,6 +196,13 @@ export async function auditMiddleware(
   const procedureName = parseProcedureName(request.url);
   const patientId = extractPatientId(request.body);
 
+  const statusCode = reply.statusCode;
+  // Treat 2xx and 3xx as success — redirects/304s are not failures and the
+  // schema's error_message column is for "short failure reason for non-2xx"
+  // failures only. Per Copilot review on PR #376.
+  const success = statusCode >= 200 && statusCode < 400;
+  const errorMessage = success ? null : statusCodeToMessage(statusCode);
+
   const db = getDb();
 
   try {
@@ -160,6 +215,9 @@ export async function auditMiddleware(
       procedure_name: procedureName,
       patient_id: patientId,
       ip_address: request.ip,
+      http_status_code: statusCode,
+      success,
+      error_message: errorMessage,
       timestamp: new Date().toISOString(),
     });
   } catch (err) {

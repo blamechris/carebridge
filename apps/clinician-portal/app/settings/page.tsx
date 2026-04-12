@@ -14,6 +14,7 @@ function MFASection() {
   const [setupData, setSetupData] = useState<{
     secret: string;
     uri: string;
+    qrCodeDataUrl: string;
     recoveryCodes: string[];
   } | null>(null);
   const [verifyCode, setVerifyCode] = useState("");
@@ -227,7 +228,9 @@ function MFASection() {
             6-digit code it shows to confirm setup.
           </p>
 
-          {/* QR code rendered via Google Charts API */}
+          {/* QR code generated server-side as a data URL so the TOTP secret
+              never leaves our infrastructure via a third-party service.
+              See issue #280. */}
           <div
             style={{
               display: "flex",
@@ -236,7 +239,7 @@ function MFASection() {
             }}
           >
             <img
-              src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(setupData.uri)}`}
+              src={setupData.qrCodeDataUrl}
               alt="Scan this QR code with your authenticator app"
               width={180}
               height={180}

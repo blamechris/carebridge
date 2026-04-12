@@ -4,19 +4,36 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Mocks — set up before importing the module under test
 // ---------------------------------------------------------------------------
 
-const deletedRows: { id: string }[] = [];
+interface DeletedSessionRow {
+  id: string;
+  user_id: string;
+  expires_at: string | null;
+  last_active_at: string | null;
+  created_at: string;
+}
+
+const deletedRows: DeletedSessionRow[] = [];
 const mockReturning = vi.fn(() => deletedRows);
 const mockWhere = vi.fn(() => ({ returning: mockReturning }));
 const mockDeleteFn = vi.fn(() => ({ where: mockWhere }));
 
+const insertedAuditEntries: Array<Record<string, unknown>> = [];
+const mockInsertValues = vi.fn(async (values: Record<string, unknown>) => {
+  insertedAuditEntries.push(values);
+});
+const mockInsertFn = vi.fn(() => ({ values: mockInsertValues }));
+
 vi.mock("@carebridge/db-schema", () => ({
-  getDb: () => ({ delete: mockDeleteFn }),
+  getDb: () => ({ delete: mockDeleteFn, insert: mockInsertFn }),
   sessions: {
     id: "sessions.id",
     user_id: "sessions.user_id",
     expires_at: "sessions.expires_at",
     created_at: "sessions.created_at",
     last_active_at: "sessions.last_active_at",
+  },
+  auditLog: {
+    id: "audit_log.id",
   },
 }));
 
@@ -34,10 +51,23 @@ import { cleanupExpiredSessions } from "../session-cleanup.js";
 // Tests
 // ---------------------------------------------------------------------------
 
+function seedDeletedRow(
+  overrides: Partial<DeletedSessionRow> = {},
+): DeletedSessionRow {
+  return {
+    id: overrides.id ?? "s1",
+    user_id: overrides.user_id ?? "user-1",
+    expires_at: overrides.expires_at ?? new Date(Date.now() + 3_600_000).toISOString(),
+    last_active_at: overrides.last_active_at ?? null,
+    created_at: overrides.created_at ?? new Date().toISOString(),
+  };
+}
+
 describe("cleanupExpiredSessions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     deletedRows.length = 0;
+    insertedAuditEntries.length = 0;
   });
 
   it("calls db.delete on the sessions table", async () => {
@@ -50,7 +80,11 @@ describe("cleanupExpiredSessions", () => {
   });
 
   it("returns the number of deleted rows", async () => {
-    deletedRows.push({ id: "s1" }, { id: "s2" }, { id: "s3" });
+    deletedRows.push(
+      seedDeletedRow({ id: "s1" }),
+      seedDeletedRow({ id: "s2" }),
+      seedDeletedRow({ id: "s3" }),
+    );
 
     const count = await cleanupExpiredSessions();
 
@@ -129,13 +163,66 @@ describe("cleanupExpiredSessions", () => {
 
   it("logs when sessions are deleted", async () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    deletedRows.push({ id: "s1" });
+    deletedRows.push(seedDeletedRow({ id: "s1" }));
 
     await cleanupExpiredSessions();
 
     expect(consoleSpy).toHaveBeenCalledWith(
       expect.stringContaining("Deleted 1 expired/idle sessions"),
     );
+    consoleSpy.mockRestore();
+  });
+
+  it("writes a session_idle_expired audit entry for each deleted session", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const pastExpiry = new Date(Date.now() - 60_000).toISOString();
+    const idlePast = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    const oldCreated = new Date(Date.now() - 50 * 60 * 60 * 1000).toISOString();
+
+    deletedRows.push(
+      seedDeletedRow({
+        id: "expired-1",
+        user_id: "user-a",
+        expires_at: pastExpiry,
+      }),
+      seedDeletedRow({
+        id: "idle-1",
+        user_id: "user-b",
+        last_active_at: idlePast,
+      }),
+      seedDeletedRow({
+        id: "hard-cap-1",
+        user_id: "user-c",
+        created_at: oldCreated,
+      }),
+    );
+
+    await cleanupExpiredSessions();
+
+    expect(insertedAuditEntries).toHaveLength(3);
+    for (const entry of insertedAuditEntries) {
+      expect(entry.action).toBe("session_idle_expired");
+      expect(entry.resource_type).toBe("session");
+      expect(typeof entry.resource_id).toBe("string");
+      expect(typeof entry.user_id).toBe("string");
+      const details = JSON.parse(entry.details as string);
+      expect(typeof details.reason).toBe("string");
+      expect(details.reason.length).toBeGreaterThan(0);
+    }
+
+    const byId = Object.fromEntries(
+      insertedAuditEntries.map((e) => [e.resource_id, e]),
+    );
+    expect(JSON.parse(byId["expired-1"].details as string).reason).toContain(
+      "Absolute",
+    );
+    expect(JSON.parse(byId["hard-cap-1"].details as string).reason).toContain(
+      "Hard-cap",
+    );
+    expect(JSON.parse(byId["idle-1"].details as string).reason).toContain(
+      "Idle",
+    );
+
     consoleSpy.mockRestore();
   });
 

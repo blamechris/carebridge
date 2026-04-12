@@ -6,6 +6,11 @@ import { TRPCError } from "@trpc/server";
 // any DB access is attempted, so these mocks only need to exist for the
 // admin happy-path test and return empty-ish values.
 const insertMock = vi.fn().mockResolvedValue(undefined);
+const txInsert = vi.fn(() => ({ values: insertMock }));
+const txMock = { insert: txInsert };
+const transactionMock = vi.fn(
+  async (cb: (tx: typeof txMock) => Promise<unknown>) => cb(txMock),
+);
 vi.mock("@carebridge/db-schema", async () => {
   const actual = await vi.importActual<Record<string, unknown>>(
     "@carebridge/db-schema",
@@ -14,6 +19,7 @@ vi.mock("@carebridge/db-schema", async () => {
     ...actual,
     getDb: () => ({
       insert: () => ({ values: insertMock }),
+      transaction: transactionMock,
       select: () => ({
         from: () => ({
           where: () => Promise.resolve([]),
@@ -77,6 +83,7 @@ describe("fhirGatewayRouter raw auth (defense-in-depth)", () => {
         caller.importBundle({
           bundle: validBundle,
           source_system: "test",
+          user_id: "user-x",
         }),
       ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     });
@@ -89,6 +96,7 @@ describe("fhirGatewayRouter raw auth (defense-in-depth)", () => {
         caller.importBundle({
           bundle: validBundle,
           source_system: "test",
+          user_id: patientUser.id,
         }),
       ).rejects.toMatchObject({ code: "FORBIDDEN" });
       expect(insertMock).not.toHaveBeenCalled();
@@ -110,9 +118,11 @@ describe("fhirGatewayRouter raw auth (defense-in-depth)", () => {
           ],
         },
         source_system: "unit-test",
+        user_id: adminUser.id,
       });
       expect(result).toEqual({ imported: 1 });
-      expect(insertMock).toHaveBeenCalledTimes(1);
+      // fhir_resources insert + audit_log insert = 2 inserts per resource
+      expect(insertMock).toHaveBeenCalledTimes(2);
     });
 
     it("throws TRPCError instances (not plain Errors) for auth failures", async () => {

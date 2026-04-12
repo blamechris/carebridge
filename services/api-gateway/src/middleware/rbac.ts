@@ -1,8 +1,38 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
+import { TRPCError } from "@trpc/server";
 import type { User } from "@carebridge/shared-types";
+import { hasPermission } from "@carebridge/shared-types";
 import { getDb, careTeamAssignments, auditLog } from "@carebridge/db-schema";
 import { eq, and, isNull } from "drizzle-orm";
 import crypto from "node:crypto";
+
+/**
+ * tRPC-side RBAC enforcement: throws `FORBIDDEN` when the user's role
+ * does not grant the requested permission per `ROLE_PERMISSIONS`.
+ *
+ * Prefer this over inline `user.role !== "admin"` checks so that all
+ * permission logic flows through a single source of truth. Extending
+ * a role's capabilities is then a one-line change in `ROLE_PERMISSIONS`
+ * rather than a grep-and-edit across every router.
+ */
+export function assertPermission(
+  user: User,
+  permission: string,
+  message = "Access denied",
+): void {
+  if (!hasPermission(user, permission)) {
+    // Default message is intentionally generic — exposing the raw
+    // permission key in the user-facing error leaks RBAC internals.
+    // Callers can pass a domain-appropriate message (e.g. "Only admins
+    // can revoke emergency access") to improve UX without revealing
+    // the underlying permission identifier.
+    // Per Copilot review on PR #381.
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message,
+    });
+  }
+}
 
 /**
  * Log an RBAC access denial to the audit trail.

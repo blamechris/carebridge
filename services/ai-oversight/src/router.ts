@@ -1,9 +1,12 @@
 /**
  * tRPC router for the AI oversight service.
  *
- * Exposes flag management and review job queries to the API gateway.
- * All flag mutation procedures require authentication — the acting user
- * is derived from the session context, never accepted as client input.
+ * The api-gateway mounts flag and review-job queries via the RBAC wrapper in
+ * `services/api-gateway/src/routers/ai-oversight.ts`, not this module. This
+ * router is retained for internal / test use and defence-in-depth: every
+ * procedure requires authentication so a direct mount would still deny
+ * anonymous callers. Patient-scoped authorisation, however, is enforced only
+ * by the RBAC wrapper — do not register this router on an external surface.
  */
 
 import { initTRPC, TRPCError } from "@trpc/server";
@@ -43,7 +46,7 @@ const protectedProcedure = t.procedure.use(isAuthenticated);
 
 export const aiOversightRouter = t.router({
   flags: t.router({
-    getByPatient: t.procedure
+    getByPatient: protectedProcedure
       .input(
         z.object({
           patientId: z.string().uuid(),
@@ -102,7 +105,7 @@ export const aiOversightRouter = t.router({
         return flagService.getAllOpenFlags();
       }),
 
-    getOpenCount: t.procedure
+    getOpenCount: protectedProcedure
       .input(z.object({ patientId: z.string().uuid() }))
       .query(async ({ input }) => {
         const count = await flagService.getOpenFlagCount(input.patientId);
@@ -111,7 +114,7 @@ export const aiOversightRouter = t.router({
   }),
 
   reviews: t.router({
-    getByPatient: t.procedure
+    getByPatient: protectedProcedure
       .input(z.object({ patientId: z.string().uuid() }))
       .query(async ({ input }) => {
         const db = getDb();

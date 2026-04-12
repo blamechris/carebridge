@@ -75,6 +75,7 @@ export const fhirRbacRouter = t.router({
       z.object({
         bundle: fhirBundleSchema,
         source_system: z.string(),
+        bundle_id: z.string().optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -84,7 +85,15 @@ export const fhirRbacRouter = t.router({
           message: "Access denied: importBundle requires admin role",
         });
       }
+      // Build a per-request caller with typed ctx so the raw router's
+      // auth middleware sees the authenticated user (PR #273 / #379), AND
+      // forward the caller's user id in the input so the fhir-gateway can
+      // attribute its per-resource audit_log entries to the admin
+      // performing the import (PR #274 / #378, HIPAA § 164.312(b)).
       const caller = fhirGatewayRouter.createCaller({ user: ctx.user });
-      return caller.importBundle(input);
+      return caller.importBundle({
+        ...input,
+        user_id: ctx.user.id,
+      });
     }),
 });

@@ -10,6 +10,10 @@ export interface User {
   role: string;
   specialty?: string;
   department?: string;
+  // Patient-role users link to their patient record via this id. Set on the
+  // users table by the auth service. Used by useMyPatientRecord to do a direct
+  // lookup instead of the legacy fragile name-match.
+  patient_id?: string;
 }
 
 export interface AuthContextValue {
