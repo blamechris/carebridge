@@ -101,3 +101,23 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     "admin:users", "admin:rules",
   ],
 };
+
+/**
+ * Centralized permission check for RBAC enforcement.
+ *
+ * Returns `true` when the user's role grants the given permission per
+ * `ROLE_PERMISSIONS`, otherwise `false`. An unknown permission string
+ * (one not present in any role's grant list) always returns `false`.
+ *
+ * Callers that need to short-circuit a request should use
+ * `assertPermission` from `services/api-gateway/src/middleware/rbac.ts`,
+ * which wraps this helper and throws a tRPC `FORBIDDEN` error on denial.
+ *
+ * This helper lives in `@carebridge/shared-types` so every service and
+ * app can import it without a framework-specific dependency.
+ */
+export function hasPermission(user: User, permission: string): boolean {
+  const grants = ROLE_PERMISSIONS[user.role];
+  if (!grants) return false;
+  return (grants as readonly string[]).includes(permission);
+}
