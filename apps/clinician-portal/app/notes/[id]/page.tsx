@@ -106,7 +106,10 @@ function NoteDetailContent() {
     if (!confirm("Sign this note? Signed notes become part of the permanent record.")) {
       return;
     }
-    signMutation.mutate({ noteId, signed_by: user.id });
+    // The gateway wrapper derives the signer from ctx.user.id on the server
+    // side to prevent signature spoofing, so `signed_by` is no longer part
+    // of the input. See fix(notes) in PR #372.
+    signMutation.mutate({ noteId });
   }
 
   return (
