@@ -51,7 +51,17 @@ beforeEach(() => {
 
 describe("importBundle audit logging", () => {
   it("writes a per-resource audit_log entry for each imported resource", async () => {
-    const caller = fhirGatewayRouter.createCaller({});
+    const caller = fhirGatewayRouter.createCaller({
+      user: {
+        id: "user-admin-42",
+        email: "admin@carebridge.dev",
+        name: "Admin",
+        role: "admin",
+        is_active: true,
+        created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z",
+      },
+    });
 
     const bundle = {
       resourceType: "Bundle" as const,
@@ -123,7 +133,17 @@ describe("importBundle audit logging", () => {
   });
 
   it("writes one fhir_resources row and one audit_log row per entry (paired)", async () => {
-    const caller = fhirGatewayRouter.createCaller({});
+    const caller = fhirGatewayRouter.createCaller({
+      user: {
+        id: "user-admin-42",
+        email: "admin@carebridge.dev",
+        name: "Admin",
+        role: "admin",
+        is_active: true,
+        created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z",
+      },
+    });
 
     const bundle = {
       resourceType: "Bundle" as const,

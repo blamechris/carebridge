@@ -49,22 +49,25 @@ async function enforcePatientAccess(
   }
 }
 
-// Delegate to the underlying fhir-gateway router via a context-less caller.
-const fhirCaller = fhirGatewayRouter.createCaller({});
-
+// Delegate to the underlying fhir-gateway router. The raw router now
+// requires an authenticated user in its own context as defense-in-depth
+// (see services/fhir-gateway/src/router.ts), so we thread ctx.user through
+// on every call rather than using a single module-level caller.
 export const fhirRbacRouter = t.router({
   exportPatient: protectedProcedure
     .input(z.object({ patientId: z.string() }))
     .query(async ({ ctx, input }) => {
       await enforcePatientAccess(ctx.user, input.patientId);
-      return fhirCaller.exportPatient(input);
+      const caller = fhirGatewayRouter.createCaller({ user: ctx.user });
+      return caller.exportPatient(input);
     }),
 
   getByPatient: protectedProcedure
     .input(z.object({ patientId: z.string(), resourceType: z.string().optional() }))
     .query(async ({ ctx, input }) => {
       await enforcePatientAccess(ctx.user, input.patientId);
-      return fhirCaller.getByPatient(input);
+      const caller = fhirGatewayRouter.createCaller({ user: ctx.user });
+      return caller.getByPatient(input);
     }),
 
   importBundle: protectedProcedure
@@ -82,10 +85,13 @@ export const fhirRbacRouter = t.router({
           message: "Access denied: importBundle requires admin role",
         });
       }
-      // Forward the caller's user id so the fhir-gateway can write per-resource
-      // audit_log entries attributed to the admin performing the import
-      // (HIPAA § 164.312(b) audit completeness).
-      return fhirCaller.importBundle({
+      // Build a per-request caller with typed ctx so the raw router's
+      // auth middleware sees the authenticated user (PR #273 / #379), AND
+      // forward the caller's user id in the input so the fhir-gateway can
+      // attribute its per-resource audit_log entries to the admin
+      // performing the import (PR #274 / #378, HIPAA § 164.312(b)).
+      const caller = fhirGatewayRouter.createCaller({ user: ctx.user });
+      return caller.importBundle({
         ...input,
         user_id: ctx.user.id,
       });
