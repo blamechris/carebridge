@@ -8,7 +8,7 @@ import {
   mfaDisableSchema,
   mfaCompleteLoginSchema,
 } from "@carebridge/validators";
-import { getDb, users, sessions } from "@carebridge/db-schema";
+import { getDb, users, sessions, auditLog } from "@carebridge/db-schema";
 import { eq, and, gt, asc, inArray } from "drizzle-orm";
 import crypto from "node:crypto";
 import {
@@ -173,6 +173,9 @@ async function checkPassword(password: string, storedHash: string): Promise<bool
  * If the count is at or above MAX_CONCURRENT_SESSIONS, the oldest sessions
  * are deleted so that the count drops to MAX_CONCURRENT_SESSIONS - 1,
  * leaving room for the new session about to be inserted by the caller.
+ *
+ * Each evicted session generates a `session_evicted` audit log entry
+ * (HIPAA § 164.312(b) — record of session lifecycle events).
  */
 async function enforceSessionLimit(db: ReturnType<typeof getDb>, userId: string): Promise<void> {
   const now = new Date().toISOString();
@@ -193,6 +196,34 @@ async function enforceSessionLimit(db: ReturnType<typeof getDb>, userId: string)
 
   const toEvict = activeSessions.slice(0, overflow).map((s) => s.id);
   await db.delete(sessions).where(inArray(sessions.id, toEvict));
+
+  const timestamp = new Date().toISOString();
+  for (const evictedSessionId of toEvict) {
+    // Audit writes are best-effort: an audit_log outage must not block a
+    // login (sessions have already been evicted at this point — failing the
+    // mutation would leave the client locked out without rotated state).
+    // Per Copilot review on PR #375.
+    try {
+      await db.insert(auditLog).values({
+        id: crypto.randomUUID(),
+        user_id: userId,
+        action: "session_evicted",
+        resource_type: "session",
+        resource_id: evictedSessionId,
+        details: JSON.stringify({
+          reason: "Exceeded concurrent session limit",
+          max_concurrent_sessions: MAX_CONCURRENT_SESSIONS,
+        }),
+        timestamp,
+      });
+    } catch (err) {
+      console.error("[auth] audit_log insert failed for session_evicted", {
+        userId,
+        sessionId: evictedSessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 }
 
 function buildUserResponse(row: {
@@ -433,6 +464,29 @@ export const authRouter = t.router({
       await db.delete(sessions).where(
         and(eq(sessions.id, ctx.sessionId), eq(sessions.user_id, ctx.user.id)),
       );
+
+      // Audit log for session logout (HIPAA § 164.312(b)).
+      // Best-effort: don't fail logout if the audit insert throws — the
+      // session has already been deleted, so a thrown error would surface
+      // a confusing "logout failed" to the client even though it succeeded.
+      // Per Copilot review on PR #375.
+      try {
+        await db.insert(auditLog).values({
+          id: crypto.randomUUID(),
+          user_id: ctx.user.id,
+          action: "session_logout",
+          resource_type: "session",
+          resource_id: ctx.sessionId,
+          details: JSON.stringify({ reason: "User-initiated logout" }),
+          timestamp: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.error("[auth] audit_log insert failed for session_logout", {
+          userId: ctx.user.id,
+          sessionId: ctx.sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
     return { success: true };
@@ -503,6 +557,33 @@ export const authRouter = t.router({
         last_active_at: now,
         refresh_token: hashToken(newRefreshToken),
       });
+
+      // Audit log for session refresh / rotation (HIPAA § 164.312(b)).
+      // Best-effort: don't fail the rotation if audit_log is unavailable —
+      // the new session has already been issued and the client needs the
+      // rotated credentials in the response. Per Copilot review on PR #375.
+      try {
+        await db.insert(auditLog).values({
+          id: crypto.randomUUID(),
+          user_id: row.id,
+          action: "session_refreshed",
+          resource_type: "session",
+          resource_id: session.id,
+          details: JSON.stringify({
+            old_session_id: session.id,
+            new_session_id: newSessionId,
+            reason: "Refresh-token rotation",
+          }),
+          timestamp: now,
+        });
+      } catch (err) {
+        console.error("[auth] audit_log insert failed for session_refreshed", {
+          userId: row.id,
+          oldSessionId: session.id,
+          newSessionId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
 
       return {
         user: buildUserResponse(row),
