@@ -16,6 +16,7 @@ export default function LoginPage() {
   const [step, setStep] = useState<LoginStep>("credentials");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const router = useRouter();
   const { setSession } = useAuth();
 
@@ -128,15 +129,37 @@ export default function LoginPage() {
                 >
                   Password
                 </label>
-                <input
-                  id="password"
-                  type="password"
-                  className="search-input"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  style={{ width: "100%" }}
-                />
+                <div style={{ position: "relative" }}>
+                  <input
+                    id="password"
+                    type={showPassword ? "text" : "password"}
+                    className="search-input"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    style={{ width: "100%", paddingRight: 40 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((p) => !p)}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    style={{
+                      position: "absolute",
+                      right: 8,
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      background: "none",
+                      border: "none",
+                      cursor: "pointer",
+                      padding: 4,
+                      fontSize: 18,
+                      color: "var(--text-muted)",
+                      lineHeight: 1,
+                    }}
+                  >
+                    {showPassword ? "\u{1F648}" : "\u{1F441}"}
+                  </button>
+                </div>
               </div>
 
               {error && (

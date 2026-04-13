@@ -29,7 +29,7 @@ function getInitials(name: string): string {
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, clearSession, isAuthenticated } = useAuth();
+  const { user, clearSession, isAuthenticated, hydrated } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
 
   async function handleLogout() {
@@ -42,7 +42,7 @@ export function Sidebar() {
     router.push("/login");
   }
 
-  if (!isAuthenticated) return null;
+  if (!isAuthenticated || !hydrated) return null;
 
   return (
     <>
