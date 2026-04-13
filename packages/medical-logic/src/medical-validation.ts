@@ -23,7 +23,7 @@ export const VITAL_DANGER_ZONES: Record<VitalType, VitalRange> = {
   weight: { min: 1, max: 1000 },
   respiratory_rate: { min: 4, max: 60, criticalLow: 8, criticalHigh: 30 },
   pain_level: { min: 0, max: 10 },
-  blood_glucose: { min: 10, max: 800, criticalLow: 50, criticalHigh: 350, warningLow: 70, warningHigh: 250 },
+  blood_glucose: { min: 10, max: 800, criticalLow: 54, criticalHigh: 350, warningLow: 70, warningHigh: 250 },
 };
 
 export interface ValidationResult {

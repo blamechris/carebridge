@@ -178,7 +178,7 @@ describe("isCriticalVital", () => {
     expect(isCriticalVital("weight", 200)).toBe(false);
   });
 
-  it("returns true for glucose 45 (severe hypoglycemia, <= criticalLow 50)", () => {
+  it("returns true for glucose 45 (severe hypoglycemia, <= criticalLow 54)", () => {
     expect(isCriticalVital("blood_glucose", 45)).toBe(true);
   });
 
@@ -222,8 +222,8 @@ describe("getVitalSeverity", () => {
     expect(getVitalSeverity("blood_glucose", 450)).toBe("critical");
   });
 
-  it("returns critical for glucose at exact criticalLow boundary (50)", () => {
-    expect(getVitalSeverity("blood_glucose", 50)).toBe("critical");
+  it("returns critical for glucose at exact criticalLow boundary (54)", () => {
+    expect(getVitalSeverity("blood_glucose", 54)).toBe("critical");
   });
 
   it("returns critical for glucose at exact criticalHigh boundary (350)", () => {
