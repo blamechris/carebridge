@@ -11,6 +11,8 @@ export interface VitalRange {
   max: number;
   criticalLow?: number;
   criticalHigh?: number;
+  warningLow?: number;
+  warningHigh?: number;
 }
 
 export const VITAL_DANGER_ZONES: Record<VitalType, VitalRange> = {
@@ -21,7 +23,7 @@ export const VITAL_DANGER_ZONES: Record<VitalType, VitalRange> = {
   weight: { min: 1, max: 1000 },
   respiratory_rate: { min: 4, max: 60, criticalLow: 8, criticalHigh: 30 },
   pain_level: { min: 0, max: 10 },
-  blood_glucose: { min: 10, max: 800, criticalLow: 54, criticalHigh: 400 },
+  blood_glucose: { min: 10, max: 800, criticalLow: 50, criticalHigh: 350, warningLow: 70, warningHigh: 250 },
 };
 
 export interface ValidationResult {
@@ -54,9 +56,13 @@ export function validateVital(
 
   if (range.criticalLow && primary < range.criticalLow) {
     warnings.push(`Critically low ${type.replace(/_/g, " ")}: ${primary}`);
+  } else if (range.warningLow && primary < range.warningLow) {
+    warnings.push(`Low ${type.replace(/_/g, " ")}: ${primary}`);
   }
   if (range.criticalHigh && primary > range.criticalHigh) {
     warnings.push(`Critically high ${type.replace(/_/g, " ")}: ${primary}`);
+  } else if (range.warningHigh && primary > range.warningHigh) {
+    warnings.push(`High ${type.replace(/_/g, " ")}: ${primary}`);
   }
 
   if (type === "blood_pressure" && secondary != null) {
@@ -133,4 +139,23 @@ export function isCriticalVital(type: VitalType, value: number): boolean {
   if (range.criticalLow !== undefined && value <= range.criticalLow) return true;
   if (range.criticalHigh !== undefined && value >= range.criticalHigh) return true;
   return false;
+}
+
+/** Return severity level for a vital value: "critical", "warning", or null if normal */
+export function getVitalSeverity(
+  type: VitalType,
+  value: number
+): "critical" | "warning" | null {
+  const range = VITAL_DANGER_ZONES[type];
+  if (!range) return null;
+
+  // Check critical thresholds first (most severe)
+  if (range.criticalLow !== undefined && value <= range.criticalLow) return "critical";
+  if (range.criticalHigh !== undefined && value >= range.criticalHigh) return "critical";
+
+  // Check warning thresholds
+  if (range.warningLow !== undefined && value < range.warningLow) return "warning";
+  if (range.warningHigh !== undefined && value > range.warningHigh) return "warning";
+
+  return null;
 }
