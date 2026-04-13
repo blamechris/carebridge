@@ -1,0 +1,26 @@
+-- 0025_encrypt_patient_diagnosis_notes.sql
+--
+-- HIPAA: encrypt patients.diagnosis and patients.notes at rest
+-- using AES-256-GCM via the `encryptedText` Drizzle custom type
+-- (see packages/db-schema/src/encryption.ts).
+--
+-- Both columns are already `text` at the SQL level, and the
+-- `encryptedText` custom type also maps to `text`, so no DDL
+-- change is required. The Drizzle ORM layer now transparently
+-- encrypts on write and decrypts on read.
+--
+-- Fields now encrypted:
+--   patients.diagnosis
+--   patients.notes
+--
+-- IMPORTANT — DATA MIGRATION REQUIRED:
+-- Any existing rows with plaintext values in these columns will
+-- fail to decrypt through the custom type (which expects the
+-- `iv:authTag:ct` format produced by encrypt()). A one-time
+-- re-encryption script must run against the live database to
+-- rewrite every existing row through the encryption pipeline
+-- before application reads will succeed.
+
+-- No-op: column type unchanged (text -> text); encryption is
+-- handled at the ORM layer by the encryptedText custom type.
+SELECT 1;
