@@ -39,6 +39,12 @@ import { sanitizeFreeText } from "@carebridge/phi-sanitizer";
  */
 export interface Context {
   user: User | null;
+  /**
+   * When true, the caller (api-gateway RBAC wrapper) has already verified
+   * care-team access for the target patient. The raw router's
+   * assertRawPatientAccess will skip its own restrictive check.
+   */
+  rbacVerified?: boolean;
 }
 
 const t = initTRPC.context<Context>().create();
@@ -92,6 +98,7 @@ const adminProcedure = t.procedure.use(isAdmin);
  * access. Per Copilot review on PR #379.
  *
  * Allowed:
+ *   - rbacVerified context flag: gateway already ran care-team check
  *   - admin role: full access
  *   - patient role: self-access only (user.id === patientId)
  *
@@ -103,7 +110,9 @@ const adminProcedure = t.procedure.use(isAdmin);
 function assertRawPatientAccess(
   user: User,
   patientId: string,
+  rbacVerified?: boolean,
 ): void {
+  if (rbacVerified) return;
   if (user.role === "admin") return;
   if (user.role === "patient" && user.id === patientId) return;
   throw new TRPCError({
@@ -202,7 +211,7 @@ export const fhirGatewayRouter = t.router({
   getByPatient: protectedProcedure
     .input(z.object({ patientId: z.string(), resourceType: z.string().optional() }))
     .query(async ({ ctx, input }) => {
-      assertRawPatientAccess(ctx.user, input.patientId);
+      assertRawPatientAccess(ctx.user, input.patientId, ctx.rbacVerified);
       const db = getDb();
       return db.select().from(fhirResources)
         .where(eq(fhirResources.patient_id, input.patientId));
@@ -211,7 +220,7 @@ export const fhirGatewayRouter = t.router({
   exportPatient: protectedProcedure
     .input(z.object({ patientId: z.string() }))
     .query(async ({ ctx, input }) => {
-      assertRawPatientAccess(ctx.user, input.patientId);
+      assertRawPatientAccess(ctx.user, input.patientId, ctx.rbacVerified);
       const db = getDb();
       const { patientId } = input;
 

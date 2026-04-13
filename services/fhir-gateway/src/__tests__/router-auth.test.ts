@@ -176,4 +176,42 @@ describe("fhirGatewayRouter raw auth (defense-in-depth)", () => {
       ).resolves.toEqual([]);
     });
   });
+
+  describe("rbacVerified context flag (gateway RBAC pre-authorization)", () => {
+    const physicianUser = {
+      ...patientUser,
+      id: "user-physician-1",
+      role: "physician" as const,
+      specialty: "Hematology/Oncology",
+    };
+
+    it("allows a clinician through when rbacVerified is true", async () => {
+      const caller = fhirGatewayRouter.createCaller({
+        user: physicianUser,
+        rbacVerified: true,
+      });
+      await expect(
+        caller.getByPatient({ patientId: "any-patient" }),
+      ).resolves.toEqual([]);
+    });
+
+    it("still rejects a clinician when rbacVerified is false", async () => {
+      const caller = fhirGatewayRouter.createCaller({
+        user: physicianUser,
+        rbacVerified: false,
+      });
+      await expect(
+        caller.getByPatient({ patientId: "any-patient" }),
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
+
+    it("still rejects a clinician when rbacVerified is not set", async () => {
+      const caller = fhirGatewayRouter.createCaller({
+        user: physicianUser,
+      });
+      await expect(
+        caller.getByPatient({ patientId: "any-patient" }),
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
+  });
 });
