@@ -1,8 +1,144 @@
 import { eq, and, desc } from "drizzle-orm";
-import { getDb, medications, medLogs } from "@carebridge/db-schema";
+import { getDb, medications, medLogs, allergies } from "@carebridge/db-schema";
 import type { CreateMedicationInput, UpdateMedicationInput } from "@carebridge/validators";
 import type { Medication, MedLog, MedStatus } from "@carebridge/shared-types";
 import { emitClinicalEvent } from "../events.js";
+
+// ─── Allergy cross-reactivity map ─────────────────────────────────
+// Maps allergen name patterns to medication name patterns that belong to
+// the same drug class or share cross-reactive ingredients.
+
+const CROSS_REACTIVITY_MAP: Array<{
+  allergenPattern: RegExp;
+  medicationPattern: RegExp;
+  class: string;
+}> = [
+  {
+    allergenPattern: /penicillin|amoxicillin|ampicillin/i,
+    medicationPattern: /penicillin|amoxicillin|ampicillin|augmentin|amoxil|piperacillin|nafcillin|oxacillin|dicloxacillin/i,
+    class: "penicillin",
+  },
+  {
+    allergenPattern: /cephalosporin|cefazolin|ceftriaxone|cephalexin/i,
+    medicationPattern: /cefazolin|ceftriaxone|cephalexin|cefepime|cefuroxime|ceftazidime|cefdinir|cefpodoxime|cefotaxime/i,
+    class: "cephalosporin",
+  },
+  {
+    allergenPattern: /penicillin|amoxicillin|ampicillin/i,
+    medicationPattern: /cefazolin|ceftriaxone|cephalexin|cefepime|cefuroxime/i,
+    class: "penicillin-cephalosporin-cross",
+  },
+  {
+    allergenPattern: /sulfa|sulfamethoxazole|bactrim|septra|trimethoprim/i,
+    medicationPattern: /sulfamethoxazole|bactrim|septra|sulfasalazine|sulfadiazine|dapsone/i,
+    class: "sulfonamide",
+  },
+  {
+    allergenPattern: /nsaid|ibuprofen|naproxen|aspirin/i,
+    medicationPattern: /ibuprofen|naproxen|diclofenac|celecoxib|indomethacin|ketorolac|meloxicam|piroxicam|aspirin/i,
+    class: "NSAID",
+  },
+  {
+    allergenPattern: /codeine|morphine|opioid/i,
+    medicationPattern: /codeine|morphine|hydrocodone|oxycodone|fentanyl|tramadol|hydromorphone|meperidine/i,
+    class: "opioid",
+  },
+  {
+    allergenPattern: /fluoroquinolone|ciprofloxacin|levofloxacin/i,
+    medicationPattern: /ciprofloxacin|levofloxacin|moxifloxacin|norfloxacin|ofloxacin/i,
+    class: "fluoroquinolone",
+  },
+  {
+    allergenPattern: /ace inhibitor|lisinopril|enalapril/i,
+    medicationPattern: /lisinopril|enalapril|ramipril|captopril|benazepril|fosinopril|quinapril|perindopril/i,
+    class: "ACE inhibitor",
+  },
+  {
+    allergenPattern: /statin|atorvastatin|simvastatin/i,
+    medicationPattern: /atorvastatin|simvastatin|rosuvastatin|pravastatin|lovastatin|fluvastatin|pitavastatin/i,
+    class: "statin",
+  },
+  {
+    allergenPattern: /macrolide|azithromycin|erythromycin|clarithromycin/i,
+    medicationPattern: /azithromycin|erythromycin|clarithromycin|fidaxomicin/i,
+    class: "macrolide",
+  },
+  {
+    allergenPattern: /tetracycline|doxycycline|minocycline/i,
+    medicationPattern: /tetracycline|doxycycline|minocycline|tigecycline/i,
+    class: "tetracycline",
+  },
+  {
+    allergenPattern: /benzodiazepine|diazepam|lorazepam|alprazolam/i,
+    medicationPattern: /diazepam|lorazepam|alprazolam|clonazepam|midazolam|temazepam|triazolam/i,
+    class: "benzodiazepine",
+  },
+];
+
+export interface AllergyConflict {
+  allergen: string;
+  severity: string | null;
+  reaction: string | null;
+  matchType: "direct" | "cross-reactivity";
+  drugClass?: string;
+}
+
+/**
+ * Check a medication name against a patient's allergy list.
+ * Returns any conflicts found via direct name match or cross-reactivity class.
+ */
+export async function checkAllergyConflicts(
+  patientId: string,
+  medicationName: string,
+): Promise<AllergyConflict[]> {
+  const db = getDb();
+  const patientAllergies = await db
+    .select()
+    .from(allergies)
+    .where(eq(allergies.patient_id, patientId));
+
+  if (patientAllergies.length === 0) return [];
+
+  const conflicts: AllergyConflict[] = [];
+  const medLower = medicationName.toLowerCase();
+
+  for (const allergy of patientAllergies) {
+    const allergenLower = allergy.allergen.toLowerCase();
+
+    // Strategy 1: Direct name match
+    if (
+      medLower.includes(allergenLower) ||
+      allergenLower.includes(medLower.split(" ")[0])
+    ) {
+      conflicts.push({
+        allergen: allergy.allergen,
+        severity: allergy.severity,
+        reaction: allergy.reaction,
+        matchType: "direct",
+      });
+      continue; // Don't double-match via cross-reactivity
+    }
+
+    // Strategy 2: Cross-reactivity class matching
+    for (const mapping of CROSS_REACTIVITY_MAP) {
+      if (
+        mapping.allergenPattern.test(allergy.allergen) &&
+        mapping.medicationPattern.test(medicationName)
+      ) {
+        conflicts.push({
+          allergen: allergy.allergen,
+          severity: allergy.severity,
+          reaction: allergy.reaction,
+          matchType: "cross-reactivity",
+          drugClass: mapping.class,
+        });
+        break; // One cross-reactivity match per allergy is enough
+      }
+    }
+  }
+
+  return conflicts;
+}
 
 /**
  * Creates a new medication record and emits a "medication.created" event.
@@ -11,6 +147,20 @@ export async function createMedication(input: CreateMedicationInput): Promise<Me
   const db = getDb();
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
+
+  // Synchronous allergy safety check — blocks prescription of allergenic drugs
+  const allergyConflicts = await checkAllergyConflicts(input.patient_id, input.name);
+  if (allergyConflicts.length > 0) {
+    const details = allergyConflicts.map((c) => {
+      const base = `allergy to "${c.allergen}" (severity: ${c.severity ?? "unknown"}, reaction: ${c.reaction ?? "not specified"})`;
+      return c.matchType === "cross-reactivity"
+        ? `${base} — cross-reactivity via ${c.drugClass} class`
+        : base;
+    });
+    throw new Error(
+      `ALLERGY_CONFLICT: Medication "${input.name}" conflicts with patient allergies: ${details.join("; ")}`,
+    );
+  }
 
   const record: typeof medications.$inferInsert = {
     id,
