@@ -8,7 +8,7 @@
 import type { VitalType } from "@carebridge/shared-types";
 import { COMMON_LAB_TESTS } from "@carebridge/shared-types";
 import type { ClinicalEvent, FlagSeverity, FlagCategory } from "@carebridge/shared-types";
-import { VITAL_DANGER_ZONES, isCriticalVital } from "@carebridge/medical-logic";
+import { VITAL_DANGER_ZONES, DIASTOLIC_DANGER_ZONE, isCriticalVital, checkDiastolicBP } from "@carebridge/medical-logic";
 
 export interface RuleFlag {
   severity: FlagSeverity;
@@ -51,6 +51,39 @@ export function checkCriticalValues(event: ClinicalEvent): RuleFlag[] {
         notify_specialties: [],
         rule_id: `CRITICAL-VITAL-${vitalType.toUpperCase()}`,
       });
+    }
+
+    // Evaluate diastolic BP independently for blood pressure vitals
+    if (vitalType === "blood_pressure") {
+      const diastolic = event.data.value_secondary as number | undefined;
+      if (diastolic !== undefined) {
+        const diastolicSeverity = checkDiastolicBP(diastolic);
+        if (diastolicSeverity) {
+          const direction = diastolic < DIASTOLIC_DANGER_ZONE.criticalLow ? "low" : "high";
+          const displayBP = value !== undefined ? `${value}/${diastolic}` : `${diastolic}`;
+          flags.push({
+            severity: diastolicSeverity,
+            category: "critical-value",
+            summary: `Critically ${direction} diastolic blood pressure: ${displayBP} ${(event.data.unit as string) ?? "mmHg"}`.trim(),
+            rationale:
+              `Patient's diastolic blood pressure of ${diastolic} mmHg is in the ${diastolicSeverity} range. ` +
+              `Diastolic thresholds: critical low < ${DIASTOLIC_DANGER_ZONE.criticalLow}, ` +
+              `warning high >= ${DIASTOLIC_DANGER_ZONE.warningHigh}, ` +
+              `critical high >= ${DIASTOLIC_DANGER_ZONE.criticalHigh}. ` +
+              (diastolicSeverity === "critical" && direction === "high"
+                ? `Diastolic >= ${DIASTOLIC_DANGER_ZONE.criticalHigh} mmHg indicates hypertensive emergency. Immediate assessment required.`
+                : diastolicSeverity === "critical" && direction === "low"
+                  ? `Diastolic < ${DIASTOLIC_DANGER_ZONE.criticalLow} mmHg indicates significant hypotension. Immediate assessment required.`
+                  : `Diastolic >= ${DIASTOLIC_DANGER_ZONE.warningHigh} mmHg indicates hypertension requiring clinical evaluation.`),
+            suggested_action:
+              diastolicSeverity === "critical"
+                ? `Assess patient immediately. ${direction === "high" ? "Evaluate for hypertensive emergency — risk of stroke, aortic dissection, and end-organ damage. Initiate IV antihypertensive therapy per protocol." : "Evaluate for causes of hypotension and initiate fluid resuscitation or vasopressor support as indicated."}`
+                : `Evaluate patient for hypertension. Consider repeat measurement, medication review, and initiation or adjustment of antihypertensive therapy.`,
+            notify_specialties: diastolicSeverity === "critical" ? ["cardiology"] : [],
+            rule_id: `CRITICAL-VITAL-DIASTOLIC_BP`,
+          });
+        }
+      }
     }
   }
 

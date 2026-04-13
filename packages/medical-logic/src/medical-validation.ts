@@ -13,6 +13,19 @@ export interface VitalRange {
   criticalHigh?: number;
 }
 
+/** Diastolic-specific thresholds for blood pressure evaluation */
+export interface DiastolicRange {
+  criticalLow: number;
+  criticalHigh: number;
+  warningHigh: number;
+}
+
+export const DIASTOLIC_DANGER_ZONE: DiastolicRange = {
+  criticalLow: 60,
+  criticalHigh: 120,
+  warningHigh: 90,
+};
+
 export const VITAL_DANGER_ZONES: Record<VitalType, VitalRange> = {
   blood_pressure: { min: 60, max: 250, criticalLow: 70, criticalHigh: 180 },
   heart_rate: { min: 20, max: 300, criticalLow: 40, criticalHigh: 200 },
@@ -133,4 +146,15 @@ export function isCriticalVital(type: VitalType, value: number): boolean {
   if (range.criticalLow !== undefined && value <= range.criticalLow) return true;
   if (range.criticalHigh !== undefined && value >= range.criticalHigh) return true;
   return false;
+}
+
+/** Severity level for diastolic evaluation */
+export type DiastolicSeverity = "critical" | "warning" | null;
+
+/** Check diastolic BP and return severity (critical, warning, or null) */
+export function checkDiastolicBP(diastolic: number): DiastolicSeverity {
+  if (diastolic < DIASTOLIC_DANGER_ZONE.criticalLow) return "critical";
+  if (diastolic >= DIASTOLIC_DANGER_ZONE.criticalHigh) return "critical";
+  if (diastolic >= DIASTOLIC_DANGER_ZONE.warningHigh) return "warning";
+  return null;
 }
