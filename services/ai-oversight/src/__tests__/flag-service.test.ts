@@ -7,6 +7,8 @@ const mockWhere = vi.fn();
 const mockLimit = vi.fn();
 const mockInsert = vi.fn();
 const mockValues = vi.fn();
+const mockOnConflictDoNothing = vi.fn();
+const mockReturning = vi.fn();
 
 const mockDb = {
   select: mockSelect,
@@ -44,9 +46,12 @@ beforeEach(() => {
   mockWhere.mockReturnValue({ limit: mockLimit });
   mockLimit.mockResolvedValue([]);
 
-  // Default chain: insert().values() -> void
+  // Default chain: insert().values().onConflictDoNothing().returning() -> [record]
   mockInsert.mockReturnValue({ values: mockValues });
-  mockValues.mockResolvedValue(undefined);
+  mockValues.mockReturnValue({ onConflictDoNothing: mockOnConflictDoNothing });
+  mockOnConflictDoNothing.mockReturnValue({ returning: mockReturning });
+  // By default, returning() resolves with a single-element array (insert succeeded)
+  mockReturning.mockResolvedValue([{ id: "inserted" }]);
 });
 
 describe("createFlag", () => {
@@ -139,6 +144,64 @@ describe("createFlag", () => {
 
     expect(mockInsert).not.toHaveBeenCalled();
     expect(result.id).toBe("existing-llm-flag");
+  });
+
+  it("returns existing flag when DB unique constraint prevents duplicate insert (TOCTOU race)", async () => {
+    // Simulate the race: application-level SELECT found nothing, but a
+    // concurrent worker inserted between our SELECT and INSERT, so
+    // ON CONFLICT DO NOTHING fires and returning() yields [].
+    mockReturning.mockResolvedValueOnce([]);
+
+    // The follow-up SELECT to fetch the winner's flag
+    const winnerFlag = {
+      id: "winner-flag-id",
+      ...baseFlag,
+      created_at: "2026-01-01T00:00:00.000Z",
+    };
+    // First call: dedup SELECT -> [] (no dup found at app level)
+    // Second call (after conflict): fetch winner -> [winnerFlag]
+    mockLimit
+      .mockResolvedValueOnce([])       // initial dedup check
+      .mockResolvedValueOnce([winnerFlag]); // post-conflict fetch
+
+    const result = await createFlag(baseFlag);
+
+    expect(result.id).toBe("winner-flag-id");
+    // Insert was attempted (but suppressed by DB constraint)
+    expect(mockInsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns existing flag when DB unique constraint prevents duplicate LLM flag insert", async () => {
+    const llmFlag = {
+      patient_id: "patient-1",
+      source: "ai-review" as const,
+      severity: "warning" as const,
+      category: "cross-specialty" as const,
+      summary: "LLM finding",
+      rationale: "Analysis",
+      suggested_action: "Review",
+      notify_specialties: ["pharmacy"],
+      trigger_event_ids: ["evt-4"],
+      status: "open" as const,
+    };
+
+    const winnerFlag = {
+      id: "winner-llm-flag",
+      ...llmFlag,
+      created_at: new Date().toISOString(),
+    };
+
+    // ON CONFLICT DO NOTHING returns empty
+    mockReturning.mockResolvedValueOnce([]);
+    // First SELECT (app-level dedup) -> no match; second SELECT (post-conflict) -> winner
+    mockLimit
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([winnerFlag]);
+
+    const result = await createFlag(llmFlag);
+
+    expect(result.id).toBe("winner-llm-flag");
+    expect(mockInsert).toHaveBeenCalledTimes(1);
   });
 
   it("creates a new LLM flag when no duplicate exists within 24h window", async () => {

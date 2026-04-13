@@ -90,7 +90,48 @@ export async function createFlag(
     created_at: now,
   };
 
-  await db.insert(clinicalFlags).values(record);
+  // Use ON CONFLICT DO NOTHING to handle the race condition where a
+  // concurrent worker inserts a duplicate between our SELECT and INSERT.
+  // The unique partial indexes (idx_flags_open_rule_dedup and
+  // idx_flags_open_llm_dedup) enforce dedup at the DB level.
+  const inserted = await db
+    .insert(clinicalFlags)
+    .values(record)
+    .onConflictDoNothing()
+    .returning();
+
+  // If the insert was suppressed by the unique constraint, fetch and
+  // return the existing flag that won the race.
+  if (inserted.length === 0) {
+    if (flag.rule_id) {
+      const existing = await db
+        .select()
+        .from(clinicalFlags)
+        .where(
+          and(
+            eq(clinicalFlags.patient_id, flag.patient_id),
+            eq(clinicalFlags.rule_id, flag.rule_id),
+            eq(clinicalFlags.status, "open"),
+          ),
+        )
+        .limit(1);
+      return existing[0] as unknown as ClinicalFlag;
+    } else {
+      const existing = await db
+        .select()
+        .from(clinicalFlags)
+        .where(
+          and(
+            eq(clinicalFlags.patient_id, flag.patient_id),
+            eq(clinicalFlags.category, flag.category),
+            eq(clinicalFlags.severity, flag.severity),
+            eq(clinicalFlags.status, "open"),
+          ),
+        )
+        .limit(1);
+      return existing[0] as unknown as ClinicalFlag;
+    }
+  }
 
   recordFlagCreated({ rule_id: flag.rule_id, source: flag.source });
 
