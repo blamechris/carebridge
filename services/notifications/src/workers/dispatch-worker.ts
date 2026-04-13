@@ -20,6 +20,7 @@ import { eq, and, isNull, inArray } from "drizzle-orm";
 import crypto from "node:crypto";
 import type { NotificationEvent } from "../queue.js";
 import { publishNotification } from "../publish.js";
+import { redactPatientId } from "@carebridge/phi-sanitizer";
 import { filterRecipientsBySpecialty } from "./specialty-filter.js";
 import type { CandidateRecipient } from "./specialty-filter.js";
 
@@ -136,7 +137,7 @@ async function processNotificationJob(event: NotificationEvent): Promise<number>
   if (recipientIds.length === 0) {
     console.log(
       `[dispatch-worker] No recipients found for flag ${event.flag_id} ` +
-        `(patient: ${event.patient_id}, specialties: ${event.notify_specialties.join(", ")})`,
+        `(patient: ${redactPatientId(event.patient_id)}, specialties: ${event.notify_specialties.join(", ")})`,
     );
     return 0;
   }
@@ -205,7 +206,7 @@ export function startDispatchWorker(): Worker {
 
       console.log(
         `[dispatch-worker] Processing job ${job.id} — flag: ${event.flag_id} ` +
-          `(severity: ${event.severity}, patient: ${event.patient_id})`,
+          `(severity: ${event.severity}, patient: ${redactPatientId(event.patient_id)})`,
       );
 
       const startTime = Date.now();

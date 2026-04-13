@@ -32,6 +32,7 @@ import {
 import type { LLMFlagOutput } from "@carebridge/ai-prompts";
 import {
   redactClinicalText,
+  redactPatientId,
   validateLLMResponse,
 } from "@carebridge/phi-sanitizer";
 
@@ -186,7 +187,7 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
 
     if (budgetResult.truncated) {
       console.warn(
-        `[review-service] Token budget exceeded for patient ${event.patient_id}. ` +
+        `[review-service] Token budget exceeded for patient ${redactPatientId(event.patient_id)}. ` +
           `Original: ${budgetResult.originalTokens} tokens, ` +
           `Final: ${budgetResult.finalTokens} tokens. ` +
           `Sections trimmed: ${budgetResult.sectionsRemoved.join(", ")}`,
