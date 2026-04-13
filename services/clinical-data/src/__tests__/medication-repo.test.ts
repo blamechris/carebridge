@@ -10,7 +10,17 @@ const updateSetMock = vi.fn(() => ({ where: updateSetWhereMock }));
 const updateMock = vi.fn(() => ({ set: updateSetMock }));
 
 const selectFromWhereLimitMock = vi.fn();
-const selectFromWhereMock = vi.fn(() => ({ limit: selectFromWhereLimitMock }));
+/** Where mock returns a thenable with .limit() support.
+ * Allergy queries await where() directly; other queries chain .limit(). */
+let allergyResults: unknown[] = [];
+const selectFromWhereMock = vi.fn(() => {
+  const obj = {
+    limit: selectFromWhereLimitMock,
+    then: (resolve: (v: unknown) => void, reject?: (e: unknown) => void) =>
+      Promise.resolve(allergyResults).then(resolve, reject),
+  };
+  return obj;
+});
 const selectFromMock = vi.fn(() => ({
   where: selectFromWhereMock,
   orderBy: vi.fn().mockReturnValue({ where: selectFromWhereMock }),
@@ -31,6 +41,9 @@ vi.mock("@carebridge/db-schema", () => ({
     updated_at: "updated_at",
   },
   medLogs: {},
+  allergies: {
+    patient_id: "patient_id",
+  },
 }));
 
 // ── Mock events ──────────────────────────────────────────────────
@@ -262,5 +275,79 @@ describe("updateMedication", () => {
     // Should succeed without expectedUpdatedAt (backwards compatible)
     const result = await updateMedication(MED_ID, { frequency: "TID" });
     expect(result.frequency).toBe("TID");
+  });
+});
+
+describe("allergy safety check", () => {
+  it("blocks medication that directly matches a patient allergy", async () => {
+    allergyResults = [
+      {
+        id: "allergy-1",
+        patient_id: PATIENT_ID,
+        allergen: "Penicillin",
+        rxnorm_code: null,
+        severity: "severe",
+        reaction: "anaphylaxis",
+        snomed_code: null,
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+    ];
+
+    await expect(
+      createMedication({ ...sampleMedInput, name: "Penicillin V" }),
+    ).rejects.toThrow(/ALLERGY_CONFLICT.*Penicillin/);
+
+    // Must NOT have inserted into the database
+    expect(insertMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks medication that cross-reacts with a patient allergy (penicillin → amoxicillin)", async () => {
+    allergyResults = [
+      {
+        id: "allergy-2",
+        patient_id: PATIENT_ID,
+        allergen: "Penicillin",
+        rxnorm_code: null,
+        severity: "severe",
+        reaction: "anaphylaxis",
+        snomed_code: null,
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+    ];
+
+    await expect(
+      createMedication({ ...sampleMedInput, name: "Amoxicillin 500mg" }),
+    ).rejects.toThrow(/ALLERGY_CONFLICT.*Amoxicillin.*Penicillin.*penicillin/);
+
+    expect(insertMock).not.toHaveBeenCalled();
+  });
+
+  it("allows medication when no allergy conflicts exist", async () => {
+    allergyResults = [
+      {
+        id: "allergy-3",
+        patient_id: PATIENT_ID,
+        allergen: "Penicillin",
+        rxnorm_code: null,
+        severity: "moderate",
+        reaction: "rash",
+        snomed_code: null,
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+    ];
+
+    const result = await createMedication(sampleMedInput); // Enoxaparin — no penicillin cross-reactivity
+
+    expect(result.name).toBe("Enoxaparin");
+    expect(insertMock).toHaveBeenCalledOnce();
+  });
+
+  it("allows medication when patient has no allergies", async () => {
+    allergyResults = [];
+
+    const result = await createMedication(sampleMedInput);
+
+    expect(result.name).toBe("Enoxaparin");
+    expect(insertMock).toHaveBeenCalledOnce();
   });
 });

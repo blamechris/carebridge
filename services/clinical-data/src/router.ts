@@ -71,7 +71,17 @@ const medicationsRouter = t.router({
   create: t.procedure
     .input(createMedicationSchema)
     .mutation(async ({ input }) => {
-      return medicationRepo.createMedication(input);
+      try {
+        return await medicationRepo.createMedication(input);
+      } catch (err) {
+        if (err instanceof Error && err.message.startsWith("ALLERGY_CONFLICT:")) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: err.message.replace("ALLERGY_CONFLICT: ", ""),
+          });
+        }
+        throw err;
+      }
     }),
 
   update: t.procedure
