@@ -1,7 +1,7 @@
 "use client";
 
-import { createTRPCReact, httpBatchLink } from "@trpc/react-query";
-import { createTRPCClient, httpBatchLink as vanillaHttpBatchLink } from "@trpc/client";
+import { createTRPCReact, httpLink } from "@trpc/react-query";
+import { createTRPCClient, httpLink as vanillaHttpLink } from "@trpc/client";
 import type { AppRouter } from "@carebridge/api-gateway/src/router.js";
 
 /**
@@ -17,17 +17,25 @@ function getSessionToken(): string | undefined {
   return localStorage.getItem("carebridge_session") ?? undefined;
 }
 
+function getApiUrl(): string {
+  return process.env.NEXT_PUBLIC_API_URL
+    ? `${process.env.NEXT_PUBLIC_API_URL}/trpc`
+    : "http://localhost:4000/trpc";
+}
+
+function authHeaders() {
+  const token = getSessionToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 /**
  * Create links array for the tRPC React provider.
  */
 export function getTRPCLinks() {
   return [
-    httpBatchLink({
-      url: process.env.NEXT_PUBLIC_API_URL ? `${process.env.NEXT_PUBLIC_API_URL}/trpc` : "http://localhost:4000/trpc",
-      headers() {
-        const token = getSessionToken();
-        return token ? { Authorization: `Bearer ${token}` } : {};
-      },
+    httpLink({
+      url: getApiUrl(),
+      headers: authHeaders,
     }),
   ];
 }
@@ -37,12 +45,9 @@ export function getTRPCLinks() {
  */
 export const trpcVanilla = createTRPCClient<AppRouter>({
   links: [
-    vanillaHttpBatchLink({
-      url: process.env.NEXT_PUBLIC_API_URL ? `${process.env.NEXT_PUBLIC_API_URL}/trpc` : "http://localhost:4000/trpc",
-      headers() {
-        const token = getSessionToken();
-        return token ? { Authorization: `Bearer ${token}` } : {};
-      },
+    vanillaHttpLink({
+      url: getApiUrl(),
+      headers: authHeaders,
     }),
   ],
 });

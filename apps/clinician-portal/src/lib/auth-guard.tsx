@@ -8,19 +8,19 @@ import { useAuth } from "./auth";
  * Wraps a page component and redirects to /login if not authenticated.
  */
 export function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, hydrated } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (hydrated && !isAuthenticated) {
       router.replace("/login");
     }
-  }, [isAuthenticated, router]);
+  }, [hydrated, isAuthenticated, router]);
 
-  if (!isAuthenticated) {
+  if (!hydrated || !isAuthenticated) {
     return (
       <div style={{ padding: 40, color: "var(--text-muted)" }}>
-        Redirecting to login...
+        {hydrated ? "Redirecting to login..." : "Loading..."}
       </div>
     );
   }

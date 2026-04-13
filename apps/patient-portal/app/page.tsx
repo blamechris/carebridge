@@ -213,19 +213,21 @@ function PatientDashboard() {
 }
 
 export default function PatientHome() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, hydrated } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (hydrated && !isAuthenticated) {
       router.replace("/login");
     }
-  }, [isAuthenticated, router]);
+  }, [hydrated, isAuthenticated, router]);
 
-  if (!isAuthenticated) {
+  if (!hydrated || !isAuthenticated) {
     return (
       <main>
-        <p style={{ color: "#999" }}>Redirecting to login...</p>
+        <p style={{ color: "#999" }}>
+          {hydrated ? "Redirecting to login..." : "Loading..."}
+        </p>
       </main>
     );
   }
