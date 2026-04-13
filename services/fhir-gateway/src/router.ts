@@ -98,8 +98,8 @@ const adminProcedure = t.procedure.use(isAdmin);
  * access. Per Copilot review on PR #379.
  *
  * Allowed:
+ *   - admin role: full access (unconditional)
  *   - rbacVerified context flag: gateway already ran care-team check
- *   - admin role: full access
  *   - patient role: self-access only (user.id === patientId)
  *
  * Clinicians (physician/specialist/nurse) are deliberately NOT allowed

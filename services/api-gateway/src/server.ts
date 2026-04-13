@@ -98,14 +98,11 @@ async function main() {
   // ~3300 guesses/second; this cap reduces that to 5 attempts per minute
   // per IP. In development, the login limit is raised to 60 req/min to
   // avoid blocking manual and automated testing.
-  const isDev = process.env.NODE_ENV !== "production";
+  const isDev = process.env.NODE_ENV === "development";
   await server.register(rateLimit, {
     global: true,
     max: (req, _key) => {
-      if (req.url?.startsWith("/trpc/auth.login")) {
-        return isDev ? 60 : 5;
-      }
-      if (req.url?.startsWith("/trpc/auth.refreshSession")) {
+      if (req.url?.startsWith("/trpc/auth.login") || req.url?.startsWith("/trpc/auth.refreshSession")) {
         return isDev ? 60 : 5;
       }
       return 100;

@@ -185,7 +185,7 @@ describe("fhirGatewayRouter raw auth (defense-in-depth)", () => {
       specialty: "Hematology/Oncology",
     };
 
-    it("allows a clinician through when rbacVerified is true", async () => {
+    it("allows a clinician through getByPatient when rbacVerified is true", async () => {
       const caller = fhirGatewayRouter.createCaller({
         user: physicianUser,
         rbacVerified: true,
@@ -195,7 +195,7 @@ describe("fhirGatewayRouter raw auth (defense-in-depth)", () => {
       ).resolves.toEqual([]);
     });
 
-    it("still rejects a clinician when rbacVerified is false", async () => {
+    it("still rejects a clinician on getByPatient when rbacVerified is false", async () => {
       const caller = fhirGatewayRouter.createCaller({
         user: physicianUser,
         rbacVerified: false,
@@ -205,12 +205,43 @@ describe("fhirGatewayRouter raw auth (defense-in-depth)", () => {
       ).rejects.toMatchObject({ code: "FORBIDDEN" });
     });
 
-    it("still rejects a clinician when rbacVerified is not set", async () => {
+    it("still rejects a clinician on getByPatient when rbacVerified is not set", async () => {
       const caller = fhirGatewayRouter.createCaller({
         user: physicianUser,
       });
       await expect(
         caller.getByPatient({ patientId: "any-patient" }),
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
+
+    it("allows a clinician through exportPatient when rbacVerified is true", async () => {
+      const caller = fhirGatewayRouter.createCaller({
+        user: physicianUser,
+        rbacVerified: true,
+      });
+      // DB mock returns [] for patients, so exportPatient will throw NOT_FOUND
+      // — but NOT FORBIDDEN, proving the rbacVerified flag was accepted.
+      await expect(
+        caller.exportPatient({ patientId: "any-patient" }),
+      ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    });
+
+    it("rejects a clinician on exportPatient when rbacVerified is false", async () => {
+      const caller = fhirGatewayRouter.createCaller({
+        user: physicianUser,
+        rbacVerified: false,
+      });
+      await expect(
+        caller.exportPatient({ patientId: "any-patient" }),
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
+
+    it("rejects a clinician on exportPatient when rbacVerified is not set", async () => {
+      const caller = fhirGatewayRouter.createCaller({
+        user: physicianUser,
+      });
+      await expect(
+        caller.exportPatient({ patientId: "any-patient" }),
       ).rejects.toMatchObject({ code: "FORBIDDEN" });
     });
   });
