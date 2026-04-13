@@ -21,6 +21,7 @@ export interface AuditTrail {
   facilitiesRedacted: number;
   phonesRedacted: number;
   addressesRedacted: number;
+  ssnsRedacted: number;
 }
 
 const MRN_LABELED = /\bMRN[:\s#]*\d{6,12}\b/gi;
@@ -33,6 +34,7 @@ const PHONE_PAREN = /\(\d{3}\)\s*\d{3}-\d{4}/g;
 const PHONE_DASH = /\b\d{3}-\d{3}-\d{4}\b/g;
 const PHONE_SHORT = /\b\d{3}-\d{4}\b/g;
 const ADDRESS = /\b\d+\s+[A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Boulevard|Blvd|Lane|Ln|Court|Ct|Way)\b\.?/g;
+const SSN = /\b\d{3}-\d{2}-\d{4}\b/g;
 
 // ChatML / Llama delimiter patterns that could be used for injection
 const INJECTION_PATTERNS = [
@@ -292,6 +294,18 @@ export function redactAddresses(text: string): { redactedText: string; count: nu
 }
 
 /**
+ * Redact Social Security Numbers (NNN-NN-NNNN pattern).
+ */
+export function redactSSN(text: string): { redactedText: string; count: number } {
+  let count = 0;
+  const result = text.replace(SSN, () => {
+    count++;
+    return "[SSN]";
+  });
+  return { redactedText: result, count };
+}
+
+/**
  * Error thrown when a prompt fails the fail-closed PHI sanitization check.
  * Carries a list of violation labels (NOT the matching text) so callers can
  * log diagnostics without re-leaking PHI.
@@ -360,6 +374,7 @@ export function redactClinicalText(
     facilitiesRedacted: 0,
     phonesRedacted: 0,
     addressesRedacted: 0,
+    ssnsRedacted: 0,
   };
 
   // Step 1: sanitize free text
@@ -430,6 +445,13 @@ export function redactClinicalText(
     audit.addressesRedacted = r.count;
   }
 
+  // Step 10: redact SSNs
+  {
+    const r = redactSSN(current);
+    current = r.redactedText;
+    audit.ssnsRedacted = r.count;
+  }
+
   audit.fieldsRedacted =
     audit.providersRedacted +
     audit.agesRedacted +
@@ -439,7 +461,8 @@ export function redactClinicalText(
     audit.datesRedacted +
     audit.facilitiesRedacted +
     audit.phonesRedacted +
-    audit.addressesRedacted;
+    audit.addressesRedacted +
+    audit.ssnsRedacted;
 
   return {
     redactedText: current,

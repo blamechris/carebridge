@@ -12,6 +12,7 @@ import {
   redactFacilityNames,
   redactPhones,
   redactAddresses,
+  redactSSN,
 } from "../redactor.js";
 
 describe("redactProviderNames", () => {
@@ -373,11 +374,35 @@ describe("redactAddresses", () => {
   });
 });
 
+describe("redactSSN", () => {
+  it("redacts standard SSN format NNN-NN-NNNN", () => {
+    const { redactedText, count } = redactSSN("Patient SSN 123-45-6789 on file.");
+    expect(redactedText).toContain("[SSN]");
+    expect(redactedText).not.toContain("123-45-6789");
+    expect(count).toBe(1);
+  });
+
+  it("redacts multiple SSNs", () => {
+    const { redactedText, count } = redactSSN(
+      "Primary: 111-22-3333, Spouse: 444-55-6666",
+    );
+    expect(redactedText).not.toContain("111-22-3333");
+    expect(redactedText).not.toContain("444-55-6666");
+    expect(count).toBe(2);
+  });
+
+  it("does not redact partial matches", () => {
+    const { redactedText, count } = redactSSN("Code 12-34-5678 is not an SSN.");
+    expect(redactedText).toBe("Code 12-34-5678 is not an SSN.");
+    expect(count).toBe(0);
+  });
+});
+
 describe("redactClinicalText — full pipeline expansion", () => {
   it("redacts all PHI categories through the pipeline", () => {
     const text =
       "Jane Doe (MRN: 12345678) seen on 03/15/2025 at Mercy General Hospital. " +
-      "Call (555) 123-4567. Address: 789 Elm Drive.";
+      "Call (555) 123-4567. Address: 789 Elm Drive. SSN: 123-45-6789.";
     const result = redactClinicalText(text, {
       patientName: "Jane Doe",
       facilityNames: ["Mercy General Hospital"],
@@ -388,11 +413,13 @@ describe("redactClinicalText — full pipeline expansion", () => {
     expect(result.redactedText).not.toContain("Mercy General Hospital");
     expect(result.redactedText).not.toContain("(555) 123-4567");
     expect(result.redactedText).not.toContain("789 Elm Drive");
+    expect(result.redactedText).not.toContain("123-45-6789");
     expect(result.auditTrail.patientNamesRedacted).toBeGreaterThan(0);
     expect(result.auditTrail.mrnsRedacted).toBeGreaterThan(0);
     expect(result.auditTrail.datesRedacted).toBeGreaterThan(0);
     expect(result.auditTrail.facilitiesRedacted).toBeGreaterThan(0);
     expect(result.auditTrail.phonesRedacted).toBeGreaterThan(0);
     expect(result.auditTrail.addressesRedacted).toBeGreaterThan(0);
+    expect(result.auditTrail.ssnsRedacted).toBeGreaterThan(0);
   });
 });
