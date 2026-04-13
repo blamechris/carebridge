@@ -52,6 +52,9 @@ function resolveCorsOrigins(): string[] {
 async function main() {
   const corsOrigins = resolveCorsOrigins();
   const redisClient = createRedisClient();
+  // Eagerly connect so the rate-limiter's first command doesn't race against
+  // lazy-connect and fail with "Stream isn't writeable" (enableOfflineQueue is false).
+  await redisClient.connect();
 
   const server = Fastify({
     logger: {
