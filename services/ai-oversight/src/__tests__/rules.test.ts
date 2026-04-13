@@ -17,6 +17,11 @@ vi.mock("@carebridge/medical-logic", () => ({
     blood_pressure: { min: 60, max: 250, criticalLow: 70, criticalHigh: 180 },
     blood_glucose: { min: 10, max: 800, criticalLow: 54, criticalHigh: 400 },
   },
+  DIASTOLIC_DANGER_ZONE: {
+    criticalLow: 60,
+    criticalHigh: 120,
+    warningHigh: 90,
+  },
   isCriticalVital: (type: string, value: number) => {
     const zones: Record<string, { criticalLow?: number; criticalHigh?: number }> = {
       heart_rate: { criticalLow: 40, criticalHigh: 200 },
@@ -30,6 +35,12 @@ vi.mock("@carebridge/medical-logic", () => ({
     if (zone.criticalLow !== undefined && value <= zone.criticalLow) return true;
     if (zone.criticalHigh !== undefined && value >= zone.criticalHigh) return true;
     return false;
+  },
+  checkDiastolicBP: (diastolic: number) => {
+    if (diastolic < 60) return "critical";
+    if (diastolic >= 120) return "critical";
+    if (diastolic >= 90) return "warning";
+    return null;
   },
 }));
 
@@ -77,6 +88,105 @@ describe("checkCriticalValues", () => {
     });
 
     expect(flags).toHaveLength(0);
+  });
+
+  it("returns no diastolic flag for normal BP (120/80)", () => {
+    const flags = checkCriticalValues({
+      id: "evt-bp-1",
+      type: "vital.created",
+      patient_id: "p-1",
+      data: { type: "blood_pressure", value_primary: 120, value_secondary: 80, unit: "mmHg" },
+      timestamp: new Date().toISOString(),
+    });
+
+    expect(flags).toHaveLength(0);
+  });
+
+  it("flags systolic crisis (190/90) as critical", () => {
+    const flags = checkCriticalValues({
+      id: "evt-bp-2",
+      type: "vital.created",
+      patient_id: "p-1",
+      data: { type: "blood_pressure", value_primary: 190, value_secondary: 90, unit: "mmHg" },
+      timestamp: new Date().toISOString(),
+    });
+
+    // Systolic 190 >= 180 triggers systolic critical flag
+    const systolicFlag = flags.find((f) => f.rule_id === "CRITICAL-VITAL-BLOOD_PRESSURE");
+    expect(systolicFlag).toBeDefined();
+    expect(systolicFlag!.severity).toBe("critical");
+  });
+
+  it("flags diastolic crisis (145/125) as critical — hypertensive emergency", () => {
+    const flags = checkCriticalValues({
+      id: "evt-bp-3",
+      type: "vital.created",
+      patient_id: "p-1",
+      data: { type: "blood_pressure", value_primary: 145, value_secondary: 125, unit: "mmHg" },
+      timestamp: new Date().toISOString(),
+    });
+
+    // Systolic 145 is NOT critical (< 180), but diastolic 125 >= 120 is critical
+    const systolicFlag = flags.find((f) => f.rule_id === "CRITICAL-VITAL-BLOOD_PRESSURE");
+    expect(systolicFlag).toBeUndefined();
+
+    const diastolicFlag = flags.find((f) => f.rule_id === "CRITICAL-VITAL-DIASTOLIC_BP");
+    expect(diastolicFlag).toBeDefined();
+    expect(diastolicFlag!.severity).toBe("critical");
+    expect(diastolicFlag!.summary).toContain("diastolic");
+    expect(diastolicFlag!.summary).toContain("145/125");
+  });
+
+  it("flags both systolic and diastolic when both critical (200/130)", () => {
+    const flags = checkCriticalValues({
+      id: "evt-bp-4",
+      type: "vital.created",
+      patient_id: "p-1",
+      data: { type: "blood_pressure", value_primary: 200, value_secondary: 130, unit: "mmHg" },
+      timestamp: new Date().toISOString(),
+    });
+
+    const systolicFlag = flags.find((f) => f.rule_id === "CRITICAL-VITAL-BLOOD_PRESSURE");
+    expect(systolicFlag).toBeDefined();
+    expect(systolicFlag!.severity).toBe("critical");
+
+    const diastolicFlag = flags.find((f) => f.rule_id === "CRITICAL-VITAL-DIASTOLIC_BP");
+    expect(diastolicFlag).toBeDefined();
+    expect(diastolicFlag!.severity).toBe("critical");
+  });
+
+  it("flags isolated diastolic high (135/95) as warning", () => {
+    const flags = checkCriticalValues({
+      id: "evt-bp-5",
+      type: "vital.created",
+      patient_id: "p-1",
+      data: { type: "blood_pressure", value_primary: 135, value_secondary: 95, unit: "mmHg" },
+      timestamp: new Date().toISOString(),
+    });
+
+    // Systolic 135 is not critical
+    const systolicFlag = flags.find((f) => f.rule_id === "CRITICAL-VITAL-BLOOD_PRESSURE");
+    expect(systolicFlag).toBeUndefined();
+
+    // Diastolic 95 >= 90 triggers warning
+    const diastolicFlag = flags.find((f) => f.rule_id === "CRITICAL-VITAL-DIASTOLIC_BP");
+    expect(diastolicFlag).toBeDefined();
+    expect(diastolicFlag!.severity).toBe("warning");
+  });
+
+  it("flags critically low diastolic (130/50) as critical hypotension", () => {
+    const flags = checkCriticalValues({
+      id: "evt-bp-6",
+      type: "vital.created",
+      patient_id: "p-1",
+      data: { type: "blood_pressure", value_primary: 130, value_secondary: 50, unit: "mmHg" },
+      timestamp: new Date().toISOString(),
+    });
+
+    const diastolicFlag = flags.find((f) => f.rule_id === "CRITICAL-VITAL-DIASTOLIC_BP");
+    expect(diastolicFlag).toBeDefined();
+    expect(diastolicFlag!.severity).toBe("critical");
+    expect(diastolicFlag!.summary).toContain("low");
   });
 
   it("flags critical lab results with explicit critical flag", () => {
