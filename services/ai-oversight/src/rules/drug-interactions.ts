@@ -280,6 +280,38 @@ const INTERACTION_PAIRS: DrugInteractionPair[] = [
     notify_specialties: ["nephrology"],
   },
   {
+    id: "DI-MACROLIDE-STATIN-CRITICAL",
+    drugA: /clarithromycin|erythromycin/i,
+    drugB: /simvastatin|lovastatin/i,
+    severity: "critical",
+    summary:
+      "Macrolide antibiotic + CYP3A4-metabolized statin: contraindicated — severe rhabdomyolysis risk",
+    rationale:
+      "Clarithromycin and erythromycin are potent CYP3A4 inhibitors that dramatically increase plasma " +
+      "levels of simvastatin and lovastatin (3-4x elevation). This causes severe myopathy, " +
+      "rhabdomyolysis, and acute kidney injury. This combination is contraindicated per FDA labeling.",
+    suggested_action:
+      "CONTRAINDICATED combination. Hold statin during macrolide course, switch to a non-CYP3A4-metabolized " +
+      "statin (pravastatin, rosuvastatin), or use an alternative antibiotic (azithromycin, amoxicillin, doxycycline).",
+    notify_specialties: ["cardiology", "infectious_disease"],
+  },
+  {
+    id: "DI-MACROLIDE-STATIN-WARNING",
+    drugA: /clarithromycin|erythromycin/i,
+    drugB: /atorvastatin/i,
+    severity: "warning",
+    summary:
+      "Macrolide antibiotic + atorvastatin: dose reduction needed — rhabdomyolysis risk via CYP3A4 inhibition",
+    rationale:
+      "Clarithromycin and erythromycin inhibit CYP3A4, raising atorvastatin plasma levels and increasing " +
+      "the risk of myopathy and rhabdomyolysis. Atorvastatin is less affected than simvastatin/lovastatin " +
+      "but the interaction is still clinically significant. Dose reduction is recommended.",
+    suggested_action:
+      "Reduce atorvastatin dose during macrolide course (max 20mg/day). Monitor for muscle pain, weakness, " +
+      "and dark urine. Consider switching to pravastatin or rosuvastatin, or use an alternative antibiotic.",
+    notify_specialties: ["cardiology", "infectious_disease"],
+  },
+  {
     id: "DI-QTC-COMBO",
     drugA: /amiodarone|sotalol|dofetilide|dronedarone|haloperidol|thioridazine/i,
     drugB: /azithromycin|zithromax|erythromycin|clarithromycin|ondansetron|zofran|methadone|levofloxacin|moxifloxacin/i,
