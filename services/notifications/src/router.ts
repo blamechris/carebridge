@@ -51,16 +51,26 @@ export const notificationsRouter = t.router({
       };
       await db.insert(notifications).values(notification);
 
-      // Publish to Redis pub/sub for real-time SSE delivery
-      await publishNotification(notification.user_id, {
-        id: notification.id,
-        type: notification.type,
-        title: notification.title,
-        body: notification.body,
-        link: notification.link,
-        related_flag_id: notification.related_flag_id,
-        created_at: notification.created_at,
-      });
+      // Publish to Redis pub/sub for real-time SSE delivery.
+      // Best-effort: a Redis outage should not fail the mutation after
+      // the notification row has already been persisted.
+      try {
+        await publishNotification(notification.user_id, {
+          id: notification.id,
+          type: notification.type,
+          title: notification.title,
+          body: notification.body,
+          link: notification.link,
+          related_flag_id: notification.related_flag_id,
+          created_at: notification.created_at,
+        });
+      } catch (error) {
+        console.error("[notifications] Failed to publish notification to Redis", {
+          notificationId: notification.id,
+          userId: notification.user_id,
+          error,
+        });
+      }
 
       return notification;
     }),
