@@ -372,6 +372,51 @@ const INTERACTION_PAIRS: DrugInteractionPair[] = [
     notify_specialties: ["cardiology", "infectious_disease"],
   },
   {
+    id: "DI-ACE-KSPARING",
+    drugA: /lisinopril|enalapril|ramipril|captopril|benazepril|fosinopril|quinapril|perindopril/i,
+    drugB: /spironolactone|aldactone|eplerenone|inspra|amiloride|midamor|triamterene|dyrenium/i,
+    severity: "warning",
+    summary: "ACE inhibitor + potassium-sparing diuretic: hyperkalemia risk",
+    rationale:
+      "ACE inhibitors reduce aldosterone-mediated potassium excretion. Potassium-sparing diuretics " +
+      "further impair potassium elimination. The combined effect significantly increases the risk of " +
+      "life-threatening hyperkalemia, especially in patients with renal impairment or diabetes.",
+    suggested_action:
+      "Monitor serum potassium within 1 week of initiation and regularly thereafter. Check renal function. " +
+      "Use lowest effective doses. Counsel patient to avoid high-potassium foods and salt substitutes.",
+    notify_specialties: ["nephrology", "cardiology"],
+  },
+  {
+    id: "DI-LITHIUM-ACE",
+    drugA: /lithium|lithobid|eskalith/i,
+    drugB: /lisinopril|enalapril|ramipril|captopril|benazepril|fosinopril|quinapril|perindopril/i,
+    severity: "warning",
+    summary: "Lithium + ACE inhibitor: lithium toxicity risk",
+    rationale:
+      "ACE inhibitors reduce renal blood flow and GFR, decreasing lithium clearance by up to 25-35%. " +
+      "This leads to lithium accumulation and increased risk of toxicity, presenting as tremor, ataxia, " +
+      "confusion, renal failure, seizures, and cardiac arrhythmias.",
+    suggested_action:
+      "Monitor lithium levels within 1 week of ACE inhibitor initiation and with dose changes. " +
+      "Consider reducing lithium dose. Ensure adequate hydration. Use ARBs with similar caution.",
+    notify_specialties: ["psychiatry", "nephrology"],
+  },
+  {
+    id: "DI-FLUOROQUINOLONE-CORTICOSTEROID",
+    drugA: /ciprofloxacin|cipro|levofloxacin|moxifloxacin|norfloxacin|ofloxacin|gemifloxacin/i,
+    drugB: /prednisone|prednisolone|methylprednisolone|dexamethasone|hydrocortisone|budesonide|triamcinolone/i,
+    severity: "warning",
+    summary: "Fluoroquinolone + corticosteroid: increased tendon rupture risk",
+    rationale:
+      "Fluoroquinolones carry an FDA black box warning for tendinitis and tendon rupture. Concurrent " +
+      "corticosteroid use further increases this risk, particularly for the Achilles tendon. Risk is " +
+      "highest in patients over 60, organ transplant recipients, and those with renal impairment.",
+    suggested_action:
+      "Avoid combination when possible. If co-prescribed, counsel patient to discontinue fluoroquinolone " +
+      "and seek medical attention at first sign of tendon pain or swelling. Consider alternative antibiotic.",
+    notify_specialties: ["orthopedics", "infectious_disease"],
+  },
+  {
     id: "DI-QTC-COMBO",
     drugA: /amiodarone|sotalol|dofetilide|dronedarone|haloperidol|thioridazine/i,
     drugB: /azithromycin|zithromax|erythromycin|clarithromycin|ondansetron|zofran|methadone|levofloxacin|moxifloxacin/i,

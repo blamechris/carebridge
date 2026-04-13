@@ -102,6 +102,126 @@ describe("checkDrugInteractions", () => {
     });
   });
 
+  describe("ACE inhibitor + potassium-sparing diuretic — hyperkalemia", () => {
+    it("flags lisinopril + spironolactone", () => {
+      const flags = checkDrugInteractions(["lisinopril 10mg", "spironolactone 25mg"]);
+      const match = flags.find((f) => f.rule_id === "DI-ACE-KSPARING");
+      expect(match).toBeDefined();
+      expect(match!.severity).toBe("warning");
+    });
+
+    it("flags enalapril + amiloride", () => {
+      const flags = checkDrugInteractions(["enalapril 5mg", "amiloride 5mg"]);
+      const match = flags.find((f) => f.rule_id === "DI-ACE-KSPARING");
+      expect(match).toBeDefined();
+    });
+
+    it("flags ramipril + eplerenone (brand inspra)", () => {
+      const flags = checkDrugInteractions(["ramipril 5mg", "inspra 50mg"]);
+      const match = flags.find((f) => f.rule_id === "DI-ACE-KSPARING");
+      expect(match).toBeDefined();
+    });
+
+    it("flags captopril + triamterene", () => {
+      const flags = checkDrugInteractions(["captopril 25mg", "triamterene 50mg"]);
+      const match = flags.find((f) => f.rule_id === "DI-ACE-KSPARING");
+      expect(match).toBeDefined();
+    });
+  });
+
+  describe("lithium + ACE inhibitor — lithium toxicity", () => {
+    it("flags lithium + lisinopril", () => {
+      const flags = checkDrugInteractions(["lithium 300mg", "lisinopril 10mg"]);
+      const match = flags.find((f) => f.rule_id === "DI-LITHIUM-ACE");
+      expect(match).toBeDefined();
+      expect(match!.severity).toBe("warning");
+    });
+
+    it("flags lithobid + enalapril", () => {
+      const flags = checkDrugInteractions(["lithobid 450mg", "enalapril 5mg"]);
+      const match = flags.find((f) => f.rule_id === "DI-LITHIUM-ACE");
+      expect(match).toBeDefined();
+    });
+
+    it("flags lithium + ramipril", () => {
+      const flags = checkDrugInteractions(["lithium 600mg", "ramipril 5mg"]);
+      const match = flags.find((f) => f.rule_id === "DI-LITHIUM-ACE");
+      expect(match).toBeDefined();
+    });
+  });
+
+  describe("fluoroquinolone + corticosteroid — tendon rupture", () => {
+    it("flags ciprofloxacin + prednisone", () => {
+      const flags = checkDrugInteractions(["ciprofloxacin 500mg", "prednisone 20mg"]);
+      const match = flags.find((f) => f.rule_id === "DI-FLUOROQUINOLONE-CORTICOSTEROID");
+      expect(match).toBeDefined();
+      expect(match!.severity).toBe("warning");
+    });
+
+    it("flags levofloxacin + dexamethasone", () => {
+      const flags = checkDrugInteractions(["levofloxacin 750mg", "dexamethasone 4mg"]);
+      const match = flags.find((f) => f.rule_id === "DI-FLUOROQUINOLONE-CORTICOSTEROID");
+      expect(match).toBeDefined();
+    });
+
+    it("flags moxifloxacin + methylprednisolone", () => {
+      const flags = checkDrugInteractions(["moxifloxacin 400mg", "methylprednisolone 40mg"]);
+      const match = flags.find((f) => f.rule_id === "DI-FLUOROQUINOLONE-CORTICOSTEROID");
+      expect(match).toBeDefined();
+    });
+  });
+
+  describe("existing high-priority pairs coverage", () => {
+    it("flags warfarin + ibuprofen (NSAID)", () => {
+      const flags = checkDrugInteractions(["warfarin 5mg", "ibuprofen 400mg"]);
+      const match = flags.find((f) => f.rule_id === "DI-WARFARIN-NSAID");
+      expect(match).toBeDefined();
+      expect(match!.severity).toBe("critical");
+    });
+
+    it("flags digoxin + amiodarone", () => {
+      const flags = checkDrugInteractions(["digoxin 0.125mg", "amiodarone 200mg"]);
+      const match = flags.find((f) => f.rule_id === "DI-DIGOXIN-AMIODARONE");
+      expect(match).toBeDefined();
+      expect(match!.severity).toBe("critical");
+    });
+
+    it("flags opioid + benzodiazepine (FDA black box)", () => {
+      const flags = checkDrugInteractions(["oxycodone 10mg", "alprazolam 0.5mg"]);
+      const match = flags.find((f) => f.rule_id === "DI-OPIOID-BENZO");
+      expect(match).toBeDefined();
+      expect(match!.severity).toBe("critical");
+    });
+
+    it("flags metformin + contrast dye", () => {
+      const flags = checkDrugInteractions(["metformin 500mg", "iodinated contrast"]);
+      const match = flags.find((f) => f.rule_id === "DI-METFORMIN-CONTRAST");
+      expect(match).toBeDefined();
+      expect(match!.severity).toBe("warning");
+    });
+
+    it("flags lithium + naproxen (NSAID)", () => {
+      const flags = checkDrugInteractions(["lithium 300mg", "naproxen 500mg"]);
+      const match = flags.find((f) => f.rule_id === "DI-LITHIUM-NSAID");
+      expect(match).toBeDefined();
+      expect(match!.severity).toBe("critical");
+    });
+
+    it("flags theophylline + ciprofloxacin", () => {
+      const flags = checkDrugInteractions(["theophylline 300mg", "ciprofloxacin 500mg"]);
+      const match = flags.find((f) => f.rule_id === "DI-THEOPHYLLINE-CIPRO");
+      expect(match).toBeDefined();
+      expect(match!.severity).toBe("warning");
+    });
+
+    it("flags potassium supplement + spironolactone", () => {
+      const flags = checkDrugInteractions(["potassium chloride 20mEq", "spironolactone 25mg"]);
+      const match = flags.find((f) => f.rule_id === "DI-POTASSIUM-SPIRONOLACTONE");
+      expect(match).toBeDefined();
+      expect(match!.severity).toBe("warning");
+    });
+  });
+
   describe("no false positives", () => {
     it("does not flag unrelated medications", () => {
       const flags = checkDrugInteractions([
