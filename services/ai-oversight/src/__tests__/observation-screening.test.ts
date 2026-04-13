@@ -88,14 +88,14 @@ describe("screenPatientObservation", () => {
 
   // ── High/warning patterns ────────────────────────────────────────
 
-  it("flags 'blood in stool' as warning", () => {
+  it("flags 'blood in stool' as critical", () => {
     const event = makeObservationEvent("I noticed blood in stool this morning");
     const flags = screenPatientObservation(event);
 
     expect(flags.length).toBeGreaterThanOrEqual(1);
     const bleedFlag = flags.find((f) => f.rule_id === "OBS-BLEEDING");
     expect(bleedFlag).toBeDefined();
-    expect(bleedFlag!.severity).toBe("warning");
+    expect(bleedFlag!.severity).toBe("critical");
   });
 
   it("flags severe pain as warning", () => {

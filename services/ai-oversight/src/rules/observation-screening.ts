@@ -6,8 +6,8 @@
  * like "worst headache of my life" are flagged even when the LLM layer is
  * unavailable or delayed.
  *
- * Applies the same urgent keyword patterns used for message screening, but
- * targets the observation `description` field. Only fires on
+ * Uses observation-specific keyword patterns (critical and warning tiers)
+ * targeting the observation `description` field. Only fires on
  * `patient.observation` events.
  */
 
@@ -71,7 +71,7 @@ const CRITICAL_PATTERNS: ObservationKeywordPattern[] = [
   },
   {
     id: "OBS-STROKE-SYMPTOMS",
-    pattern: /face\s*droop|arm\s*weakness|slurred\s*speech|sudden\s*numbness|sudden\s*confusion|vision\s*loss|can'?t\s*move\s*(my|arm|leg)/i,
+    pattern: /face\s*droop|arm\s*weakness|slurred\s*speech|sudden\s*numbness|sudden\s*confusion|vision\s*loss|can'?t\s*move\s*(my\s*)?(arm|leg)\b/i,
     severity: "critical",
     summary: "Patient describes possible stroke symptoms in symptom journal",
     rationale:
@@ -117,7 +117,7 @@ const HIGH_PATTERNS: ObservationKeywordPattern[] = [
   {
     id: "OBS-BLEEDING",
     pattern: /blood\s*in\s*(stool|urine|vomit)|coughing\s*(up\s*)?blood|bleeding\s*(a\s*lot|heavily|won'?t\s*stop)|hemoptysis|hematuria|melena|hematemesis/i,
-    severity: "warning",
+    severity: "critical",
     summary: "Patient reports significant bleeding in symptom journal",
     rationale:
       "Patient described significant bleeding symptoms. This is particularly dangerous in patients " +
@@ -200,7 +200,7 @@ export function screenPatientObservation(event: ClinicalEvent): RuleFlag[] {
     if (entry.pattern.test(description)) {
       flags.push({
         severity: entry.severity,
-        category: "patient-reported" as FlagCategory,
+        category: "patient-reported",
         summary: entry.summary,
         rationale: entry.rationale,
         suggested_action: entry.suggested_action,
