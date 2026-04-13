@@ -247,55 +247,36 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
       })
       .where(eq(reviewJobs.id, jobId));
 
-    // Step 6: Call Claude API
-    const llmResponse = await reviewPatientRecord(
-      CLINICAL_REVIEW_SYSTEM_PROMPT,
-      userMessage,
-    );
+    // Step 6: Call Claude API (with fallback on timeout/outage)
+    let llmFindings: LLMFlagOutput[] = [];
+    let llmFailed = false;
+    let llmFailureStatus: "llm_timeout" | "llm_error" | null = null;
+    let llmErrorMessage: string | null = null;
 
-    // Step 7: Validate and parse LLM response
-    const validationResult = validateLLMResponse(llmResponse);
-    let llmFindingsCount = 0;
-
-    if (!validationResult.ok) {
-      // Log raw response for debugging (truncated to avoid flooding logs)
-      console.error(
-        `[review-service] LLM response validation failed for job ${jobId}: ${validationResult.error}. ` +
-          `Raw response (first 500 chars): ${llmResponse.slice(0, 500)}`,
+    try {
+      const llmResponse = await reviewPatientRecord(
+        CLINICAL_REVIEW_SYSTEM_PROMPT,
+        userMessage,
       );
 
-      // Create a fallback "review failed" flag so clinicians know this event
-      // was not successfully reviewed by the LLM layer.
-      const fallbackFlag = await createFlag({
-        patient_id: event.patient_id,
-        source: "ai-review" as FlagSource,
-        severity: "warning",
-        category: "care-gap" as ClinicalFlagCategory,
-        summary: "AI review could not be completed — LLM response was malformed",
-        rationale:
-          `The automated clinical review for event ${event.type} (${event.id}) ` +
-          `could not parse the LLM response. Parse error: ${validationResult.error}. ` +
-          `Deterministic rules still ran, but the deeper LLM analysis was not applied. ` +
-          `A clinician should manually review this event.`,
-        suggested_action:
-          "Manually review the triggering clinical event for any concerns " +
-          "that automated rules may not catch.",
-        notify_specialties: [],
-        trigger_event_ids: [event.id],
-        status: "open",
-        model_id: "claude-sonnet-4-6",
-        prompt_version: PROMPT_VERSION,
-        requires_human_review: true,
-      });
-      flagIds.push(fallbackFlag.id);
-    } else {
+      // Step 7: Validate and parse LLM response
+      const validationResult = validateLLMResponse(llmResponse);
+
+      if (!validationResult.ok) {
+        console.error(
+          `[review-service] LLM response validation failed for job ${jobId}: ${validationResult.error}. ` +
+            `Raw response (first 500 chars): ${llmResponse.slice(0, 500)}`,
+        );
+        throw new Error(`LLM response validation failed: ${validationResult.error}`);
+      }
+
       if (validationResult.warnings.length > 0) {
         console.warn(
           `[review-service] LLM response warnings: ${validationResult.warnings.join("; ")}`,
         );
       }
 
-      const llmFindings: LLMFlagOutput[] = validationResult.flags.map((f) => ({
+      llmFindings = validationResult.flags.map((f) => ({
         severity: f.severity,
         category: f.category,
         summary: f.summary,
@@ -303,53 +284,129 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
         suggested_action: f.suggested_action,
         notify_specialties: f.notify_specialties,
       }));
+    } catch (llmError) {
+      llmFailed = true;
+      llmErrorMessage =
+        llmError instanceof Error ? llmError.message : String(llmError);
 
-      llmFindingsCount = llmFindings.length;
+      const isValidationFailure =
+        llmErrorMessage.includes("LLM response validation failed");
 
-      // Step 8: Create flags for LLM findings (deduplicate against rule-based flags)
-      for (const finding of llmFindings) {
-        if (isDuplicate(finding, allRuleFlags)) {
-          continue;
-        }
+      const isTimeout =
+        llmErrorMessage.includes("timed out") ||
+        llmErrorMessage.includes("timeout") ||
+        llmErrorMessage.includes("ETIMEDOUT") ||
+        llmErrorMessage.includes("ECONNABORTED");
 
-        const flag = await createFlag({
+      llmFailureStatus = isTimeout ? "llm_timeout" : "llm_error";
+
+      console.error(
+        `[review-service] LLM review failed for job ${jobId} ` +
+          `(status: ${llmFailureStatus}, patient: ${event.patient_id}, ` +
+          `event: ${event.type}/${event.id}): ${llmErrorMessage}`,
+      );
+
+      if (isValidationFailure) {
+        const fallbackFlag = await createFlag({
           patient_id: event.patient_id,
           source: "ai-review" as FlagSource,
-          severity: finding.severity,
-          category: finding.category as ClinicalFlagCategory,
-          summary: finding.summary,
-          rationale: finding.rationale,
-          suggested_action: finding.suggested_action,
-          notify_specialties: finding.notify_specialties,
+          severity: "warning",
+          category: "care-gap" as ClinicalFlagCategory,
+          summary: "AI review could not be completed \u2014 LLM response was malformed",
+          rationale:
+            `The automated clinical review for event ${event.type} (${event.id}) ` +
+            `could not parse the LLM response. Parse error: ${llmErrorMessage}. ` +
+            `Deterministic rules still ran, but the deeper LLM analysis was not applied. ` +
+            `A clinician should manually review this event.`,
+          suggested_action:
+            "Manually review the triggering clinical event for any concerns " +
+            "that automated rules may not catch.",
+          notify_specialties: [],
           trigger_event_ids: [event.id],
           status: "open",
           model_id: "claude-sonnet-4-6",
           prompt_version: PROMPT_VERSION,
+          requires_human_review: true,
         });
-        flagIds.push(flag.id);
+        flagIds.push(fallbackFlag.id);
+      } else {
+        const fallbackFlag = await createFlag({
+          patient_id: event.patient_id,
+          source: "ai-review" as FlagSource,
+          severity: "info",
+          category: "care-gap" as ClinicalFlagCategory,
+          summary:
+            "AI review unavailable \u2014 deterministic rules applied, LLM review deferred",
+          rationale:
+            `The Claude API was unreachable or timed out during review of event ${event.type}. ` +
+            `Deterministic safety rules were evaluated normally. LLM-based review did not run ` +
+            `and may catch additional patterns once the service recovers.`,
+          suggested_action:
+            "No immediate action required. Deterministic rules have been applied. " +
+            "LLM review will run on subsequent clinical events.",
+          notify_specialties: [],
+          trigger_event_ids: [event.id],
+          status: "open",
+          requires_human_review: false,
+        });
+        flagIds.push(fallbackFlag.id);
       }
     }
 
-    // Step 9: Update review_jobs record — completed
+    // Step 8: Create flags for LLM findings (deduplicate against rule-based flags)
+    for (const finding of llmFindings) {
+      if (isDuplicate(finding, allRuleFlags)) {
+        continue;
+      }
+
+      const flag = await createFlag({
+        patient_id: event.patient_id,
+        source: "ai-review" as FlagSource,
+        severity: finding.severity,
+        category: finding.category as ClinicalFlagCategory,
+        summary: finding.summary,
+        rationale: finding.rationale,
+        suggested_action: finding.suggested_action,
+        notify_specialties: finding.notify_specialties,
+        trigger_event_ids: [event.id],
+        status: "open",
+        model_id: "claude-sonnet-4-6",
+        prompt_version: PROMPT_VERSION,
+      });
+      flagIds.push(flag.id);
+    }
+
+    // Step 9: Update review_jobs record
     const processingTime = Date.now() - startTime;
+    const jobStatus = llmFailed ? llmFailureStatus! : "completed";
+
     await db
       .update(reviewJobs)
       .set({
-        status: "completed",
+        status: jobStatus,
         rules_evaluated: rulesEvaluated,
         rules_fired: rulesFired,
         flags_generated: flagIds,
         processing_time_ms: processingTime,
+        ...(llmFailed ? { error: llmErrorMessage } : {}),
         completed_at: new Date().toISOString(),
       })
       .where(eq(reviewJobs.id, jobId));
 
-    console.log(
-      `[review-service] Job ${jobId} completed in ${processingTime}ms. ` +
-        `Rules fired: ${rulesFired.length}, LLM findings: ${llmFindingsCount}, ` +
-        `Total flags: ${flagIds.length}` +
-        (budgetResult.truncated ? ` (prompt truncated: ${budgetResult.originalTokens} -> ${budgetResult.finalTokens} tokens)` : ""),
-    );
+    if (llmFailed) {
+      console.warn(
+        `[review-service] Job ${jobId} completed with ${jobStatus} in ${processingTime}ms. ` +
+          `Rules fired: ${rulesFired.length}, LLM skipped, ` +
+          `Total flags: ${flagIds.length} (includes fallback)`,
+      );
+    } else {
+      console.log(
+        `[review-service] Job ${jobId} completed in ${processingTime}ms. ` +
+          `Rules fired: ${rulesFired.length}, LLM findings: ${llmFindings.length}, ` +
+          `Total flags: ${flagIds.length}` +
+          (budgetResult.truncated ? ` (prompt truncated: ${budgetResult.originalTokens} -> ${budgetResult.finalTokens} tokens)` : ""),
+      );
+    }
   } catch (error) {
     // Step 10: Update review_jobs — failed
     const processingTime = Date.now() - startTime;
