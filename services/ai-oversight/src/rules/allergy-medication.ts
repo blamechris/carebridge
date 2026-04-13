@@ -113,7 +113,20 @@ function mapAllergyToFlagSeverity(allergySeverity?: string | null): FlagSeverity
   }
 }
 
-let ruleSequence = 0;
+/**
+ * Build a deterministic rule ID from the allergen, medication, and match type.
+ * Uses a short hash to guarantee uniqueness without a mutable counter.
+ */
+function buildRuleId(allergen: string, medication: string, matchType: string): string {
+  const key = `${allergen.toLowerCase()}|${medication.toLowerCase()}|${matchType}`;
+  // Simple djb2 hash — deterministic, no collisions in practice for short clinical strings
+  let hash = 5381;
+  for (let i = 0; i < key.length; i++) {
+    hash = ((hash << 5) + hash + key.charCodeAt(i)) | 0;
+  }
+  const hex = (hash >>> 0).toString(16).padStart(8, "0").toUpperCase();
+  return `ALLERGY-MED-${matchType}-${hex}`;
+}
 
 /**
  * Check medications against patient allergies.
@@ -136,7 +149,6 @@ export function checkAllergyMedication(context: PatientContext): RuleFlag[] {
 
       // Strategy 1: Direct name match (allergen name appears in medication name)
       if (medLower.includes(allergenLower) || allergenLower.includes(medLower.split(" ")[0])) {
-        ruleSequence++;
         flags.push({
           severity: mapAllergyToFlagSeverity(allergy.severity),
           category: "medication-safety" as FlagCategory,
@@ -149,7 +161,7 @@ export function checkAllergyMedication(context: PatientContext): RuleFlag[] {
             `Verify allergy is current. If confirmed, discontinue "${med}" and select an alternative. ` +
             `If allergy was previously tolerated or is mild, document clinical decision to proceed.`,
           notify_specialties: ["pharmacy"],
-          rule_id: `ALLERGY-MED-${String(ruleSequence).padStart(3, "0")}`,
+          rule_id: buildRuleId(allergy.allergen, med, "DIRECT"),
         });
         break; // Don't double-flag same medication
       }
@@ -157,7 +169,6 @@ export function checkAllergyMedication(context: PatientContext): RuleFlag[] {
       // Strategy 2: Cross-reactivity class matching
       for (const mapping of CROSS_REACTIVITY_MAP) {
         if (mapping.allergenPattern.test(allergy.allergen) && mapping.medicationPattern.test(med)) {
-          ruleSequence++;
           flags.push({
             severity: mapAllergyToFlagSeverity(allergy.severity),
             category: "medication-safety" as FlagCategory,
@@ -170,7 +181,7 @@ export function checkAllergyMedication(context: PatientContext): RuleFlag[] {
               `Evaluate cross-reactivity risk for ${mapping.class} class. Consider alternative agent outside this class. ` +
               `If proceeding, ensure appropriate monitoring and have emergency treatment available.`,
             notify_specialties: ["pharmacy"],
-            rule_id: `ALLERGY-MED-${String(ruleSequence).padStart(3, "0")}`,
+            rule_id: buildRuleId(allergy.allergen, med, `CROSS-${mapping.class}`),
           });
           break; // Don't flag same medication multiple times
         }
