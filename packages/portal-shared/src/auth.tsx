@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useCallback } from "react";
+import { createContext, useContext, useState, useCallback, useEffect } from "react";
 import type { ReactNode } from "react";
 
 export interface User {
@@ -22,6 +22,8 @@ export interface AuthContextValue {
   setSession: (user: User, sessionId: string) => void;
   clearSession: () => void;
   isAuthenticated: boolean;
+  /** True after the initial localStorage read completes on the client. */
+  hydrated: boolean;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -30,20 +32,20 @@ const SESSION_KEY = "carebridge_session";
 const USER_KEY = "carebridge_user";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(() => {
-    if (typeof window === "undefined") return null;
+  // Initialize as null on both server and client to avoid hydration mismatch.
+  // localStorage is read in useEffect after the first client render.
+  const [user, setUser] = useState<User | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
     try {
       const stored = localStorage.getItem(USER_KEY);
-      return stored ? (JSON.parse(stored) as User) : null;
-    } catch {
-      return null;
-    }
-  });
-
-  const [sessionId, setSessionId] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    return localStorage.getItem(SESSION_KEY);
-  });
+      if (stored) setUser(JSON.parse(stored) as User);
+      setSessionId(localStorage.getItem(SESSION_KEY));
+    } catch { /* corrupt / blocked storage — stay logged out */ }
+    setHydrated(true);
+  }, []);
 
   const setSession = useCallback((u: User, sid: string) => {
     localStorage.setItem(SESSION_KEY, sid);
@@ -67,6 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setSession,
         clearSession,
         isAuthenticated: !!user && !!sessionId,
+        hydrated,
       }}
     >
       {children}
