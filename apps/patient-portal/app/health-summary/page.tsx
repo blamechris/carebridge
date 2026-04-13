@@ -27,7 +27,7 @@ export default function HealthSummaryPage() {
   const { user } = useAuth();
   const router = useRouter();
 
-  const { patient: myRecord, isLoading: patientLoading } = useMyPatientRecord();
+  const { patient: myRecord, isLoading: patientLoading, isUnlinked } = useMyPatientRecord();
 
   const diagnosesQuery = trpc.patients.diagnoses.getByPatient.useQuery(
     { patientId: myRecord?.id ?? "" },
@@ -67,6 +67,12 @@ export default function HealthSummaryPage() {
           Back to Dashboard
         </button>
       </div>
+
+      {isUnlinked && (
+        <p style={{ color: "#ef4444" }}>
+          Your account is not linked to a patient record. Please contact your care team.
+        </p>
+      )}
 
       {/* Active Diagnoses */}
       <section style={{ marginBottom: "2rem" }}>

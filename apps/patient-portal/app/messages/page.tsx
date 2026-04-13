@@ -23,7 +23,7 @@ export default function PatientMessagesPage() {
   const router = useRouter();
   const utils = trpc.useUtils();
 
-  const { patient: myRecord, isLoading: patientLoading } = useMyPatientRecord();
+  const { patient: myRecord, isLoading: patientLoading, isUnlinked } = useMyPatientRecord();
 
   const conversationsQuery = trpc.messaging.listConversations.useQuery(
     undefined,
@@ -137,6 +137,12 @@ export default function PatientMessagesPage() {
           </button>
         </div>
       </div>
+
+      {isUnlinked && (
+        <p style={{ color: "#ef4444" }}>
+          Your account is not linked to a patient record. Please contact your care team.
+        </p>
+      )}
 
       {/* Compose new message */}
       {showCompose && (

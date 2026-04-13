@@ -10,7 +10,7 @@ export default function RefillPage() {
   const { user } = useAuth();
   const router = useRouter();
 
-  const { patient: myRecord, isLoading: patientLoading } = useMyPatientRecord();
+  const { patient: myRecord, isLoading: patientLoading, isUnlinked } = useMyPatientRecord();
 
   const medsQuery = trpc.clinicalData.medications.getByPatient.useQuery(
     { patientId: myRecord?.id ?? "" },
@@ -108,6 +108,12 @@ export default function RefillPage() {
         Select a medication to request a refill. Your prescribing provider will receive
         the request and can approve or deny it.
       </p>
+
+      {isUnlinked && (
+        <p style={{ color: "#ef4444" }}>
+          Your account is not linked to a patient record. Please contact your care team.
+        </p>
+      )}
 
       {medsQuery.isLoading && <p style={{ color: "#999" }}>Loading medications...</p>}
 

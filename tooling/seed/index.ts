@@ -45,6 +45,9 @@ async function seed() {
   const nurseRachel = uuid();
   const patientUser = uuid();
 
+  // Generate dvtPatientId early so the patient user can reference it.
+  const dvtPatientId = uuid();
+
   await db.insert(schema.users).values([
     {
       id: drSmith,
@@ -87,6 +90,7 @@ async function seed() {
       password_hash: devPasswordHash,
       name: "Demo Patient",
       role: "patient",
+      patient_id: dvtPatientId,
       is_active: true,
       created_at: now(),
       updated_at: now(),
@@ -94,7 +98,6 @@ async function seed() {
   ]).onConflictDoNothing();
 
   // ─── The DVT Scenario Patient ───────────────────────────────────
-  const dvtPatientId = uuid();
 
   await db.insert(schema.patients).values({
     id: dvtPatientId,
