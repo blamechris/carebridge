@@ -58,7 +58,7 @@ export const fhirRbacRouter = t.router({
     .input(z.object({ patientId: z.string() }))
     .query(async ({ ctx, input }) => {
       await enforcePatientAccess(ctx.user, input.patientId);
-      const caller = fhirGatewayRouter.createCaller({ user: ctx.user });
+      const caller = fhirGatewayRouter.createCaller({ user: ctx.user, rbacVerified: true });
       return caller.exportPatient(input);
     }),
 
@@ -66,7 +66,7 @@ export const fhirRbacRouter = t.router({
     .input(z.object({ patientId: z.string(), resourceType: z.string().optional() }))
     .query(async ({ ctx, input }) => {
       await enforcePatientAccess(ctx.user, input.patientId);
-      const caller = fhirGatewayRouter.createCaller({ user: ctx.user });
+      const caller = fhirGatewayRouter.createCaller({ user: ctx.user, rbacVerified: true });
       return caller.getByPatient(input);
     }),
 

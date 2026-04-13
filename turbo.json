@@ -1,5 +1,24 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "globalPassThroughEnv": [
+    "DATABASE_URL",
+    "REDIS_URL",
+    "REDIS_HOST",
+    "REDIS_PORT",
+    "REDIS_PASSWORD",
+    "PHI_ENCRYPTION_KEY",
+    "PHI_HMAC_KEY",
+    "SESSION_SECRET",
+    "JWT_SECRET",
+    "API_PORT",
+    "API_HOST",
+    "NODE_ENV",
+    "NEXT_PUBLIC_API_URL",
+    "CORS_ORIGIN",
+    "ANTHROPIC_API_KEY",
+    "HEALTH_PORT",
+    "CAREBRIDGE_DEV_AUTH"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],

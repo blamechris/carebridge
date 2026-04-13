@@ -93,17 +93,17 @@ async function main() {
   // Global rate limit: 100 requests per minute per IP across all API endpoints.
   // Protects PHI endpoints from enumeration and abuse.
   //
-  // The auth.login procedure gets a stricter per-IP limit of 5 req/min.
-  // At ~30 ms/scrypt check, the default would allow ~3300 guesses/second;
-  // this cap reduces that to 5 attempts per minute per IP.
+  // The auth.login procedure gets a stricter per-IP limit of 5 req/min
+  // in production. At ~30 ms/scrypt check, the default would allow
+  // ~3300 guesses/second; this cap reduces that to 5 attempts per minute
+  // per IP. In development, the login limit is raised to 60 req/min to
+  // avoid blocking manual and automated testing.
+  const isDev = process.env.NODE_ENV === "development";
   await server.register(rateLimit, {
     global: true,
     max: (req, _key) => {
-      if (req.url?.startsWith("/trpc/auth.login")) {
-        return 5;
-      }
-      if (req.url?.startsWith("/trpc/auth.refreshSession")) {
-        return 5;
+      if (req.url?.startsWith("/trpc/auth.login") || req.url?.startsWith("/trpc/auth.refreshSession")) {
+        return isDev ? 60 : 5;
       }
       return 100;
     },
