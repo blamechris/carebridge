@@ -223,7 +223,7 @@ describe("updateMedication", () => {
     }).catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(ConflictError);
-    expect((error as ConflictError).message).toBe(
+    expect((error as InstanceType<typeof ConflictError>).message).toBe(
       "Medication was modified by another user. Please refresh and try again.",
     );
     // Event should NOT have been emitted on conflict
