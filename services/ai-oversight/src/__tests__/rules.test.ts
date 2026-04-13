@@ -298,4 +298,89 @@ describe("checkDrugInteractions", () => {
     const warfarinNsaid = flags.find((f) => f.rule_id === "DI-WARFARIN-NSAID");
     expect(warfarinNsaid).toBeUndefined();
   });
+
+  it("flags clarithromycin + simvastatin as CRITICAL (contraindicated)", () => {
+    const flags = checkDrugInteractions(["Clarithromycin 500mg", "Simvastatin 40mg"]);
+
+    const interaction = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-CRITICAL");
+    expect(interaction).toBeDefined();
+    expect(interaction!.severity).toBe("critical");
+    expect(interaction!.summary).toContain("rhabdomyolysis");
+  });
+
+  it("flags clarithromycin + lovastatin as CRITICAL (contraindicated)", () => {
+    const flags = checkDrugInteractions(["Clarithromycin 500mg", "Lovastatin 20mg"]);
+
+    const interaction = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-CRITICAL");
+    expect(interaction).toBeDefined();
+    expect(interaction!.severity).toBe("critical");
+  });
+
+  it("flags erythromycin + simvastatin as CRITICAL", () => {
+    const flags = checkDrugInteractions(["Erythromycin 250mg", "Simvastatin 20mg"]);
+
+    const interaction = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-CRITICAL");
+    expect(interaction).toBeDefined();
+    expect(interaction!.severity).toBe("critical");
+  });
+
+  it("flags erythromycin + lovastatin as CRITICAL", () => {
+    const flags = checkDrugInteractions(["Erythromycin 250mg", "Lovastatin 20mg"]);
+
+    const interaction = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-CRITICAL");
+    expect(interaction).toBeDefined();
+    expect(interaction!.severity).toBe("critical");
+  });
+
+  it("flags clarithromycin + atorvastatin as WARNING (dose reduction needed)", () => {
+    const flags = checkDrugInteractions(["Clarithromycin 500mg", "Atorvastatin 40mg"]);
+
+    const interaction = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-WARNING");
+    expect(interaction).toBeDefined();
+    expect(interaction!.severity).toBe("warning");
+    expect(interaction!.summary).toContain("dose reduction");
+  });
+
+  it("flags erythromycin + atorvastatin as WARNING", () => {
+    const flags = checkDrugInteractions(["Erythromycin 250mg", "Atorvastatin 20mg"]);
+
+    const interaction = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-WARNING");
+    expect(interaction).toBeDefined();
+    expect(interaction!.severity).toBe("warning");
+  });
+
+  it("does NOT flag azithromycin + simvastatin (azithromycin is safe — minimal CYP3A4 inhibition)", () => {
+    const flags = checkDrugInteractions(["Azithromycin 250mg", "Simvastatin 40mg"]);
+
+    const critical = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-CRITICAL");
+    const warning = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-WARNING");
+    expect(critical).toBeUndefined();
+    expect(warning).toBeUndefined();
+  });
+
+  it("does NOT flag clarithromycin + pravastatin (pravastatin not CYP3A4-metabolized)", () => {
+    const flags = checkDrugInteractions(["Clarithromycin 500mg", "Pravastatin 40mg"]);
+
+    const critical = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-CRITICAL");
+    const warning = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-WARNING");
+    expect(critical).toBeUndefined();
+    expect(warning).toBeUndefined();
+  });
+
+  it("does NOT flag clarithromycin + rosuvastatin (rosuvastatin not CYP3A4-metabolized)", () => {
+    const flags = checkDrugInteractions(["Clarithromycin 500mg", "Rosuvastatin 10mg"]);
+
+    const critical = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-CRITICAL");
+    const warning = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-WARNING");
+    expect(critical).toBeUndefined();
+    expect(warning).toBeUndefined();
+  });
+
+  it("notifies cardiology and infectious_disease for macrolide-statin interactions", () => {
+    const flags = checkDrugInteractions(["Clarithromycin 500mg", "Simvastatin 40mg"]);
+
+    const interaction = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-CRITICAL");
+    expect(interaction!.notify_specialties).toContain("cardiology");
+    expect(interaction!.notify_specialties).toContain("infectious_disease");
+  });
 });
