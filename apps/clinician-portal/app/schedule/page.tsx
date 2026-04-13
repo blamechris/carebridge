@@ -3,21 +3,19 @@
 import { useState } from "react";
 import { AuthGuard } from "@/lib/auth-guard";
 import { useAuth } from "@/lib/auth";
+import { trpc } from "@/lib/trpc";
 
 /**
  * Clinician Schedule View.
  *
- * Shows the provider's daily schedule with appointment slots.
- * Depends on the scheduling service (PR #349 / issue #330) being merged
- * and registered in the api-gateway before full tRPC integration.
- *
- * Until then, this provides the UI shell with static placeholder data.
+ * Shows the provider's daily schedule with appointment slots fetched from
+ * the scheduling service via tRPC.
  */
 
 interface AppointmentSlot {
   start: string;
   end: string;
-  patientName?: string;
+  patientId?: string;
   appointmentType?: string;
   reason?: string;
   status: "available" | "booked" | "blocked";
@@ -44,17 +42,53 @@ function ScheduleContent() {
     return today.toISOString().split("T")[0];
   });
 
-  // Placeholder slots — will be replaced with tRPC query once scheduling service is merged
-  const slots: AppointmentSlot[] = [
-    { start: `${selectedDate}T09:00:00.000Z`, end: `${selectedDate}T09:30:00.000Z`, status: "available" },
-    { start: `${selectedDate}T09:30:00.000Z`, end: `${selectedDate}T10:00:00.000Z`, status: "available" },
-    { start: `${selectedDate}T10:00:00.000Z`, end: `${selectedDate}T10:30:00.000Z`, patientName: "Placeholder", appointmentType: "follow_up", reason: "Post-treatment check", status: "booked" },
-    { start: `${selectedDate}T10:30:00.000Z`, end: `${selectedDate}T11:00:00.000Z`, status: "available" },
-    { start: `${selectedDate}T11:00:00.000Z`, end: `${selectedDate}T11:30:00.000Z`, status: "blocked" },
-    { start: `${selectedDate}T11:30:00.000Z`, end: `${selectedDate}T12:00:00.000Z`, status: "available" },
-    { start: `${selectedDate}T13:00:00.000Z`, end: `${selectedDate}T13:30:00.000Z`, status: "available" },
-    { start: `${selectedDate}T13:30:00.000Z`, end: `${selectedDate}T14:00:00.000Z`, status: "available" },
-  ];
+  const providerId = user?.id ?? "";
+
+  const availabilityQuery = trpc.scheduling.schedule.availability.useQuery(
+    { providerId, date: selectedDate },
+    { enabled: !!providerId },
+  );
+
+  const dayStart = `${selectedDate}T00:00:00.000Z`;
+  const dayEnd = `${selectedDate}T23:59:59.999Z`;
+
+  const appointmentsQuery = trpc.scheduling.appointments.listByProvider.useQuery(
+    { startDate: dayStart, endDate: dayEnd },
+    { enabled: !!providerId },
+  );
+
+  const isLoading = availabilityQuery.isLoading || appointmentsQuery.isLoading;
+  const isError = availabilityQuery.isError || appointmentsQuery.isError;
+
+  // Merge availability slots with appointment details
+  const slots: AppointmentSlot[] = (() => {
+    const rawSlots = availabilityQuery.data?.slots ?? [];
+    const appts = appointmentsQuery.data ?? [];
+
+    return rawSlots.map((slot) => {
+      // Find an appointment overlapping this slot
+      const appt = appts.find(
+        (a) => a.start_time < slot.end && a.end_time > slot.start && a.status !== "cancelled",
+      );
+
+      if (appt) {
+        return {
+          start: slot.start,
+          end: slot.end,
+          patientId: appt.patient_id,
+          appointmentType: appt.appointment_type,
+          reason: appt.reason ?? undefined,
+          status: "booked" as const,
+        };
+      }
+
+      return {
+        start: slot.start,
+        end: slot.end,
+        status: slot.available ? ("available" as const) : ("blocked" as const),
+      };
+    });
+  })();
 
   function navigateDate(delta: number) {
     const d = new Date(selectedDate);
@@ -104,60 +138,72 @@ function ScheduleContent() {
         </button>
       </div>
 
-      <div className="table-container">
-        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          {slots.map((slot, i) => (
-            <div
-              key={i}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                padding: "10px 16px",
-                backgroundColor: slot.status === "booked" ? "#1e3a5f" : slot.status === "blocked" ? "#1a1a1a" : "#111",
-                borderLeft: `3px solid ${statusColor(slot.status)}`,
-                borderRadius: 4,
-              }}
-            >
-              <div style={{ width: 140, fontSize: "0.85rem", color: "#999" }}>
-                {formatTime(slot.start)} — {formatTime(slot.end)}
-              </div>
-
-              {slot.status === "booked" && (
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: "0.9rem", fontWeight: 600 }}>
-                    {slot.patientName}
-                  </div>
-                  <div style={{ fontSize: "0.8rem", color: "#999" }}>
-                    {slot.appointmentType?.replace(/_/g, " ")} {slot.reason ? `— ${slot.reason}` : ""}
-                  </div>
-                </div>
-              )}
-
-              {slot.status === "available" && (
-                <div style={{ flex: 1, fontSize: "0.85rem", color: "#22c55e" }}>
-                  Available
-                </div>
-              )}
-
-              {slot.status === "blocked" && (
-                <div style={{ flex: 1, fontSize: "0.85rem", color: "#666", fontStyle: "italic" }}>
-                  Blocked
-                </div>
-              )}
-            </div>
-          ))}
+      {isLoading && (
+        <div className="empty-state">
+          <div className="empty-state-text">Loading schedule...</div>
         </div>
+      )}
 
-        {slots.length === 0 && (
-          <div className="empty-state">
-            <div className="empty-state-text">No schedule configured for this day.</div>
+      {isError && (
+        <div className="empty-state">
+          <div className="empty-state-text" style={{ color: "#ef4444" }}>
+            Failed to load schedule. Please try again.
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      <p style={{ color: "#666", fontSize: "0.75rem", marginTop: 16 }}>
-        Schedule integration pending — connect to scheduling service for live data.
-      </p>
+      {!isLoading && !isError && (
+        <div className="table-container">
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            {slots.map((slot, i) => (
+              <div
+                key={i}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  padding: "10px 16px",
+                  backgroundColor: slot.status === "booked" ? "#1e3a5f" : slot.status === "blocked" ? "#1a1a1a" : "#111",
+                  borderLeft: `3px solid ${statusColor(slot.status)}`,
+                  borderRadius: 4,
+                }}
+              >
+                <div style={{ width: 140, fontSize: "0.85rem", color: "#999" }}>
+                  {formatTime(slot.start)} — {formatTime(slot.end)}
+                </div>
+
+                {slot.status === "booked" && (
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: "0.9rem", fontWeight: 600 }}>
+                      {slot.appointmentType?.replace(/_/g, " ") ?? "Appointment"}
+                    </div>
+                    <div style={{ fontSize: "0.8rem", color: "#999" }}>
+                      {slot.reason ? slot.reason : `Patient ${slot.patientId?.slice(0, 8) ?? ""}`}
+                    </div>
+                  </div>
+                )}
+
+                {slot.status === "available" && (
+                  <div style={{ flex: 1, fontSize: "0.85rem", color: "#22c55e" }}>
+                    Available
+                  </div>
+                )}
+
+                {slot.status === "blocked" && (
+                  <div style={{ flex: 1, fontSize: "0.85rem", color: "#666", fontStyle: "italic" }}>
+                    Blocked
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {slots.length === 0 && (
+            <div className="empty-state">
+              <div className="empty-state-text">No schedule configured for this day.</div>
+            </div>
+          )}
+        </div>
+      )}
     </>
   );
 }
