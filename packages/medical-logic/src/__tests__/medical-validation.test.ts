@@ -6,6 +6,10 @@ import {
   isCriticalVital,
   getVitalSeverity,
   VITAL_DANGER_ZONES,
+  PEDIATRIC_VITAL_RANGES,
+  classifyAgeGroup,
+  ageInYearsFromDOB,
+  getVitalRangeForAge,
 } from "../medical-validation.js";
 
 // ─── validateVital ──────────────────────────────────────────────
@@ -197,6 +201,38 @@ describe("isCriticalVital", () => {
   it("returns false for glucose 300 (above warningHigh but below criticalHigh)", () => {
     expect(isCriticalVital("blood_glucose", 300)).toBe(false);
   });
+
+  it("uses adult thresholds when no age is provided", () => {
+    expect(isCriticalVital("heart_rate", 150)).toBe(false);
+  });
+
+  it("flags HR 150 as critical for a toddler (age 2)", () => {
+    expect(isCriticalVital("heart_rate", 150, 2)).toBe(true);
+  });
+
+  it("does not flag HR 120 as critical for a toddler (age 2)", () => {
+    expect(isCriticalVital("heart_rate", 120, 2)).toBe(false);
+  });
+
+  it("flags HR 165 as critical for a neonate (age 0.01)", () => {
+    expect(isCriticalVital("heart_rate", 165, 0.01)).toBe(true);
+  });
+
+  it("does not flag HR 140 as critical for a neonate (age 0.01)", () => {
+    expect(isCriticalVital("heart_rate", 140, 0.01)).toBe(false);
+  });
+
+  it("flags RR 55 as critical for an infant (age 0.5)", () => {
+    expect(isCriticalVital("respiratory_rate", 55, 0.5)).toBe(true);
+  });
+
+  it("flags low SBP for school-age child", () => {
+    expect(isCriticalVital("blood_pressure", 80, 8)).toBe(true);
+  });
+
+  it("uses adult thresholds for age 25", () => {
+    expect(isCriticalVital("heart_rate", 150, 25)).toBe(false);
+  });
 });
 
 // ─── getVitalSeverity ──────────────────────────────────────────
@@ -236,5 +272,84 @@ describe("getVitalSeverity", () => {
 
   it("returns critical for critically low heart rate", () => {
     expect(getVitalSeverity("heart_rate", 30)).toBe("critical");
+  });
+});
+
+// ─── classifyAgeGroup ──────────────────────────────────────────
+
+describe("classifyAgeGroup", () => {
+  it("classifies neonate (10 days old)", () => {
+    expect(classifyAgeGroup(10 / 365.25)).toBe("neonate");
+  });
+
+  it("classifies infant (6 months old)", () => {
+    expect(classifyAgeGroup(0.5)).toBe("infant");
+  });
+
+  it("classifies child (3 years old)", () => {
+    expect(classifyAgeGroup(3)).toBe("child");
+  });
+
+  it("classifies school age (10 years old)", () => {
+    expect(classifyAgeGroup(10)).toBe("school_age");
+  });
+
+  it("classifies adolescent (15 years old)", () => {
+    expect(classifyAgeGroup(15)).toBe("adolescent");
+  });
+
+  it("classifies adult (30 years old)", () => {
+    expect(classifyAgeGroup(30)).toBe("adult");
+  });
+
+  it("falls back to adult for negative age", () => {
+    expect(classifyAgeGroup(-1)).toBe("adult");
+  });
+});
+
+// ─── ageInYearsFromDOB ─────────────────────────────────────────
+
+describe("ageInYearsFromDOB", () => {
+  it("returns undefined for undefined DOB", () => {
+    expect(ageInYearsFromDOB(undefined)).toBeUndefined();
+  });
+
+  it("returns undefined for invalid DOB string", () => {
+    expect(ageInYearsFromDOB("not-a-date")).toBeUndefined();
+  });
+
+  it("computes correct age for a known reference date", () => {
+    const ref = new Date("2025-01-01T00:00:00Z");
+    const age = ageInYearsFromDOB("2020-01-01", ref);
+    expect(age).toBeCloseTo(5, 0);
+  });
+
+  it("returns undefined for future DOB", () => {
+    const ref = new Date("2025-01-01T00:00:00Z");
+    expect(ageInYearsFromDOB("2026-01-01", ref)).toBeUndefined();
+  });
+});
+
+// ─── getVitalRangeForAge ────────────────────────────────────────
+
+describe("getVitalRangeForAge", () => {
+  it("returns adult range when age is undefined", () => {
+    const range = getVitalRangeForAge("heart_rate");
+    expect(range).toEqual(VITAL_DANGER_ZONES.heart_rate);
+  });
+
+  it("returns pediatric range for child", () => {
+    const range = getVitalRangeForAge("heart_rate", 3);
+    expect(range).toEqual(PEDIATRIC_VITAL_RANGES.child.heart_rate);
+  });
+
+  it("falls back to adult range for vitals without pediatric data", () => {
+    const range = getVitalRangeForAge("blood_glucose", 3);
+    expect(range).toEqual(VITAL_DANGER_ZONES.blood_glucose);
+  });
+
+  it("returns adult range for age 20", () => {
+    const range = getVitalRangeForAge("heart_rate", 20);
+    expect(range).toEqual(VITAL_DANGER_ZONES.heart_rate);
   });
 });

@@ -9,56 +9,57 @@ vi.mock("@carebridge/shared-types", () => ({
   },
 }));
 
-vi.mock("@carebridge/medical-logic", () => ({
-  VITAL_DANGER_ZONES: {
+vi.mock("@carebridge/medical-logic", () => {
+  const VITAL_DANGER_ZONES: Record<string, { min: number; max: number; criticalLow?: number; criticalHigh?: number; warningLow?: number; warningHigh?: number }> = {
     heart_rate: { min: 20, max: 300, criticalLow: 40, criticalHigh: 200 },
     o2_sat: { min: 50, max: 100, criticalLow: 85 },
     temperature: { min: 85, max: 115, criticalLow: 95, criticalHigh: 104 },
     blood_pressure: { min: 60, max: 250, criticalLow: 70, criticalHigh: 180 },
     blood_glucose: { min: 10, max: 800, criticalLow: 50, criticalHigh: 350, warningLow: 70, warningHigh: 250 },
-  },
-  DIASTOLIC_DANGER_ZONE: {
-    criticalLow: 60,
-    criticalHigh: 120,
-    warningHigh: 90,
-  },
-  isCriticalVital: (type: string, value: number) => {
-    const zones: Record<string, { criticalLow?: number; criticalHigh?: number }> = {
-      heart_rate: { criticalLow: 40, criticalHigh: 200 },
-      o2_sat: { criticalLow: 85 },
-      temperature: { criticalLow: 95, criticalHigh: 104 },
-      blood_pressure: { criticalLow: 70, criticalHigh: 180 },
-      blood_glucose: { criticalLow: 50, criticalHigh: 350 },
-    };
-    const zone = zones[type];
-    if (!zone) return false;
-    if (zone.criticalLow !== undefined && value <= zone.criticalLow) return true;
-    if (zone.criticalHigh !== undefined && value >= zone.criticalHigh) return true;
-    return false;
-  },
-  getVitalSeverity: (type: string, value: number) => {
-    const zones: Record<string, { criticalLow?: number; criticalHigh?: number; warningLow?: number; warningHigh?: number }> = {
-      heart_rate: { criticalLow: 40, criticalHigh: 200 },
-      o2_sat: { criticalLow: 85 },
-      temperature: { criticalLow: 95, criticalHigh: 104 },
-      blood_pressure: { criticalLow: 70, criticalHigh: 180 },
-      blood_glucose: { criticalLow: 50, criticalHigh: 350, warningLow: 70, warningHigh: 250 },
-    };
-    const zone = zones[type];
-    if (!zone) return null;
-    if (zone.criticalLow !== undefined && value <= zone.criticalLow) return "critical";
-    if (zone.criticalHigh !== undefined && value >= zone.criticalHigh) return "critical";
-    if (zone.warningLow !== undefined && value < zone.warningLow) return "warning";
-    if (zone.warningHigh !== undefined && value > zone.warningHigh) return "warning";
-    return null;
-  },
-  checkDiastolicBP: (diastolic: number) => {
-    if (diastolic < 60) return "critical";
-    if (diastolic >= 120) return "critical";
-    if (diastolic >= 90) return "warning";
-    return null;
-  },
-}));
+  };
+  return {
+    VITAL_DANGER_ZONES,
+    DIASTOLIC_DANGER_ZONE: {
+      criticalLow: 60,
+      criticalHigh: 120,
+      warningHigh: 90,
+    },
+    isCriticalVital: (type: string, value: number, _ageYears?: number) => {
+      const zone = VITAL_DANGER_ZONES[type];
+      if (!zone) return false;
+      if (zone.criticalLow !== undefined && value <= zone.criticalLow) return true;
+      if (zone.criticalHigh !== undefined && value >= zone.criticalHigh) return true;
+      return false;
+    },
+    getVitalSeverity: (type: string, value: number) => {
+      const zone = VITAL_DANGER_ZONES[type];
+      if (!zone) return null;
+      if (zone.criticalLow !== undefined && value <= zone.criticalLow) return "critical";
+      if (zone.criticalHigh !== undefined && value >= zone.criticalHigh) return "critical";
+      if (zone.warningLow !== undefined && value < zone.warningLow) return "warning";
+      if (zone.warningHigh !== undefined && value > zone.warningHigh) return "warning";
+      return null;
+    },
+    checkDiastolicBP: (diastolic: number) => {
+      if (diastolic < 60) return "critical";
+      if (diastolic >= 120) return "critical";
+      if (diastolic >= 90) return "warning";
+      return null;
+    },
+    ageInYearsFromDOB: (dob: string | undefined | null, refDate?: Date) => {
+      if (!dob) return undefined;
+      const d = new Date(dob);
+      if (isNaN(d.getTime())) return undefined;
+      const ref = refDate ?? new Date();
+      const diffMs = ref.getTime() - d.getTime();
+      if (diffMs < 0) return undefined;
+      return diffMs / (365.25 * 24 * 60 * 60 * 1000);
+    },
+    getVitalRangeForAge: (vitalType: string, _ageYears?: number) => {
+      return VITAL_DANGER_ZONES[vitalType] ?? { min: 0, max: 1000 };
+    },
+  };
+});
 
 import { checkCriticalValues } from "../rules/critical-values.js";
 import { checkCrossSpecialtyPatterns, type PatientContext } from "../rules/cross-specialty.js";

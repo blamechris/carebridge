@@ -9,11 +9,10 @@ import type { VitalType } from "@carebridge/shared-types";
 import { COMMON_LAB_TESTS } from "@carebridge/shared-types";
 import type { ClinicalEvent, FlagSeverity, FlagCategory } from "@carebridge/shared-types";
 import {
-  VITAL_DANGER_ZONES,
   DIASTOLIC_DANGER_ZONE,
-  isCriticalVital,
-  getVitalSeverity,
   checkDiastolicBP,
+  getVitalRangeForAge,
+  ageInYearsFromDOB,
 } from "@carebridge/medical-logic";
 
 // ─── Explicit Critical Lab Thresholds ────────────────────────────
@@ -336,15 +335,24 @@ export interface RuleFlag {
 export function checkCriticalValues(event: ClinicalEvent): RuleFlag[] {
   const flags: RuleFlag[] = [];
 
+  // Compute patient age from DOB when available (supports pediatric thresholds)
+  const patientDOB = event.data.patient_date_of_birth as string | undefined;
+  const patientAgeYears = ageInYearsFromDOB(patientDOB);
+
   if (event.type === "vital.created") {
     const vitalType = event.data.type as VitalType | undefined;
     const value = event.data.value_primary as number | undefined;
 
     if (vitalType && value !== undefined) {
-      const severity = getVitalSeverity(vitalType, value);
+      const range = getVitalRangeForAge(vitalType, patientAgeYears);
+
+      let severity: "critical" | "warning" | null = null;
+      if (range.criticalLow !== undefined && value <= range.criticalLow) severity = "critical";
+      else if (range.criticalHigh !== undefined && value >= range.criticalHigh) severity = "critical";
+      else if (range.warningLow !== undefined && value < range.warningLow) severity = "warning";
+      else if (range.warningHigh !== undefined && value > range.warningHigh) severity = "warning";
 
       if (severity) {
-        const range = VITAL_DANGER_ZONES[vitalType];
         const isLow =
           (range.criticalLow !== undefined && value <= range.criticalLow) ||
           (range.warningLow !== undefined && value < range.warningLow);
