@@ -40,6 +40,7 @@ import { checkCrossSpecialtyPatterns } from "../rules/cross-specialty.js";
 import type { PatientContext } from "../rules/cross-specialty.js";
 import { checkDrugInteractions } from "../rules/drug-interactions.js";
 import { screenPatientMessage } from "../rules/message-screening.js";
+import { screenPatientObservation } from "../rules/observation-screening.js";
 import { checkAllergyMedication } from "../rules/allergy-medication.js";
 import type { RuleFlag } from "../rules/critical-values.js";
 import { buildPatientContext } from "../workers/context-builder.js";
@@ -135,8 +136,8 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
     }
 
     // 2f. Patient observation screening (only for patient.observation events)
-    // Same keyword patterns as message screening, applied to observation descriptions.
-    // Ensures the symptom journal has deterministic safety coverage even when LLM is unavailable.
+    // Dedicated keyword rules for observation descriptions (symptom journal).
+    // Ensures deterministic safety coverage even when the LLM layer is unavailable.
     if (event.type === "patient.observation" && event.data.observation_id) {
       rulesEvaluated.push("observation-screening");
 
@@ -148,9 +149,9 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
       if (obs?.description) {
         const enrichedEvent = {
           ...event,
-          data: { ...event.data, message_text: obs.description, sender_role: "patient" },
+          data: { ...event.data, observation_description: obs.description },
         };
-        const obsFlags = screenPatientMessage(enrichedEvent);
+        const obsFlags = screenPatientObservation(enrichedEvent);
         if (obsFlags.length > 0) {
           rulesFired.push("observation-screening");
           allRuleFlags.push(...obsFlags);
