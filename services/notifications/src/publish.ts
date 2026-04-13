@@ -7,6 +7,7 @@
  */
 
 import Redis from "ioredis";
+import { getRedisConnection } from "@carebridge/redis-config";
 
 export interface NotificationPayload {
   id: string;
@@ -29,12 +30,7 @@ let publisherClient: Redis | null = null;
  */
 export function getPublisher(): Redis {
   if (!publisherClient) {
-    publisherClient = new Redis({
-      host: process.env.REDIS_HOST ?? "localhost",
-      port: Number(process.env.REDIS_PORT ?? 6379),
-      ...(process.env.REDIS_PASSWORD ? { password: process.env.REDIS_PASSWORD } : {}),
-      ...(process.env.REDIS_TLS === "true" ? { tls: {} } : {}),
-    });
+    publisherClient = new Redis(getRedisConnection());
   }
   return publisherClient;
 }
