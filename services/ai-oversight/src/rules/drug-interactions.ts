@@ -107,6 +107,66 @@ const INTERACTION_PAIRS: DrugInteractionPair[] = [
     notify_specialties: ["psychiatry"],
   },
   {
+    id: "DI-SEROTONIN-TRAMADOL",
+    drugA: /fluoxetine|sertraline|paroxetine|citalopram|escitalopram|fluvoxamine|venlafaxine|duloxetine|desvenlafaxine/i,
+    drugB: /tramadol|ultram/i,
+    severity: "critical",
+    summary: "SSRI/SNRI + Tramadol: serotonin syndrome risk",
+    rationale:
+      "Tramadol has serotonin-norepinephrine reuptake inhibitor activity in addition to its opioid effects. " +
+      "Combined with SSRIs or SNRIs, the additive serotonergic activity significantly increases the risk of " +
+      "serotonin syndrome — a potentially fatal toxidrome characterized by hyperthermia, rigidity, myoclonus, " +
+      "and autonomic instability. This is a commonly encountered combination in patients with comorbid pain and depression.",
+    suggested_action:
+      "Avoid combination. Use a non-serotonergic analgesic (e.g., acetaminophen, non-tramadol opioid if needed). " +
+      "If co-prescribing is unavoidable, use lowest effective doses and counsel patient on serotonin syndrome symptoms.",
+    notify_specialties: ["psychiatry", "pain_management"],
+  },
+  {
+    id: "DI-SEROTONIN-LINEZOLID",
+    drugA: /fluoxetine|sertraline|paroxetine|citalopram|escitalopram|fluvoxamine|venlafaxine|duloxetine|desvenlafaxine/i,
+    drugB: /linezolid|zyvox/i,
+    severity: "critical",
+    summary: "SSRI/SNRI + Linezolid: serotonin syndrome risk (MAOI activity)",
+    rationale:
+      "Linezolid is a reversible, nonselective MAO inhibitor. When combined with serotonergic antidepressants, " +
+      "it can precipitate serotonin syndrome. This interaction is frequently missed because linezolid is prescribed " +
+      "as an antibiotic rather than a psychiatric medication. Cases of fatal serotonin syndrome have been reported.",
+    suggested_action:
+      "CONTRAINDICATED combination. Use an alternative antibiotic (e.g., vancomycin, daptomycin) if possible. " +
+      "If linezolid is essential, discontinue SSRI/SNRI and monitor closely for serotonin syndrome for 2 weeks (5 weeks for fluoxetine).",
+    notify_specialties: ["psychiatry", "infectious_disease"],
+  },
+  {
+    id: "DI-SEROTONIN-DEXTROMETHORPHAN",
+    drugA: /fluoxetine|sertraline|paroxetine|citalopram|escitalopram|fluvoxamine|venlafaxine|duloxetine|desvenlafaxine/i,
+    drugB: /dextromethorphan|robitussin|delsym/i,
+    severity: "warning",
+    summary: "SSRI/SNRI + Dextromethorphan: serotonin syndrome risk",
+    rationale:
+      "Dextromethorphan has serotonergic activity via sigma-1 receptor agonism and serotonin reuptake inhibition. " +
+      "Combined with SSRIs/SNRIs, particularly CYP2D6 inhibitors like fluoxetine and paroxetine which also " +
+      "increase dextromethorphan levels, the risk of serotonin syndrome is elevated.",
+    suggested_action:
+      "Advise patient to avoid OTC cough products containing dextromethorphan. Use non-serotonergic cough suppressant alternatives.",
+    notify_specialties: ["psychiatry"],
+  },
+  {
+    id: "DI-SEROTONIN-METHYLENE-BLUE",
+    drugA: /fluoxetine|sertraline|paroxetine|citalopram|escitalopram|fluvoxamine|venlafaxine|duloxetine|desvenlafaxine/i,
+    drugB: /methylene blue|methylthioninium/i,
+    severity: "critical",
+    summary: "SSRI/SNRI + Methylene blue: serotonin syndrome risk (potent MAO-A inhibitor)",
+    rationale:
+      "Intravenous methylene blue is a potent MAO-A inhibitor. When administered to patients on serotonergic " +
+      "antidepressants, it can precipitate severe serotonin syndrome. Multiple fatalities have been reported. " +
+      "This interaction is frequently missed in surgical and procedural settings.",
+    suggested_action:
+      "CONTRAINDICATED combination. Discontinue SSRI/SNRI before elective procedures requiring methylene blue. " +
+      "In emergencies, use lowest dose and monitor intensively for serotonin syndrome.",
+    notify_specialties: ["psychiatry", "anesthesiology"],
+  },
+  {
     id: "DI-DIGOXIN-AMIODARONE",
     drugA: /digoxin|lanoxin/i,
     drugB: /amiodarone|pacerone|cordarone/i,
