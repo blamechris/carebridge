@@ -30,7 +30,7 @@ export const DIASTOLIC_DANGER_ZONE: DiastolicRange = {
 
 /** Adult vital sign danger zones (default, used for age >= 18 or when age is unknown) */
 export const VITAL_DANGER_ZONES: Record<VitalType, VitalRange> = {
-  blood_pressure: { min: 60, max: 250, criticalLow: 70, criticalHigh: 180 },
+  blood_pressure: { min: 60, max: 250, criticalLow: 55, criticalHigh: 180, warningLow: 90 },
   heart_rate: { min: 20, max: 300, criticalLow: 40, criticalHigh: 200 },
   o2_sat: { min: 50, max: 100, criticalLow: 85 },
   temperature: { min: 85, max: 115, criticalLow: 95, criticalHigh: 104 },
@@ -264,24 +264,39 @@ export function getVitalSeverity(
   const range = VITAL_DANGER_ZONES[type];
   if (!range) return null;
 
-  // Check critical thresholds first (most severe)
   if (range.criticalLow !== undefined && value <= range.criticalLow) return "critical";
   if (range.criticalHigh !== undefined && value >= range.criticalHigh) return "critical";
-
-  // Check warning thresholds
   if (range.warningLow !== undefined && value < range.warningLow) return "warning";
   if (range.warningHigh !== undefined && value > range.warningHigh) return "warning";
 
   return null;
 }
 
-/** Severity level for diastolic evaluation */
-export type DiastolicSeverity = "critical" | "warning" | null;
+/** Severity level for BP evaluation */
+export type BPSeverity = "critical" | "warning" | null;
+
+/** @deprecated Use BPSeverity instead */
+export type DiastolicSeverity = BPSeverity;
 
 /** Check diastolic BP and return severity (critical, warning, or null) */
-export function checkDiastolicBP(diastolic: number): DiastolicSeverity {
+export function checkDiastolicBP(diastolic: number): BPSeverity {
   if (diastolic < DIASTOLIC_DANGER_ZONE.criticalLow) return "critical";
   if (diastolic >= DIASTOLIC_DANGER_ZONE.criticalHigh) return "critical";
   if (diastolic >= DIASTOLIC_DANGER_ZONE.warningHigh) return "warning";
+  return null;
+}
+
+/**
+ * Check systolic BP and return severity.
+ * - critical: SBP <= criticalLow (55) — circulatory shock
+ * - warning:  SBP < warningLow (90)  — symptomatic hypotension (covers 56-89)
+ * - critical: SBP >= criticalHigh (180) — hypertensive crisis
+ * - null:     within acceptable range
+ */
+export function checkSystolicBP(systolic: number): BPSeverity {
+  const range = VITAL_DANGER_ZONES.blood_pressure;
+  if (range.criticalLow !== undefined && systolic <= range.criticalLow) return "critical";
+  if (range.criticalHigh !== undefined && systolic >= range.criticalHigh) return "critical";
+  if (range.warningLow !== undefined && systolic < range.warningLow) return "warning";
   return null;
 }
