@@ -36,6 +36,132 @@
       "when": 1744041600000,
       "tag": "0004_mfa_and_llm_audit",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1744128000000,
+      "tag": "0005_refresh_token",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1744214400000,
+      "tag": "0006_audit_log_procedure_patient",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1744300800000,
+      "tag": "0008_encrypt_patient_name",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1744387200000,
+      "tag": "0009_icd10_snomed_coding",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1744473600000,
+      "tag": "0010_add_vitals_loinc_code",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1744560000000,
+      "tag": "0011_encrypt_clinical_narratives",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1744646400000,
+      "tag": "0012_audit_log_immutability",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1744732800000,
+      "tag": "0013_encounters_table",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1744819200000,
+      "tag": "0014_llm_compliance_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1744905600000,
+      "tag": "0015_requires_human_review_boolean",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1744992000000,
+      "tag": "0016_notification_phi_encryption",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1745078400000,
+      "tag": "0017_messaging_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1745164800000,
+      "tag": "0018_patient_observations",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1745251200000,
+      "tag": "0019_scheduling_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1745337600000,
+      "tag": "0020_emergency_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1745424000000,
+      "tag": "0021_notification_preferences",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1745510400000,
+      "tag": "0022_user_patient_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1745596800000,
+      "tag": "0023_audit_log_status",
+      "breakpoints": true
     }
   ]
 }
