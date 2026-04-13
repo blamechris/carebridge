@@ -20,8 +20,8 @@ function makeUser(role: User["role"]): User {
 const careTeamSelectMock = vi.fn();
 const emergencySelectMock = vi.fn();
 vi.mock("@carebridge/db-schema", () => {
-  const careTeamFromMock = vi.fn(() => ({ where: vi.fn(() => ({ limit: careTeamSelectMock })) }));
-  const emergencyFromMock = vi.fn(() => ({ where: vi.fn(() => ({ limit: emergencySelectMock })) }));
+  const careTeamFromMock = vi.fn((_table?: unknown) => ({ where: vi.fn(() => ({ limit: careTeamSelectMock })) }));
+  const emergencyFromMock = vi.fn((_table?: unknown) => ({ where: vi.fn(() => ({ limit: emergencySelectMock })) }));
 
   // Track which table the `from` call targets to route to the right mock.
   const selectFn = () => ({

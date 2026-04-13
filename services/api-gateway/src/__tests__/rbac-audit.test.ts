@@ -13,12 +13,15 @@ const mockInsert = vi.fn(() => ({ values: mockValues }));
 
 // Care-team query: returns empty by default (no assignment)
 let careTeamRows: unknown[] = [];
+let emergencyAccessRows: unknown[] = [];
 
+let selectCallCount = 0;
 function makeSelectChain() {
+  const callIndex = selectCallCount++;
   const chain: Record<string, unknown> = {};
   chain.from = vi.fn(() => chain);
   chain.where = vi.fn(() => chain);
-  chain.limit = vi.fn(() => careTeamRows);
+  chain.limit = vi.fn(() => (callIndex === 0 ? careTeamRows : emergencyAccessRows));
   return chain;
 }
 
@@ -36,12 +39,20 @@ vi.mock("@carebridge/db-schema", () => ({
     patient_id: "care_team_assignments.patient_id",
     removed_at: "care_team_assignments.removed_at",
   },
+  emergencyAccess: {
+    id: "emergency_access.id",
+    user_id: "emergency_access.user_id",
+    patient_id: "emergency_access.patient_id",
+    revoked_at: "emergency_access.revoked_at",
+    expires_at: "emergency_access.expires_at",
+  },
 }));
 
 vi.mock("drizzle-orm", () => ({
   eq: (col: unknown, val: unknown) => ({ col, val }),
   and: (...args: unknown[]) => args,
   isNull: (col: unknown) => ({ isNull: col }),
+  gt: (col: unknown, val: unknown) => ({ gt: col, val }),
 }));
 
 import { assertPatientAccess } from "../middleware/rbac.js";
@@ -99,6 +110,8 @@ describe("RBAC audit logging", () => {
     vi.clearAllMocks();
     insertedRows.length = 0;
     careTeamRows = [];
+    emergencyAccessRows = [];
+    selectCallCount = 0;
   });
 
   it("logs an audit entry when a patient accesses another patient's data", async () => {

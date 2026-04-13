@@ -186,7 +186,7 @@ describe("createFlag", () => {
   it("emits a notification event with empty notify_specialties when none provided", async () => {
     const flagNoSpecialties = {
       ...baseFlag,
-      notify_specialties: undefined,
+      notify_specialties: [] as string[],
     };
 
     const result = await createFlag(flagNoSpecialties);
