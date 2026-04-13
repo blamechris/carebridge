@@ -1,8 +1,18 @@
-import { eq, desc } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { getDb, clinicalNotes, noteVersions } from "@carebridge/db-schema";
 import type { CreateNoteInput, UpdateNoteInput } from "@carebridge/validators";
 import type { ClinicalNote, NoteVersion } from "@carebridge/shared-types";
 import { emitClinicalEvent } from "../events.js";
+
+/**
+ * Thrown when an optimistic locking conflict is detected (concurrent modification).
+ */
+export class NoteConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NoteConflictError";
+  }
+}
 
 /**
  * Creates a new clinical note, persists it, and emits a "note.saved" event.
@@ -82,14 +92,27 @@ export async function updateNote(
 
   const newVersion = existing.version + 1;
 
+  // Optimistic locking: when expectedVersion is provided, only update if the
+  // row hasn't been modified since the caller last read it.
+  const whereClause = input.expectedVersion
+    ? and(eq(clinicalNotes.id, noteId), eq(clinicalNotes.version, input.expectedVersion))
+    : eq(clinicalNotes.id, noteId);
+
   // Update the note with new sections and incremented version
-  await db
+  const result = await db
     .update(clinicalNotes)
     .set({
       sections: input.sections,
       version: newVersion,
     })
-    .where(eq(clinicalNotes.id, noteId));
+    .where(whereClause)
+    .returning({ id: clinicalNotes.id });
+
+  if (result.length === 0 && input.expectedVersion) {
+    throw new NoteConflictError(
+      "Note was modified by another user. Please refresh and try again.",
+    );
+  }
 
   await emitClinicalEvent({
     id: crypto.randomUUID(),
