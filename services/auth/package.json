@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./family-invite-flow": {
+      "types": "./dist/family-invite-flow.d.ts",
+      "default": "./dist/family-invite-flow.js"
     }
   },
   "scripts": {
