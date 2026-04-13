@@ -11,6 +11,7 @@ export const notifications = pgTable("notifications", {
   summary_safe: text("summary_safe"), // PHI-free summary for lock-screen/push display
   link: text("link"), // deep link to the relevant resource
   related_flag_id: text("related_flag_id"),
+  is_urgent: boolean("is_urgent").notNull().default(false),
   is_read: boolean("is_read").notNull().default(false),
   created_at: text("created_at").notNull(),
   read_at: text("read_at"),
