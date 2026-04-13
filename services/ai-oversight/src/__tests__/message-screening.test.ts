@@ -128,6 +128,14 @@ describe("screenPatientMessage — urgent keyword detection", () => {
     expect(flags.find((f) => f.rule_id === "MSG-FALL")!.severity).toBe("warning");
   });
 
+  it("flags new weakness (warning severity)", () => {
+    const flags = screenPatientMessage(
+      makeMessageEvent({ message_text: "I have sudden weakness in my left leg" }),
+    );
+    expect(flags.some((f) => f.rule_id === "MSG-NEW-WEAKNESS")).toBe(true);
+    expect(flags.find((f) => f.rule_id === "MSG-NEW-WEAKNESS")!.severity).toBe("warning");
+  });
+
   it("detects multiple urgent keywords in a single message", () => {
     const flags = screenPatientMessage(
       makeMessageEvent({
