@@ -6,7 +6,8 @@
   "exports": {
     "./trpc": "./src/trpc.ts",
     "./auth": "./src/auth.tsx",
-    "./providers": "./src/providers.tsx"
+    "./providers": "./src/providers.tsx",
+    "./password-input": "./src/password-input.tsx"
   },
   "dependencies": {
     "@trpc/client": "^11.0.0",
