@@ -4,6 +4,7 @@ import {
   validateMedicationDose,
   validateLabResult,
   isCriticalVital,
+  getVitalSeverity,
   VITAL_DANGER_ZONES,
 } from "../medical-validation.js";
 
@@ -175,5 +176,65 @@ describe("isCriticalVital", () => {
 
   it("returns false for vital type without critical thresholds", () => {
     expect(isCriticalVital("weight", 200)).toBe(false);
+  });
+
+  it("returns true for glucose 45 (severe hypoglycemia, <= criticalLow 50)", () => {
+    expect(isCriticalVital("blood_glucose", 45)).toBe(true);
+  });
+
+  it("returns false for glucose 65 (above criticalLow but below warningLow)", () => {
+    expect(isCriticalVital("blood_glucose", 65)).toBe(false);
+  });
+
+  it("returns false for normal glucose 120", () => {
+    expect(isCriticalVital("blood_glucose", 120)).toBe(false);
+  });
+
+  it("returns true for glucose 450 (DKA territory, >= criticalHigh 350)", () => {
+    expect(isCriticalVital("blood_glucose", 450)).toBe(true);
+  });
+
+  it("returns false for glucose 300 (above warningHigh but below criticalHigh)", () => {
+    expect(isCriticalVital("blood_glucose", 300)).toBe(false);
+  });
+});
+
+// ─── getVitalSeverity ──────────────────────────────────────────
+
+describe("getVitalSeverity", () => {
+  it("returns critical for glucose 45 (severe hypoglycemia)", () => {
+    expect(getVitalSeverity("blood_glucose", 45)).toBe("critical");
+  });
+
+  it("returns warning for glucose 65 (mild hypoglycemia)", () => {
+    expect(getVitalSeverity("blood_glucose", 65)).toBe("warning");
+  });
+
+  it("returns null for normal glucose 120", () => {
+    expect(getVitalSeverity("blood_glucose", 120)).toBeNull();
+  });
+
+  it("returns warning for glucose 300 (hyperglycemia)", () => {
+    expect(getVitalSeverity("blood_glucose", 300)).toBe("warning");
+  });
+
+  it("returns critical for glucose 450 (DKA territory)", () => {
+    expect(getVitalSeverity("blood_glucose", 450)).toBe("critical");
+  });
+
+  it("returns critical for glucose at exact criticalLow boundary (50)", () => {
+    expect(getVitalSeverity("blood_glucose", 50)).toBe("critical");
+  });
+
+  it("returns critical for glucose at exact criticalHigh boundary (350)", () => {
+    expect(getVitalSeverity("blood_glucose", 350)).toBe("critical");
+  });
+
+  it("returns null for vital type without thresholds", () => {
+    expect(getVitalSeverity("weight", 200)).toBeNull();
+  });
+
+  it("returns critical for critically low heart rate", () => {
+    expect(getVitalSeverity("heart_rate", 30)).toBe("critical");
   });
 });
