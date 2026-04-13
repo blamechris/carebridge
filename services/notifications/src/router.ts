@@ -4,6 +4,7 @@ import { getDb } from "@carebridge/db-schema";
 import { notifications, notificationPreferences } from "@carebridge/db-schema";
 import { eq, and, desc } from "drizzle-orm";
 import crypto from "node:crypto";
+import { publishNotification } from "./publish.js";
 
 const t = initTRPC.create();
 
@@ -49,6 +50,18 @@ export const notificationsRouter = t.router({
         created_at: new Date().toISOString(),
       };
       await db.insert(notifications).values(notification);
+
+      // Publish to Redis pub/sub for real-time SSE delivery
+      await publishNotification(notification.user_id, {
+        id: notification.id,
+        type: notification.type,
+        title: notification.title,
+        body: notification.body,
+        link: notification.link,
+        related_flag_id: notification.related_flag_id,
+        created_at: notification.created_at,
+      });
+
       return notification;
     }),
   getPreferences: t.procedure
