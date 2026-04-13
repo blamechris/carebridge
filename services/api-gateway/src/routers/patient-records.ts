@@ -160,6 +160,12 @@ export const patientRecordsRbacRouter = t.router({
     create: protectedProcedure
       .input(createDiagnosisSchema)
       .mutation(async ({ ctx, input }) => {
+        if (ctx.user.role === "patient" || ctx.user.role === "family_caregiver") {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Patients cannot create clinical diagnoses",
+          });
+        }
         await enforcePatientAccess(ctx.user, input.patient_id);
         return createDiagnosis(input);
       }),
@@ -167,6 +173,12 @@ export const patientRecordsRbacRouter = t.router({
     update: protectedProcedure
       .input(z.object({ id: z.string().uuid() }).merge(updateDiagnosisSchema))
       .mutation(async ({ ctx, input }) => {
+        if (ctx.user.role === "patient" || ctx.user.role === "family_caregiver") {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Patients cannot update clinical diagnoses",
+          });
+        }
         const { id, ...data } = input;
         // Look up the diagnosis to get the patient_id for access check
         const db = getDb();
@@ -198,6 +210,12 @@ export const patientRecordsRbacRouter = t.router({
     create: protectedProcedure
       .input(createAllergySchema)
       .mutation(async ({ ctx, input }) => {
+        if (ctx.user.role === "patient" || ctx.user.role === "family_caregiver") {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Patients cannot create clinical allergies",
+          });
+        }
         await enforcePatientAccess(ctx.user, input.patient_id);
         return createAllergy(input);
       }),
@@ -205,6 +223,12 @@ export const patientRecordsRbacRouter = t.router({
     update: protectedProcedure
       .input(z.object({ id: z.string().uuid() }).merge(updateAllergySchema))
       .mutation(async ({ ctx, input }) => {
+        if (ctx.user.role === "patient" || ctx.user.role === "family_caregiver") {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Patients cannot update clinical allergies",
+          });
+        }
         const { id, ...data } = input;
         const db = getDb();
         const [existing] = await db
