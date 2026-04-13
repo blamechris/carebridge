@@ -108,6 +108,19 @@ export const procedures = pgTable("procedures", {
   index("idx_procedures_patient").on(table.patient_id, table.status),
 ]);
 
+export const failedClinicalEvents = pgTable("failed_clinical_events", {
+  id: text("id").primaryKey(),
+  event_type: text("event_type").notNull(),
+  event_payload: jsonb("event_payload").notNull(),
+  error_message: text("error_message").notNull(),
+  status: text("status").notNull().default("pending"),
+  retry_count: real("retry_count").notNull().default(0),
+  created_at: text("created_at").notNull(),
+  retried_at: text("retried_at"),
+}, (table) => [
+  index("idx_failed_clinical_events_status").on(table.status, table.created_at),
+]);
+
 export const events = pgTable("events", {
   id: text("id").primaryKey(),
   patient_id: text("patient_id").notNull().references(() => patients.id),
