@@ -313,6 +313,7 @@ export async function createAllergy(input: z.infer<typeof createAllergySchema>) 
     allergen: input.allergen,
     reaction: input.reaction,
     severity: input.severity,
+    verification_status: input.verification_status ?? "unconfirmed",
     created_at: now,
   };
 
@@ -322,7 +323,7 @@ export async function createAllergy(input: z.infer<typeof createAllergySchema>) 
     id: crypto.randomUUID(),
     type: "allergy.added",
     patient_id: input.patient_id,
-    data: { allergy_id: id, allergen: input.allergen, severity: input.severity },
+    data: { allergy_id: id, allergen: input.allergen, severity: input.severity, verification_status: record.verification_status },
     timestamp: now,
   });
 
@@ -344,6 +345,7 @@ export async function updateAllergy(
   const updates: Record<string, unknown> = {};
   if (input.severity !== undefined) updates.severity = input.severity;
   if (input.reaction !== undefined) updates.reaction = input.reaction;
+  if (input.verification_status !== undefined) updates.verification_status = input.verification_status;
 
   if (Object.keys(updates).length === 0) {
     return existing;

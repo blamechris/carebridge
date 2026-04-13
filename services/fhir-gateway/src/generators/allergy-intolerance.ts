@@ -53,6 +53,25 @@ const CLINICAL_STATUS_SYSTEM =
 const VERIFICATION_STATUS_SYSTEM =
   "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification";
 
+/**
+ * Map internal verification_status to FHIR R4 verificationStatus code.
+ * See https://hl7.org/fhir/R4/valueset-allergyintolerance-verification.html
+ */
+function mapVerificationStatus(
+  status: string | null,
+): "confirmed" | "unconfirmed" | "entered-in-error" | "refuted" {
+  switch (status) {
+    case "confirmed":
+      return "confirmed";
+    case "entered_in_error":
+      return "entered-in-error";
+    case "refuted":
+      return "refuted";
+    default:
+      return "unconfirmed";
+  }
+}
+
 function mapSeverityToCriticality(
   severity: string | null,
 ): "low" | "high" | "unable-to-assess" {
@@ -133,7 +152,7 @@ export function toFhirAllergyIntolerance(
       coding: [
         {
           system: VERIFICATION_STATUS_SYSTEM,
-          code: "confirmed",
+          code: mapVerificationStatus(allergy.verification_status),
         },
       ],
     },

@@ -38,8 +38,9 @@ export interface ReviewContext {
   patient: {
     age: number;
     sex: string;
+    allergy_status?: "nkda" | "unknown" | "has_allergies";
     active_diagnoses: string[];
-    allergies: string[];
+    allergies: (string | { allergen: string; verification_status: string })[];
   };
   active_medications: {
     name: string;
@@ -80,6 +81,29 @@ export interface ReviewContext {
   }[];
 }
 
+function formatAllergies(context: ReviewContext): string {
+  if (context.patient.allergies.length > 0) {
+    return context.patient.allergies
+      .map((a) => {
+        if (typeof a === "string") return `  - ${a}`;
+        return `  - ${a.allergen} [${a.verification_status}]`;
+      })
+      .join("\n");
+  }
+
+  const status = context.patient.allergy_status ?? "unknown";
+  switch (status) {
+    case "nkda":
+      return "  NKDA (confirmed — no known drug allergies)";
+    case "unknown":
+      return "  ALLERGY STATUS UNKNOWN (never assessed — do NOT assume NKDA)";
+    case "has_allergies":
+      return "  Marked as having allergies but none documented (data gap)";
+    default:
+      return "  ALLERGY STATUS UNKNOWN (never assessed — do NOT assume NKDA)";
+  }
+}
+
 export function buildReviewPrompt(context: ReviewContext): string {
   return `PATIENT CLINICAL CONTEXT
 ========================
@@ -90,7 +114,7 @@ ${PROMPT_SECTIONS.DIAGNOSES}:
 ${context.patient.active_diagnoses.map((d) => `  - ${d}`).join("\n") || "  None documented"}
 
 ${PROMPT_SECTIONS.ALLERGIES}:
-${context.patient.allergies.map((a) => `  - ${a}`).join("\n") || "  NKDA"}
+${formatAllergies(context)}
 
 ${PROMPT_SECTIONS.MEDICATIONS}:
 ${context.active_medications.map((m) => `  - ${m.name} ${m.dose} ${m.route} ${m.frequency} (since ${m.started_at})`).join("\n") || "  None"}
