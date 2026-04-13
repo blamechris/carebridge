@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useCallback, useEffect } from "react";
 import type { ReactNode } from "react";
+import { getApiBaseUrl } from "./trpc.js";
 
 export interface User {
   id: string;
@@ -28,8 +29,40 @@ export interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-const SESSION_KEY = "carebridge_session";
 const USER_KEY = "carebridge_user";
+// The session token is now stored in an HttpOnly cookie set by POST /auth/session.
+// It is NOT stored in localStorage, which prevents XSS-based token theft.
+// Only the non-sensitive user profile (name, role) is kept in localStorage for
+// hydration on page reload.
+const HAS_SESSION_KEY = "carebridge_has_session";
+
+/**
+ * Sends the session token to the API gateway which writes it into an HttpOnly
+ * cookie. This is the primary session transport — the cookie is inaccessible
+ * to JavaScript and immune to XSS token theft.
+ */
+async function setSessionCookie(token: string): Promise<void> {
+  const baseUrl = getApiBaseUrl();
+  await fetch(`${baseUrl}/auth/session`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ token }),
+  });
+}
+
+/**
+ * Clears the HttpOnly session cookie via the API gateway.
+ */
+async function clearSessionCookie(): Promise<void> {
+  const baseUrl = getApiBaseUrl();
+  await fetch(`${baseUrl}/auth/session/clear`, {
+    method: "POST",
+    credentials: "include",
+  }).catch(() => {
+    // Best-effort — if the server is unreachable the cookie will expire on its own.
+  });
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   // Initialize as null on both server and client to avoid hydration mismatch.
@@ -42,21 +75,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const stored = localStorage.getItem(USER_KEY);
       if (stored) setUser(JSON.parse(stored) as User);
-      setSessionId(localStorage.getItem(SESSION_KEY));
+      // The actual session token lives in an HttpOnly cookie. We use a flag
+      // in localStorage only to know whether we believe we have an active
+      // session (for hydration / isAuthenticated on the client).
+      const hasSession = localStorage.getItem(HAS_SESSION_KEY);
+      if (hasSession) setSessionId(hasSession);
     } catch { /* corrupt / blocked storage — stay logged out */ }
     setHydrated(true);
   }, []);
 
   const setSession = useCallback((u: User, sid: string) => {
-    localStorage.setItem(SESSION_KEY, sid);
+    // Write the session token into an HttpOnly cookie via the API gateway.
+    // The token is NOT stored in localStorage — only a flag indicating an
+    // active session exists (the flag itself is not the token).
+    setSessionCookie(sid).catch(() => {
+      // If the cookie endpoint fails, the Authorization header fallback in
+      // the auth middleware will still work for the current page session.
+    });
     localStorage.setItem(USER_KEY, JSON.stringify(u));
+    localStorage.setItem(HAS_SESSION_KEY, "true");
     setUser(u);
     setSessionId(sid);
   }, []);
 
   const clearSession = useCallback(() => {
-    localStorage.removeItem(SESSION_KEY);
+    clearSessionCookie();
     localStorage.removeItem(USER_KEY);
+    localStorage.removeItem(HAS_SESSION_KEY);
     setUser(null);
     setSessionId(null);
   }, []);
