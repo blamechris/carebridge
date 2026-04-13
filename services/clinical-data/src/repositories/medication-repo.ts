@@ -5,6 +5,16 @@ import type { Medication, MedLog, MedStatus } from "@carebridge/shared-types";
 import { emitClinicalEvent } from "../events.js";
 
 /**
+ * Thrown when an optimistic locking conflict is detected (concurrent modification).
+ */
+export class ConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ConflictError";
+  }
+}
+
+/**
  * Creates a new medication record and emits a "medication.created" event.
  */
 export async function createMedication(input: CreateMedicationInput): Promise<Medication> {
@@ -85,30 +95,42 @@ export async function updateMedication(
     throw new Error(`Medication ${id} not found`);
   }
 
-  const updates: Record<string, unknown> = { updated_at: now };
-  if (input.name !== undefined) updates.name = input.name;
-  if (input.brand_name !== undefined) updates.brand_name = input.brand_name;
-  if (input.dose_amount !== undefined) updates.dose_amount = input.dose_amount;
-  if (input.dose_unit !== undefined) updates.dose_unit = input.dose_unit;
-  if (input.route !== undefined) updates.route = input.route;
-  if (input.frequency !== undefined) updates.frequency = input.frequency;
-  if (input.status !== undefined) updates.status = input.status;
-  if (input.started_at !== undefined) updates.started_at = input.started_at;
-  if (input.ended_at !== undefined) updates.ended_at = input.ended_at;
-  if (input.prescribed_by !== undefined) updates.prescribed_by = input.prescribed_by;
-  if (input.notes !== undefined) updates.notes = input.notes;
-  if (input.rxnorm_code !== undefined) updates.rxnorm_code = input.rxnorm_code;
-  if (input.ordering_provider_id !== undefined) updates.ordering_provider_id = input.ordering_provider_id;
-  if (input.encounter_id !== undefined) updates.encounter_id = input.encounter_id;
+  const { expectedUpdatedAt, ...fields } = input;
 
-  await db.update(medications).set(updates).where(eq(medications.id, id));
+  const updates: Record<string, unknown> = { updated_at: now };
+  if (fields.name !== undefined) updates.name = fields.name;
+  if (fields.brand_name !== undefined) updates.brand_name = fields.brand_name;
+  if (fields.dose_amount !== undefined) updates.dose_amount = fields.dose_amount;
+  if (fields.dose_unit !== undefined) updates.dose_unit = fields.dose_unit;
+  if (fields.route !== undefined) updates.route = fields.route;
+  if (fields.frequency !== undefined) updates.frequency = fields.frequency;
+  if (fields.status !== undefined) updates.status = fields.status;
+  if (fields.started_at !== undefined) updates.started_at = fields.started_at;
+  if (fields.ended_at !== undefined) updates.ended_at = fields.ended_at;
+  if (fields.prescribed_by !== undefined) updates.prescribed_by = fields.prescribed_by;
+  if (fields.notes !== undefined) updates.notes = fields.notes;
+  if (fields.rxnorm_code !== undefined) updates.rxnorm_code = fields.rxnorm_code;
+  if (fields.ordering_provider_id !== undefined) updates.ordering_provider_id = fields.ordering_provider_id;
+  if (fields.encounter_id !== undefined) updates.encounter_id = fields.encounter_id;
+
+  // Optimistic locking: when expectedUpdatedAt is provided, only update if the
+  // row hasn't been modified since the caller last read it.
+  const whereClause = expectedUpdatedAt
+    ? and(eq(medications.id, id), eq(medications.updated_at, expectedUpdatedAt))
+    : eq(medications.id, id);
+
+  const result = await db.update(medications).set(updates).where(whereClause).returning({ id: medications.id });
+
+  if (result.length === 0 && expectedUpdatedAt) {
+    throw new ConflictError("Medication was modified by another user. Please refresh and try again.");
+  }
 
   await emitClinicalEvent({
     id: crypto.randomUUID(),
     type: "medication.updated",
     patient_id: existing.patient_id,
     timestamp: now,
-    data: { resourceId: id, changedFields: Object.keys(input) },
+    data: { resourceId: id, changedFields: Object.keys(fields) },
   });
 
   // Re-fetch the updated record
