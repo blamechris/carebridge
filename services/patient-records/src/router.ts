@@ -2,7 +2,14 @@ import { initTRPC } from "@trpc/server";
 import { z } from "zod";
 import { getDb, hmacForIndex } from "@carebridge/db-schema";
 import { patients, diagnoses, allergies, careTeamMembers, patientObservations } from "@carebridge/db-schema";
-import { createPatientSchema, updatePatientSchema } from "@carebridge/validators";
+import {
+  createPatientSchema,
+  updatePatientSchema,
+  createDiagnosisSchema,
+  updateDiagnosisSchema,
+  createAllergySchema,
+  updateAllergySchema,
+} from "@carebridge/validators";
 import { eq, desc } from "drizzle-orm";
 import { Queue } from "bullmq";
 import { getRedisConnection } from "@carebridge/redis-config";
@@ -54,12 +61,20 @@ export const patientRecordsRouter = t.router({
     return db.select().from(patients);
   }),
 
-  // Stub: diagnoses, allergies, care team
   diagnoses: t.router({
     getByPatient: t.procedure.input(z.object({ patientId: z.string() })).query(async ({ input }) => {
       const db = getDb();
       return db.select().from(diagnoses).where(eq(diagnoses.patient_id, input.patientId));
     }),
+    create: t.procedure.input(createDiagnosisSchema).mutation(async ({ input }) => {
+      return createDiagnosis(input);
+    }),
+    update: t.procedure
+      .input(z.object({ id: z.string().uuid() }).merge(updateDiagnosisSchema))
+      .mutation(async ({ input }) => {
+        const { id, ...data } = input;
+        return updateDiagnosis(id, data);
+      }),
   }),
 
   allergies: t.router({
@@ -67,6 +82,15 @@ export const patientRecordsRouter = t.router({
       const db = getDb();
       return db.select().from(allergies).where(eq(allergies.patient_id, input.patientId));
     }),
+    create: t.procedure.input(createAllergySchema).mutation(async ({ input }) => {
+      return createAllergy(input);
+    }),
+    update: t.procedure
+      .input(z.object({ id: z.string().uuid() }).merge(updateAllergySchema))
+      .mutation(async ({ input }) => {
+        const { id, ...data } = input;
+        return updateAllergy(id, data);
+      }),
   }),
 
   careTeam: t.router({
@@ -196,6 +220,129 @@ export async function createObservation(input: ObservationCreateInput) {
   });
 
   return observation;
+}
+
+// ---------------------------------------------------------------------------
+// Diagnosis helpers
+// ---------------------------------------------------------------------------
+
+export async function createDiagnosis(input: z.infer<typeof createDiagnosisSchema>) {
+  const db = getDb();
+  const now = new Date().toISOString();
+  const id = crypto.randomUUID();
+
+  const record = {
+    id,
+    patient_id: input.patient_id,
+    icd10_code: input.icd10_code,
+    description: input.description,
+    status: input.status ?? "active",
+    onset_date: input.onset_date ?? null,
+    snomed_code: input.snomed_code ?? null,
+    created_at: now,
+  };
+
+  await db.insert(diagnoses).values(record);
+
+  await clinicalEventsQueue.add("diagnosis.added", {
+    id: crypto.randomUUID(),
+    type: "diagnosis.added",
+    patient_id: input.patient_id,
+    data: { resourceId: id, icd10_code: input.icd10_code, status: record.status },
+    timestamp: now,
+  });
+
+  return record;
+}
+
+export async function updateDiagnosis(
+  id: string,
+  input: z.infer<typeof updateDiagnosisSchema>,
+) {
+  const db = getDb();
+  const now = new Date().toISOString();
+
+  const [existing] = await db.select().from(diagnoses).where(eq(diagnoses.id, id)).limit(1);
+  if (!existing) {
+    throw new Error(`Diagnosis ${id} not found`);
+  }
+
+  const updates: Record<string, unknown> = {};
+  if (input.status !== undefined) updates.status = input.status;
+  if (input.description !== undefined) updates.description = input.description;
+
+  if (Object.keys(updates).length === 0) {
+    return existing;
+  }
+
+  await db.update(diagnoses).set(updates).where(eq(diagnoses.id, id));
+
+  await clinicalEventsQueue.add("diagnosis.updated", {
+    id: crypto.randomUUID(),
+    type: "diagnosis.updated",
+    patient_id: existing.patient_id,
+    data: { resourceId: id, changedFields: Object.keys(updates) },
+    timestamp: now,
+  });
+
+  const [updated] = await db.select().from(diagnoses).where(eq(diagnoses.id, id)).limit(1);
+  return updated;
+}
+
+// ---------------------------------------------------------------------------
+// Allergy helpers
+// ---------------------------------------------------------------------------
+
+export async function createAllergy(input: z.infer<typeof createAllergySchema>) {
+  const db = getDb();
+  const now = new Date().toISOString();
+  const id = crypto.randomUUID();
+
+  const record = {
+    id,
+    patient_id: input.patient_id,
+    allergen: input.allergen,
+    reaction: input.reaction,
+    severity: input.severity,
+    created_at: now,
+  };
+
+  await db.insert(allergies).values(record);
+
+  await clinicalEventsQueue.add("allergy.added", {
+    id: crypto.randomUUID(),
+    type: "allergy.added",
+    patient_id: input.patient_id,
+    data: { resourceId: id, allergen: input.allergen, severity: input.severity },
+    timestamp: now,
+  });
+
+  return record;
+}
+
+export async function updateAllergy(
+  id: string,
+  input: z.infer<typeof updateAllergySchema>,
+) {
+  const db = getDb();
+
+  const [existing] = await db.select().from(allergies).where(eq(allergies.id, id)).limit(1);
+  if (!existing) {
+    throw new Error(`Allergy ${id} not found`);
+  }
+
+  const updates: Record<string, unknown> = {};
+  if (input.severity !== undefined) updates.severity = input.severity;
+  if (input.reaction !== undefined) updates.reaction = input.reaction;
+
+  if (Object.keys(updates).length === 0) {
+    return existing;
+  }
+
+  await db.update(allergies).set(updates).where(eq(allergies.id, id));
+
+  const [updated] = await db.select().from(allergies).where(eq(allergies.id, id)).limit(1);
+  return updated;
 }
 
 export type PatientRecordsRouter = typeof patientRecordsRouter;

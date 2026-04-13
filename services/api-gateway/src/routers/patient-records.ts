@@ -20,7 +20,17 @@ import { createPatientSchema, updatePatientSchema } from "@carebridge/validators
 import {
   listObservationsByPatient,
   createObservation,
+  createDiagnosis,
+  updateDiagnosis,
+  createAllergy,
+  updateAllergy,
 } from "@carebridge/patient-records";
+import {
+  createDiagnosisSchema,
+  updateDiagnosisSchema,
+  createAllergySchema,
+  updateAllergySchema,
+} from "@carebridge/validators";
 import { eq } from "drizzle-orm";
 import crypto from "node:crypto";
 import type { Context } from "../context.js";
@@ -146,6 +156,31 @@ export const patientRecordsRbacRouter = t.router({
           .from(diagnoses)
           .where(eq(diagnoses.patient_id, input.patientId));
       }),
+
+    create: protectedProcedure
+      .input(createDiagnosisSchema)
+      .mutation(async ({ ctx, input }) => {
+        await enforcePatientAccess(ctx.user, input.patient_id);
+        return createDiagnosis(input);
+      }),
+
+    update: protectedProcedure
+      .input(z.object({ id: z.string().uuid() }).merge(updateDiagnosisSchema))
+      .mutation(async ({ ctx, input }) => {
+        const { id, ...data } = input;
+        // Look up the diagnosis to get the patient_id for access check
+        const db = getDb();
+        const [existing] = await db
+          .select()
+          .from(diagnoses)
+          .where(eq(diagnoses.id, id))
+          .limit(1);
+        if (!existing) {
+          throw new TRPCError({ code: "NOT_FOUND", message: `Diagnosis ${id} not found` });
+        }
+        await enforcePatientAccess(ctx.user, existing.patient_id);
+        return updateDiagnosis(id, data);
+      }),
   }),
 
   allergies: t.router({
@@ -158,6 +193,30 @@ export const patientRecordsRbacRouter = t.router({
           .select()
           .from(allergies)
           .where(eq(allergies.patient_id, input.patientId));
+      }),
+
+    create: protectedProcedure
+      .input(createAllergySchema)
+      .mutation(async ({ ctx, input }) => {
+        await enforcePatientAccess(ctx.user, input.patient_id);
+        return createAllergy(input);
+      }),
+
+    update: protectedProcedure
+      .input(z.object({ id: z.string().uuid() }).merge(updateAllergySchema))
+      .mutation(async ({ ctx, input }) => {
+        const { id, ...data } = input;
+        const db = getDb();
+        const [existing] = await db
+          .select()
+          .from(allergies)
+          .where(eq(allergies.id, id))
+          .limit(1);
+        if (!existing) {
+          throw new TRPCError({ code: "NOT_FOUND", message: `Allergy ${id} not found` });
+        }
+        await enforcePatientAccess(ctx.user, existing.patient_id);
+        return updateAllergy(id, data);
       }),
   }),
 

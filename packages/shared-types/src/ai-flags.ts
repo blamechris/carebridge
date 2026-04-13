@@ -99,6 +99,8 @@ export type ClinicalEventType =
   | "note.signed"
   | "procedure.completed"
   | "diagnosis.added"
+  | "diagnosis.updated"
+  | "allergy.added"
   | "fhir.imported"
   | "message.received"
   | "patient.observation";

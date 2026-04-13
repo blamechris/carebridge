@@ -86,6 +86,46 @@ export const createLabPanelSchema = z.object({
 
 export type CreateLabPanelInput = z.infer<typeof createLabPanelSchema>;
 
+// ─── Diagnoses ──────────────────────────────────────────────────
+
+export const diagnosisStatusSchema = z.enum(["active", "chronic", "resolved"]);
+
+export const createDiagnosisSchema = z.object({
+  patient_id: z.string().uuid(),
+  icd10_code: z.string().regex(/^[A-Z]\d{2}(\.\d{1,4})?$/, "Invalid ICD-10-CM code format"),
+  description: z.string().min(1).max(2000),
+  status: diagnosisStatusSchema.default("active"),
+  onset_date: z.string().date().optional(),
+  snomed_code: z.string().max(20).optional(),
+});
+
+export const updateDiagnosisSchema = z.object({
+  status: diagnosisStatusSchema.optional(),
+  description: z.string().min(1).max(2000).optional(),
+});
+
+export type CreateDiagnosisInput = z.infer<typeof createDiagnosisSchema>;
+export type UpdateDiagnosisInput = z.infer<typeof updateDiagnosisSchema>;
+
+// ─── Allergies ──────────────────────────────────────────────────
+
+export const allergySeveritySchema = z.enum(["mild", "moderate", "severe", "critical"]);
+
+export const createAllergySchema = z.object({
+  patient_id: z.string().uuid(),
+  allergen: z.string().min(1).max(200),
+  reaction: z.string().min(1).max(500),
+  severity: allergySeveritySchema,
+});
+
+export const updateAllergySchema = z.object({
+  severity: allergySeveritySchema.optional(),
+  reaction: z.string().min(1).max(500).optional(),
+});
+
+export type CreateAllergyInput = z.infer<typeof createAllergySchema>;
+export type UpdateAllergyInput = z.infer<typeof updateAllergySchema>;
+
 // ─── Procedures ──────────────────────────────────────────────────
 
 export const procedureStatusSchema = z.enum(["scheduled", "in_progress", "completed", "cancelled"]);
