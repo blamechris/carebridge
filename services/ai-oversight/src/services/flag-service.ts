@@ -135,20 +135,21 @@ export async function createFlag(
 
   recordFlagCreated({ rule_id: flag.rule_id, source: flag.source });
 
-  // Emit notification event for the new flag
-  if (flag.notify_specialties && flag.notify_specialties.length > 0) {
-    await emitNotificationEvent({
-      flag_id: id,
-      patient_id: flag.patient_id,
-      severity: flag.severity,
-      category: flag.category,
-      summary: flag.summary,
-      suggested_action: flag.suggested_action,
-      notify_specialties: flag.notify_specialties,
-      source: flag.source,
-      created_at: now,
-    });
-  }
+  // Emit notification event for the new flag.
+  // Always emit — the dispatch worker handles specialty filtering and
+  // falls back to notifying all care team members when notify_specialties
+  // is empty/undefined.
+  await emitNotificationEvent({
+    flag_id: id,
+    patient_id: flag.patient_id,
+    severity: flag.severity,
+    category: flag.category,
+    summary: flag.summary,
+    suggested_action: flag.suggested_action,
+    notify_specialties: flag.notify_specialties ?? [],
+    source: flag.source,
+    created_at: now,
+  });
 
   return record as ClinicalFlag;
 }

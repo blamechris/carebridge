@@ -31,8 +31,11 @@ vi.mock("@carebridge/db-schema", () => ({
 // BullMQ + Redis at module-load time. Without this mock the import-time
 // notification queue connection ECONNREFUSEs in CI (no Redis service) and the
 // tests time out at 5s.
+const { mockEmitNotificationEvent } = vi.hoisted(() => ({
+  mockEmitNotificationEvent: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@carebridge/notifications", () => ({
-  emitNotificationEvent: vi.fn().mockResolvedValue(undefined),
+  emitNotificationEvent: mockEmitNotificationEvent,
 }));
 
 import { createFlag } from "../services/flag-service.js";
@@ -224,5 +227,54 @@ describe("createFlag", () => {
     expect(mockInsert).toHaveBeenCalledTimes(1);
     expect(result.id).toBeDefined();
     expect(result.patient_id).toBe("patient-1");
+  });
+
+  it("emits a notification event when a new flag is created with notify_specialties", async () => {
+    const result = await createFlag(baseFlag);
+
+    expect(mockEmitNotificationEvent).toHaveBeenCalledTimes(1);
+    expect(mockEmitNotificationEvent).toHaveBeenCalledWith({
+      flag_id: result.id,
+      patient_id: "patient-1",
+      severity: "critical",
+      category: "cross-specialty",
+      summary: baseFlag.summary,
+      suggested_action: baseFlag.suggested_action,
+      notify_specialties: ["neurology", "hematology"],
+      source: "rules",
+      created_at: result.created_at,
+    });
+  });
+
+  it("emits a notification event with empty notify_specialties when none provided", async () => {
+    const flagNoSpecialties = {
+      ...baseFlag,
+      notify_specialties: [] as string[],
+    };
+
+    const result = await createFlag(flagNoSpecialties);
+
+    expect(mockEmitNotificationEvent).toHaveBeenCalledTimes(1);
+    expect(mockEmitNotificationEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        flag_id: result.id,
+        notify_specialties: [],
+      }),
+    );
+  });
+
+  it("does not emit a notification event when a duplicate flag is returned", async () => {
+    const existingFlag = {
+      id: "existing-flag-id",
+      ...baseFlag,
+      created_at: "2026-01-01T00:00:00.000Z",
+    };
+
+    // Mock DB returning an existing flag
+    mockLimit.mockResolvedValueOnce([existingFlag]);
+
+    await createFlag(baseFlag);
+
+    expect(mockEmitNotificationEvent).not.toHaveBeenCalled();
   });
 });
