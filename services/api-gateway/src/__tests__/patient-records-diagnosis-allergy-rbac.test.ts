@@ -141,14 +141,14 @@ const diagnosisInput = {
   patient_id: PATIENT_ID,
   icd10_code: "C50.9",
   description: "Breast cancer, unspecified",
-  status: "active",
+  status: "active" as const,
 };
 
 const allergyInput = {
   patient_id: PATIENT_ID,
   allergen: "Penicillin",
   reaction: "Hives and swelling",
-  severity: "moderate",
+  severity: "moderate" as const,
 };
 
 // ---------------------------------------------------------------------------
