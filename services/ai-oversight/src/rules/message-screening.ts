@@ -174,9 +174,9 @@ export function screenPatientMessage(event: ClinicalEvent): RuleFlag[] {
   // Only screen patient-sent messages
   if (event.data.sender_role !== "patient") return flags;
 
-  // Get message text — the event carries the message_id, but for keyword
-  // screening we need the text. The messaging service should include a
-  // sanitized excerpt in the event data for screening purposes.
+  // The BullMQ event payload intentionally omits message text (PHI-free).
+  // The review service reads the body from the DB and passes it here via
+  // an enriched event with data.message_text set to the DB-fetched content.
   const messageText = (event.data.message_text as string) ?? "";
 
   if (!messageText) return flags;
