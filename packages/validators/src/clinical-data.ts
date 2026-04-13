@@ -92,7 +92,7 @@ export const diagnosisStatusSchema = z.enum(["active", "chronic", "resolved"]);
 
 export const createDiagnosisSchema = z.object({
   patient_id: z.string().uuid(),
-  icd10_code: z.string().regex(/^[A-Z]\d{2}(\.\d{1,4})?$/, "Invalid ICD-10-CM code format"),
+  icd10_code: icd10CodeSchema,
   description: z.string().min(1).max(2000),
   status: diagnosisStatusSchema.default("active"),
   onset_date: z.string().date().optional(),

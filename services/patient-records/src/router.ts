@@ -248,7 +248,7 @@ export async function createDiagnosis(input: z.infer<typeof createDiagnosisSchem
     id: crypto.randomUUID(),
     type: "diagnosis.added",
     patient_id: input.patient_id,
-    data: { resourceId: id, icd10_code: input.icd10_code, status: record.status },
+    data: { diagnosis_id: id, icd10_code: input.icd10_code, status: record.status },
     timestamp: now,
   });
 
@@ -268,7 +268,16 @@ export async function updateDiagnosis(
   }
 
   const updates: Record<string, unknown> = {};
-  if (input.status !== undefined) updates.status = input.status;
+  if (input.status !== undefined) {
+    updates.status = input.status;
+    // Populate resolved_date for FHIR Condition export and patient portal display
+    if (input.status === "resolved") {
+      updates.resolved_date = now;
+    } else if (existing.status === "resolved") {
+      // Transitioning away from resolved — clear the date
+      updates.resolved_date = null;
+    }
+  }
   if (input.description !== undefined) updates.description = input.description;
 
   if (Object.keys(updates).length === 0) {
@@ -281,7 +290,7 @@ export async function updateDiagnosis(
     id: crypto.randomUUID(),
     type: "diagnosis.updated",
     patient_id: existing.patient_id,
-    data: { resourceId: id, changedFields: Object.keys(updates) },
+    data: { diagnosis_id: id, changedFields: Object.keys(updates) },
     timestamp: now,
   });
 
@@ -313,7 +322,7 @@ export async function createAllergy(input: z.infer<typeof createAllergySchema>) 
     id: crypto.randomUUID(),
     type: "allergy.added",
     patient_id: input.patient_id,
-    data: { resourceId: id, allergen: input.allergen, severity: input.severity },
+    data: { allergy_id: id, allergen: input.allergen, severity: input.severity },
     timestamp: now,
   });
 
@@ -325,6 +334,7 @@ export async function updateAllergy(
   input: z.infer<typeof updateAllergySchema>,
 ) {
   const db = getDb();
+  const now = new Date().toISOString();
 
   const [existing] = await db.select().from(allergies).where(eq(allergies.id, id)).limit(1);
   if (!existing) {
@@ -340,6 +350,14 @@ export async function updateAllergy(
   }
 
   await db.update(allergies).set(updates).where(eq(allergies.id, id));
+
+  await clinicalEventsQueue.add("allergy.updated", {
+    id: crypto.randomUUID(),
+    type: "allergy.updated",
+    patient_id: existing.patient_id,
+    data: { allergy_id: id, changedFields: Object.keys(updates) },
+    timestamp: now,
+  });
 
   const [updated] = await db.select().from(allergies).where(eq(allergies.id, id)).limit(1);
   return updated;

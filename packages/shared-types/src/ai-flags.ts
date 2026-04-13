@@ -101,6 +101,7 @@ export type ClinicalEventType =
   | "diagnosis.added"
   | "diagnosis.updated"
   | "allergy.added"
+  | "allergy.updated"
   | "fhir.imported"
   | "message.received"
   | "patient.observation";
