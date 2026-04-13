@@ -10,15 +10,18 @@ import type { NoteTemplateType } from "@carebridge/shared-types";
 import * as noteService from "./services/note-service.js";
 import { createSOAPTemplate } from "./templates/soap.js";
 import { createProgressTemplate } from "./templates/progress.js";
+import { createHAndPTemplate } from "./templates/h-and-p.js";
+import { createDischargeTemplate } from "./templates/discharge.js";
+import { createConsultTemplate } from "./templates/consult.js";
 
 const t = initTRPC.create();
 
 const templateBuilders: Record<NoteTemplateType, (() => ReturnType<typeof createSOAPTemplate>) | null> = {
   soap: createSOAPTemplate,
   progress: createProgressTemplate,
-  h_and_p: null,
-  discharge: null,
-  consult: null,
+  h_and_p: createHAndPTemplate,
+  discharge: createDischargeTemplate,
+  consult: createConsultTemplate,
 };
 
 export const clinicalNotesRouter = t.router({
