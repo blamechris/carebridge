@@ -178,7 +178,7 @@ export default function LoginPage() {
                       cursor: "pointer",
                       padding: 4,
                       fontSize: 18,
-                      color: "#999",
+                      color: "var(--text-muted, #999)",
                       lineHeight: 1,
                     }}
                   >

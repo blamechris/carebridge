@@ -42,8 +42,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const stored = localStorage.getItem(USER_KEY);
       if (stored) setUser(JSON.parse(stored) as User);
-    } catch { /* corrupt data — stay logged out */ }
-    setSessionId(localStorage.getItem(SESSION_KEY));
+      setSessionId(localStorage.getItem(SESSION_KEY));
+    } catch { /* corrupt / blocked storage — stay logged out */ }
     setHydrated(true);
   }, []);
 
