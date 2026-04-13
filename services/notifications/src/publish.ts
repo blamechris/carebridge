@@ -15,6 +15,7 @@ export interface NotificationPayload {
   body?: string;
   link?: string;
   related_flag_id?: string;
+  is_urgent?: boolean;
   created_at: string;
 }
 

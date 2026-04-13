@@ -15,8 +15,8 @@ import { Worker, Queue } from "bullmq";
 import type { Job } from "bullmq";
 import { getRedisConnection } from "@carebridge/redis-config";
 import { getDb } from "@carebridge/db-schema";
-import { notifications, users } from "@carebridge/db-schema";
-import { eq, and, inArray } from "drizzle-orm";
+import { notifications, users, careTeamAssignments } from "@carebridge/db-schema";
+import { eq, and, isNull, inArray } from "drizzle-orm";
 import crypto from "node:crypto";
 import type { NotificationEvent } from "../queue.js";
 import { publishNotification } from "../publish.js";
@@ -40,7 +40,10 @@ const dlq = new Queue(DLQ_NAME, {
  * Find provider user IDs who should receive a notification for a given flag.
  *
  * Strategy:
- * 1. Look up active care team members for the patient
+ * 1. Look up active care_team_assignments for the patient — this is the
+ *    RBAC source-of-truth that determines which users have access to the
+ *    patient's records. Using this table (instead of care_team_members)
+ *    ensures we only notify users who can actually act on the flag.
  * 2. Load their user rows (id, specialty, role, is_active)
  * 3. If `notify_specialties` is non-empty, use `filterRecipientsBySpecialty`
  *    to keep only providers whose specialty matches (plus admins).
@@ -55,23 +58,21 @@ async function findNotificationRecipients(
 ): Promise<string[]> {
   const db = getDb();
 
-  // Import care team members table dynamically to avoid circular deps
-  const { careTeamMembers } = await import("@carebridge/db-schema");
-
-  // Get all active care team members for this patient
-  const teamMembers = await db
-    .select({ provider_id: careTeamMembers.provider_id })
-    .from(careTeamMembers)
+  // Get all active care team assignments (RBAC) for this patient.
+  // A row with removed_at = null is an active assignment.
+  const assignments = await db
+    .select({ user_id: careTeamAssignments.user_id })
+    .from(careTeamAssignments)
     .where(
       and(
-        eq(careTeamMembers.patient_id, patientId),
-        eq(careTeamMembers.is_active, true),
+        eq(careTeamAssignments.patient_id, patientId),
+        isNull(careTeamAssignments.removed_at),
       ),
     );
 
-  if (teamMembers.length === 0) return [];
+  if (assignments.length === 0) return [];
 
-  const providerIds = teamMembers.map((m) => m.provider_id);
+  const assignedUserIds = assignments.map((a) => a.user_id);
 
   // Load all active providers on the care team with their specialty + role
   const activeProviders = await db
@@ -83,7 +84,7 @@ async function findNotificationRecipients(
     .from(users)
     .where(
       and(
-        inArray(users.id, providerIds),
+        inArray(users.id, assignedUserIds),
         eq(users.is_active, true),
       ),
     );
@@ -113,6 +114,15 @@ function buildFlagLink(event: NotificationEvent): string {
 }
 
 /**
+ * Determine whether a flag should generate urgent notifications.
+ * Critical and high severity flags are urgent — they bypass quiet hours
+ * and render with prominent visual indicators in the clinician portal.
+ */
+function isUrgentFlag(severity: string): boolean {
+  return severity === "critical" || severity === "high";
+}
+
+/**
  * Process a single notification event: find recipients and create notification records.
  */
 async function processNotificationJob(event: NotificationEvent): Promise<number> {
@@ -134,6 +144,7 @@ async function processNotificationJob(event: NotificationEvent): Promise<number>
   const title = buildNotificationTitle(event);
   const link = buildFlagLink(event);
   const now = new Date().toISOString();
+  const urgent = isUrgentFlag(event.severity);
 
   const notificationRecords = recipientIds.map((userId) => ({
     id: crypto.randomUUID(),
@@ -143,6 +154,7 @@ async function processNotificationJob(event: NotificationEvent): Promise<number>
     body: event.summary,
     link,
     related_flag_id: event.flag_id,
+    is_urgent: urgent,
     is_read: false,
     created_at: now,
   }));
@@ -162,6 +174,7 @@ async function processNotificationJob(event: NotificationEvent): Promise<number>
         body: record.body,
         link: record.link,
         related_flag_id: record.related_flag_id,
+        is_urgent: record.is_urgent,
         created_at: record.created_at,
       });
     } catch (error) {
