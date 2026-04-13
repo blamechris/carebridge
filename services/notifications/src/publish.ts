@@ -47,6 +47,19 @@ export function setPublisher(client: Redis): void {
 }
 
 /**
+ * Gracefully close the Redis publisher connection if one exists.
+ *
+ * After calling this the singleton is cleared so a subsequent
+ * `getPublisher()` call will create a fresh connection.
+ */
+export async function shutdownPublisher(): Promise<void> {
+  if (publisherClient) {
+    await publisherClient.quit();
+    publisherClient = null;
+  }
+}
+
+/**
  * Publish a notification to the Redis channel for a specific user.
  *
  * The channel format `notifications:{userId}` matches what the SSE
