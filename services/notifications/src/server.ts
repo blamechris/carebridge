@@ -7,6 +7,7 @@
 
 import { createServer } from "node:http";
 import { startDispatchWorker } from "./workers/dispatch-worker.js";
+import { shutdownPublisher } from "./publish.js";
 
 const HEALTH_PORT = Number(process.env.NOTIFICATION_HEALTH_PORT ?? 4002);
 
@@ -54,6 +55,7 @@ async function shutdown(signal: string) {
   console.log(`[notifications] Received ${signal}, shutting down…`);
   healthServer.close();
   await worker.close();
+  await shutdownPublisher();
   console.log("[notifications] Shutdown complete");
   process.exit(0);
 }
