@@ -54,7 +54,9 @@ export const createMedicationSchema = z.object({
   encounter_id: z.string().uuid().optional(),
 });
 
-export const updateMedicationSchema = createMedicationSchema.partial().omit({ patient_id: true });
+export const updateMedicationSchema = createMedicationSchema.partial().omit({ patient_id: true }).extend({
+  expectedUpdatedAt: z.string().datetime().optional(),
+});
 
 export type CreateMedicationInput = z.infer<typeof createMedicationSchema>;
 export type UpdateMedicationInput = z.infer<typeof updateMedicationSchema>;

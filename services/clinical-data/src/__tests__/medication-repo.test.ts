@@ -4,7 +4,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const insertValuesMock = vi.fn().mockResolvedValue(undefined);
 const insertMock = vi.fn(() => ({ values: insertValuesMock }));
 
-const updateSetWhereMock = vi.fn().mockResolvedValue(undefined);
+const updateReturningMock = vi.fn();
+const updateSetWhereMock = vi.fn(() => ({ returning: updateReturningMock }));
 const updateSetMock = vi.fn(() => ({ where: updateSetWhereMock }));
 const updateMock = vi.fn(() => ({ set: updateSetMock }));
 
@@ -27,6 +28,7 @@ vi.mock("@carebridge/db-schema", () => ({
     patient_id: "patient_id",
     status: "status",
     created_at: "created_at",
+    updated_at: "updated_at",
   },
   medLogs: {},
 }));
@@ -36,7 +38,7 @@ const emitClinicalEvent = vi.fn().mockResolvedValue(undefined);
 vi.mock("../events.js", () => ({ emitClinicalEvent }));
 
 // ── Import after mocks ──────────────────────────────────────────
-const { createMedication, updateMedication } = await import(
+const { createMedication, updateMedication, ConflictError } = await import(
   "../repositories/medication-repo.js"
 );
 
@@ -122,6 +124,8 @@ describe("updateMedication", () => {
 
     // First select: find existing record
     selectFromWhereLimitMock.mockResolvedValueOnce([existingRow]);
+    // Update returning: row was updated
+    updateReturningMock.mockResolvedValueOnce([{ id: MED_ID }]);
     // Second select: re-fetch updated record
     selectFromWhereLimitMock.mockResolvedValueOnce([
       { ...existingRow, status: "discontinued", updated_at: "2026-03-16T10:00:00.000Z" },
@@ -146,5 +150,117 @@ describe("updateMedication", () => {
 
     await expect(updateMedication("nonexistent", { status: "discontinued" }))
       .rejects.toThrow("Medication nonexistent not found");
+  });
+
+  it("succeeds when expectedUpdatedAt matches the current value", async () => {
+    const existingRow = {
+      id: MED_ID,
+      patient_id: PATIENT_ID,
+      name: "Enoxaparin",
+      brand_name: "Lovenox",
+      dose_amount: 40,
+      dose_unit: "mg",
+      route: "subcutaneous",
+      frequency: "BID",
+      status: "active",
+      started_at: null,
+      ended_at: null,
+      prescribed_by: null,
+      notes: null,
+      rxnorm_code: null,
+      ordering_provider_id: null,
+      encounter_id: null,
+      source_system: null,
+      created_at: "2026-03-15T10:00:00.000Z",
+      updated_at: "2026-03-15T10:00:00.000Z",
+    };
+
+    selectFromWhereLimitMock.mockResolvedValueOnce([existingRow]);
+    updateReturningMock.mockResolvedValueOnce([{ id: MED_ID }]);
+    selectFromWhereLimitMock.mockResolvedValueOnce([
+      { ...existingRow, status: "discontinued", updated_at: "2026-03-16T10:00:00.000Z" },
+    ]);
+
+    const result = await updateMedication(MED_ID, {
+      status: "discontinued",
+      expectedUpdatedAt: "2026-03-15T10:00:00.000Z",
+    });
+
+    expect(result.status).toBe("discontinued");
+    expect(updateSetWhereMock).toHaveBeenCalledOnce();
+  });
+
+  it("throws ConflictError when expectedUpdatedAt does not match (concurrent modification)", async () => {
+    const existingRow = {
+      id: MED_ID,
+      patient_id: PATIENT_ID,
+      name: "Enoxaparin",
+      brand_name: "Lovenox",
+      dose_amount: 40,
+      dose_unit: "mg",
+      route: "subcutaneous",
+      frequency: "BID",
+      status: "active",
+      started_at: null,
+      ended_at: null,
+      prescribed_by: null,
+      notes: null,
+      rxnorm_code: null,
+      ordering_provider_id: null,
+      encounter_id: null,
+      source_system: null,
+      created_at: "2026-03-15T10:00:00.000Z",
+      updated_at: "2026-03-16T12:00:00.000Z", // already modified by another user
+    };
+
+    selectFromWhereLimitMock.mockResolvedValueOnce([existingRow]);
+    // Update returns 0 rows because updated_at doesn't match
+    updateReturningMock.mockResolvedValueOnce([]);
+
+    const error = await updateMedication(MED_ID, {
+      status: "discontinued",
+      expectedUpdatedAt: "2026-03-15T10:00:00.000Z", // stale value
+    }).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ConflictError);
+    expect((error as ConflictError).message).toBe(
+      "Medication was modified by another user. Please refresh and try again.",
+    );
+    // Event should NOT have been emitted on conflict
+    expect(emitClinicalEvent).not.toHaveBeenCalled();
+  });
+
+  it("does not check optimistic locking when expectedUpdatedAt is omitted", async () => {
+    const existingRow = {
+      id: MED_ID,
+      patient_id: PATIENT_ID,
+      name: "Enoxaparin",
+      brand_name: null,
+      dose_amount: 40,
+      dose_unit: "mg",
+      route: "subcutaneous",
+      frequency: "BID",
+      status: "active",
+      started_at: null,
+      ended_at: null,
+      prescribed_by: null,
+      notes: null,
+      rxnorm_code: null,
+      ordering_provider_id: null,
+      encounter_id: null,
+      source_system: null,
+      created_at: "2026-03-15T10:00:00.000Z",
+      updated_at: "2026-03-15T10:00:00.000Z",
+    };
+
+    selectFromWhereLimitMock.mockResolvedValueOnce([existingRow]);
+    updateReturningMock.mockResolvedValueOnce([{ id: MED_ID }]);
+    selectFromWhereLimitMock.mockResolvedValueOnce([
+      { ...existingRow, frequency: "TID", updated_at: "2026-03-16T10:00:00.000Z" },
+    ]);
+
+    // Should succeed without expectedUpdatedAt (backwards compatible)
+    const result = await updateMedication(MED_ID, { frequency: "TID" });
+    expect(result.frequency).toBe("TID");
   });
 });
