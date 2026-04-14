@@ -51,6 +51,10 @@ vi.mock("@carebridge/db-schema", () => {
     labPanels: {},
     labResults: {},
     clinicalFlags: {},
+    encounters: {
+      patient_id: "patient_id",
+      location: "location",
+    },
   };
 });
 
