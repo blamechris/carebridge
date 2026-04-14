@@ -44,6 +44,15 @@ export interface ClinicalFlag extends BaseRecord {
    * automation acts on it. Defaults to true for all LLM-sourced flags.
    */
   requires_human_review?: boolean;
+  /**
+   * Number of times the escalation worker has re-notified the care team for
+   * this flag. Capped at 3 to bound alert fatigue; once the cap is reached
+   * the flag transitions to status='escalated' so it is excluded from
+   * further escalation scans.
+   */
+  escalation_count?: number;
+  /** ISO timestamp of the last escalation re-notification. */
+  last_escalated_at?: string;
 }
 
 // ─── Clinical Rules ──────────────────────────────────────────────
