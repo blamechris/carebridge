@@ -15,6 +15,7 @@ import {
   diagnoses,
   allergies,
   careTeamMembers,
+  careTeamAssignments,
 } from "@carebridge/db-schema";
 import { createPatientSchema, updatePatientSchema } from "@carebridge/validators";
 import {
@@ -31,7 +32,7 @@ import {
   createAllergySchema,
   updateAllergySchema,
 } from "@carebridge/validators";
-import { eq } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import crypto from "node:crypto";
 import type { Context } from "../context.js";
 import { assertCareTeamAccess } from "../middleware/rbac.js";
@@ -133,16 +134,50 @@ export const patientRecordsRbacRouter = t.router({
       return patient ?? null;
     }),
 
-  // Listing all patients is restricted to non-patient roles.
+  // HIPAA minimum-necessary: filter patient list by role.
   list: protectedProcedure.query(async ({ ctx }) => {
-    if (ctx.user.role === "patient") {
-      throw new TRPCError({
-        code: "FORBIDDEN",
-        message: "Patients cannot list all patient records",
-      });
-    }
     const db = getDb();
-    return db.select().from(patients);
+
+    // Patients see only their own record.
+    if (ctx.user.role === "patient") {
+      if (!ctx.user.patient_id) {
+        return [];
+      }
+      return db
+        .select()
+        .from(patients)
+        .where(eq(patients.id, ctx.user.patient_id));
+    }
+
+    // Admins see all patients.
+    if (ctx.user.role === "admin") {
+      return db.select().from(patients);
+    }
+
+    // Clinicians (physician, specialist, nurse): only patients with an
+    // active care_team_assignments entry for this user.
+    return db
+      .select({
+        id: patients.id,
+        name: patients.name,
+        date_of_birth: patients.date_of_birth,
+        biological_sex: patients.biological_sex,
+        mrn: patients.mrn,
+        mrn_hmac: patients.mrn_hmac,
+        created_at: patients.created_at,
+        updated_at: patients.updated_at,
+      })
+      .from(patients)
+      .innerJoin(
+        careTeamAssignments,
+        eq(patients.id, careTeamAssignments.patient_id),
+      )
+      .where(
+        and(
+          eq(careTeamAssignments.user_id, ctx.user.id),
+          isNull(careTeamAssignments.removed_at),
+        ),
+      );
   }),
 
   diagnoses: t.router({
