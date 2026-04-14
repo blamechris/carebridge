@@ -30,6 +30,7 @@ export const createNoteSchema = z.object({
 
 export const updateNoteSchema = z.object({
   sections: z.array(noteSectionSchema).min(1),
+  expectedVersion: z.number().int().positive().optional(),
 });
 
 export const signNoteSchema = z.object({

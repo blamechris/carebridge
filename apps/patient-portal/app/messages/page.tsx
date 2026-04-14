@@ -150,8 +150,9 @@ export default function PatientMessagesPage() {
           <h3 style={{ margin: "0 0 1rem", fontSize: "0.95rem" }}>New Message to Care Team</h3>
 
           <div style={{ marginBottom: "0.75rem" }}>
-            <label style={{ display: "block", marginBottom: 4, fontSize: "0.8rem", color: "#999" }}>To</label>
+            <label htmlFor="compose-recipient" style={{ display: "block", marginBottom: 4, fontSize: "0.8rem", color: "#999" }}>To</label>
             <select
+              id="compose-recipient"
               value={composeRecipient}
               onChange={(e) => setComposeRecipient(e.target.value)}
               style={{ ...inputStyle, cursor: "pointer" }}
@@ -166,8 +167,9 @@ export default function PatientMessagesPage() {
           </div>
 
           <div style={{ marginBottom: "0.75rem" }}>
-            <label style={{ display: "block", marginBottom: 4, fontSize: "0.8rem", color: "#999" }}>Subject</label>
+            <label htmlFor="compose-subject" style={{ display: "block", marginBottom: 4, fontSize: "0.8rem", color: "#999" }}>Subject</label>
             <input
+              id="compose-subject"
               type="text"
               value={composeSubject}
               onChange={(e) => setComposeSubject(e.target.value)}
@@ -177,8 +179,9 @@ export default function PatientMessagesPage() {
           </div>
 
           <div style={{ marginBottom: "0.75rem" }}>
-            <label style={{ display: "block", marginBottom: 4, fontSize: "0.8rem", color: "#999" }}>Message</label>
+            <label htmlFor="compose-body" style={{ display: "block", marginBottom: 4, fontSize: "0.8rem", color: "#999" }}>Message</label>
             <textarea
+              id="compose-body"
               value={composeBody}
               onChange={(e) => setComposeBody(e.target.value)}
               placeholder="Type your message..."
@@ -206,6 +209,22 @@ export default function PatientMessagesPage() {
       )}
 
       {/* Conversation list */}
+      {conversationsQuery.isError && (
+        <p role="alert" style={{ color: "#ef4444" }}>Failed to load conversations. Please try refreshing.</p>
+      )}
+
+      {sendMutation.isError && (
+        <div role="alert" style={{ backgroundColor: "#ef444420", border: "1px solid #ef4444", borderRadius: 8, padding: "0.75rem", marginBottom: "1rem", color: "#ef4444" }}>
+          Failed to send message. Please try again.
+        </div>
+      )}
+
+      {createConvoMutation.isError && (
+        <div role="alert" style={{ backgroundColor: "#ef444420", border: "1px solid #ef4444", borderRadius: 8, padding: "0.75rem", marginBottom: "1rem", color: "#ef4444" }}>
+          Failed to create conversation. Please try again.
+        </div>
+      )}
+
       {conversationsQuery.isLoading && <p style={{ color: "#999" }}>Loading conversations...</p>}
 
       {conversations.length === 0 && !conversationsQuery.isLoading && !showCompose && (
@@ -280,6 +299,7 @@ export default function PatientMessagesPage() {
                   onChange={(e) => setReplyText(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleSend()}
                   placeholder="Reply..."
+                  aria-label="Reply to conversation"
                   style={{ ...inputStyle, flex: 1 }}
                 />
                 <button

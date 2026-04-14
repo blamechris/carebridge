@@ -9,45 +9,48 @@ import type { AppRouter } from "@carebridge/api-gateway/src/router.js";
  */
 export const trpc = createTRPCReact<AppRouter>();
 
-/**
- * Returns the session token stored in localStorage (if any).
- */
-function getSessionToken(): string | undefined {
-  if (typeof window === "undefined") return undefined;
-  return localStorage.getItem("carebridge_session") ?? undefined;
-}
-
 function getApiUrl(): string {
   return process.env.NEXT_PUBLIC_API_URL
     ? `${process.env.NEXT_PUBLIC_API_URL}/trpc`
     : "http://localhost:4000/trpc";
 }
 
-function authHeaders() {
-  const token = getSessionToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
+/**
+ * Returns the base API URL (without /trpc suffix) for non-tRPC endpoints.
+ */
+export function getApiBaseUrl(): string {
+  return process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 }
 
 /**
  * Create links array for the tRPC React provider.
+ *
+ * Session credentials are sent via HttpOnly cookie (credentials: "include").
+ * The cookie is set by POST /auth/session on login and is immune to XSS.
  */
 export function getTRPCLinks() {
   return [
     httpLink({
       url: getApiUrl(),
-      headers: authHeaders,
+      fetch(url: RequestInfo | URL, options?: RequestInit) {
+        return fetch(url, { ...options, credentials: "include" });
+      },
     }),
   ];
 }
 
 /**
  * Vanilla (non-React) tRPC client for use outside of components (e.g. login page actions).
+ *
+ * Session credentials are sent via HttpOnly cookie (credentials: "include").
  */
 export const trpcVanilla = createTRPCClient<AppRouter>({
   links: [
     vanillaHttpLink({
       url: getApiUrl(),
-      headers: authHeaders,
+      fetch(url: RequestInfo | URL, options?: RequestInit) {
+        return fetch(url, { ...options, credentials: "include" });
+      },
     }),
   ],
 });

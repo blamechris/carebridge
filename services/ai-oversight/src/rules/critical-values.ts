@@ -8,7 +8,13 @@
 import type { VitalType } from "@carebridge/shared-types";
 import { COMMON_LAB_TESTS } from "@carebridge/shared-types";
 import type { ClinicalEvent, FlagSeverity, FlagCategory } from "@carebridge/shared-types";
-import { VITAL_DANGER_ZONES, DIASTOLIC_DANGER_ZONE, isCriticalVital, checkDiastolicBP } from "@carebridge/medical-logic";
+import {
+  VITAL_DANGER_ZONES,
+  DIASTOLIC_DANGER_ZONE,
+  isCriticalVital,
+  getVitalSeverity,
+  checkDiastolicBP,
+} from "@carebridge/medical-logic";
 
 // ─── Explicit Critical Lab Thresholds ────────────────────────────
 // These thresholds fire deterministically on lab.resulted events,
@@ -334,30 +340,46 @@ export function checkCriticalValues(event: ClinicalEvent): RuleFlag[] {
     const vitalType = event.data.type as VitalType | undefined;
     const value = event.data.value_primary as number | undefined;
 
-    if (vitalType && value !== undefined && isCriticalVital(vitalType, value)) {
-      const range = VITAL_DANGER_ZONES[vitalType];
-      const direction =
-        range.criticalLow !== undefined && value <= range.criticalLow
-          ? "low"
-          : "high";
+    if (vitalType && value !== undefined) {
+      const severity = getVitalSeverity(vitalType, value);
 
-      flags.push({
-        severity: "critical",
-        category: "critical-value",
-        summary: `Critically ${direction} ${vitalType.replace(/_/g, " ")}: ${value} ${(event.data.unit as string) ?? ""}`.trim(),
-        rationale:
-          `Patient's ${vitalType.replace(/_/g, " ")} of ${value} is in the critical range. ` +
-          `Normal critical thresholds: ${range.criticalLow !== undefined ? `low <= ${range.criticalLow}` : ""}` +
-          `${range.criticalLow !== undefined && range.criticalHigh !== undefined ? ", " : ""}` +
-          `${range.criticalHigh !== undefined ? `high >= ${range.criticalHigh}` : ""}. ` +
-          `Immediate clinical assessment is recommended.`,
-        suggested_action:
-          direction === "low"
-            ? `Assess patient immediately. Evaluate for causes of critically low ${vitalType.replace(/_/g, " ")} and initiate appropriate intervention.`
-            : `Assess patient immediately. Evaluate for causes of critically elevated ${vitalType.replace(/_/g, " ")} and initiate appropriate intervention.`,
-        notify_specialties: [],
-        rule_id: `CRITICAL-VITAL-${vitalType.toUpperCase()}`,
-      });
+      if (severity) {
+        const range = VITAL_DANGER_ZONES[vitalType];
+        const isLow =
+          (range.criticalLow !== undefined && value <= range.criticalLow) ||
+          (range.warningLow !== undefined && value < range.warningLow);
+        const direction = isLow ? "low" : "high";
+        const severityLabel = severity === "critical" ? "Critically" : "";
+        const summaryPrefix = severity === "critical"
+          ? `Critically ${direction}`
+          : direction === "low" ? "Low" : "High";
+
+        flags.push({
+          severity,
+          category: "critical-value",
+          summary: `${summaryPrefix} ${vitalType.replace(/_/g, " ")}: ${value} ${(event.data.unit as string) ?? ""}`.trim(),
+          rationale:
+            severity === "critical"
+              ? `Patient's ${vitalType.replace(/_/g, " ")} of ${value} is in the critical range. ` +
+                `Normal critical thresholds: ${range.criticalLow !== undefined ? `low <= ${range.criticalLow}` : ""}` +
+                `${range.criticalLow !== undefined && range.criticalHigh !== undefined ? ", " : ""}` +
+                `${range.criticalHigh !== undefined ? `high >= ${range.criticalHigh}` : ""}. ` +
+                `Immediate clinical assessment is recommended.`
+              : `Patient's ${vitalType.replace(/_/g, " ")} of ${value} is outside normal range. ` +
+                `Warning thresholds: ${range.warningLow !== undefined ? `low < ${range.warningLow}` : ""}` +
+                `${range.warningLow !== undefined && range.warningHigh !== undefined ? ", " : ""}` +
+                `${range.warningHigh !== undefined ? `high > ${range.warningHigh}` : ""}. ` +
+                `Clinical review is recommended.`,
+          suggested_action:
+            severity === "critical"
+              ? direction === "low"
+                ? `Assess patient immediately. Evaluate for causes of critically low ${vitalType.replace(/_/g, " ")} and initiate appropriate intervention.`
+                : `Assess patient immediately. Evaluate for causes of critically elevated ${vitalType.replace(/_/g, " ")} and initiate appropriate intervention.`
+              : `Review ${vitalType.replace(/_/g, " ")} trend and assess patient. Consider repeat measurement and clinical correlation.`,
+          notify_specialties: [],
+          rule_id: `CRITICAL-VITAL-${vitalType.toUpperCase()}`,
+        });
+      }
     }
 
     // Evaluate diastolic BP independently for blood pressure vitals

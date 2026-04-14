@@ -22,16 +22,18 @@ const tabs = [
 
 function LoadingState({ label }: { label: string }) {
   return (
-    <div style={{ padding: 24, color: "var(--text-muted)" }}>
-      Loading {label}...
+    <div className="loading-indicator" role="status" aria-label={`Loading ${label}`}>
+      <div className="loading-spinner" aria-hidden="true" />
+      <span>Loading {label}...</span>
     </div>
   );
 }
 
 function ErrorState({ label }: { label: string }) {
   return (
-    <div style={{ padding: 24, color: "var(--critical)" }}>
-      Failed to load {label}. Is the API running?
+    <div className="error-indicator" role="alert">
+      <div className="error-icon" aria-hidden="true">!</div>
+      <span>Failed to load {label}. Is the API running?</span>
     </div>
   );
 }
@@ -390,12 +392,18 @@ function FlagsTab({ patientId }: { patientId: string }) {
   );
   const [activeAction, setActiveAction] = useState<FlagAction | null>(null);
 
+  const [showSuccess, setShowSuccess] = useState(false);
+
   const onSuccess = async () => {
+    setShowSuccess(true);
     await utils.aiOversight.flags.getByPatient.invalidate({ patientId });
     await utils.aiOversight.flags.getOpenCount.invalidate({ patientId });
     await utils.aiOversight.flags.getAllOpen.invalidate();
-    setActiveFlag(null);
-    setActiveAction(null);
+    setTimeout(() => {
+      setShowSuccess(false);
+      setActiveFlag(null);
+      setActiveAction(null);
+    }, 1200);
   };
 
   const acknowledgeMutation =
@@ -480,18 +488,21 @@ function FlagsTab({ patientId }: { patientId: string }) {
               <button
                 className="btn btn-success btn-sm"
                 onClick={() => openModal(flag, "acknowledge")}
+                disabled={isSubmitting}
               >
                 Acknowledge
               </button>
               <button
                 className="btn btn-primary btn-sm"
                 onClick={() => openModal(flag, "resolve")}
+                disabled={isSubmitting}
               >
                 Resolve
               </button>
               <button
                 className="btn btn-ghost btn-sm"
                 onClick={() => openModal(flag, "dismiss")}
+                disabled={isSubmitting}
               >
                 Dismiss
               </button>
@@ -503,12 +514,13 @@ function FlagsTab({ patientId }: { patientId: string }) {
         flag={activeFlag}
         action={activeAction}
         onCancel={() => {
-          if (isSubmitting) return;
+          if (isSubmitting || showSuccess) return;
           setActiveFlag(null);
           setActiveAction(null);
         }}
         onConfirm={handleConfirm}
         isSubmitting={isSubmitting}
+        isSuccess={showSuccess}
       />
     </div>
   );

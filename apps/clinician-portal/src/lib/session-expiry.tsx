@@ -41,14 +41,17 @@ export function emitSessionExpired(): void {
 
 /**
  * Wraps the global fetch to detect 401 responses. When a 401 is received,
- * clears the session from localStorage and triggers the session-expired flow.
+ * clears the session state and triggers the session-expired flow.
+ *
+ * The session token lives in an HttpOnly cookie (not localStorage), so there
+ * is no token to remove here — only the non-sensitive user profile flag.
  */
 export function createAuthFetch(): typeof fetch {
   return async (input, init) => {
     const response = await fetch(input, init);
 
     if (response.status === 401) {
-      localStorage.removeItem("carebridge_session");
+      localStorage.removeItem("carebridge_has_session");
       localStorage.removeItem("carebridge_user");
       localStorage.setItem(SESSION_EXPIRED_KEY, "true");
       emitSessionExpired();

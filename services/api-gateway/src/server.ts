@@ -11,6 +11,7 @@ import { authMiddleware } from "./middleware/auth.js";
 import { auditMiddleware } from "./middleware/audit.js";
 import { makeAcceptInviteRateLimitHook } from "./middleware/accept-invite-rate-limit.js";
 import { registerNotificationSSE } from "./routes/notifications-sse.js";
+import { redactUrlIds } from "@carebridge/phi-sanitizer";
 import { startBackgroundWorkers } from "./workers.js";
 
 const API_PORT = Number(process.env.API_PORT) || 4000;
@@ -60,6 +61,16 @@ async function main() {
   const server = Fastify({
     logger: {
       level: process.env.LOG_LEVEL ?? "info",
+      serializers: {
+        req(request) {
+          return {
+            method: request.method,
+            url: redactUrlIds(request.url),
+            hostname: request.hostname,
+            remoteAddress: request.ip,
+          };
+        },
+      },
     },
   });
 

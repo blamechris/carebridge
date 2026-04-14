@@ -71,20 +71,24 @@ export async function authMiddleware(
     }
   }
 
-  // --- Resolve session id from header or cookie ---
+  // --- Resolve session id from cookie (preferred) or Authorization header ---
+  // The HttpOnly session cookie is the primary transport — it is immune to XSS
+  // token theft. The Authorization header is retained as a backwards-compatible
+  // fallback but should be removed once all clients have migrated.
   let sessionId: string | undefined;
 
-  const authHeader = request.headers.authorization;
-  if (authHeader?.startsWith("Bearer ")) {
-    sessionId = authHeader.slice(7);
+  // Parsed by @fastify/cookie plugin registered in server.ts.
+  const cookies = (request as unknown as { cookies?: Record<string, string> })
+    .cookies;
+  if (cookies?.session) {
+    sessionId = cookies.session;
   }
 
   if (!sessionId) {
-    // Parsed by @fastify/cookie plugin registered in server.ts.
-    const cookies = (request as unknown as { cookies?: Record<string, string> })
-      .cookies;
-    if (cookies?.session) {
-      sessionId = cookies.session;
+    // Fallback: Authorization header (deprecated — prefer HttpOnly cookie)
+    const authHeader = request.headers.authorization;
+    if (authHeader?.startsWith("Bearer ")) {
+      sessionId = authHeader.slice(7);
     }
   }
 
@@ -122,9 +126,18 @@ export async function authMiddleware(
 
   const session = sessionRows[0]!;
 
-  // Check expiration.
+  // Check idle-timeout expiration.
   if (new Date(session.expires_at) < new Date()) {
     // Clean up the expired session from the database.
+    await db.delete(sessions).where(eq(sessions.id, resolvedSessionId));
+    return;
+  }
+
+  // Absolute session expiry: force re-authentication after 12 hours
+  // regardless of activity (HIPAA best practice for clinical environments).
+  const ABSOLUTE_SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+  const sessionAge = Date.now() - new Date(session.created_at).getTime();
+  if (sessionAge > ABSOLUTE_SESSION_TTL_MS) {
     await db.delete(sessions).where(eq(sessions.id, resolvedSessionId));
     return;
   }

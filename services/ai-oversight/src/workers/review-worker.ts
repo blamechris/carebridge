@@ -10,6 +10,7 @@ import { Worker, Queue } from "bullmq";
 import type { Job } from "bullmq";
 import type { ClinicalEvent } from "@carebridge/shared-types";
 import { getRedisConnection } from "@carebridge/redis-config";
+import { redactPatientId } from "@carebridge/phi-sanitizer";
 import { processReviewJob } from "../services/review-service.js";
 
 const QUEUE_NAME = "clinical-events";
@@ -36,7 +37,7 @@ export function startReviewWorker(): Worker {
 
       console.log(
         `[review-worker] Processing job ${job.id} — event: ${event.type} ` +
-          `for patient ${event.patient_id}`,
+          `for patient ${redactPatientId(event.patient_id)}`,
       );
 
       const startTime = Date.now();
@@ -81,7 +82,6 @@ export function startReviewWorker(): Worker {
 
     console.error(
       `[review-worker] Job ${job?.id} failed (attempt ${attemptsMade}/${maxAttempts}): ${error.message}`,
-      { jobData: job?.data },
     );
 
     if (isExhausted && job != null) {
