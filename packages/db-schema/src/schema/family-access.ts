@@ -9,7 +9,8 @@
  * may revoke a relationship or cancel a pending invite.
  */
 
-import { pgTable, text, index } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { pgTable, text, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { users } from "./auth.js";
 
 /**
@@ -33,6 +34,11 @@ export const familyRelationships = pgTable("family_relationships", {
   index("idx_family_rel_patient").on(table.patient_id),
   index("idx_family_rel_caregiver").on(table.caregiver_id),
   index("idx_family_rel_status").on(table.status),
+  // Partial unique index: one active relationship per (patient, caregiver).
+  // See issue #308 and migration 0026_family_access_dedup.sql.
+  uniqueIndex("idx_family_rel_active_unique")
+    .on(table.patient_id, table.caregiver_id)
+    .where(sql`revoked_at IS NULL`),
 ]);
 
 /**
