@@ -15,6 +15,7 @@
 import { Queue, Worker } from "bullmq";
 import type { Job } from "bullmq";
 import { getRedisConnection } from "@carebridge/redis-config";
+import { redactPatientId } from "@carebridge/phi-sanitizer";
 import { getDb } from "@carebridge/db-schema";
 import { clinicalFlags } from "@carebridge/db-schema";
 import { eq, and, lt, isNull } from "drizzle-orm";
@@ -97,7 +98,7 @@ async function checkAndEscalate(): Promise<{ escalated: number }> {
 
       console.log(
         `[escalation-worker] Escalated flag ${flag.id} ` +
-          `(severity: ${flag.severity}, patient: ${flag.patient_id}, ` +
+          `(severity: ${flag.severity}, patient: ${redactPatientId(flag.patient_id)}, ` +
           `age: ${Math.round((now - new Date(flag.created_at).getTime()) / 60000)}min)`,
       );
     }

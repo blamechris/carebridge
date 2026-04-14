@@ -244,4 +244,51 @@ describe("authMiddleware", () => {
     expect(details.reason).toBe("User account is deactivated");
     expect(details.ip_address).toBe("192.168.1.42");
   });
+
+  it("invalidates a session older than 12 hours (absolute expiry)", async () => {
+    const thirteenHoursAgo = new Date(Date.now() - 13 * 60 * 60 * 1000).toISOString();
+    sessionRows = [{
+      id: "sess-old",
+      user_id: "user-1",
+      expires_at: FUTURE,
+      created_at: thirteenHoursAgo,
+    }];
+    userRows = [activeUser];
+
+    const request = makeRequest({
+      headers: { authorization: "Bearer sess-old" },
+    });
+    const reply = makeReply();
+
+    await authMiddleware(request, reply);
+
+    // User should not be attached — session exceeded absolute lifetime.
+    const user = (request as unknown as Record<string, unknown>).user;
+    expect(user).toBeUndefined();
+
+    // Session should have been deleted.
+    expect(mockDb.delete).toHaveBeenCalled();
+  });
+
+  it("allows a session younger than 12 hours", async () => {
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    sessionRows = [{
+      id: "sess-recent",
+      user_id: "user-1",
+      expires_at: FUTURE,
+      created_at: twoHoursAgo,
+    }];
+    userRows = [activeUser];
+
+    const request = makeRequest({
+      headers: { authorization: "Bearer sess-recent" },
+    });
+    const reply = makeReply();
+
+    await authMiddleware(request, reply);
+
+    const user = (request as unknown as Record<string, unknown>).user;
+    expect(user).toBeDefined();
+    expect((user as Record<string, unknown>).id).toBe("user-1");
+  });
 });

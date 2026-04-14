@@ -44,8 +44,12 @@ const LAB_DIRECTIONS: Record<string, GoodDirection> = {
   CEA: "down",
   AFP: "down",
   PSA: "down",
-  Creatinine: "stable",
-  BUN: "stable",
+  // Creatinine and BUN: rising indicates kidney injury (AKI/CKD progression).
+  // Treat "down" as the desirable direction so rising values surface as negative
+  // trends rather than silently displaying as neutral/stable. See KDIGO AKI
+  // criteria and `detectAKI` below for programmatic rise detection.
+  Creatinine: "down",
+  BUN: "down",
   ALT: "down",
   AST: "down",
   Sodium: "stable",
@@ -143,4 +147,148 @@ export function formatDelta(delta: Delta | null, unit: string): string {
   const changeStr = absChange >= 10 ? absChange.toFixed(0) : absChange.toFixed(1);
   const pctStr = absPct.toFixed(1);
   return `${sign}${changeStr} ${unit} (${pctStr}%)`;
+}
+
+// ─── Trend classification ──────────────────────────────────────────────
+//
+// Classifies a sequence of values as rising, falling, or stable independent
+// of the "good direction" semantics used for coloring. The trend color
+// (`getTrendColor`) answers "is the change good or bad for the patient?";
+// the trend *direction* answers "which way are the numbers moving?".
+//
+// For metrics like creatinine and BUN this distinction matters: a rise from
+// 0.7 → 1.0 → 1.4 mg/dL is unambiguously "rising" even though a lazy
+// last-two-point comparison or a noisy signal might obscure it.
+
+export type TrendDirection = "rising" | "falling" | "stable";
+
+/**
+ * Classify a series of values as rising / falling / stable.
+ *
+ * Uses both the endpoint delta and a monotonicity check so that noisy but
+ * trending-up data (0.7 → 0.9 → 0.8 → 1.1 → 1.4) is still classified as
+ * rising. The `tolerance` parameter is the minimum absolute change from the
+ * first to the last value for the series to count as non-stable.
+ */
+export function classifyTrend(
+  values: number[],
+  tolerance = 0.01
+): TrendDirection {
+  if (values.length < 2) return "stable";
+  const first = values[0];
+  const last = values[values.length - 1];
+  const totalChange = last - first;
+  if (Math.abs(totalChange) < tolerance) return "stable";
+  return totalChange > 0 ? "rising" : "falling";
+}
+
+// ─── KDIGO AKI detection ───────────────────────────────────────────────
+//
+// KDIGO defines AKI by ANY of:
+//   1. Rise in serum creatinine ≥ 0.3 mg/dL within 48 hours
+//   2. Rise in serum creatinine to ≥ 1.5x baseline, known or presumed to
+//      have occurred within the prior 7 days
+//   3. Urine output < 0.5 mL/kg/h for ≥ 6 hours (not handled here — we
+//      only see lab trends, not fluid balance)
+//
+// This helper evaluates (1) and (2) from a time-ordered creatinine series.
+
+export interface CreatinineReading {
+  /** Serum creatinine in mg/dL */
+  value: number;
+  /** ISO 8601 timestamp */
+  timestamp: string;
+}
+
+export type AKIStage = 1 | 2 | 3;
+
+export interface AKIResult {
+  /** True if KDIGO criteria (1) or (2) are met */
+  isAKI: boolean;
+  /** KDIGO stage when AKI is detected, based on peak rise vs baseline. */
+  stage: AKIStage | null;
+  /** Which KDIGO criterion triggered the detection, if any. */
+  criterion: "absolute-rise-48h" | "relative-rise-7d" | null;
+  /** Baseline creatinine used for the relative-rise comparison. */
+  baseline: number | null;
+  /** Peak creatinine observed in the evaluation window. */
+  peak: number | null;
+}
+
+const MS_PER_HOUR = 60 * 60 * 1000;
+
+function kdigoStage(peak: number, baseline: number): AKIStage {
+  const ratio = peak / baseline;
+  const absoluteRise = peak - baseline;
+  // Stage 3: ≥ 3.0x baseline OR creatinine ≥ 4.0 mg/dL with acute rise ≥ 0.5
+  if (ratio >= 3.0 || (peak >= 4.0 && absoluteRise >= 0.5)) return 3;
+  // Stage 2: 2.0–2.9x baseline
+  if (ratio >= 2.0) return 2;
+  // Stage 1: 1.5–1.9x baseline OR rise ≥ 0.3 mg/dL
+  return 1;
+}
+
+/**
+ * Detect AKI from a time-ordered series of creatinine readings.
+ *
+ * Readings should be sorted ascending by timestamp. The lowest value within
+ * the prior 7 days is used as the baseline for the relative-rise criterion.
+ */
+export function detectAKI(readings: CreatinineReading[]): AKIResult {
+  const empty: AKIResult = {
+    isAKI: false,
+    stage: null,
+    criterion: null,
+    baseline: null,
+    peak: null,
+  };
+  if (readings.length < 2) return empty;
+
+  const sorted = [...readings].sort(
+    (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp)
+  );
+  const latest = sorted[sorted.length - 1];
+  const latestMs = Date.parse(latest.timestamp);
+
+  // Criterion 1: rise ≥ 0.3 mg/dL within any 48h window ending at latest.
+  const window48h = sorted.filter(
+    (r) => latestMs - Date.parse(r.timestamp) <= 48 * MS_PER_HOUR
+  );
+  let minIn48h = latest.value;
+  let peakIn48h = latest.value;
+  for (const r of window48h) {
+    if (r.value < minIn48h) minIn48h = r.value;
+    if (r.value > peakIn48h) peakIn48h = r.value;
+  }
+  if (peakIn48h - minIn48h >= 0.3) {
+    return {
+      isAKI: true,
+      stage: kdigoStage(peakIn48h, minIn48h),
+      criterion: "absolute-rise-48h",
+      baseline: minIn48h,
+      peak: peakIn48h,
+    };
+  }
+
+  // Criterion 2: rise to ≥ 1.5x baseline within the prior 7 days.
+  const window7d = sorted.filter(
+    (r) => latestMs - Date.parse(r.timestamp) <= 7 * 24 * MS_PER_HOUR
+  );
+  let baseline = latest.value;
+  let peak = latest.value;
+  for (const r of window7d) {
+    if (r.value < baseline) baseline = r.value;
+    if (r.value > peak) peak = r.value;
+  }
+  if (baseline > 0 && peak / baseline >= 1.5) {
+    return {
+      isAKI: true,
+      stage: kdigoStage(peak, baseline),
+      criterion: "relative-rise-7d",
+      baseline,
+      peak,
+    };
+  }
+
+  return empty;
 }

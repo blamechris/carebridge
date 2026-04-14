@@ -31,8 +31,14 @@ export const mfaCompleteLoginSchema = z.object({
   code: z.string().min(1), // 6-digit TOTP or XXXXX-XXXXX recovery code
 });
 
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(8),
+});
+
 export type LoginInput = z.infer<typeof loginSchema>;
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 export type MFAVerifyInput = z.infer<typeof mfaVerifySchema>;
 export type MFADisableInput = z.infer<typeof mfaDisableSchema>;
 export type MFACompleteLoginInput = z.infer<typeof mfaCompleteLoginSchema>;
+export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;

@@ -386,3 +386,128 @@ describe("OBSTETRIC-TERATOGEN-D-001 — Pregnancy + Category D teratogen", () =>
     expect(dFlag!.severity).toBe("warning");
   });
 });
+
+describe("ANTICOAG-BLEED-001 — severity stratification", () => {
+  const anticoagCtx = (
+    symptoms: string[],
+    overrides: Partial<PatientContext> = {},
+  ): PatientContext => ({
+    active_diagnoses: ["Atrial fibrillation"],
+    active_diagnosis_codes: ["I48.91"],
+    active_medications: ["Warfarin 5mg"],
+    new_symptoms: symptoms,
+    care_team_specialties: ["hematology"],
+    ...overrides,
+  });
+
+  // --- CRITICAL severity: frank hemorrhage ---
+
+  it.each([
+    ["GI hemorrhage"],
+    ["hematemesis"],
+    ["melena"],
+    ["hematochezia"],
+    ["hemoptysis"],
+    ["intracranial bleed"],
+    ["GI bleed"],
+    ["retroperitoneal hemorrhage"],
+    ["blood in stool"],
+  ])("fires CRITICAL for major hemorrhage term: %s", (symptom) => {
+    const flags = checkCrossSpecialtyPatterns(anticoagCtx([symptom]));
+    const flag = flags.find((f) => f.rule_id === "ANTICOAG-BLEED-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("critical");
+  });
+
+  // --- WARNING severity: moderate bleeding ---
+
+  it.each([
+    ["hematuria"],
+    ["blood in urine"],
+    ["nosebleed"],
+    ["post-procedural bleeding"],
+    ["bleeding from wound site"],
+  ])("fires WARNING for moderate bleeding term: %s", (symptom) => {
+    const flags = checkCrossSpecialtyPatterns(anticoagCtx([symptom]));
+    const flag = flags.find((f) => f.rule_id === "ANTICOAG-BLEED-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("warning");
+  });
+
+  // --- SUPPRESSED: minor bruising with normal/unknown INR ---
+
+  it.each([
+    ["minor bruising on arm"],
+    ["bruising at injection site"],
+    ["petechiae"],
+    ["ecchymosis"],
+    ["minor skin bleeding"],
+  ])("does NOT fire for minor bleeding with normal INR: %s", (symptom) => {
+    const flags = checkCrossSpecialtyPatterns(
+      anticoagCtx([symptom], { recent_labs: [{ name: "INR", value: 2.5 }] }),
+    );
+    const flag = flags.find((f) => f.rule_id === "ANTICOAG-BLEED-001");
+    expect(flag).toBeUndefined();
+  });
+
+  it("does NOT fire for minor bruising when INR is unknown", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      anticoagCtx(["bruising on forearm"], { recent_labs: [] }),
+    );
+    const flag = flags.find((f) => f.rule_id === "ANTICOAG-BLEED-001");
+    expect(flag).toBeUndefined();
+  });
+
+  // --- Minor bleeding escalated when INR > 5.0 ---
+
+  it("fires WARNING for minor bruising when INR > 5.0", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      anticoagCtx(["bruising on forearm"], {
+        recent_labs: [{ name: "INR", value: 6.2 }],
+      }),
+    );
+    const flag = flags.find((f) => f.rule_id === "ANTICOAG-BLEED-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("warning");
+  });
+
+  it("fires WARNING for petechiae when INR > 5.0", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      anticoagCtx(["petechiae on lower extremities"], {
+        recent_labs: [{ name: "INR", value: 7.0 }],
+      }),
+    );
+    const flag = flags.find((f) => f.rule_id === "ANTICOAG-BLEED-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("warning");
+  });
+
+  // --- Does NOT fire without anticoagulant ---
+
+  it("does NOT fire without anticoagulant medication", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      anticoagCtx(["hematemesis"], { active_medications: ["Metformin 500mg"] }),
+    );
+    const flag = flags.find((f) => f.rule_id === "ANTICOAG-BLEED-001");
+    expect(flag).toBeUndefined();
+  });
+
+  // --- Does NOT fire without bleeding symptom ---
+
+  it("does NOT fire without bleeding symptom", () => {
+    const flags = checkCrossSpecialtyPatterns(anticoagCtx(["headache"]));
+    const flag = flags.find((f) => f.rule_id === "ANTICOAG-BLEED-001");
+    expect(flag).toBeUndefined();
+  });
+
+  // --- Mixed symptoms: critical overrides moderate ---
+
+  it("fires CRITICAL when both critical and minor symptoms present", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      anticoagCtx(["bruising on arm", "hematemesis"]),
+    );
+    const flag = flags.find((f) => f.rule_id === "ANTICOAG-BLEED-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("critical");
+  });
+});

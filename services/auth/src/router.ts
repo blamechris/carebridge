@@ -7,6 +7,7 @@ import {
   mfaVerifySchema,
   mfaDisableSchema,
   mfaCompleteLoginSchema,
+  changePasswordSchema,
 } from "@carebridge/validators";
 import { getDb, users, sessions, auditLog } from "@carebridge/db-schema";
 import { eq, and, gt, asc, inArray } from "drizzle-orm";
@@ -139,6 +140,7 @@ function hashToken(token: string): string {
 }
 
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const ABSOLUTE_SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours — absolute max regardless of activity
 
 /**
  * Issue a signed JWT that wraps the internal session UUID.
@@ -675,6 +677,92 @@ export const authRouter = t.router({
 
     return user;
   }),
+
+  /**
+   * Change the authenticated user's password.
+   * Requires the current password for verification. On success, all other
+   * sessions are revoked so that stolen tokens are invalidated.
+   */
+  changePassword: protectedProcedure
+    .input(changePasswordSchema)
+    .mutation(async ({ ctx, input }) => {
+      const db = getDb();
+
+      // Fetch the stored password hash.
+      const rows = await db
+        .select({ password_hash: users.password_hash })
+        .from(users)
+        .where(eq(users.id, ctx.user.id))
+        .limit(1);
+
+      if (rows.length === 0) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "User not found." });
+      }
+
+      const row = rows[0]!;
+
+      // Verify current password.
+      if (!(await checkPassword(input.currentPassword, row.password_hash))) {
+        throw new TRPCError({
+          code: "UNAUTHORIZED",
+          message: "Current password is incorrect.",
+        });
+      }
+
+      // Reject the new password if it matches the current one.
+      if (input.currentPassword === input.newPassword) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "New password must differ from the current password.",
+        });
+      }
+
+      // Hash and persist the new password.
+      const newHash = await hashPassword(input.newPassword);
+      const now = new Date().toISOString();
+
+      await db
+        .update(users)
+        .set({ password_hash: newHash, updated_at: now })
+        .where(eq(users.id, ctx.user.id));
+
+      // Revoke all *other* sessions for this user (security best practice).
+      // Fetch all sessions, then delete every one except the caller's current session.
+      const allSessions = await db
+        .select({ id: sessions.id })
+        .from(sessions)
+        .where(eq(sessions.user_id, ctx.user.id));
+
+      const toDelete = allSessions
+        .filter((s) => s.id !== ctx.sessionId)
+        .map((s) => s.id);
+
+      if (toDelete.length > 0) {
+        await db.delete(sessions).where(inArray(sessions.id, toDelete));
+      }
+
+      // Audit log for password change (HIPAA § 164.312(b)).
+      try {
+        await db.insert(auditLog).values({
+          id: crypto.randomUUID(),
+          user_id: ctx.user.id,
+          action: "password_changed",
+          resource_type: "user",
+          resource_id: ctx.user.id,
+          details: JSON.stringify({
+            sessions_revoked: toDelete.length,
+          }),
+          timestamp: now,
+        });
+      } catch (err) {
+        console.error("[auth] audit_log insert failed for password_changed", {
+          userId: ctx.user.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+
+      return { success: true };
+    }),
 
   // ---------- MFA management (protected) ----------
 

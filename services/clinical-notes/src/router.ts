@@ -1,4 +1,4 @@
-import { initTRPC } from "@trpc/server";
+import { initTRPC, TRPCError } from "@trpc/server";
 import { z } from "zod";
 import {
   createNoteSchema,
@@ -8,6 +8,7 @@ import {
 } from "@carebridge/validators";
 import type { NoteTemplateType } from "@carebridge/shared-types";
 import * as noteService from "./services/note-service.js";
+import { NoteConflictError } from "./services/note-service.js";
 import { createSOAPTemplate } from "./templates/soap.js";
 import { createProgressTemplate } from "./templates/progress.js";
 import { createHAndPTemplate } from "./templates/h-and-p.js";
@@ -35,7 +36,14 @@ export const clinicalNotesRouter = t.router({
     .input(z.object({ id: z.string().uuid() }).merge(updateNoteSchema))
     .mutation(async ({ input }) => {
       const { id, ...rest } = input;
-      return noteService.updateNote(id, rest);
+      try {
+        return await noteService.updateNote(id, rest);
+      } catch (err) {
+        if (err instanceof NoteConflictError) {
+          throw new TRPCError({ code: "CONFLICT", message: err.message });
+        }
+        throw err;
+      }
     }),
 
   sign: t.procedure

@@ -56,6 +56,55 @@ const ANTICOAGULANT_PATTERN =
 /** ICD-10 pattern for active VTE / DVT / PE diagnoses. */
 const VTE_ICD10_PATTERN = /^(I26|I80|I82)\./;
 
+/**
+ * ANTICOAG-BLEED severity stratification patterns.
+ *
+ * CRITICAL: frank hemorrhage terms that require immediate evaluation.
+ * WARNING: moderate bleeding that warrants prompt but not emergent review.
+ * MINOR: bruising / petechiae — expected in anticoagulated patients with
+ *        therapeutic INR. Suppressed unless INR > 5.0.
+ */
+const ANTICOAG_BLEED_CRITICAL_PATTERN =
+  /hemorrhage|haemorrhage|hematemesis|melena|hematochezia|hemoptysis|intracranial bleed|gi bleed|gastrointestinal bleed|retroperitoneal|blood in stool/i;
+
+const ANTICOAG_BLEED_WARNING_PATTERN =
+  /hematuria|blood in urine|epistaxis.*packing|post.?procedural bleeding|nosebleed/i;
+
+const ANTICOAG_BLEED_MINOR_PATTERN =
+  /bruis|petechiae|ecchymosis|minor.*bleeding/i;
+
+/**
+ * Classify a single symptom string into a bleeding severity tier.
+ * Minor is checked first so "minor skin bleeding" is not escalated by
+ * a generic "bleeding" match in the warning tier.
+ */
+function classifySymptomBleedingTier(symptom: string): "critical" | "warning" | "minor" | null {
+  if (ANTICOAG_BLEED_CRITICAL_PATTERN.test(symptom)) return "critical";
+  if (ANTICOAG_BLEED_MINOR_PATTERN.test(symptom)) return "minor";
+  if (ANTICOAG_BLEED_WARNING_PATTERN.test(symptom)) return "warning";
+  // Generic "bleeding" without minor qualifier → warning
+  if (/bleeding/i.test(symptom)) return "warning";
+  return null;
+}
+
+/**
+ * Return the highest bleeding severity tier across all symptoms.
+ */
+function classifyBleedingSeverity(symptoms: string[]): "critical" | "warning" | "minor" | null {
+  let highest: "critical" | "warning" | "minor" | null = null;
+  for (const s of symptoms) {
+    const tier = classifySymptomBleedingTier(s);
+    if (tier === "critical") return "critical";
+    if (tier === "warning") highest = "warning";
+    if (tier === "minor" && highest === null) highest = "minor";
+  }
+  return highest;
+}
+
+/** Matches any bleeding-related symptom across all severity tiers. */
+const ANTICOAG_BLEED_ANY_PATTERN =
+  /hemorrhage|haemorrhage|hematemesis|melena|hematochezia|hemoptysis|intracranial bleed|gi bleed|gastrointestinal bleed|retroperitoneal|blood in stool|hematuria|blood in urine|epistaxis|nosebleed|post.?procedural bleeding|bleeding|bruis|petechiae|ecchymosis/i;
+
 interface CrossSpecialtyRule {
   id: string;
   name: string;
@@ -125,10 +174,29 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       const onAnticoag = ctx.active_medications.some((m) =>
         /warfarin|coumadin|heparin|enoxaparin|lovenox|rivaroxaban|xarelto|apixaban|eliquis/i.test(m),
       );
-      const hasBleedingSymptom = ctx.new_symptoms.some((s) =>
-        /bleeding|blood in stool|blood in urine|hemoptysis|bruising|nosebleed|melena|hematuria|hematemesis/i.test(s),
+      if (!onAnticoag) return false;
+
+      const hasAnyBleedingSymptom = ctx.new_symptoms.some((s) =>
+        ANTICOAG_BLEED_ANY_PATTERN.test(s),
       );
-      return onAnticoag && hasBleedingSymptom;
+      if (!hasAnyBleedingSymptom) return false;
+
+      // Classify each symptom. Minor pattern is checked first so that
+      // "minor skin bleeding" is not escalated by a generic "bleeding" match.
+      const tier = classifyBleedingSeverity(ctx.new_symptoms);
+      if (tier === "critical" || tier === "warning") return true;
+
+      // Only minor bleeding — suppress unless INR is significantly elevated
+      // (> 5.0), since minor bruising is expected in 20-40% of
+      // anticoagulated patients with therapeutic INR.
+      const inr = ctx.recent_labs?.find((l) => /\bINR\b/i.test(l.name))?.value;
+      return inr !== undefined && inr > 5.0;
+    },
+    buildSeverity: (ctx: PatientContext) => {
+      const tier = classifyBleedingSeverity(ctx.new_symptoms);
+      if (tier === "critical") return "critical";
+      // Both "warning" and "minor" (INR > 5.0) map to warning severity
+      return "warning";
     },
     severity: "critical" as const,
     category: "cross-specialty" as const,
