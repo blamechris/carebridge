@@ -22,16 +22,18 @@ const tabs = [
 
 function LoadingState({ label }: { label: string }) {
   return (
-    <div style={{ padding: 24, color: "var(--text-muted)" }}>
-      Loading {label}...
+    <div className="loading-indicator" role="status" aria-label={`Loading ${label}`}>
+      <div className="loading-spinner" aria-hidden="true" />
+      <span>Loading {label}...</span>
     </div>
   );
 }
 
 function ErrorState({ label }: { label: string }) {
   return (
-    <div style={{ padding: 24, color: "var(--critical)" }}>
-      Failed to load {label}. Is the API running?
+    <div className="error-indicator" role="alert">
+      <div className="error-icon" aria-hidden="true">!</div>
+      <span>Failed to load {label}. Is the API running?</span>
     </div>
   );
 }
