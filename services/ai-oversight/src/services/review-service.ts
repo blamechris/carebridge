@@ -254,47 +254,79 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
 
     // Step 7: Validate and parse LLM response
     const validationResult = validateLLMResponse(llmResponse);
+    let llmFindingsCount = 0;
 
     if (!validationResult.ok) {
-      throw new Error(`LLM response validation failed: ${validationResult.error}`);
-    }
-
-    if (validationResult.warnings.length > 0) {
-      console.warn(
-        `[review-service] LLM response warnings: ${validationResult.warnings.join("; ")}`,
+      // Log raw response for debugging (truncated to avoid flooding logs)
+      console.error(
+        `[review-service] LLM response validation failed for job ${jobId}: ${validationResult.error}. ` +
+          `Raw response (first 500 chars): ${llmResponse.slice(0, 500)}`,
       );
-    }
 
-    const llmFindings: LLMFlagOutput[] = validationResult.flags.map((f) => ({
-      severity: f.severity,
-      category: f.category,
-      summary: f.summary,
-      rationale: f.rationale,
-      suggested_action: f.suggested_action,
-      notify_specialties: f.notify_specialties,
-    }));
-
-    // Step 8: Create flags for LLM findings (deduplicate against rule-based flags)
-    for (const finding of llmFindings) {
-      if (isDuplicate(finding, allRuleFlags)) {
-        continue;
-      }
-
-      const flag = await createFlag({
+      // Create a fallback "review failed" flag so clinicians know this event
+      // was not successfully reviewed by the LLM layer.
+      const fallbackFlag = await createFlag({
         patient_id: event.patient_id,
         source: "ai-review" as FlagSource,
-        severity: finding.severity,
-        category: finding.category as ClinicalFlagCategory,
-        summary: finding.summary,
-        rationale: finding.rationale,
-        suggested_action: finding.suggested_action,
-        notify_specialties: finding.notify_specialties,
+        severity: "warning",
+        category: "care-gap" as ClinicalFlagCategory,
+        summary: "AI review could not be completed — LLM response was malformed",
+        rationale:
+          `The automated clinical review for event ${event.type} (${event.id}) ` +
+          `could not parse the LLM response. Parse error: ${validationResult.error}. ` +
+          `Deterministic rules still ran, but the deeper LLM analysis was not applied. ` +
+          `A clinician should manually review this event.`,
+        suggested_action:
+          "Manually review the triggering clinical event for any concerns " +
+          "that automated rules may not catch.",
+        notify_specialties: [],
         trigger_event_ids: [event.id],
         status: "open",
         model_id: "claude-sonnet-4-6",
         prompt_version: PROMPT_VERSION,
+        requires_human_review: true,
       });
-      flagIds.push(flag.id);
+      flagIds.push(fallbackFlag.id);
+    } else {
+      if (validationResult.warnings.length > 0) {
+        console.warn(
+          `[review-service] LLM response warnings: ${validationResult.warnings.join("; ")}`,
+        );
+      }
+
+      const llmFindings: LLMFlagOutput[] = validationResult.flags.map((f) => ({
+        severity: f.severity,
+        category: f.category,
+        summary: f.summary,
+        rationale: f.rationale,
+        suggested_action: f.suggested_action,
+        notify_specialties: f.notify_specialties,
+      }));
+
+      llmFindingsCount = llmFindings.length;
+
+      // Step 8: Create flags for LLM findings (deduplicate against rule-based flags)
+      for (const finding of llmFindings) {
+        if (isDuplicate(finding, allRuleFlags)) {
+          continue;
+        }
+
+        const flag = await createFlag({
+          patient_id: event.patient_id,
+          source: "ai-review" as FlagSource,
+          severity: finding.severity,
+          category: finding.category as ClinicalFlagCategory,
+          summary: finding.summary,
+          rationale: finding.rationale,
+          suggested_action: finding.suggested_action,
+          notify_specialties: finding.notify_specialties,
+          trigger_event_ids: [event.id],
+          status: "open",
+          model_id: "claude-sonnet-4-6",
+          prompt_version: PROMPT_VERSION,
+        });
+        flagIds.push(flag.id);
+      }
     }
 
     // Step 9: Update review_jobs record — completed
@@ -313,7 +345,7 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
 
     console.log(
       `[review-service] Job ${jobId} completed in ${processingTime}ms. ` +
-        `Rules fired: ${rulesFired.length}, LLM findings: ${llmFindings.length}, ` +
+        `Rules fired: ${rulesFired.length}, LLM findings: ${llmFindingsCount}, ` +
         `Total flags: ${flagIds.length}` +
         (budgetResult.truncated ? ` (prompt truncated: ${budgetResult.originalTokens} -> ${budgetResult.finalTokens} tokens)` : ""),
     );
