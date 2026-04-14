@@ -1,4 +1,5 @@
-import { pgTable, text, integer, boolean, jsonb, index } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { pgTable, text, integer, boolean, jsonb, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { patients } from "./patients.js";
 
 export const clinicalFlags = pgTable("clinical_flags", {
@@ -30,6 +31,12 @@ export const clinicalFlags = pgTable("clinical_flags", {
 }, (table) => [
   index("idx_flags_patient").on(table.patient_id, table.status),
   index("idx_flags_severity").on(table.severity, table.status),
+  uniqueIndex("idx_flags_open_rule_dedup")
+    .on(table.patient_id, table.rule_id)
+    .where(sql`status = 'open' AND rule_id IS NOT NULL`),
+  uniqueIndex("idx_flags_open_llm_dedup")
+    .on(table.patient_id, table.category, table.severity)
+    .where(sql`status = 'open' AND rule_id IS NULL`),
 ]);
 
 export const clinicalRules = pgTable("clinical_rules", {

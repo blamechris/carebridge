@@ -17,6 +17,11 @@ vi.mock("@carebridge/medical-logic", () => ({
     blood_pressure: { min: 60, max: 250, criticalLow: 70, criticalHigh: 180 },
     blood_glucose: { min: 10, max: 800, criticalLow: 50, criticalHigh: 350, warningLow: 70, warningHigh: 250 },
   },
+  DIASTOLIC_DANGER_ZONE: {
+    criticalLow: 60,
+    criticalHigh: 120,
+    warningHigh: 90,
+  },
   isCriticalVital: (type: string, value: number) => {
     const zones: Record<string, { criticalLow?: number; criticalHigh?: number }> = {
       heart_rate: { criticalLow: 40, criticalHigh: 200 },
@@ -45,6 +50,12 @@ vi.mock("@carebridge/medical-logic", () => ({
     if (zone.criticalHigh !== undefined && value >= zone.criticalHigh) return "critical";
     if (zone.warningLow !== undefined && value < zone.warningLow) return "warning";
     if (zone.warningHigh !== undefined && value > zone.warningHigh) return "warning";
+    return null;
+  },
+  checkDiastolicBP: (diastolic: number) => {
+    if (diastolic < 60) return "critical";
+    if (diastolic >= 120) return "critical";
+    if (diastolic >= 90) return "warning";
     return null;
   },
 }));
@@ -163,6 +174,105 @@ describe("checkCriticalValues", () => {
     expect(flags[0]!.summary).toContain("high");
   });
 
+  it("returns no diastolic flag for normal BP (120/80)", () => {
+    const flags = checkCriticalValues({
+      id: "evt-bp-1",
+      type: "vital.created",
+      patient_id: "p-1",
+      data: { type: "blood_pressure", value_primary: 120, value_secondary: 80, unit: "mmHg" },
+      timestamp: new Date().toISOString(),
+    });
+
+    expect(flags).toHaveLength(0);
+  });
+
+  it("flags systolic crisis (190/90) as critical", () => {
+    const flags = checkCriticalValues({
+      id: "evt-bp-2",
+      type: "vital.created",
+      patient_id: "p-1",
+      data: { type: "blood_pressure", value_primary: 190, value_secondary: 90, unit: "mmHg" },
+      timestamp: new Date().toISOString(),
+    });
+
+    // Systolic 190 >= 180 triggers systolic critical flag
+    const systolicFlag = flags.find((f) => f.rule_id === "CRITICAL-VITAL-BLOOD_PRESSURE");
+    expect(systolicFlag).toBeDefined();
+    expect(systolicFlag!.severity).toBe("critical");
+  });
+
+  it("flags diastolic crisis (145/125) as critical — hypertensive emergency", () => {
+    const flags = checkCriticalValues({
+      id: "evt-bp-3",
+      type: "vital.created",
+      patient_id: "p-1",
+      data: { type: "blood_pressure", value_primary: 145, value_secondary: 125, unit: "mmHg" },
+      timestamp: new Date().toISOString(),
+    });
+
+    // Systolic 145 is NOT critical (< 180), but diastolic 125 >= 120 is critical
+    const systolicFlag = flags.find((f) => f.rule_id === "CRITICAL-VITAL-BLOOD_PRESSURE");
+    expect(systolicFlag).toBeUndefined();
+
+    const diastolicFlag = flags.find((f) => f.rule_id === "CRITICAL-VITAL-DIASTOLIC_BP");
+    expect(diastolicFlag).toBeDefined();
+    expect(diastolicFlag!.severity).toBe("critical");
+    expect(diastolicFlag!.summary).toContain("diastolic");
+    expect(diastolicFlag!.summary).toContain("145/125");
+  });
+
+  it("flags both systolic and diastolic when both critical (200/130)", () => {
+    const flags = checkCriticalValues({
+      id: "evt-bp-4",
+      type: "vital.created",
+      patient_id: "p-1",
+      data: { type: "blood_pressure", value_primary: 200, value_secondary: 130, unit: "mmHg" },
+      timestamp: new Date().toISOString(),
+    });
+
+    const systolicFlag = flags.find((f) => f.rule_id === "CRITICAL-VITAL-BLOOD_PRESSURE");
+    expect(systolicFlag).toBeDefined();
+    expect(systolicFlag!.severity).toBe("critical");
+
+    const diastolicFlag = flags.find((f) => f.rule_id === "CRITICAL-VITAL-DIASTOLIC_BP");
+    expect(diastolicFlag).toBeDefined();
+    expect(diastolicFlag!.severity).toBe("critical");
+  });
+
+  it("flags isolated diastolic high (135/95) as warning", () => {
+    const flags = checkCriticalValues({
+      id: "evt-bp-5",
+      type: "vital.created",
+      patient_id: "p-1",
+      data: { type: "blood_pressure", value_primary: 135, value_secondary: 95, unit: "mmHg" },
+      timestamp: new Date().toISOString(),
+    });
+
+    // Systolic 135 is not critical
+    const systolicFlag = flags.find((f) => f.rule_id === "CRITICAL-VITAL-BLOOD_PRESSURE");
+    expect(systolicFlag).toBeUndefined();
+
+    // Diastolic 95 >= 90 triggers warning
+    const diastolicFlag = flags.find((f) => f.rule_id === "CRITICAL-VITAL-DIASTOLIC_BP");
+    expect(diastolicFlag).toBeDefined();
+    expect(diastolicFlag!.severity).toBe("warning");
+  });
+
+  it("flags critically low diastolic (130/50) as critical hypotension", () => {
+    const flags = checkCriticalValues({
+      id: "evt-bp-6",
+      type: "vital.created",
+      patient_id: "p-1",
+      data: { type: "blood_pressure", value_primary: 130, value_secondary: 50, unit: "mmHg" },
+      timestamp: new Date().toISOString(),
+    });
+
+    const diastolicFlag = flags.find((f) => f.rule_id === "CRITICAL-VITAL-DIASTOLIC_BP");
+    expect(diastolicFlag).toBeDefined();
+    expect(diastolicFlag!.severity).toBe("critical");
+    expect(diastolicFlag!.summary).toContain("low");
+  });
+
   it("flags critical lab results with explicit critical flag", () => {
     const flags = checkCriticalValues({
       id: "evt-4",
@@ -171,11 +281,11 @@ describe("checkCriticalValues", () => {
       data: {
         results: [
           {
-            test_name: "Potassium",
-            value: 7.2,
-            unit: "mEq/L",
-            reference_low: 3.5,
-            reference_high: 5.0,
+            test_name: "WBC",
+            value: 50.0,
+            unit: "K/uL",
+            reference_low: 4.5,
+            reference_high: 11.0,
             flag: "critical",
           },
         ],
@@ -185,7 +295,303 @@ describe("checkCriticalValues", () => {
 
     expect(flags).toHaveLength(1);
     expect(flags[0]!.severity).toBe("critical");
+    expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-WBC");
+  });
+});
+
+// ─── Explicit Critical Lab Thresholds ────────────────────────────
+
+describe("checkCriticalValues — Troponin I thresholds", () => {
+  it("flags troponin >0.4 as critical (MI range)", () => {
+    const flags = checkCriticalValues({
+      id: "evt-trop-1",
+      type: "lab.resulted",
+      patient_id: "p-1",
+      data: { results: [{ test_name: "Troponin I", value: 1.2, unit: "ng/mL" }] },
+      timestamp: new Date().toISOString(),
+    });
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("critical");
+    expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-TROPONIN_I");
+    expect(flags[0]!.notify_specialties).toContain("cardiology");
+  });
+
+  it("flags troponin >0.04 as warning", () => {
+    const flags = checkCriticalValues({
+      id: "evt-trop-2",
+      type: "lab.resulted",
+      patient_id: "p-1",
+      data: { results: [{ test_name: "Troponin", value: 0.15, unit: "ng/mL" }] },
+      timestamp: new Date().toISOString(),
+    });
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("warning");
+    expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-TROPONIN_I");
+  });
+
+  it("does not flag normal troponin (<=0.04)", () => {
+    const flags = checkCriticalValues({
+      id: "evt-trop-3",
+      type: "lab.resulted",
+      patient_id: "p-1",
+      data: { results: [{ test_name: "Troponin I", value: 0.02, unit: "ng/mL" }] },
+      timestamp: new Date().toISOString(),
+    });
+    expect(flags).toHaveLength(0);
+  });
+
+  it("matches troponin by LOINC code", () => {
+    const flags = checkCriticalValues({
+      id: "evt-trop-4",
+      type: "lab.resulted",
+      patient_id: "p-1",
+      data: { results: [{ test_name: "Cardiac Troponin", test_code: "10839-9", value: 0.5, unit: "ng/mL" }] },
+      timestamp: new Date().toISOString(),
+    });
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("critical");
+    expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-TROPONIN_I");
+  });
+});
+
+describe("checkCriticalValues — Potassium thresholds", () => {
+  it("flags potassium >=6.0 as critical (hyperkalemia)", () => {
+    const flags = checkCriticalValues({
+      id: "evt-k-1",
+      type: "lab.resulted",
+      patient_id: "p-1",
+      data: { results: [{ test_name: "Potassium", value: 7.2, unit: "mEq/L" }] },
+      timestamp: new Date().toISOString(),
+    });
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("critical");
     expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-POTASSIUM");
+    expect(flags[0]!.notify_specialties).toContain("nephrology");
+  });
+
+  it("flags potassium 5.1-5.9 as warning", () => {
+    const flags = checkCriticalValues({
+      id: "evt-k-2",
+      type: "lab.resulted",
+      patient_id: "p-1",
+      data: { results: [{ test_name: "Potassium", value: 5.5, unit: "mEq/L" }] },
+      timestamp: new Date().toISOString(),
+    });
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("warning");
+    expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-POTASSIUM");
+  });
+
+  it("flags potassium <3.0 as critical (hypokalemia)", () => {
+    const flags = checkCriticalValues({
+      id: "evt-k-3",
+      type: "lab.resulted",
+      patient_id: "p-1",
+      data: { results: [{ test_name: "Potassium", value: 2.5, unit: "mEq/L" }] },
+      timestamp: new Date().toISOString(),
+    });
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("critical");
+    expect(flags[0]!.summary).toContain("hypokalemia");
+  });
+
+  it("flags potassium 3.0-3.4 as warning (mild hypokalemia)", () => {
+    const flags = checkCriticalValues({
+      id: "evt-k-4",
+      type: "lab.resulted",
+      patient_id: "p-1",
+      data: { results: [{ test_name: "Potassium", value: 3.2, unit: "mEq/L" }] },
+      timestamp: new Date().toISOString(),
+    });
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("warning");
+    expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-POTASSIUM");
+  });
+
+  it("does not flag normal potassium (3.5-5.0)", () => {
+    const flags = checkCriticalValues({
+      id: "evt-k-5",
+      type: "lab.resulted",
+      patient_id: "p-1",
+      data: { results: [{ test_name: "Potassium", value: 4.2, unit: "mEq/L" }] },
+      timestamp: new Date().toISOString(),
+    });
+    expect(flags).toHaveLength(0);
+  });
+});
+
+describe("checkCriticalValues — Lactate thresholds", () => {
+  it("flags lactate >4.0 as critical (sepsis/shock)", () => {
+    const flags = checkCriticalValues({
+      id: "evt-lac-1",
+      type: "lab.resulted",
+      patient_id: "p-1",
+      data: { results: [{ test_name: "Lactate", value: 6.5, unit: "mmol/L" }] },
+      timestamp: new Date().toISOString(),
+    });
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("critical");
+    expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-LACTATE");
+    expect(flags[0]!.notify_specialties).toContain("critical_care");
+  });
+
+  it("flags lactate >2.0 as warning", () => {
+    const flags = checkCriticalValues({
+      id: "evt-lac-2",
+      type: "lab.resulted",
+      patient_id: "p-1",
+      data: { results: [{ test_name: "Lactic Acid", value: 3.0, unit: "mmol/L" }] },
+      timestamp: new Date().toISOString(),
+    });
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("warning");
+    expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-LACTATE");
+  });
+
+  it("does not flag normal lactate (<=2.0)", () => {
+    const flags = checkCriticalValues({
+      id: "evt-lac-3",
+      type: "lab.resulted",
+      patient_id: "p-1",
+      data: { results: [{ test_name: "Lactate", value: 1.5, unit: "mmol/L" }] },
+      timestamp: new Date().toISOString(),
+    });
+    expect(flags).toHaveLength(0);
+  });
+});
+
+describe("checkCriticalValues — pH (arterial) thresholds", () => {
+  it("flags pH <7.25 as critical (severe acidosis)", () => {
+    const flags = checkCriticalValues({
+      id: "evt-ph-1",
+      type: "lab.resulted",
+      patient_id: "p-1",
+      data: { results: [{ test_name: "pH (arterial)", value: 7.1, unit: "" }] },
+      timestamp: new Date().toISOString(),
+    });
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("critical");
+    expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-PH_ARTERIAL");
+    expect(flags[0]!.summary).toContain("acidemia");
+  });
+
+  it("flags pH 7.25-7.34 as warning (acidosis)", () => {
+    const flags = checkCriticalValues({
+      id: "evt-ph-2",
+      type: "lab.resulted",
+      patient_id: "p-1",
+      data: { results: [{ test_name: "pH", value: 7.30, unit: "" }] },
+      timestamp: new Date().toISOString(),
+    });
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("warning");
+    expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-PH_ARTERIAL");
+  });
+
+  it("flags pH >7.55 as critical (severe alkalosis)", () => {
+    const flags = checkCriticalValues({
+      id: "evt-ph-3",
+      type: "lab.resulted",
+      patient_id: "p-1",
+      data: { results: [{ test_name: "Arterial pH", value: 7.62, unit: "" }] },
+      timestamp: new Date().toISOString(),
+    });
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("critical");
+    expect(flags[0]!.summary).toContain("alkalemia");
+  });
+
+  it("flags pH 7.45-7.55 as warning (alkalosis)", () => {
+    const flags = checkCriticalValues({
+      id: "evt-ph-4",
+      type: "lab.resulted",
+      patient_id: "p-1",
+      data: { results: [{ test_name: "pH", value: 7.50, unit: "" }] },
+      timestamp: new Date().toISOString(),
+    });
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("warning");
+  });
+
+  it("does not flag normal pH (7.35-7.45)", () => {
+    const flags = checkCriticalValues({
+      id: "evt-ph-5",
+      type: "lab.resulted",
+      patient_id: "p-1",
+      data: { results: [{ test_name: "pH", value: 7.40, unit: "" }] },
+      timestamp: new Date().toISOString(),
+    });
+    expect(flags).toHaveLength(0);
+  });
+});
+
+describe("checkCriticalValues — INR thresholds", () => {
+  it("flags INR >5.0 as critical (hemorrhage risk)", () => {
+    const flags = checkCriticalValues({
+      id: "evt-inr-1",
+      type: "lab.resulted",
+      patient_id: "p-1",
+      data: { results: [{ test_name: "INR", value: 6.5, unit: "" }] },
+      timestamp: new Date().toISOString(),
+    });
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("critical");
+    expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-INR");
+    expect(flags[0]!.notify_specialties).toContain("hematology");
+  });
+
+  it("flags INR >4.0 as warning", () => {
+    const flags = checkCriticalValues({
+      id: "evt-inr-2",
+      type: "lab.resulted",
+      patient_id: "p-1",
+      data: { results: [{ test_name: "INR", value: 4.5, unit: "" }] },
+      timestamp: new Date().toISOString(),
+    });
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("warning");
+    expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-INR");
+  });
+
+  it("flags INR <1.5 as warning when on warfarin (subtherapeutic)", () => {
+    const flags = checkCriticalValues({
+      id: "evt-inr-3",
+      type: "lab.resulted",
+      patient_id: "p-1",
+      data: {
+        results: [{ test_name: "INR", value: 1.1, unit: "" }],
+        active_medications: ["Warfarin 5mg daily"],
+      },
+      timestamp: new Date().toISOString(),
+    });
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("warning");
+    expect(flags[0]!.summary).toContain("Subtherapeutic");
+  });
+
+  it("does not flag INR <1.5 when not on warfarin", () => {
+    const flags = checkCriticalValues({
+      id: "evt-inr-4",
+      type: "lab.resulted",
+      patient_id: "p-1",
+      data: { results: [{ test_name: "INR", value: 1.1, unit: "" }] },
+      timestamp: new Date().toISOString(),
+    });
+    expect(flags).toHaveLength(0);
+  });
+
+  it("does not flag normal therapeutic INR (2.0-3.0)", () => {
+    const flags = checkCriticalValues({
+      id: "evt-inr-5",
+      type: "lab.resulted",
+      patient_id: "p-1",
+      data: {
+        results: [{ test_name: "INR", value: 2.5, unit: "" }],
+        active_medications: ["Warfarin 5mg daily"],
+      },
+      timestamp: new Date().toISOString(),
+    });
+    expect(flags).toHaveLength(0);
   });
 });
 
@@ -381,5 +787,90 @@ describe("checkDrugInteractions", () => {
 
     const warfarinNsaid = flags.find((f) => f.rule_id === "DI-WARFARIN-NSAID");
     expect(warfarinNsaid).toBeUndefined();
+  });
+
+  it("flags clarithromycin + simvastatin as CRITICAL (contraindicated)", () => {
+    const flags = checkDrugInteractions(["Clarithromycin 500mg", "Simvastatin 40mg"]);
+
+    const interaction = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-CRITICAL");
+    expect(interaction).toBeDefined();
+    expect(interaction!.severity).toBe("critical");
+    expect(interaction!.summary).toContain("rhabdomyolysis");
+  });
+
+  it("flags clarithromycin + lovastatin as CRITICAL (contraindicated)", () => {
+    const flags = checkDrugInteractions(["Clarithromycin 500mg", "Lovastatin 20mg"]);
+
+    const interaction = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-CRITICAL");
+    expect(interaction).toBeDefined();
+    expect(interaction!.severity).toBe("critical");
+  });
+
+  it("flags erythromycin + simvastatin as CRITICAL", () => {
+    const flags = checkDrugInteractions(["Erythromycin 250mg", "Simvastatin 20mg"]);
+
+    const interaction = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-CRITICAL");
+    expect(interaction).toBeDefined();
+    expect(interaction!.severity).toBe("critical");
+  });
+
+  it("flags erythromycin + lovastatin as CRITICAL", () => {
+    const flags = checkDrugInteractions(["Erythromycin 250mg", "Lovastatin 20mg"]);
+
+    const interaction = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-CRITICAL");
+    expect(interaction).toBeDefined();
+    expect(interaction!.severity).toBe("critical");
+  });
+
+  it("flags clarithromycin + atorvastatin as WARNING (dose reduction needed)", () => {
+    const flags = checkDrugInteractions(["Clarithromycin 500mg", "Atorvastatin 40mg"]);
+
+    const interaction = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-WARNING");
+    expect(interaction).toBeDefined();
+    expect(interaction!.severity).toBe("warning");
+    expect(interaction!.summary).toContain("dose reduction");
+  });
+
+  it("flags erythromycin + atorvastatin as WARNING", () => {
+    const flags = checkDrugInteractions(["Erythromycin 250mg", "Atorvastatin 20mg"]);
+
+    const interaction = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-WARNING");
+    expect(interaction).toBeDefined();
+    expect(interaction!.severity).toBe("warning");
+  });
+
+  it("does NOT flag azithromycin + simvastatin (azithromycin is safe — minimal CYP3A4 inhibition)", () => {
+    const flags = checkDrugInteractions(["Azithromycin 250mg", "Simvastatin 40mg"]);
+
+    const critical = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-CRITICAL");
+    const warning = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-WARNING");
+    expect(critical).toBeUndefined();
+    expect(warning).toBeUndefined();
+  });
+
+  it("does NOT flag clarithromycin + pravastatin (pravastatin not CYP3A4-metabolized)", () => {
+    const flags = checkDrugInteractions(["Clarithromycin 500mg", "Pravastatin 40mg"]);
+
+    const critical = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-CRITICAL");
+    const warning = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-WARNING");
+    expect(critical).toBeUndefined();
+    expect(warning).toBeUndefined();
+  });
+
+  it("does NOT flag clarithromycin + rosuvastatin (rosuvastatin not CYP3A4-metabolized)", () => {
+    const flags = checkDrugInteractions(["Clarithromycin 500mg", "Rosuvastatin 10mg"]);
+
+    const critical = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-CRITICAL");
+    const warning = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-WARNING");
+    expect(critical).toBeUndefined();
+    expect(warning).toBeUndefined();
+  });
+
+  it("notifies cardiology and infectious_disease for macrolide-statin interactions", () => {
+    const flags = checkDrugInteractions(["Clarithromycin 500mg", "Simvastatin 40mg"]);
+
+    const interaction = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-CRITICAL");
+    expect(interaction!.notify_specialties).toContain("cardiology");
+    expect(interaction!.notify_specialties).toContain("infectious_disease");
   });
 });

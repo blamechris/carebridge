@@ -19,7 +19,7 @@ export default function NotesPage() {
   const router = useRouter();
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  const { patient: myRecord, isLoading: patientLoading } = useMyPatientRecord();
+  const { patient: myRecord, isLoading: patientLoading, isUnlinked } = useMyPatientRecord();
 
   const notesQuery = trpc.notes.getByPatient.useQuery(
     { patientId: myRecord?.id ?? "" },
@@ -53,6 +53,12 @@ export default function NotesPage() {
         These are your signed clinical notes from your care team. Under the 21st Century Cures Act,
         you have the right to access these documents.
       </p>
+
+      {isUnlinked && (
+        <p style={{ color: "#ef4444" }}>
+          Your account is not linked to a patient record. Please contact your care team.
+        </p>
+      )}
 
       {notesQuery.isLoading && <p style={{ color: "#999" }}>Loading notes...</p>}
       {notesQuery.isError && <p style={{ color: "#ef4444" }}>Failed to load notes.</p>}

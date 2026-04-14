@@ -23,6 +23,14 @@ export default defineConfig({
         __dirname,
         "../../services/auth/src/index.ts",
       ),
+      "@carebridge/patient-records": path.resolve(
+        __dirname,
+        "../../services/patient-records/src/index.ts",
+      ),
+      "@carebridge/clinical-notes": path.resolve(
+        __dirname,
+        "../../services/clinical-notes/src/index.ts",
+      ),
     },
   },
 });

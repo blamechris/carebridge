@@ -34,6 +34,21 @@ export interface PatientContext {
   recent_labs?: Array<{ name: string; value: number }>;
 }
 
+/** ICD-10 pattern for pregnancy-related diagnoses (Z33, Z34, O00-O9A). */
+const PREGNANCY_ICD10_PATTERN = /^(Z3[34]|O[0-9][0-9A]|O9A)\b/;
+
+/** Pregnancy description pattern. */
+const PREGNANCY_DESCRIPTION_PATTERN =
+  /pregnan|gestational|gravid|obstetric|prenatal|antepartum|trimester/i;
+
+/** FDA Category X teratogenic drugs — high risk of fetal harm, contraindicated in pregnancy. */
+const CATEGORY_X_TERATOGEN_PATTERN =
+  /isotretinoin|accutane|warfarin|coumadin|methotrexate|trexall|thalidomide|thalomid|misoprostol|cytotec|finasteride|propecia|proscar|dutasteride|avodart/i;
+
+/** FDA Category D teratogenic drugs — evidence of fetal risk, use only if benefit outweighs risk. */
+const CATEGORY_D_TERATOGEN_PATTERN =
+  /valproic acid|depakote|depakene|carbamazepine|tegretol|phenytoin|dilantin|lithium|lithobid|eskalith|tetracycline|doxycycline|vibramycin/i;
+
 /** Anticoagulant name pattern shared across rules. */
 const ANTICOAGULANT_PATTERN =
   /warfarin|coumadin|heparin|enoxaparin|lovenox|rivaroxaban|xarelto|apixaban|eliquis|dabigatran|pradaxa|edoxaban|savaysa|fondaparinux|arixtra/i;
@@ -270,6 +285,71 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
     suggested_action:
       "Increase glucose monitoring frequency. Consider prophylactic insulin dose adjustment. Review steroid taper plan.",
     notify_specialties: ["endocrinology"],
+  },
+  {
+    id: "OBSTETRIC-TERATOGEN-X-001",
+    name: "Pregnancy + FDA Category X teratogenic medication",
+    check: (ctx: PatientContext) => {
+      const isPregnant =
+        ctx.active_diagnosis_codes.some((code) =>
+          PREGNANCY_ICD10_PATTERN.test(code),
+        ) ||
+        ctx.active_diagnoses.some((d) =>
+          PREGNANCY_DESCRIPTION_PATTERN.test(d),
+        );
+      const onCategoryX = ctx.active_medications.some((m) =>
+        CATEGORY_X_TERATOGEN_PATTERN.test(m),
+      );
+      return isPregnant && onCategoryX;
+    },
+    severity: "critical" as const,
+    category: "medication-safety" as const,
+    summary:
+      "Pregnant patient on FDA Category X teratogenic medication — contraindicated, high risk of fetal harm",
+    rationale:
+      "FDA Pregnancy Category X: studies in animals or humans have demonstrated fetal abnormalities " +
+      "and/or there is positive evidence of human fetal risk. The risk of use in pregnant patients " +
+      "clearly outweighs any possible benefit. Category X drugs include isotretinoin (severe craniofacial, " +
+      "cardiac, and CNS defects), warfarin (fetal warfarin syndrome, CNS abnormalities), methotrexate " +
+      "(spontaneous abortion, craniofacial defects), thalidomide (phocomelia), misoprostol (uterine " +
+      "contractions, fetal death), and finasteride/dutasteride (abnormal external genitalia in male fetus).",
+    suggested_action:
+      "IMMEDIATE medication review required. Discontinue Category X medication and switch to a pregnancy-safe " +
+      "alternative. Consult obstetrics and maternal-fetal medicine. Assess fetal exposure duration and " +
+      "consider teratology counseling.",
+    notify_specialties: ["obstetrics", "pharmacology"],
+  },
+  {
+    id: "OBSTETRIC-TERATOGEN-D-001",
+    name: "Pregnancy + FDA Category D teratogenic medication",
+    check: (ctx: PatientContext) => {
+      const isPregnant =
+        ctx.active_diagnosis_codes.some((code) =>
+          PREGNANCY_ICD10_PATTERN.test(code),
+        ) ||
+        ctx.active_diagnoses.some((d) =>
+          PREGNANCY_DESCRIPTION_PATTERN.test(d),
+        );
+      const onCategoryD = ctx.active_medications.some((m) =>
+        CATEGORY_D_TERATOGEN_PATTERN.test(m),
+      );
+      return isPregnant && onCategoryD;
+    },
+    severity: "warning" as const,
+    category: "medication-safety" as const,
+    summary:
+      "Pregnant patient on FDA Category D medication — evidence of fetal risk, review benefit vs. risk",
+    rationale:
+      "FDA Pregnancy Category D: there is positive evidence of human fetal risk based on adverse reaction " +
+      "data, but potential benefits may warrant use in pregnant patients despite the risk. Category D drugs " +
+      "include valproic acid (neural tube defects, cognitive impairment), carbamazepine (neural tube defects, " +
+      "craniofacial abnormalities), phenytoin (fetal hydantoin syndrome), lithium (Ebstein's cardiac anomaly), " +
+      "tetracycline (permanent tooth discoloration, bone growth inhibition), and doxycycline (same class risks).",
+    suggested_action:
+      "Urgent medication review. Evaluate whether benefit outweighs fetal risk. Consider switching to a " +
+      "pregnancy-safe alternative. Consult obstetrics and relevant specialty. If continued, ensure informed " +
+      "consent and enhanced fetal monitoring.",
+    notify_specialties: ["obstetrics", "pharmacology"],
   },
 ];
 

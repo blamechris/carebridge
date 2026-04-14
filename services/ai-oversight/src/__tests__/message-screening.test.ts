@@ -83,6 +83,20 @@ describe("screenPatientMessage — urgent keyword detection", () => {
     expect(flags.some((f) => f.rule_id === "MSG-STROKE-SYMPTOMS")).toBe(true);
   });
 
+  it("flags stroke symptoms — can't move my arm", () => {
+    const flags = screenPatientMessage(
+      makeMessageEvent({ message_text: "I can't move my arm" }),
+    );
+    expect(flags.some((f) => f.rule_id === "MSG-STROKE-SYMPTOMS")).toBe(true);
+  });
+
+  it("flags stroke symptoms — cant move leg (no apostrophe)", () => {
+    const flags = screenPatientMessage(
+      makeMessageEvent({ message_text: "I cant move leg at all" }),
+    );
+    expect(flags.some((f) => f.rule_id === "MSG-STROKE-SYMPTOMS")).toBe(true);
+  });
+
   it("flags suicidal ideation — direct", () => {
     const flags = screenPatientMessage(
       makeMessageEvent({ message_text: "I want to kill myself" }),
@@ -180,6 +194,15 @@ describe("screenPatientMessage — no false positives", () => {
       }),
     );
     expect(flags).toHaveLength(0);
+  });
+
+  it("does not false-positive on 'can't move my appointment'", () => {
+    const flags = screenPatientMessage(
+      makeMessageEvent({
+        message_text: "I can't move my appointment to next week.",
+      }),
+    );
+    expect(flags.some((f) => f.rule_id === "MSG-STROKE-SYMPTOMS")).toBe(false);
   });
 });
 
