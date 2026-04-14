@@ -62,7 +62,8 @@ const mocks = vi.hoisted(() => {
     });
     chain.limit = fn(async () => resolvedData);
     // When no where/join is called, resolve via then
-    (chain as Record<string, unknown>)[Symbol.toStringTag] = "Promise";
+    (chain as Record<string | symbol, unknown>)[Symbol.toStringTag] =
+      "Promise";
     const originalFrom = chain.from;
     chain.from = fn((...args: unknown[]) => {
       const result = (originalFrom as (...a: unknown[]) => unknown)(...args);
