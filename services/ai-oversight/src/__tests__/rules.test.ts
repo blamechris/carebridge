@@ -15,7 +15,7 @@ vi.mock("@carebridge/medical-logic", () => ({
     o2_sat: { min: 50, max: 100, criticalLow: 85 },
     temperature: { min: 85, max: 115, criticalLow: 95, criticalHigh: 104 },
     blood_pressure: { min: 60, max: 250, criticalLow: 70, criticalHigh: 180 },
-    blood_glucose: { min: 10, max: 800, criticalLow: 54, criticalHigh: 400 },
+    blood_glucose: { min: 10, max: 800, criticalLow: 50, criticalHigh: 350, warningLow: 70, warningHigh: 250 },
   },
   DIASTOLIC_DANGER_ZONE: {
     criticalLow: 60,
@@ -28,13 +28,29 @@ vi.mock("@carebridge/medical-logic", () => ({
       o2_sat: { criticalLow: 85 },
       temperature: { criticalLow: 95, criticalHigh: 104 },
       blood_pressure: { criticalLow: 70, criticalHigh: 180 },
-      blood_glucose: { criticalLow: 54, criticalHigh: 400 },
+      blood_glucose: { criticalLow: 50, criticalHigh: 350 },
     };
     const zone = zones[type];
     if (!zone) return false;
     if (zone.criticalLow !== undefined && value <= zone.criticalLow) return true;
     if (zone.criticalHigh !== undefined && value >= zone.criticalHigh) return true;
     return false;
+  },
+  getVitalSeverity: (type: string, value: number) => {
+    const zones: Record<string, { criticalLow?: number; criticalHigh?: number; warningLow?: number; warningHigh?: number }> = {
+      heart_rate: { criticalLow: 40, criticalHigh: 200 },
+      o2_sat: { criticalLow: 85 },
+      temperature: { criticalLow: 95, criticalHigh: 104 },
+      blood_pressure: { criticalLow: 70, criticalHigh: 180 },
+      blood_glucose: { criticalLow: 50, criticalHigh: 350, warningLow: 70, warningHigh: 250 },
+    };
+    const zone = zones[type];
+    if (!zone) return null;
+    if (zone.criticalLow !== undefined && value <= zone.criticalLow) return "critical";
+    if (zone.criticalHigh !== undefined && value >= zone.criticalHigh) return "critical";
+    if (zone.warningLow !== undefined && value < zone.warningLow) return "warning";
+    if (zone.warningHigh !== undefined && value > zone.warningHigh) return "warning";
+    return null;
   },
   checkDiastolicBP: (diastolic: number) => {
     if (diastolic < 60) return "critical";
@@ -88,6 +104,74 @@ describe("checkCriticalValues", () => {
     });
 
     expect(flags).toHaveLength(0);
+  });
+
+  it("flags glucose 45 as critical (severe hypoglycemia)", () => {
+    const flags = checkCriticalValues({
+      id: "evt-glu-1",
+      type: "vital.created",
+      patient_id: "p-1",
+      data: { type: "blood_glucose", value_primary: 45, unit: "mg/dL" },
+      timestamp: new Date().toISOString(),
+    });
+
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("critical");
+    expect(flags[0]!.summary).toContain("low");
+  });
+
+  it("flags glucose 65 as warning (mild hypoglycemia)", () => {
+    const flags = checkCriticalValues({
+      id: "evt-glu-2",
+      type: "vital.created",
+      patient_id: "p-1",
+      data: { type: "blood_glucose", value_primary: 65, unit: "mg/dL" },
+      timestamp: new Date().toISOString(),
+    });
+
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("warning");
+    expect(flags[0]!.summary).toContain("Low");
+  });
+
+  it("returns empty for normal glucose 120", () => {
+    const flags = checkCriticalValues({
+      id: "evt-glu-3",
+      type: "vital.created",
+      patient_id: "p-1",
+      data: { type: "blood_glucose", value_primary: 120, unit: "mg/dL" },
+      timestamp: new Date().toISOString(),
+    });
+
+    expect(flags).toHaveLength(0);
+  });
+
+  it("flags glucose 300 as warning (hyperglycemia)", () => {
+    const flags = checkCriticalValues({
+      id: "evt-glu-4",
+      type: "vital.created",
+      patient_id: "p-1",
+      data: { type: "blood_glucose", value_primary: 300, unit: "mg/dL" },
+      timestamp: new Date().toISOString(),
+    });
+
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("warning");
+    expect(flags[0]!.summary).toContain("High");
+  });
+
+  it("flags glucose 450 as critical (DKA territory)", () => {
+    const flags = checkCriticalValues({
+      id: "evt-glu-5",
+      type: "vital.created",
+      patient_id: "p-1",
+      data: { type: "blood_glucose", value_primary: 450, unit: "mg/dL" },
+      timestamp: new Date().toISOString(),
+    });
+
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("critical");
+    expect(flags[0]!.summary).toContain("high");
   });
 
   it("returns no diastolic flag for normal BP (120/80)", () => {

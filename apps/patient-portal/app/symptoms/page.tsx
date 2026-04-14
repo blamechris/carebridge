@@ -115,17 +115,24 @@ export default function SymptomsPage() {
       )}
 
       {submitted && (
-        <div style={{ backgroundColor: "#16a34a20", border: "1px solid #16a34a", borderRadius: 8, padding: "0.75rem", marginBottom: "1rem", color: "#16a34a" }}>
-          Observation recorded. Your care team will be notified if any patterns are detected.
+        <div role="status" aria-live="polite" style={{ backgroundColor: "#16a34a20", border: "1px solid #16a34a", borderRadius: 8, padding: "0.75rem", marginBottom: "1rem", color: "#16a34a" }}>
+          &#x2713; Observation recorded. Your care team will be notified if any patterns are detected.
+        </div>
+      )}
+
+      {createMutation.isError && (
+        <div role="alert" style={{ backgroundColor: "#ef444420", border: "1px solid #ef4444", borderRadius: 8, padding: "0.75rem", marginBottom: "1rem", color: "#ef4444" }}>
+          Failed to submit observation. Please try again.
         </div>
       )}
 
       <div style={{ backgroundColor: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: 8, padding: "1.25rem", marginBottom: "2rem" }}>
         <div style={{ marginBottom: "1rem" }}>
-          <label style={{ display: "block", marginBottom: 4, fontSize: "0.85rem", color: "#999" }}>
+          <label htmlFor="symptom-type" style={{ display: "block", marginBottom: 4, fontSize: "0.85rem", color: "#999" }}>
             What type of symptom?
           </label>
           <select
+            id="symptom-type"
             value={selectedType}
             onChange={(e) => setSelectedType(e.target.value as ObservationType)}
             style={{ ...inputStyle, cursor: "pointer" }}
@@ -138,10 +145,11 @@ export default function SymptomsPage() {
 
         {(selectedType === "pain" || selectedType === "skin") && (
           <div style={{ marginBottom: "1rem" }}>
-            <label style={{ display: "block", marginBottom: 4, fontSize: "0.85rem", color: "#999" }}>
+            <label htmlFor="body-location" style={{ display: "block", marginBottom: 4, fontSize: "0.85rem", color: "#999" }}>
               Where on your body?
             </label>
             <input
+              id="body-location"
               type="text"
               value={location}
               onChange={(e) => setLocation(e.target.value)}
@@ -152,15 +160,20 @@ export default function SymptomsPage() {
         )}
 
         <div style={{ marginBottom: "1rem" }}>
-          <label style={{ display: "block", marginBottom: 4, fontSize: "0.85rem", color: "#999" }}>
+          <label htmlFor="severity-scale" style={{ display: "block", marginBottom: 4, fontSize: "0.85rem", color: "#999" }}>
             How severe? ({severityScale}/10)
           </label>
           <input
+            id="severity-scale"
             type="range"
             min={1}
             max={10}
             value={severityScale}
             onChange={(e) => setSeverityScale(Number(e.target.value))}
+            aria-valuemin={1}
+            aria-valuemax={10}
+            aria-valuenow={severityScale}
+            aria-label={`Severity scale: ${severityScale} out of 10`}
             style={{ width: "100%" }}
           />
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem", color: "#666" }}>
@@ -178,6 +191,7 @@ export default function SymptomsPage() {
               <button
                 key={opt.value}
                 onClick={() => setSeverityAssessment(opt.value)}
+                aria-pressed={severityAssessment === opt.value}
                 style={{
                   flex: 1,
                   padding: "0.5rem",
@@ -196,10 +210,11 @@ export default function SymptomsPage() {
         </div>
 
         <div style={{ marginBottom: "1rem" }}>
-          <label style={{ display: "block", marginBottom: 4, fontSize: "0.85rem", color: "#999" }}>
+          <label htmlFor="symptom-duration" style={{ display: "block", marginBottom: 4, fontSize: "0.85rem", color: "#999" }}>
             How long has this been going on?
           </label>
           <input
+            id="symptom-duration"
             type="text"
             value={duration}
             onChange={(e) => setDuration(e.target.value)}
@@ -209,10 +224,11 @@ export default function SymptomsPage() {
         </div>
 
         <div style={{ marginBottom: "1rem" }}>
-          <label style={{ display: "block", marginBottom: 4, fontSize: "0.85rem", color: "#999" }}>
+          <label htmlFor="symptom-description" style={{ display: "block", marginBottom: 4, fontSize: "0.85rem", color: "#999" }}>
             Describe what you&apos;re experiencing
           </label>
           <textarea
+            id="symptom-description"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Tell us in your own words what's going on..."
