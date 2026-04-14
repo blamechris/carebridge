@@ -69,7 +69,7 @@ export default function HealthSummaryPage() {
       </div>
 
       {isUnlinked && (
-        <p style={{ color: "#ef4444" }}>
+        <p role="alert" style={{ color: "#ef4444" }}>
           Your account is not linked to a patient record. Please contact your care team.
         </p>
       )}
@@ -80,7 +80,9 @@ export default function HealthSummaryPage() {
           Active Conditions ({activeDiagnoses.length})
         </h3>
 
-        {diagnosesQuery.isLoading ? (
+        {diagnosesQuery.isError ? (
+          <p role="alert" style={{ color: "#ef4444" }}>Failed to load diagnoses. Please try refreshing.</p>
+        ) : diagnosesQuery.isLoading ? (
           <p style={{ color: "#999" }}>Loading...</p>
         ) : activeDiagnoses.length === 0 ? (
           <p style={{ color: "#999", fontSize: "0.85rem" }}>No active diagnoses on file.</p>
@@ -139,7 +141,9 @@ export default function HealthSummaryPage() {
           Allergies ({allergies.length})
         </h3>
 
-        {allergiesQuery.isLoading ? (
+        {allergiesQuery.isError ? (
+          <p role="alert" style={{ color: "#ef4444" }}>Failed to load allergies. Please try refreshing.</p>
+        ) : allergiesQuery.isLoading ? (
           <p style={{ color: "#999" }}>Loading...</p>
         ) : allergies.length === 0 ? (
           <p style={{ color: "#999", fontSize: "0.85rem" }}>No known allergies on file.</p>
@@ -190,7 +194,9 @@ export default function HealthSummaryPage() {
           My Care Team ({careTeam.length})
         </h3>
 
-        {careTeamQuery.isLoading ? (
+        {careTeamQuery.isError ? (
+          <p role="alert" style={{ color: "#ef4444" }}>Failed to load care team. Please try refreshing.</p>
+        ) : careTeamQuery.isLoading ? (
           <p style={{ color: "#999" }}>Loading...</p>
         ) : careTeam.length === 0 ? (
           <p style={{ color: "#999", fontSize: "0.85rem" }}>No care team members on file.</p>

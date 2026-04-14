@@ -27,6 +27,7 @@ export default function RefillPage() {
 
   const [submittingMedId, setSubmittingMedId] = useState<string | null>(null);
   const [successMedId, setSuccessMedId] = useState<string | null>(null);
+  const [errorMedId, setErrorMedId] = useState<string | null>(null);
   const [note, setNote] = useState("");
 
   if (!user) {
@@ -62,6 +63,7 @@ export default function RefillPage() {
     if (!recipientId) return;
 
     setSubmittingMedId(med.id);
+    setErrorMedId(null);
 
     try {
       const convo = await createConvoMutation.mutateAsync({
@@ -87,6 +89,9 @@ export default function RefillPage() {
       setSuccessMedId(med.id);
       setNote("");
       setTimeout(() => setSuccessMedId(null), 3000);
+    } catch {
+      setErrorMedId(med.id);
+      setTimeout(() => setErrorMedId(null), 5000);
     } finally {
       setSubmittingMedId(null);
     }
@@ -117,7 +122,11 @@ export default function RefillPage() {
 
       {medsQuery.isLoading && <p style={{ color: "#999" }}>Loading medications...</p>}
 
-      {activeMeds.length === 0 && !medsQuery.isLoading && (
+      {medsQuery.isError && (
+        <p role="alert" style={{ color: "#ef4444" }}>Failed to load medications. Please try refreshing.</p>
+      )}
+
+      {activeMeds.length === 0 && !medsQuery.isLoading && !medsQuery.isError && (
         <p style={{ color: "#999" }}>No active medications found.</p>
       )}
 
@@ -141,8 +150,12 @@ export default function RefillPage() {
             </div>
 
             {successMedId === med.id ? (
-              <span style={{ color: "#22c55e", fontSize: "0.8rem", fontWeight: 600 }}>
-                Refill requested!
+              <span role="status" aria-live="polite" style={{ color: "#22c55e", fontSize: "0.8rem", fontWeight: 600 }}>
+                &#x2713; Refill requested!
+              </span>
+            ) : errorMedId === med.id ? (
+              <span role="alert" style={{ color: "#ef4444", fontSize: "0.8rem", fontWeight: 600 }}>
+                &#x2717; Request failed. Try again.
               </span>
             ) : (
               <button
@@ -168,10 +181,11 @@ export default function RefillPage() {
 
       {activeMeds.length > 0 && (
         <div style={{ marginTop: "1rem" }}>
-          <label style={{ display: "block", marginBottom: 4, fontSize: "0.85rem", color: "#999" }}>
+          <label htmlFor="refill-note" style={{ display: "block", marginBottom: 4, fontSize: "0.85rem", color: "#999" }}>
             Optional note for your provider
           </label>
           <input
+            id="refill-note"
             type="text"
             value={note}
             onChange={(e) => setNote(e.target.value)}
