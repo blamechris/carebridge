@@ -16,6 +16,8 @@ import {
   allergies,
   careTeamMembers,
   careTeamAssignments,
+  familyRelationships,
+  users,
 } from "@carebridge/db-schema";
 import { createPatientSchema, updatePatientSchema } from "@carebridge/validators";
 import {
@@ -32,7 +34,7 @@ import {
   createAllergySchema,
   updateAllergySchema,
 } from "@carebridge/validators";
-import { eq, and, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import crypto from "node:crypto";
 import type { Context } from "../context.js";
 import { assertCareTeamAccess } from "../middleware/rbac.js";
@@ -135,6 +137,10 @@ export const patientRecordsRbacRouter = t.router({
     }),
 
   // HIPAA minimum-necessary: filter patient list by role.
+  //   - patient: only their own record
+  //   - admin: full list
+  //   - family_caregiver: only patients linked via an active family_relationships row
+  //   - clinician (nurse/physician/specialist): only patients with an active care-team assignment
   list: protectedProcedure.query(async ({ ctx }) => {
     const db = getDb();
 
@@ -152,6 +158,39 @@ export const patientRecordsRbacRouter = t.router({
     // Admins see all patients.
     if (ctx.user.role === "admin") {
       return db.select().from(patients);
+    }
+
+    // Family caregivers: only patients linked via an active family_relationships row.
+    if ((ctx.user.role as string) === "family_caregiver") {
+      const activeRelationships = await db
+        .select({ patient_user_id: familyRelationships.patient_id })
+        .from(familyRelationships)
+        .where(
+          and(
+            eq(familyRelationships.caregiver_id, ctx.user.id),
+            eq(familyRelationships.status, "active"),
+          ),
+        );
+      if (activeRelationships.length === 0) {
+        return [];
+      }
+      const patientUserIds = activeRelationships.map((r) => r.patient_user_id);
+      const linkedUsers = await db
+        .select({ patient_id: users.patient_id })
+        .from(users)
+        .where(
+          and(
+            inArray(users.id, patientUserIds),
+            isNotNull(users.patient_id),
+          ),
+        );
+      const patientRecordIds = linkedUsers
+        .map((u) => u.patient_id)
+        .filter((id): id is string => Boolean(id));
+      if (patientRecordIds.length === 0) {
+        return [];
+      }
+      return db.select().from(patients).where(inArray(patients.id, patientRecordIds));
     }
 
     // Clinicians (physician, specialist, nurse): only patients with an
