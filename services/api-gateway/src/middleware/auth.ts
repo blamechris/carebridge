@@ -126,9 +126,18 @@ export async function authMiddleware(
 
   const session = sessionRows[0]!;
 
-  // Check expiration.
+  // Check idle-timeout expiration.
   if (new Date(session.expires_at) < new Date()) {
     // Clean up the expired session from the database.
+    await db.delete(sessions).where(eq(sessions.id, resolvedSessionId));
+    return;
+  }
+
+  // Absolute session expiry: force re-authentication after 12 hours
+  // regardless of activity (HIPAA best practice for clinical environments).
+  const ABSOLUTE_SESSION_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+  const sessionAge = Date.now() - new Date(session.created_at).getTime();
+  if (sessionAge > ABSOLUTE_SESSION_TTL_MS) {
     await db.delete(sessions).where(eq(sessions.id, resolvedSessionId));
     return;
   }
