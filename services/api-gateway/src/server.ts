@@ -9,6 +9,7 @@ import { appRouter } from "./router.js";
 import { createContext } from "./context.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { auditMiddleware } from "./middleware/audit.js";
+import { makeAcceptInviteRateLimitHook } from "./middleware/accept-invite-rate-limit.js";
 import { registerNotificationSSE } from "./routes/notifications-sse.js";
 import { startBackgroundWorkers } from "./workers.js";
 
@@ -119,6 +120,16 @@ async function main() {
       message: `Rate limit exceeded. Try again in ${Math.ceil(context.ttl / 1000)} seconds.`,
     }),
   });
+
+  // Hardened per-endpoint rate limit for family invite acceptance (issue #313):
+  // 10 attempts/hour/IP in production, raised in dev for manual testing.
+  server.addHook(
+    "onRequest",
+    makeAcceptInviteRateLimitHook({
+      redis: redisClient,
+      max: isDev ? 100 : 10,
+    }),
+  );
 
   // --- Hooks ---
   server.addHook("preHandler", authMiddleware);

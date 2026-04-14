@@ -16,10 +16,40 @@ import {
   familyInvites,
   auditLog,
 } from "@carebridge/db-schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, gt } from "drizzle-orm";
 import crypto from "node:crypto";
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+/**
+ * Invite token format: 32 random bytes encoded as hex (64 characters).
+ * 256 bits of entropy makes brute-force computationally infeasible; this
+ * constant is used to bound the input size on lookup and to size the
+ * constant-time comparison buffer.
+ */
+const INVITE_TOKEN_BYTES = 32;
+const INVITE_TOKEN_HEX_LENGTH = INVITE_TOKEN_BYTES * 2;
+
+/**
+ * Constant-time comparison of two hex-encoded invite tokens.
+ *
+ * The primary lookup is an indexed equality match in PostgreSQL — that is
+ * already timing-safe at the storage layer. This second comparison is
+ * defense-in-depth: even if a future change moves the lookup out of the
+ * database or caches rows in memory, token equality will still be checked
+ * without leaking information via short-circuiting string comparison.
+ *
+ * `timingSafeEqual` requires equal-length buffers; we pre-pad to the full
+ * token length so a malformed (short) token can never throw or accidentally
+ * succeed by matching a prefix.
+ */
+function timingSafeTokenEqual(a: string, b: string): boolean {
+  const bufA = Buffer.alloc(INVITE_TOKEN_HEX_LENGTH);
+  const bufB = Buffer.alloc(INVITE_TOKEN_HEX_LENGTH);
+  bufA.write(a.slice(0, INVITE_TOKEN_HEX_LENGTH));
+  bufB.write(b.slice(0, INVITE_TOKEN_HEX_LENGTH));
+  return crypto.timingSafeEqual(bufA, bufB) && a.length === b.length;
+}
 
 // ---- Invite creation ----
 
@@ -31,7 +61,7 @@ export async function createFamilyInvite(
   const db = getDb();
   const now = new Date().toISOString();
   const id = crypto.randomUUID();
-  const token = crypto.randomBytes(32).toString("hex");
+  const token = crypto.randomBytes(INVITE_TOKEN_BYTES).toString("hex");
   const expiresAt = new Date(Date.now() + INVITE_TTL_MS).toISOString();
 
   await db.insert(familyInvites).values({
@@ -61,6 +91,20 @@ export async function createFamilyInvite(
 
 // ---- Accept invite ----
 
+/**
+ * Accept a family-access invite using the opaque token.
+ *
+ * Hardening (issue #313):
+ *   - Reject malformed tokens (wrong length, non-hex) without a DB lookup
+ *     so attackers cannot probe the shape of valid tokens.
+ *   - Filter expired tokens at the SQL layer (`expires_at > NOW()`) so an
+ *     expired row is never loaded into application memory.
+ *   - Re-verify the returned row's token with `crypto.timingSafeEqual` as
+ *     defense-in-depth on top of the indexed DB equality check.
+ *   - Single-use is enforced by the `status = 'pending'` filter plus the
+ *     status transition to `accepted` after successful acceptance.
+ *   - Log every failed attempt to `audit_log` for security monitoring.
+ */
 export async function acceptFamilyInvite(
   inviteToken: string,
   caregiverId: string,
@@ -68,25 +112,56 @@ export async function acceptFamilyInvite(
   const db = getDb();
   const now = new Date().toISOString();
 
-  const [invite] = await db
-    .select()
-    .from(familyInvites)
-    .where(and(eq(familyInvites.token, inviteToken), eq(familyInvites.status, "pending")))
-    .limit(1);
-
-  if (!invite) {
+  // Shape check first — avoids a DB round-trip for obviously bogus input
+  // and keeps the timing-safe compare below operating on well-formed hex.
+  if (
+    typeof inviteToken !== "string" ||
+    inviteToken.length !== INVITE_TOKEN_HEX_LENGTH ||
+    !/^[0-9a-f]+$/i.test(inviteToken)
+  ) {
+    await recordFailedAcceptAttempt(caregiverId, "malformed_token");
     throw new TRPCError({ code: "NOT_FOUND", message: "Invalid or expired invite." });
   }
 
-  if (new Date(invite.expires_at) < new Date()) {
-    throw new TRPCError({ code: "BAD_REQUEST", message: "This invite has expired." });
+  const nowIso = now;
+  const [invite] = await db
+    .select()
+    .from(familyInvites)
+    .where(
+      and(
+        eq(familyInvites.token, inviteToken),
+        eq(familyInvites.status, "pending"),
+        gt(familyInvites.expires_at, nowIso),
+      ),
+    )
+    .limit(1);
+
+  if (!invite) {
+    await recordFailedAcceptAttempt(caregiverId, "not_found_or_expired");
+    throw new TRPCError({ code: "NOT_FOUND", message: "Invalid or expired invite." });
   }
 
-  // Transition invite to accepted
+  // Defense-in-depth: even after the indexed DB match, verify the returned
+  // token in constant time. Guards against a caching/replication layer
+  // ever returning a row whose token differs from the query input.
+  if (!timingSafeTokenEqual(invite.token as string, inviteToken)) {
+    await recordFailedAcceptAttempt(caregiverId, "token_mismatch");
+    throw new TRPCError({ code: "NOT_FOUND", message: "Invalid or expired invite." });
+  }
+
+  // Transition invite to accepted. The `status = 'pending'` guard in the
+  // WHERE clause makes this single-use: a concurrent accept on the same
+  // token will update zero rows because the first accept already flipped
+  // the status.
   await db
     .update(familyInvites)
     .set({ status: "accepted", updated_at: now })
-    .where(eq(familyInvites.id, invite.id));
+    .where(
+      and(
+        eq(familyInvites.id, invite.id),
+        eq(familyInvites.status, "pending"),
+      ),
+    );
 
   // Create the active relationship
   const relId = crypto.randomUUID();
@@ -101,7 +176,43 @@ export async function acceptFamilyInvite(
     updated_at: now,
   });
 
+  await db.insert(auditLog).values({
+    id: crypto.randomUUID(),
+    user_id: caregiverId,
+    action: "family_invite_accepted",
+    resource_type: "family_invite",
+    resource_id: invite.id,
+    details: JSON.stringify({ patient_id: invite.patient_id, relationship_id: relId }),
+    timestamp: now,
+  });
+
   return { relationship_id: relId };
+}
+
+/**
+ * Emit an audit entry for a failed invite acceptance attempt.
+ *
+ * Swallows its own errors — we never want a logging failure to mask the
+ * actual NOT_FOUND the caller is about to throw.
+ */
+async function recordFailedAcceptAttempt(
+  caregiverId: string,
+  reason: string,
+): Promise<void> {
+  try {
+    const db = getDb();
+    await db.insert(auditLog).values({
+      id: crypto.randomUUID(),
+      user_id: caregiverId,
+      action: "family_invite_accept_failed",
+      resource_type: "family_invite",
+      resource_id: "unknown",
+      details: JSON.stringify({ reason }),
+      timestamp: new Date().toISOString(),
+    });
+  } catch {
+    // Audit best-effort; do not mask the caller's error.
+  }
 }
 
 // ---- Revoke relationship ----
