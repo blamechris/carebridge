@@ -404,13 +404,15 @@ const INTERACTION_PAIRS: DrugInteractionPair[] = [
   {
     id: "DI-FLUOROQUINOLONE-CORTICOSTEROID",
     drugA: /ciprofloxacin|cipro|levofloxacin|moxifloxacin|norfloxacin|ofloxacin|gemifloxacin/i,
-    drugB: /prednisone|prednisolone|methylprednisolone|dexamethasone|hydrocortisone|budesonide|triamcinolone/i,
+    drugB: /prednisone|prednisolone|methylprednisolone|dexamethasone/i,
     severity: "warning",
-    summary: "Fluoroquinolone + corticosteroid: increased tendon rupture risk",
+    summary: "Fluoroquinolone + systemic corticosteroid: increased tendon rupture risk",
     rationale:
       "Fluoroquinolones carry an FDA black box warning for tendinitis and tendon rupture. Concurrent " +
-      "corticosteroid use further increases this risk, particularly for the Achilles tendon. Risk is " +
-      "highest in patients over 60, organ transplant recipients, and those with renal impairment.",
+      "systemic corticosteroid use further increases this risk, particularly for the Achilles tendon. " +
+      "Risk is highest in patients over 60, organ transplant recipients, and those with renal impairment. " +
+      "Matcher limited to systemic agents (prednisone, prednisolone, methylprednisolone, dexamethasone) " +
+      "to avoid alert fatigue from inhaled/topical corticosteroids with minimal systemic exposure.",
     suggested_action:
       "Avoid combination when possible. If co-prescribed, counsel patient to discontinue fluoroquinolone " +
       "and seek medical attention at first sign of tendon pain or swelling. Consider alternative antibiotic.",

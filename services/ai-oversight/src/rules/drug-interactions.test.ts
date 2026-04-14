@@ -169,6 +169,33 @@ describe("checkDrugInteractions", () => {
       const match = flags.find((f) => f.rule_id === "DI-FLUOROQUINOLONE-CORTICOSTEROID");
       expect(match).toBeDefined();
     });
+
+    it("does not flag fluoroquinolone + inhaled budesonide (alert fatigue guard)", () => {
+      const flags = checkDrugInteractions([
+        "ciprofloxacin 500mg",
+        "budesonide inhaler 180mcg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-FLUOROQUINOLONE-CORTICOSTEROID");
+      expect(match).toBeUndefined();
+    });
+
+    it("does not flag fluoroquinolone + topical hydrocortisone (alert fatigue guard)", () => {
+      const flags = checkDrugInteractions([
+        "levofloxacin 500mg",
+        "hydrocortisone cream 2.5%",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-FLUOROQUINOLONE-CORTICOSTEROID");
+      expect(match).toBeUndefined();
+    });
+
+    it("does not flag fluoroquinolone + intranasal triamcinolone (alert fatigue guard)", () => {
+      const flags = checkDrugInteractions([
+        "moxifloxacin 400mg",
+        "triamcinolone nasal spray 55mcg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-FLUOROQUINOLONE-CORTICOSTEROID");
+      expect(match).toBeUndefined();
+    });
   });
 
   describe("existing high-priority pairs coverage", () => {
@@ -217,6 +244,23 @@ describe("checkDrugInteractions", () => {
     it("flags potassium supplement + spironolactone", () => {
       const flags = checkDrugInteractions(["potassium chloride 20mEq", "spironolactone 25mg"]);
       const match = flags.find((f) => f.rule_id === "DI-POTASSIUM-SPIRONOLACTONE");
+      expect(match).toBeDefined();
+      expect(match!.severity).toBe("warning");
+    });
+
+    it("flags warfarin + aspirin", () => {
+      const flags = checkDrugInteractions(["warfarin 5mg", "aspirin 81mg"]);
+      const match = flags.find((f) => f.rule_id === "DI-WARFARIN-ASPIRIN");
+      expect(match).toBeDefined();
+      expect(match!.severity).toBe("warning");
+    });
+
+    it("flags ACE inhibitor + potassium supplement", () => {
+      const flags = checkDrugInteractions([
+        "lisinopril 10mg",
+        "potassium chloride 20mEq",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-ACE-POTASSIUM");
       expect(match).toBeDefined();
       expect(match!.severity).toBe("warning");
     });
