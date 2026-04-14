@@ -17,6 +17,7 @@ interface FlagActionModalProps {
   onCancel: () => void;
   onConfirm: (reason: string) => void;
   isSubmitting?: boolean;
+  isSuccess?: boolean;
 }
 
 /**
@@ -32,6 +33,7 @@ export function FlagActionModal({
   onCancel,
   onConfirm,
   isSubmitting = false,
+  isSuccess = false,
 }: FlagActionModalProps) {
   const [reason, setReason] = useState("");
 
@@ -175,30 +177,50 @@ export function FlagActionModal({
           </div>
         )}
 
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "flex-end",
-            gap: 8,
-          }}
-        >
-          <button
-            type="button"
-            className="btn btn-ghost"
-            onClick={onCancel}
-            disabled={isSubmitting}
+        {isSuccess ? (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              padding: "12px 0 4px",
+              color: "var(--success, #22c55e)",
+              fontWeight: 500,
+              fontSize: 14,
+            }}
+            role="status"
+            aria-live="polite"
           >
-            Cancel
-          </button>
-          <button
-            type="button"
-            className={confirmClass}
-            onClick={() => canSubmit && onConfirm(reason.trim())}
-            disabled={!canSubmit || isSubmitting}
+            <span aria-hidden="true" style={{ fontSize: 18 }}>{"\u2713"}</span>
+            Flag {action === "acknowledge" ? "acknowledged" : action === "resolve" ? "resolved" : "dismissed"} successfully
+          </div>
+        ) : (
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: 8,
+            }}
           >
-            {isSubmitting ? "Saving..." : confirmLabels[action]}
-          </button>
-        </div>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={onCancel}
+              disabled={isSubmitting}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className={confirmClass}
+              onClick={() => canSubmit && onConfirm(reason.trim())}
+              disabled={!canSubmit || isSubmitting}
+            >
+              {isSubmitting ? "Saving..." : confirmLabels[action]}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

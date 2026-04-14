@@ -54,11 +54,11 @@ function PatientDashboard() {
           <h2 style={{ fontSize: "1.25rem", margin: 0 }}>
             Welcome back, {user?.name ?? "Patient"}
           </h2>
-          <p style={{ margin: "0.25rem 0 0", color: "#999", fontSize: "0.8rem" }}>
+          <p aria-live="polite" style={{ margin: "0.25rem 0 0", color: "#999", fontSize: "0.8rem" }}>
             {healthQuery.data ? (
-              <span style={{ color: "#22c55e" }}>Connected to API</span>
+              <span style={{ color: "#22c55e" }}>&#x2713; Connected to API</span>
             ) : healthQuery.isError ? (
-              <span style={{ color: "#ef4444" }}>API offline</span>
+              <span role="alert" style={{ color: "#ef4444" }}>&#x2717; API offline</span>
             ) : (
               "Connecting..."
             )}
@@ -82,6 +82,7 @@ function PatientDashboard() {
 
       {isUnlinked && (
         <div
+          role="alert"
           style={{
             backgroundColor: "#7f1d1d",
             border: "1px solid #ef4444",
@@ -134,7 +135,11 @@ function PatientDashboard() {
         </Card>
 
         <Card title="Recent Vitals">
-          {vitalsQuery.isLoading ? (
+          {vitalsQuery.isError ? (
+            <p role="alert" style={{ margin: 0, color: "#ef4444", fontSize: "0.875rem" }}>
+              Failed to load vitals. Please try refreshing.
+            </p>
+          ) : vitalsQuery.isLoading ? (
             <p style={{ margin: 0, color: "#999", fontSize: "0.875rem" }}>Loading...</p>
           ) : vitals.length > 0 ? (
             <div style={{ fontSize: "0.875rem" }}>
@@ -162,7 +167,11 @@ function PatientDashboard() {
         </Card>
 
         <Card title="Active Medications">
-          {medsQuery.isLoading ? (
+          {medsQuery.isError ? (
+            <p role="alert" style={{ margin: 0, color: "#ef4444", fontSize: "0.875rem" }}>
+              Failed to load medications. Please try refreshing.
+            </p>
+          ) : medsQuery.isLoading ? (
             <p style={{ margin: 0, color: "#999", fontSize: "0.875rem" }}>Loading...</p>
           ) : activeMeds.length > 0 ? (
             <div style={{ fontSize: "0.875rem" }}>

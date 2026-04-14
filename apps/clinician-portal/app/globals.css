@@ -967,3 +967,58 @@ tr:hover td {
     flex: 1;
   }
 }
+
+/* Loading spinner */
+@keyframes cb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.loading-indicator {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 24px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.loading-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border-light);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: cb-spin 0.6s linear infinite;
+  flex-shrink: 0;
+}
+
+.error-indicator {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 24px;
+  color: var(--critical);
+  font-size: 13px;
+}
+
+.error-icon {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--critical);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 12px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-spinner {
+    animation-duration: 3s;
+  }
+}

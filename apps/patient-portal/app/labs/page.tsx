@@ -67,7 +67,7 @@ export default function LabsPage() {
       )}
 
       {labsQuery.isError && (
-        <p style={{ color: "#ef4444" }}>Failed to load lab results.</p>
+        <p role="alert" style={{ color: "#ef4444" }}>Failed to load lab results.</p>
       )}
 
       {panels.length === 0 && !labsQuery.isLoading && (

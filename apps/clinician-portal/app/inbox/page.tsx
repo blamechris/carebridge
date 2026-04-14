@@ -42,7 +42,10 @@ function InboxContent() {
   const [activeAction, setActiveAction] = useState<FlagAction | null>(null);
   const [activePatientId, setActivePatientId] = useState<string | null>(null);
 
+  const [showSuccess, setShowSuccess] = useState(false);
+
   const onSuccess = async () => {
+    setShowSuccess(true);
     await utils.aiOversight.flags.getAllOpen.invalidate();
     if (activePatientId) {
       await utils.aiOversight.flags.getByPatient.invalidate({
@@ -52,9 +55,12 @@ function InboxContent() {
         patientId: activePatientId,
       });
     }
-    setActiveFlag(null);
-    setActiveAction(null);
-    setActivePatientId(null);
+    setTimeout(() => {
+      setShowSuccess(false);
+      setActiveFlag(null);
+      setActiveAction(null);
+      setActivePatientId(null);
+    }, 1200);
   };
 
   const acknowledgeMutation =
@@ -233,18 +239,21 @@ function InboxContent() {
                   <button
                     className="btn btn-success btn-sm"
                     onClick={() => openModal(flag, "acknowledge")}
+                    disabled={isSubmitting}
                   >
                     Acknowledge
                   </button>
                   <button
                     className="btn btn-primary btn-sm"
                     onClick={() => openModal(flag, "resolve")}
+                    disabled={isSubmitting}
                   >
                     Resolve
                   </button>
                   <button
                     className="btn btn-ghost btn-sm"
                     onClick={() => openModal(flag, "dismiss")}
+                    disabled={isSubmitting}
                   >
                     Dismiss
                   </button>
@@ -268,13 +277,14 @@ function InboxContent() {
         flag={activeFlag}
         action={activeAction}
         onCancel={() => {
-          if (isSubmitting) return;
+          if (isSubmitting || showSuccess) return;
           setActiveFlag(null);
           setActiveAction(null);
           setActivePatientId(null);
         }}
         onConfirm={handleConfirm}
         isSubmitting={isSubmitting}
+        isSuccess={showSuccess}
       />
     </>
   );

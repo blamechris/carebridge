@@ -61,7 +61,7 @@ export default function NotesPage() {
       )}
 
       {notesQuery.isLoading && <p style={{ color: "#999" }}>Loading notes...</p>}
-      {notesQuery.isError && <p style={{ color: "#ef4444" }}>Failed to load notes.</p>}
+      {notesQuery.isError && <p role="alert" style={{ color: "#ef4444" }}>Failed to load notes.</p>}
 
       {visibleNotes.length === 0 && !notesQuery.isLoading && (
         <p style={{ color: "#999" }}>No signed clinical notes available.</p>
@@ -107,6 +107,8 @@ export default function NotesPage() {
           >
             <button
               onClick={() => setExpandedId(isExpanded ? null : note.id)}
+              aria-expanded={isExpanded}
+              aria-label={`${NOTE_TYPE_LABELS[note.template_type] ?? note.template_type} — ${isExpanded ? "collapse" : "expand"}`}
               style={{
                 width: "100%",
                 padding: "1rem 1.25rem",

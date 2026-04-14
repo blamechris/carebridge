@@ -7,11 +7,14 @@ import {
   redactAgeInFreeText,
   redactClinicalText,
   redactPatientName,
+  redactPatientId,
+  redactUrlIds,
   redactMRN,
   redactDates,
   redactFacilityNames,
   redactPhones,
   redactAddresses,
+  redactSSN,
 } from "../redactor.js";
 
 describe("redactProviderNames", () => {
@@ -373,11 +376,35 @@ describe("redactAddresses", () => {
   });
 });
 
+describe("redactSSN", () => {
+  it("redacts standard SSN format NNN-NN-NNNN", () => {
+    const { redactedText, count } = redactSSN("Patient SSN 123-45-6789 on file.");
+    expect(redactedText).toContain("[SSN]");
+    expect(redactedText).not.toContain("123-45-6789");
+    expect(count).toBe(1);
+  });
+
+  it("redacts multiple SSNs", () => {
+    const { redactedText, count } = redactSSN(
+      "Primary: 111-22-3333, Spouse: 444-55-6666",
+    );
+    expect(redactedText).not.toContain("111-22-3333");
+    expect(redactedText).not.toContain("444-55-6666");
+    expect(count).toBe(2);
+  });
+
+  it("does not redact partial matches", () => {
+    const { redactedText, count } = redactSSN("Code 12-34-5678 is not an SSN.");
+    expect(redactedText).toBe("Code 12-34-5678 is not an SSN.");
+    expect(count).toBe(0);
+  });
+});
+
 describe("redactClinicalText — full pipeline expansion", () => {
   it("redacts all PHI categories through the pipeline", () => {
     const text =
       "Jane Doe (MRN: 12345678) seen on 03/15/2025 at Mercy General Hospital. " +
-      "Call (555) 123-4567. Address: 789 Elm Drive.";
+      "Call (555) 123-4567. Address: 789 Elm Drive. SSN: 123-45-6789.";
     const result = redactClinicalText(text, {
       patientName: "Jane Doe",
       facilityNames: ["Mercy General Hospital"],
@@ -388,11 +415,56 @@ describe("redactClinicalText — full pipeline expansion", () => {
     expect(result.redactedText).not.toContain("Mercy General Hospital");
     expect(result.redactedText).not.toContain("(555) 123-4567");
     expect(result.redactedText).not.toContain("789 Elm Drive");
+    expect(result.redactedText).not.toContain("123-45-6789");
     expect(result.auditTrail.patientNamesRedacted).toBeGreaterThan(0);
     expect(result.auditTrail.mrnsRedacted).toBeGreaterThan(0);
     expect(result.auditTrail.datesRedacted).toBeGreaterThan(0);
     expect(result.auditTrail.facilitiesRedacted).toBeGreaterThan(0);
     expect(result.auditTrail.phonesRedacted).toBeGreaterThan(0);
     expect(result.auditTrail.addressesRedacted).toBeGreaterThan(0);
+    expect(result.auditTrail.ssnsRedacted).toBeGreaterThan(0);
+  });
+});
+
+describe("redactPatientId", () => {
+  it("truncates a UUID to first 8 chars plus mask", () => {
+    const id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+    expect(redactPatientId(id)).toBe("a1b2c3d4****");
+  });
+
+  it("returns **** for empty string", () => {
+    expect(redactPatientId("")).toBe("****");
+  });
+
+  it("returns **** for short IDs", () => {
+    expect(redactPatientId("abc")).toBe("****");
+  });
+
+  it("handles exactly 8 character IDs", () => {
+    expect(redactPatientId("a1b2c3d4")).toBe("****");
+  });
+
+  it("handles 9+ character IDs", () => {
+    expect(redactPatientId("a1b2c3d4e")).toBe("a1b2c3d4****");
+  });
+});
+
+describe("redactUrlIds", () => {
+  it("redacts UUIDs in a tRPC URL query parameter", () => {
+    const url = '/trpc/patients.getById?input={"id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890"}';
+    const result = redactUrlIds(url);
+    expect(result).toBe('/trpc/patients.getById?input={"id":"a1b2c3d4****"}');
+    expect(result).not.toContain("ef1234567890");
+  });
+
+  it("redacts multiple UUIDs in a URL", () => {
+    const url = "/patients/a1b2c3d4-e5f6-7890-abcd-ef1234567890/notes/f1e2d3c4-b5a6-0987-fedc-ba0987654321";
+    const result = redactUrlIds(url);
+    expect(result).toBe("/patients/a1b2c3d4****/notes/f1e2d3c4****");
+  });
+
+  it("leaves non-UUID content untouched", () => {
+    const url = "/trpc/health?foo=bar";
+    expect(redactUrlIds(url)).toBe(url);
   });
 });
