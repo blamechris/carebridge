@@ -21,6 +21,7 @@ import {
   patientObservations,
   labPanels,
   labResults,
+  encounters,
 } from "@carebridge/db-schema";
 import type { ClinicalEvent, FlagSource } from "@carebridge/shared-types";
 import {
@@ -193,18 +194,33 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
       );
     }
 
-    // Fetch patient name so it can be redacted. The DB layer decrypts
-    // `name` transparently on read.
-    const patientRow = await db.query.patients.findFirst({
-      where: eq(patients.id, event.patient_id),
-    });
+    // Fetch patient name and facility/location names so they can be redacted.
+    // The DB layer decrypts `name` transparently on read.
+    const [patientRow, patientEncounters] = await Promise.all([
+      db.query.patients.findFirst({
+        where: eq(patients.id, event.patient_id),
+      }),
+      db
+        .select({ location: encounters.location })
+        .from(encounters)
+        .where(eq(encounters.patient_id, event.patient_id)),
+    ]);
+
+    // Collect unique, non-empty facility/location names for redaction
+    const facilityNames = [
+      ...new Set(
+        patientEncounters
+          .map((e) => e.location)
+          .filter((loc): loc is string => typeof loc === "string" && loc.trim().length > 0),
+      ),
+    ];
 
     // Redact PHI from the assembled prompt before sending to the Claude API
     const redactionResult = redactClinicalText(budgetResult.prompt, {
       providerNames: reviewContext.care_team?.map((m) => m.name).filter(Boolean) as string[] | undefined,
       patientAge: reviewContext.patient?.age,
       patientName: patientRow?.name ?? undefined,
-      facilityNames: [],
+      facilityNames,
       referenceDate: new Date(),
     });
 
