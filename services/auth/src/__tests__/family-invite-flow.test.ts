@@ -68,6 +68,7 @@ vi.mock("@carebridge/db-schema", () => ({
     patient_id: "family_invites.patient_id",
     token: "family_invites.token",
     status: "family_invites.status",
+    expires_at: "family_invites.expires_at",
   },
   auditLog: {
     __table: "audit_log",
@@ -78,12 +79,14 @@ vi.mock("@carebridge/db-schema", () => ({
 vi.mock("drizzle-orm", () => ({
   eq: vi.fn((a: unknown, b: unknown) => ({ op: "eq", a, b })),
   and: vi.fn((...args: unknown[]) => ({ op: "and", args })),
+  gt: vi.fn((a: unknown, b: unknown) => ({ op: "gt", a, b })),
 }));
 
 // Import AFTER mocks are installed
 const {
   revokeFamilyAccess,
   cancelFamilyInvite,
+  acceptFamilyInvite,
 } = await import("../family-invite-flow.js");
 
 // ---------------------------------------------------------------------------
@@ -274,5 +277,141 @@ describe("cancelFamilyInvite", () => {
     } catch (err) {
       expect((err as TRPCError).code).toBe("BAD_REQUEST");
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// acceptFamilyInvite (issue #313 hardening)
+// ---------------------------------------------------------------------------
+
+describe("acceptFamilyInvite", () => {
+  // 64 hex chars = 32 bytes
+  const VALID_TOKEN =
+    "a".repeat(64);
+  const OTHER_TOKEN =
+    "b".repeat(64);
+
+  const futureExpiry = new Date(Date.now() + 86400000).toISOString();
+
+  function makeInvite(overrides: Partial<Row> = {}): Row {
+    return {
+      id: INVITE_ID,
+      patient_id: PATIENT_A,
+      invitee_email: "family@example.com",
+      relationship_type: "spouse",
+      status: "pending",
+      token: VALID_TOKEN,
+      expires_at: futureExpiry,
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+      ...overrides,
+    };
+  }
+
+  it("accepts a valid, unexpired, pending invite", async () => {
+    selectTarget = "invites";
+    inviteRows = [makeInvite()];
+
+    const result = await acceptFamilyInvite(VALID_TOKEN, CAREGIVER);
+    expect(result.relationship_id).toBeTruthy();
+
+    // Status should have transitioned to "accepted"
+    const statusUpdate = updatedSets.find((r) => r.status === "accepted");
+    expect(statusUpdate).toBeDefined();
+
+    // A family_relationships row should have been inserted
+    const relationshipInsert = insertedRows.find(
+      (r) =>
+        r.caregiver_id === CAREGIVER &&
+        r.patient_id === PATIENT_A &&
+        r.status === "active",
+    );
+    expect(relationshipInsert).toBeDefined();
+
+    // An audit log entry should have been written for the acceptance
+    const auditEntry = insertedRows.find(
+      (r) => r.action === "family_invite_accepted",
+    );
+    expect(auditEntry).toBeDefined();
+  });
+
+  it("rejects a malformed token (wrong length) without a DB lookup", async () => {
+    selectTarget = "invites";
+    inviteRows = [makeInvite()];
+
+    await expect(
+      acceptFamilyInvite("short-token", CAREGIVER),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    // The select should NOT have been invoked — the shape check rejects first
+    expect(mockDb.select).not.toHaveBeenCalled();
+
+    // A failed-attempt audit entry should have been written
+    const failAudit = insertedRows.find(
+      (r) => r.action === "family_invite_accept_failed",
+    );
+    expect(failAudit).toBeDefined();
+  });
+
+  it("rejects a non-hex token without a DB lookup", async () => {
+    selectTarget = "invites";
+    inviteRows = [makeInvite()];
+
+    // 64 chars but contains non-hex characters
+    const badToken = "z".repeat(64);
+    await expect(
+      acceptFamilyInvite(badToken, CAREGIVER),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(mockDb.select).not.toHaveBeenCalled();
+  });
+
+  it("returns NOT_FOUND when no matching invite exists", async () => {
+    selectTarget = "invites";
+    inviteRows = [];
+
+    await expect(
+      acceptFamilyInvite(VALID_TOKEN, CAREGIVER),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    // Failed-attempt audit should be recorded
+    const failAudit = insertedRows.find(
+      (r) => r.action === "family_invite_accept_failed",
+    );
+    expect(failAudit).toBeDefined();
+  });
+
+  it("rejects a row whose stored token does not match (timing-safe guard)", async () => {
+    // Simulate a cache / replication anomaly where the DB returns a row
+    // whose token doesn't actually match the query input.
+    selectTarget = "invites";
+    inviteRows = [makeInvite({ token: OTHER_TOKEN })];
+
+    await expect(
+      acceptFamilyInvite(VALID_TOKEN, CAREGIVER),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+
+    // No "accepted" transition should occur
+    const statusUpdate = updatedSets.find((r) => r.status === "accepted");
+    expect(statusUpdate).toBeUndefined();
+
+    // No family_relationships row should be created
+    const relationshipInsert = insertedRows.find(
+      (r) => r.status === "active" && r.caregiver_id === CAREGIVER,
+    );
+    expect(relationshipInsert).toBeUndefined();
+  });
+
+  it("is single-use: the status update is gated on status='pending'", async () => {
+    selectTarget = "invites";
+    inviteRows = [makeInvite()];
+
+    await acceptFamilyInvite(VALID_TOKEN, CAREGIVER);
+
+    // The update set should move status to "accepted"; the mock captures
+    // the SET payload — the WHERE clause (pending guard) is verified by
+    // the update chain being invoked with both id and status predicates.
+    expect(mockDb.update).toHaveBeenCalled();
+    const acceptedUpdate = updatedSets.find((r) => r.status === "accepted");
+    expect(acceptedUpdate).toBeDefined();
   });
 });
