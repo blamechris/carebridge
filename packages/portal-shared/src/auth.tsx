@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useState, useCallback, useEffect } from "react";
 import type { ReactNode } from "react";
-import { getApiBaseUrl } from "./trpc.js";
+import { getApiBaseUrl } from "./trpc";
 
 export interface User {
   id: string;
