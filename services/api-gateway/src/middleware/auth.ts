@@ -71,20 +71,24 @@ export async function authMiddleware(
     }
   }
 
-  // --- Resolve session id from header or cookie ---
+  // --- Resolve session id from cookie (preferred) or Authorization header ---
+  // The HttpOnly session cookie is the primary transport — it is immune to XSS
+  // token theft. The Authorization header is retained as a backwards-compatible
+  // fallback but should be removed once all clients have migrated.
   let sessionId: string | undefined;
 
-  const authHeader = request.headers.authorization;
-  if (authHeader?.startsWith("Bearer ")) {
-    sessionId = authHeader.slice(7);
+  // Parsed by @fastify/cookie plugin registered in server.ts.
+  const cookies = (request as unknown as { cookies?: Record<string, string> })
+    .cookies;
+  if (cookies?.session) {
+    sessionId = cookies.session;
   }
 
   if (!sessionId) {
-    // Parsed by @fastify/cookie plugin registered in server.ts.
-    const cookies = (request as unknown as { cookies?: Record<string, string> })
-      .cookies;
-    if (cookies?.session) {
-      sessionId = cookies.session;
+    // Fallback: Authorization header (deprecated — prefer HttpOnly cookie)
+    const authHeader = request.headers.authorization;
+    if (authHeader?.startsWith("Bearer ")) {
+      sessionId = authHeader.slice(7);
     }
   }
 
