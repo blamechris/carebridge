@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import Link from "next/link";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/lib/auth";
@@ -22,8 +23,31 @@ function DashboardContent() {
   const { user } = useAuth();
   const healthQuery = trpc.healthCheck.useQuery();
   const patientsQuery = trpc.patients.list.useQuery();
+  const patients = patientsQuery.data ?? [];
 
-  const patientCount = patientsQuery.data?.length ?? 0;
+  const noteQueries = trpc.useQueries((t) =>
+    patients.map((p) => t.notes.getByPatient({ patientId: p.id })),
+  );
+
+  const unsignedCount = useMemo(() => {
+    let count = 0;
+    for (const q of noteQueries) {
+      if (q.data) {
+        for (const note of q.data) {
+          if (note.status === "draft") count++;
+        }
+      }
+    }
+    return count;
+  }, [noteQueries]);
+
+  const notesLoading =
+    patientsQuery.isLoading || noteQueries.some((q) => q.isLoading);
+
+  const openFlagsQuery = trpc.aiOversight.flags.getAllOpen.useQuery();
+  const openFlagsCount = openFlagsQuery.data?.length ?? 0;
+
+  const patientCount = patients.length;
 
   return (
     <>
@@ -80,15 +104,26 @@ function DashboardContent() {
         </div>
         <div className="stat-card">
           <span className="stat-label">Unsigned Notes</span>
-          <span className="stat-value warning">--</span>
-          <span className="stat-detail">connect notes service</span>
+          <span className="stat-value warning">
+            {notesLoading ? "..." : unsignedCount}
+          </span>
+          <span className="stat-detail">
+            {notesLoading ? "Loading..." : "draft notes awaiting signature"}
+          </span>
         </div>
         <div className="stat-card">
-          <span className="stat-label">Pending Orders</span>
-          <span className="stat-value" style={{ color: "var(--text-primary)" }}>
-            --
+          <span className="stat-label">Open AI Flags</span>
+          <span
+            className={`stat-value${openFlagsCount > 0 ? " warning" : ""}`}
+            style={openFlagsCount === 0 ? { color: "var(--text-primary)" } : undefined}
+          >
+            {openFlagsQuery.isLoading ? "..." : openFlagsCount}
           </span>
-          <span className="stat-detail">connect orders service</span>
+          <span className="stat-detail">
+            {openFlagsQuery.isLoading
+              ? "Loading..."
+              : "unresolved clinical flags"}
+          </span>
         </div>
       </div>
 

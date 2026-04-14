@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { publishNotification, setPublisher } from "../publish.js";
+import { publishNotification, setPublisher, shutdownPublisher, getPublisher } from "../publish.js";
 
 /**
  * Tests for Redis pub/sub notification publishing.
@@ -98,6 +98,34 @@ describe("publishNotification", () => {
     await publishNotification("", payload);
 
     expect(mockRedis.publish).not.toHaveBeenCalled();
+  });
+
+  it("shutdownPublisher calls quit and clears the singleton", async () => {
+    await shutdownPublisher();
+
+    expect(mockRedis.quit).toHaveBeenCalledTimes(1);
+
+    // After shutdown, getPublisher should create a new instance (not return
+    // the old mock). We inject a fresh mock to verify the singleton was cleared.
+    const freshMock = createMockRedis();
+    setPublisher(freshMock as never);
+    await publishNotification("user-check", {
+      id: "notif-shutdown",
+      type: "system",
+      title: "After shutdown",
+      created_at: "2026-04-12T15:00:00.000Z",
+    });
+    expect(freshMock.publish).toHaveBeenCalledTimes(1);
+  });
+
+  it("shutdownPublisher is a no-op when no publisher exists", async () => {
+    // Clear the publisher first by shutting down
+    await shutdownPublisher();
+    mockRedis.quit.mockClear();
+
+    // Second call should be a no-op
+    await shutdownPublisher();
+    expect(mockRedis.quit).not.toHaveBeenCalled();
   });
 
   it("publishes to distinct channels for different users", async () => {

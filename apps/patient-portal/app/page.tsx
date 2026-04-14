@@ -27,7 +27,7 @@ function PatientDashboard() {
   const router = useRouter();
 
   const healthQuery = trpc.healthCheck.useQuery();
-  const { patient: myRecord, isLoading: patientLoading } = useMyPatientRecord();
+  const { patient: myRecord, isLoading: patientLoading, isUnlinked } = useMyPatientRecord();
 
   const medsQuery = trpc.clinicalData.medications.getByPatient.useQuery(
     { patientId: myRecord?.id ?? "" },
@@ -79,6 +79,23 @@ function PatientDashboard() {
           Sign Out
         </button>
       </div>
+
+      {isUnlinked && (
+        <div
+          style={{
+            backgroundColor: "#7f1d1d",
+            border: "1px solid #ef4444",
+            borderRadius: "8px",
+            padding: "1.25rem",
+            marginBottom: "1rem",
+            color: "#fca5a5",
+            fontSize: "0.9rem",
+          }}
+        >
+          <strong>Account not linked.</strong> Your account is not linked to a patient
+          record. Please contact your care team or call the front desk to resolve this.
+        </div>
+      )}
 
       <div
         style={{

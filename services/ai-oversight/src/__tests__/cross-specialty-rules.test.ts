@@ -246,3 +246,143 @@ describe("ONCO-ANTICOAG-HELD-001 — Anticoagulant held/discontinued with active
     expect(flag).toBeUndefined();
   });
 });
+
+describe("OBSTETRIC-TERATOGEN-X-001 — Pregnancy + Category X teratogen", () => {
+  const pregnantCtx = (meds: string[], overrides: Partial<PatientContext> = {}): PatientContext => ({
+    active_diagnoses: ["Pregnancy, first trimester"],
+    active_diagnosis_codes: ["Z34.01"],
+    active_medications: meds,
+    new_symptoms: [],
+    care_team_specialties: ["obstetrics"],
+    ...overrides,
+  });
+
+  it.each([
+    ["isotretinoin"],
+    ["warfarin"],
+    ["methotrexate"],
+    ["thalidomide"],
+    ["misoprostol"],
+    ["finasteride"],
+    ["dutasteride"],
+  ])("fires CRITICAL for Category X drug: %s", (drug) => {
+    const flags = checkCrossSpecialtyPatterns(pregnantCtx([drug]));
+    const flag = flags.find((f) => f.rule_id === "OBSTETRIC-TERATOGEN-X-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("critical");
+    expect(flag!.category).toBe("medication-safety");
+    expect(flag!.notify_specialties).toContain("obstetrics");
+  });
+
+  it("fires when pregnancy detected by ICD-10 O-code", () => {
+    const ctx = pregnantCtx(["Warfarin 5mg"], {
+      active_diagnoses: ["Supervision of normal pregnancy"],
+      active_diagnosis_codes: ["O09.91"],
+    });
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "OBSTETRIC-TERATOGEN-X-001",
+    );
+    expect(flag).toBeDefined();
+  });
+
+  it("fires when pregnancy detected by description only (no ICD code)", () => {
+    const ctx = pregnantCtx(["Isotretinoin 20mg"], {
+      active_diagnoses: ["Pregnant, 12 weeks gestational age"],
+      active_diagnosis_codes: [""],
+    });
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "OBSTETRIC-TERATOGEN-X-001",
+    );
+    expect(flag).toBeDefined();
+  });
+
+  it("does NOT fire without pregnancy diagnosis", () => {
+    const ctx: PatientContext = {
+      active_diagnoses: ["Acne vulgaris"],
+      active_diagnosis_codes: ["L70.0"],
+      active_medications: ["isotretinoin"],
+      new_symptoms: [],
+      care_team_specialties: [],
+    };
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "OBSTETRIC-TERATOGEN-X-001",
+    );
+    expect(flag).toBeUndefined();
+  });
+
+  it("does NOT fire without teratogenic medication", () => {
+    const flags = checkCrossSpecialtyPatterns(pregnantCtx(["acetaminophen"]));
+    const flag = flags.find((f) => f.rule_id === "OBSTETRIC-TERATOGEN-X-001");
+    expect(flag).toBeUndefined();
+  });
+});
+
+describe("OBSTETRIC-TERATOGEN-D-001 — Pregnancy + Category D teratogen", () => {
+  const pregnantCtx = (meds: string[], overrides: Partial<PatientContext> = {}): PatientContext => ({
+    active_diagnoses: ["Pregnancy, second trimester"],
+    active_diagnosis_codes: ["Z34.02"],
+    active_medications: meds,
+    new_symptoms: [],
+    care_team_specialties: ["obstetrics"],
+    ...overrides,
+  });
+
+  it.each([
+    ["valproic acid"],
+    ["carbamazepine"],
+    ["phenytoin"],
+    ["lithium"],
+    ["tetracycline"],
+    ["doxycycline"],
+  ])("fires WARNING for Category D drug: %s", (drug) => {
+    const flags = checkCrossSpecialtyPatterns(pregnantCtx([drug]));
+    const flag = flags.find((f) => f.rule_id === "OBSTETRIC-TERATOGEN-D-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("warning");
+    expect(flag!.category).toBe("medication-safety");
+    expect(flag!.notify_specialties).toContain("obstetrics");
+  });
+
+  it("fires when pregnancy detected by Z33 code", () => {
+    const ctx = pregnantCtx(["Lithium 300mg"], {
+      active_diagnoses: ["Pregnant state, incidental"],
+      active_diagnosis_codes: ["Z33.1"],
+    });
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "OBSTETRIC-TERATOGEN-D-001",
+    );
+    expect(flag).toBeDefined();
+  });
+
+  it("does NOT fire without pregnancy diagnosis", () => {
+    const ctx: PatientContext = {
+      active_diagnoses: ["Bipolar disorder"],
+      active_diagnosis_codes: ["F31.9"],
+      active_medications: ["lithium"],
+      new_symptoms: [],
+      care_team_specialties: ["psychiatry"],
+    };
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "OBSTETRIC-TERATOGEN-D-001",
+    );
+    expect(flag).toBeUndefined();
+  });
+
+  it("does NOT fire without Category D medication", () => {
+    const flags = checkCrossSpecialtyPatterns(pregnantCtx(["acetaminophen"]));
+    const flag = flags.find((f) => f.rule_id === "OBSTETRIC-TERATOGEN-D-001");
+    expect(flag).toBeUndefined();
+  });
+
+  it("fires both X and D rules when patient has drugs from both categories", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      pregnantCtx(["warfarin", "valproic acid"]),
+    );
+    const xFlag = flags.find((f) => f.rule_id === "OBSTETRIC-TERATOGEN-X-001");
+    const dFlag = flags.find((f) => f.rule_id === "OBSTETRIC-TERATOGEN-D-001");
+    expect(xFlag).toBeDefined();
+    expect(xFlag!.severity).toBe("critical");
+    expect(dFlag).toBeDefined();
+    expect(dFlag!.severity).toBe("warning");
+  });
+});

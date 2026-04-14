@@ -74,7 +74,7 @@ export const SHARED_CRITICAL_PATTERNS: ScreeningPattern[] = [
   },
   {
     ruleIdBase: "STROKE-SYMPTOMS",
-    pattern: /face\s*droop|arm\s*weakness|slurred\s*speech|sudden\s*numbness|sudden\s*confusion|vision\s*loss|can'?t\s*move\s*(my\s*)?(arm|leg)\b/i,
+    pattern: /face\s*droop|arm\s*weakness|slurred\s*speech|sudden\s*numbness|sudden\s*confusion|vision\s*loss|can'?t\s*move\s*(my\s*)?(arm|leg|hand|foot|side)\b/i,
     severity: "critical",
     summary: "Patient describes possible stroke symptoms {source}",
     rationale:

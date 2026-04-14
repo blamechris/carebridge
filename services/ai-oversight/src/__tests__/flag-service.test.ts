@@ -7,6 +7,8 @@ const mockWhere = vi.fn();
 const mockLimit = vi.fn();
 const mockInsert = vi.fn();
 const mockValues = vi.fn();
+const mockOnConflictDoNothing = vi.fn();
+const mockReturning = vi.fn();
 
 const mockDb = {
   select: mockSelect,
@@ -29,8 +31,11 @@ vi.mock("@carebridge/db-schema", () => ({
 // BullMQ + Redis at module-load time. Without this mock the import-time
 // notification queue connection ECONNREFUSEs in CI (no Redis service) and the
 // tests time out at 5s.
+const { mockEmitNotificationEvent } = vi.hoisted(() => ({
+  mockEmitNotificationEvent: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@carebridge/notifications", () => ({
-  emitNotificationEvent: vi.fn().mockResolvedValue(undefined),
+  emitNotificationEvent: mockEmitNotificationEvent,
 }));
 
 import { createFlag } from "../services/flag-service.js";
@@ -44,9 +49,12 @@ beforeEach(() => {
   mockWhere.mockReturnValue({ limit: mockLimit });
   mockLimit.mockResolvedValue([]);
 
-  // Default chain: insert().values() -> void
+  // Default chain: insert().values().onConflictDoNothing().returning() -> [record]
   mockInsert.mockReturnValue({ values: mockValues });
-  mockValues.mockResolvedValue(undefined);
+  mockValues.mockReturnValue({ onConflictDoNothing: mockOnConflictDoNothing });
+  mockOnConflictDoNothing.mockReturnValue({ returning: mockReturning });
+  // By default, returning() resolves with a single-element array (insert succeeded)
+  mockReturning.mockResolvedValue([{ id: "inserted" }]);
 });
 
 describe("createFlag", () => {
@@ -141,6 +149,64 @@ describe("createFlag", () => {
     expect(result.id).toBe("existing-llm-flag");
   });
 
+  it("returns existing flag when DB unique constraint prevents duplicate insert (TOCTOU race)", async () => {
+    // Simulate the race: application-level SELECT found nothing, but a
+    // concurrent worker inserted between our SELECT and INSERT, so
+    // ON CONFLICT DO NOTHING fires and returning() yields [].
+    mockReturning.mockResolvedValueOnce([]);
+
+    // The follow-up SELECT to fetch the winner's flag
+    const winnerFlag = {
+      id: "winner-flag-id",
+      ...baseFlag,
+      created_at: "2026-01-01T00:00:00.000Z",
+    };
+    // First call: dedup SELECT -> [] (no dup found at app level)
+    // Second call (after conflict): fetch winner -> [winnerFlag]
+    mockLimit
+      .mockResolvedValueOnce([])       // initial dedup check
+      .mockResolvedValueOnce([winnerFlag]); // post-conflict fetch
+
+    const result = await createFlag(baseFlag);
+
+    expect(result.id).toBe("winner-flag-id");
+    // Insert was attempted (but suppressed by DB constraint)
+    expect(mockInsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns existing flag when DB unique constraint prevents duplicate LLM flag insert", async () => {
+    const llmFlag = {
+      patient_id: "patient-1",
+      source: "ai-review" as const,
+      severity: "warning" as const,
+      category: "cross-specialty" as const,
+      summary: "LLM finding",
+      rationale: "Analysis",
+      suggested_action: "Review",
+      notify_specialties: ["pharmacy"],
+      trigger_event_ids: ["evt-4"],
+      status: "open" as const,
+    };
+
+    const winnerFlag = {
+      id: "winner-llm-flag",
+      ...llmFlag,
+      created_at: new Date().toISOString(),
+    };
+
+    // ON CONFLICT DO NOTHING returns empty
+    mockReturning.mockResolvedValueOnce([]);
+    // First SELECT (app-level dedup) -> no match; second SELECT (post-conflict) -> winner
+    mockLimit
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([winnerFlag]);
+
+    const result = await createFlag(llmFlag);
+
+    expect(result.id).toBe("winner-llm-flag");
+    expect(mockInsert).toHaveBeenCalledTimes(1);
+  });
+
   it("creates a new LLM flag when no duplicate exists within 24h window", async () => {
     const llmFlag = {
       patient_id: "patient-1",
@@ -161,5 +227,54 @@ describe("createFlag", () => {
     expect(mockInsert).toHaveBeenCalledTimes(1);
     expect(result.id).toBeDefined();
     expect(result.patient_id).toBe("patient-1");
+  });
+
+  it("emits a notification event when a new flag is created with notify_specialties", async () => {
+    const result = await createFlag(baseFlag);
+
+    expect(mockEmitNotificationEvent).toHaveBeenCalledTimes(1);
+    expect(mockEmitNotificationEvent).toHaveBeenCalledWith({
+      flag_id: result.id,
+      patient_id: "patient-1",
+      severity: "critical",
+      category: "cross-specialty",
+      summary: baseFlag.summary,
+      suggested_action: baseFlag.suggested_action,
+      notify_specialties: ["neurology", "hematology"],
+      source: "rules",
+      created_at: result.created_at,
+    });
+  });
+
+  it("emits a notification event with empty notify_specialties when none provided", async () => {
+    const flagNoSpecialties = {
+      ...baseFlag,
+      notify_specialties: [] as string[],
+    };
+
+    const result = await createFlag(flagNoSpecialties);
+
+    expect(mockEmitNotificationEvent).toHaveBeenCalledTimes(1);
+    expect(mockEmitNotificationEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        flag_id: result.id,
+        notify_specialties: [],
+      }),
+    );
+  });
+
+  it("does not emit a notification event when a duplicate flag is returned", async () => {
+    const existingFlag = {
+      id: "existing-flag-id",
+      ...baseFlag,
+      created_at: "2026-01-01T00:00:00.000Z",
+    };
+
+    // Mock DB returning an existing flag
+    mockLimit.mockResolvedValueOnce([existingFlag]);
+
+    await createFlag(baseFlag);
+
+    expect(mockEmitNotificationEvent).not.toHaveBeenCalled();
   });
 });

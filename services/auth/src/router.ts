@@ -232,6 +232,7 @@ function buildUserResponse(row: {
   email: string;
   name: string;
   role: string;
+  patient_id: string | null;
   specialty: string | null;
   department: string | null;
   is_active: boolean;
@@ -243,6 +244,7 @@ function buildUserResponse(row: {
     email: row.email,
     name: row.name,
     role: row.role as User["role"],
+    patient_id: row.patient_id ?? undefined,
     specialty: row.specialty ?? undefined,
     department: row.department ?? undefined,
     is_active: row.is_active,
