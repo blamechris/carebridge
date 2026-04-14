@@ -30,7 +30,7 @@ export default function SymptomsPage() {
   const router = useRouter();
   const utils = trpc.useUtils();
 
-  const { patient: myRecord, isLoading: patientLoading } = useMyPatientRecord();
+  const { patient: myRecord, isLoading: patientLoading, isUnlinked } = useMyPatientRecord();
 
   const observationsQuery = trpc.patients.observations.getByPatient.useQuery(
     { patientId: myRecord?.id ?? "" },
@@ -107,6 +107,12 @@ export default function SymptomsPage() {
         in a separate &quot;Patient Signals&quot; section — they won&apos;t clutter your clinical chart
         but will help ensure nothing important is missed.
       </p>
+
+      {isUnlinked && (
+        <p style={{ color: "#ef4444" }}>
+          Your account is not linked to a patient record. Please contact your care team.
+        </p>
+      )}
 
       {submitted && (
         <div style={{ backgroundColor: "#16a34a20", border: "1px solid #16a34a", borderRadius: 8, padding: "0.75rem", marginBottom: "1rem", color: "#16a34a" }}>

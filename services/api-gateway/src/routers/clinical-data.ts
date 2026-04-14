@@ -24,6 +24,7 @@ import {
   labRepo,
   medicationRepo,
   procedureRepo,
+  ConflictError,
 } from "@carebridge/clinical-data";
 import { getDb, medications } from "@carebridge/db-schema";
 import { eq } from "drizzle-orm";
@@ -149,7 +150,14 @@ const medicationsRouter = t.router({
       await enforcePatientAccess(ctx.user, existing.patient_id);
 
       const { id, ...rest } = input;
-      return medicationRepo.updateMedication(id, rest);
+      try {
+        return await medicationRepo.updateMedication(id, rest);
+      } catch (err) {
+        if (err instanceof ConflictError) {
+          throw new TRPCError({ code: "CONFLICT", message: err.message });
+        }
+        throw err;
+      }
     }),
 
   getByPatient: protectedProcedure

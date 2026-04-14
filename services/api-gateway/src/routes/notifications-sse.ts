@@ -77,24 +77,3 @@ export function registerNotificationSSE(server: FastifyInstance): void {
     },
   );
 }
-
-/**
- * Publish a notification to the Redis channel for a specific user.
- * Call this from the notification dispatch worker after creating records.
- */
-export async function publishNotificationToUser(
-  redisClient: Redis,
-  userId: string,
-  notification: {
-    id: string;
-    type: string;
-    title: string;
-    body?: string;
-    link?: string;
-    related_flag_id?: string;
-    created_at: string;
-  },
-): Promise<void> {
-  const channel = `notifications:${userId}`;
-  await redisClient.publish(channel, JSON.stringify(notification));
-}

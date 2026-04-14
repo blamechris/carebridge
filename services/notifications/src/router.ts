@@ -40,12 +40,14 @@ export const notificationsRouter = t.router({
       summary_safe: z.string().optional(),
       link: z.string().optional(),
       related_flag_id: z.string().optional(),
+      is_urgent: z.boolean().optional(),
     }))
     .mutation(async ({ input }) => {
       const db = getDb();
       const notification = {
         id: crypto.randomUUID(),
         ...input,
+        is_urgent: input.is_urgent ?? false,
         is_read: false,
         created_at: new Date().toISOString(),
       };

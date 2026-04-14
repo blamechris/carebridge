@@ -1,4 +1,4 @@
-import { initTRPC } from "@trpc/server";
+import { initTRPC, TRPCError } from "@trpc/server";
 import { z } from "zod";
 import {
   createVitalSchema,
@@ -12,6 +12,7 @@ import {
 import * as vitalRepo from "./repositories/vital-repo.js";
 import * as labRepo from "./repositories/lab-repo.js";
 import * as medicationRepo from "./repositories/medication-repo.js";
+import { ConflictError } from "./repositories/medication-repo.js";
 import * as procedureRepo from "./repositories/procedure-repo.js";
 
 const t = initTRPC.create();
@@ -70,14 +71,31 @@ const medicationsRouter = t.router({
   create: t.procedure
     .input(createMedicationSchema)
     .mutation(async ({ input }) => {
-      return medicationRepo.createMedication(input);
+      try {
+        return await medicationRepo.createMedication(input);
+      } catch (err) {
+        if (err instanceof Error && err.message.startsWith("ALLERGY_CONFLICT:")) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: err.message.replace("ALLERGY_CONFLICT: ", ""),
+          });
+        }
+        throw err;
+      }
     }),
 
   update: t.procedure
     .input(z.object({ id: z.string().uuid() }).merge(updateMedicationSchema))
     .mutation(async ({ input }) => {
       const { id, ...rest } = input;
-      return medicationRepo.updateMedication(id, rest);
+      try {
+        return await medicationRepo.updateMedication(id, rest);
+      } catch (err) {
+        if (err instanceof ConflictError) {
+          throw new TRPCError({ code: "CONFLICT", message: err.message });
+        }
+        throw err;
+      }
     }),
 
   getByPatient: t.procedure

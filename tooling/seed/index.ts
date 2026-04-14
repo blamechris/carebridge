@@ -6,6 +6,7 @@
  */
 
 import { drizzle } from "drizzle-orm/postgres-js";
+import { eq } from "drizzle-orm";
 import postgres from "postgres";
 import * as schema from "@carebridge/db-schema";
 import { hmacForIndex } from "@carebridge/db-schema";
@@ -44,6 +45,9 @@ async function seed() {
   const drJones = uuid();
   const nurseRachel = uuid();
   const patientUser = uuid();
+
+  // Generate dvtPatientId early so the patient user can reference it.
+  const dvtPatientId = uuid();
 
   await db.insert(schema.users).values([
     {
@@ -87,6 +91,7 @@ async function seed() {
       password_hash: devPasswordHash,
       name: "Demo Patient",
       role: "patient",
+      patient_id: dvtPatientId,
       is_active: true,
       created_at: now(),
       updated_at: now(),
@@ -94,7 +99,6 @@ async function seed() {
   ]).onConflictDoNothing();
 
   // ─── The DVT Scenario Patient ───────────────────────────────────
-  const dvtPatientId = uuid();
 
   await db.insert(schema.patients).values({
     id: dvtPatientId,
@@ -237,6 +241,11 @@ async function seed() {
     { id: uuid(), patient_id: patient2Id, name: "Metformin", dose_amount: 500, dose_unit: "mg", route: "oral", frequency: "twice daily", status: "active", started_at: daysAgo(60), prescribed_by: "Dr. Smith", ordering_provider_id: drSmith, source_system: "internal", created_at: daysAgo(60), updated_at: daysAgo(60) },
     { id: uuid(), patient_id: patient2Id, name: "Lisinopril", dose_amount: 10, dose_unit: "mg", route: "oral", frequency: "once daily", status: "active", started_at: daysAgo(60), prescribed_by: "Dr. Smith", ordering_provider_id: drSmith, source_system: "internal", created_at: daysAgo(60), updated_at: daysAgo(60) },
   ]);
+
+  // ─── Link patient users to patient records ──────────────────────
+  await db.update(schema.users)
+    .set({ patient_id: dvtPatientId })
+    .where(eq(schema.users.id, patientUser));
 
   console.log("Seed complete.");
   console.log(`  DVT scenario patient: ${dvtPatientId} (Margaret Chen, MRN: MCH-2026-0042)`);

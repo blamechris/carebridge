@@ -17,18 +17,54 @@ function makeUser(role: User["role"]): User {
 }
 
 // Mock the db-schema module so we never hit a real database.
-const selectMock = vi.fn();
-
+const careTeamSelectMock = vi.fn();
+const emergencySelectMock = vi.fn();
 vi.mock("@carebridge/db-schema", () => {
-  const fromMock = vi.fn(() => ({ where: vi.fn(() => ({ limit: selectMock })) }));
+  const careTeamFromMock = vi.fn((_table?: unknown) => ({ where: vi.fn(() => ({ limit: careTeamSelectMock })) }));
+  const emergencyFromMock = vi.fn((_table?: unknown) => ({ where: vi.fn(() => ({ limit: emergencySelectMock })) }));
+
+  // Track which table the `from` call targets to route to the right mock.
+  const selectFn = () => ({
+    from: (table: { id: string }) => {
+      if (table === emergencyAccessTable) {
+        return emergencyFromMock(table);
+      }
+      return careTeamFromMock(table);
+    },
+  });
+
+  const emergencyAccessTable = {
+    id: "id",
+    user_id: "user_id",
+    patient_id: "patient_id",
+    revoked_at: "revoked_at",
+    expires_at: "expires_at",
+  };
+
+  const auditLogTable = {
+    id: "id",
+    user_id: "user_id",
+    action: "action",
+    resource_type: "resource_type",
+    resource_id: "resource_id",
+    details: "details",
+    ip_address: "ip_address",
+    timestamp: "timestamp",
+  };
+
   return {
-    getDb: () => ({ select: () => ({ from: fromMock }) }),
+    getDb: () => ({
+      select: selectFn,
+      insert: () => ({ values: () => Promise.resolve() }),
+    }),
     careTeamAssignments: {
       id: "id",
       user_id: "user_id",
       patient_id: "patient_id",
       removed_at: "removed_at",
     },
+    emergencyAccess: emergencyAccessTable,
+    auditLog: auditLogTable,
   };
 });
 
@@ -36,12 +72,16 @@ vi.mock("drizzle-orm", () => ({
   eq: (...args: unknown[]) => args,
   and: (...args: unknown[]) => args,
   isNull: (col: unknown) => col,
+  gt: (...args: unknown[]) => args,
 }));
 
 describe("care-team cache", () => {
   beforeEach(() => {
     clearCareTeamCache();
-    selectMock.mockReset();
+    careTeamSelectMock.mockReset();
+    emergencySelectMock.mockReset();
+    // Default: no emergency access unless explicitly set in a test.
+    emergencySelectMock.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -49,38 +89,38 @@ describe("care-team cache", () => {
   });
 
   it("queries the DB on a cache miss", async () => {
-    selectMock.mockResolvedValueOnce([{ id: "row-1" }]);
+    careTeamSelectMock.mockResolvedValueOnce([{ id: "row-1" }]);
 
     const result = await assertCareTeamAccess("user-1", "patient-1");
 
     expect(result).toBe(true);
-    expect(selectMock).toHaveBeenCalledTimes(1);
+    expect(careTeamSelectMock).toHaveBeenCalledTimes(1);
   });
 
   it("returns cached value without hitting the DB on a cache hit", async () => {
-    selectMock.mockResolvedValueOnce([{ id: "row-1" }]);
+    careTeamSelectMock.mockResolvedValueOnce([{ id: "row-1" }]);
 
     await assertCareTeamAccess("user-1", "patient-1");
     const result = await assertCareTeamAccess("user-1", "patient-1");
 
     expect(result).toBe(true);
-    expect(selectMock).toHaveBeenCalledTimes(1); // only the first call
+    expect(careTeamSelectMock).toHaveBeenCalledTimes(1); // only the first call
   });
 
   it("caches false (no access) results as well", async () => {
-    selectMock.mockResolvedValueOnce([]);
+    careTeamSelectMock.mockResolvedValueOnce([]);
 
     const first = await assertCareTeamAccess("user-2", "patient-2");
     const second = await assertCareTeamAccess("user-2", "patient-2");
 
     expect(first).toBe(false);
     expect(second).toBe(false);
-    expect(selectMock).toHaveBeenCalledTimes(1);
+    expect(careTeamSelectMock).toHaveBeenCalledTimes(1);
   });
 
   it("expires entries after 60 seconds", async () => {
-    selectMock.mockResolvedValueOnce([{ id: "row-1" }]);
-    selectMock.mockResolvedValueOnce([]); // second call returns no access
+    careTeamSelectMock.mockResolvedValueOnce([{ id: "row-1" }]);
+    careTeamSelectMock.mockResolvedValueOnce([]); // second call returns no access
 
     await assertCareTeamAccess("user-3", "patient-3");
 
@@ -90,32 +130,84 @@ describe("care-team cache", () => {
 
     const result = await assertCareTeamAccess("user-3", "patient-3");
     expect(result).toBe(false);
-    expect(selectMock).toHaveBeenCalledTimes(2);
+    expect(careTeamSelectMock).toHaveBeenCalledTimes(2);
 
     vi.useRealTimers();
   });
 
   it("clearCareTeamCache() forces a fresh DB query", async () => {
-    selectMock.mockResolvedValueOnce([{ id: "row-1" }]);
-    selectMock.mockResolvedValueOnce([{ id: "row-1" }]);
+    careTeamSelectMock.mockResolvedValueOnce([{ id: "row-1" }]);
+    careTeamSelectMock.mockResolvedValueOnce([{ id: "row-1" }]);
 
     await assertCareTeamAccess("user-4", "patient-4");
     clearCareTeamCache();
     await assertCareTeamAccess("user-4", "patient-4");
 
-    expect(selectMock).toHaveBeenCalledTimes(2);
+    expect(careTeamSelectMock).toHaveBeenCalledTimes(2);
   });
 
   it("uses separate cache entries per user/patient pair", async () => {
-    selectMock.mockResolvedValueOnce([{ id: "row-1" }]);
-    selectMock.mockResolvedValueOnce([]);
+    careTeamSelectMock.mockResolvedValueOnce([{ id: "row-1" }]);
+    careTeamSelectMock.mockResolvedValueOnce([]);
 
     const a = await assertCareTeamAccess("user-a", "patient-x");
     const b = await assertCareTeamAccess("user-b", "patient-x");
 
     expect(a).toBe(true);
     expect(b).toBe(false);
-    expect(selectMock).toHaveBeenCalledTimes(2);
+    expect(careTeamSelectMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("emergency access fallback", () => {
+  beforeEach(() => {
+    clearCareTeamCache();
+    careTeamSelectMock.mockReset();
+    emergencySelectMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("grants access via emergency access when no care-team assignment exists", async () => {
+    careTeamSelectMock.mockResolvedValueOnce([]); // no care-team
+    emergencySelectMock.mockResolvedValueOnce([{ id: "ea-1" }]); // active emergency grant
+
+    const result = await assertCareTeamAccess("user-emergency", "patient-1");
+
+    expect(result).toBe(true);
+    expect(careTeamSelectMock).toHaveBeenCalledTimes(1);
+    expect(emergencySelectMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("denies access when emergency access grant has expired", async () => {
+    careTeamSelectMock.mockResolvedValueOnce([]); // no care-team
+    emergencySelectMock.mockResolvedValueOnce([]); // no active emergency (expired filtered by gt)
+
+    const result = await assertCareTeamAccess("user-expired", "patient-1");
+
+    expect(result).toBe(false);
+    expect(emergencySelectMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("denies access when emergency access grant has been revoked", async () => {
+    careTeamSelectMock.mockResolvedValueOnce([]); // no care-team
+    emergencySelectMock.mockResolvedValueOnce([]); // no active emergency (revoked filtered by isNull)
+
+    const result = await assertCareTeamAccess("user-revoked", "patient-1");
+
+    expect(result).toBe(false);
+    expect(emergencySelectMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not check emergency access when care-team assignment exists", async () => {
+    careTeamSelectMock.mockResolvedValueOnce([{ id: "ct-1" }]); // has care-team
+
+    const result = await assertCareTeamAccess("user-team", "patient-1");
+
+    expect(result).toBe(true);
+    expect(emergencySelectMock).not.toHaveBeenCalled();
   });
 });
 

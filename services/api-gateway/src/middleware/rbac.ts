@@ -2,8 +2,8 @@ import type { FastifyRequest, FastifyReply } from "fastify";
 import { TRPCError } from "@trpc/server";
 import type { User } from "@carebridge/shared-types";
 import { hasPermission } from "@carebridge/shared-types";
-import { getDb, careTeamAssignments, auditLog } from "@carebridge/db-schema";
-import { eq, and, isNull } from "drizzle-orm";
+import { getDb, careTeamAssignments, auditLog, emergencyAccess } from "@carebridge/db-schema";
+import { eq, and, isNull, gt } from "drizzle-orm";
 import crypto from "node:crypto";
 
 /**
@@ -142,9 +142,52 @@ export async function assertCareTeamAccess(
     )
     .limit(1);
 
-  const hasAccess = rows.length > 0;
-  setCache(cacheKey, hasAccess);
-  return hasAccess;
+  if (rows.length > 0) {
+    setCache(cacheKey, true);
+    return true;
+  }
+
+  // No care-team assignment — check for active emergency access grant.
+  const now = new Date().toISOString();
+  const emergencyRows = await db
+    .select({ id: emergencyAccess.id })
+    .from(emergencyAccess)
+    .where(
+      and(
+        eq(emergencyAccess.user_id, userId),
+        eq(emergencyAccess.patient_id, patientId),
+        isNull(emergencyAccess.revoked_at),
+        gt(emergencyAccess.expires_at, now),
+      ),
+    )
+    .limit(1);
+
+  if (emergencyRows.length > 0) {
+    // Log emergency access usage distinctly in audit trail (fire-and-forget).
+    db.insert(auditLog)
+      .values({
+        id: crypto.randomUUID(),
+        user_id: userId,
+        action: "emergency_access_used",
+        resource_type: "patient",
+        resource_id: patientId,
+        details: JSON.stringify({
+          emergency_access_id: emergencyRows[0].id,
+          type: "emergency_access",
+        }),
+        ip_address: "",
+        timestamp: now,
+      })
+      .catch(() => {
+        // Swallow — audit logging must never block access decisions.
+      });
+
+    setCache(cacheKey, true);
+    return true;
+  }
+
+  setCache(cacheKey, false);
+  return false;
 }
 
 /**
