@@ -350,6 +350,32 @@ export function assertPromptSanitized(text: string): void {
 }
 
 /**
+ * Redact a patient ID (UUID) for safe use in operational logs.
+ * Retains the first 8 characters for correlation and masks the rest,
+ * so DevOps/SRE teams can cross-reference without exposing full PHI.
+ *
+ * Example: "a1b2c3d4-e5f6-..." → "a1b2c3d4****"
+ */
+export function redactPatientId(id: string): string {
+  if (!id || id.length <= 8) return "****";
+  return id.substring(0, 8) + "****";
+}
+
+/**
+ * Redact UUIDs embedded in a URL path or query string.
+ * Useful for Fastify request log serializers to prevent patient IDs
+ * from appearing in operational logs via tRPC input parameters.
+ *
+ * Matches standard UUID format: 8-4-4-4-12 hex characters.
+ */
+export function redactUrlIds(url: string): string {
+  return url.replace(
+    /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
+    (match) => match.substring(0, 8) + "****",
+  );
+}
+
+/**
  * Full redaction pipeline: sanitize free text, redact provider names,
  * band ages, and produce an audit trail.
  */

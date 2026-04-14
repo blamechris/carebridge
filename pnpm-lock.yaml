@@ -349,6 +349,9 @@ importers:
       '@carebridge/patient-records':
         specifier: workspace:*
         version: link:../patient-records
+      '@carebridge/phi-sanitizer':
+        specifier: workspace:*
+        version: link:../../packages/phi-sanitizer
       '@carebridge/redis-config':
         specifier: workspace:*
         version: link:../../packages/redis-config
@@ -604,6 +607,9 @@ importers:
       '@carebridge/db-schema':
         specifier: workspace:*
         version: link:../../packages/db-schema
+      '@carebridge/phi-sanitizer':
+        specifier: workspace:*
+        version: link:../../packages/phi-sanitizer
       '@carebridge/redis-config':
         specifier: workspace:*
         version: link:../../packages/redis-config

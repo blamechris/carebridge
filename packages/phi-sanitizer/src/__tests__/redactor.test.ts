@@ -7,6 +7,8 @@ import {
   redactAgeInFreeText,
   redactClinicalText,
   redactPatientName,
+  redactPatientId,
+  redactUrlIds,
   redactMRN,
   redactDates,
   redactFacilityNames,
@@ -421,5 +423,48 @@ describe("redactClinicalText — full pipeline expansion", () => {
     expect(result.auditTrail.phonesRedacted).toBeGreaterThan(0);
     expect(result.auditTrail.addressesRedacted).toBeGreaterThan(0);
     expect(result.auditTrail.ssnsRedacted).toBeGreaterThan(0);
+  });
+});
+
+describe("redactPatientId", () => {
+  it("truncates a UUID to first 8 chars plus mask", () => {
+    const id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+    expect(redactPatientId(id)).toBe("a1b2c3d4****");
+  });
+
+  it("returns **** for empty string", () => {
+    expect(redactPatientId("")).toBe("****");
+  });
+
+  it("returns **** for short IDs", () => {
+    expect(redactPatientId("abc")).toBe("****");
+  });
+
+  it("handles exactly 8 character IDs", () => {
+    expect(redactPatientId("a1b2c3d4")).toBe("****");
+  });
+
+  it("handles 9+ character IDs", () => {
+    expect(redactPatientId("a1b2c3d4e")).toBe("a1b2c3d4****");
+  });
+});
+
+describe("redactUrlIds", () => {
+  it("redacts UUIDs in a tRPC URL query parameter", () => {
+    const url = '/trpc/patients.getById?input={"id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890"}';
+    const result = redactUrlIds(url);
+    expect(result).toBe('/trpc/patients.getById?input={"id":"a1b2c3d4****"}');
+    expect(result).not.toContain("ef1234567890");
+  });
+
+  it("redacts multiple UUIDs in a URL", () => {
+    const url = "/patients/a1b2c3d4-e5f6-7890-abcd-ef1234567890/notes/f1e2d3c4-b5a6-0987-fedc-ba0987654321";
+    const result = redactUrlIds(url);
+    expect(result).toBe("/patients/a1b2c3d4****/notes/f1e2d3c4****");
+  });
+
+  it("leaves non-UUID content untouched", () => {
+    const url = "/trpc/health?foo=bar";
+    expect(redactUrlIds(url)).toBe(url);
   });
 });
