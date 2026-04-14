@@ -46,6 +46,14 @@ vi.mock("@carebridge/db-schema", () => ({
     patient_id: "patient_id",
     removed_at: "removed_at",
   },
+  notificationPreferences: {
+    user_id: "user_id",
+    notification_type: "notification_type",
+    channel: "channel",
+    enabled: "enabled",
+    quiet_hours_start: "quiet_hours_start",
+    quiet_hours_end: "quiet_hours_end",
+  },
 }));
 
 // ── Redis / BullMQ mocks ────────────────────────────────────────────

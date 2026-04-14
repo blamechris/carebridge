@@ -19,10 +19,12 @@ import { notifications, users, careTeamAssignments } from "@carebridge/db-schema
 import { eq, and, isNull, inArray } from "drizzle-orm";
 import crypto from "node:crypto";
 import type { NotificationEvent } from "../queue.js";
+import { notificationsQueue } from "../queue.js";
 import { publishNotification } from "../publish.js";
 import { redactPatientId } from "@carebridge/phi-sanitizer";
 import { filterRecipientsBySpecialty } from "./specialty-filter.js";
 import type { CandidateRecipient } from "./specialty-filter.js";
+import { getUserPreferences, evaluateDelivery } from "./preferences.js";
 
 const QUEUE_NAME = "notifications";
 const DLQ_NAME = "notifications-failed";
@@ -124,7 +126,15 @@ function isUrgentFlag(severity: string): boolean {
 }
 
 /**
- * Process a single notification event: find recipients and create notification records.
+ * Process a single notification event: find recipients, check preferences,
+ * and create notification records.
+ *
+ * For each recipient the worker:
+ * 1. Queries notification preferences
+ * 2. Skips disabled channels (unless critical)
+ * 3. Delays delivery during quiet hours (unless critical)
+ * Critical notifications (severity === "critical") always bypass quiet hours
+ * and disabled-channel preferences to ensure clinical safety.
  */
 async function processNotificationJob(event: NotificationEvent): Promise<number> {
   const db = getDb();
@@ -147,26 +157,77 @@ async function processNotificationJob(event: NotificationEvent): Promise<number>
   const now = new Date().toISOString();
   const urgent = isUrgentFlag(event.severity);
 
-  const notificationRecords = recipientIds.map((userId) => ({
-    id: crypto.randomUUID(),
-    user_id: userId,
-    type: "ai-flag" as const,
-    title,
-    body: event.summary,
-    link,
-    related_flag_id: event.flag_id,
-    is_urgent: urgent,
-    is_read: false,
-    created_at: now,
-  }));
+  let immediateCount = 0;
+  let delayedCount = 0;
+  let skippedCount = 0;
 
-  // Batch insert all notifications
-  await db.insert(notifications).values(notificationRecords);
+  const immediateRecords: Array<{
+    id: string;
+    user_id: string;
+    type: "ai-flag";
+    title: string;
+    body: string;
+    link: string;
+    related_flag_id: string;
+    is_urgent: boolean;
+    is_read: boolean;
+    created_at: string;
+  }> = [];
+
+  for (const userId of recipientIds) {
+    const preferences = await getUserPreferences(userId);
+    const decision = evaluateDelivery(preferences, "ai-flag", event.severity);
+
+    if (!decision.deliver_in_app) {
+      skippedCount++;
+      console.log(
+        `[dispatch-worker] Skipping notification for user ${userId} — channel disabled`,
+      );
+      continue;
+    }
+
+    if (decision.delay_ms > 0) {
+      // Re-queue the notification with a delay for this specific user.
+      // We create a targeted delayed job rather than holding the current job.
+      delayedCount++;
+      console.log(
+        `[dispatch-worker] Delaying notification for user ${userId} by ${Math.round(decision.delay_ms / 60000)}min (quiet hours)`,
+      );
+      await notificationsQueue.add(
+        "delayed-single",
+        {
+          ...event,
+          _targeted_user_id: userId,
+        },
+        { delay: decision.delay_ms },
+      );
+      continue;
+    }
+
+    immediateRecords.push({
+      id: crypto.randomUUID(),
+      user_id: userId,
+      type: "ai-flag" as const,
+      title,
+      body: event.summary,
+      link,
+      related_flag_id: event.flag_id,
+      is_urgent: urgent,
+      is_read: false,
+      created_at: now,
+    });
+    immediateCount++;
+  }
+
+  // Batch insert immediate notifications
+  if (immediateRecords.length > 0) {
+    await db.insert(notifications).values(immediateRecords);
+  }
 
   // Publish to Redis pub/sub for real-time SSE delivery.
   // Best-effort: failures are logged but do not cause job retry
   // (which would duplicate the already-inserted notification rows).
-  for (const record of notificationRecords) {
+  for (const record of immediateRecords) {
     try {
       await publishNotification(record.user_id, {
         id: record.id,
@@ -188,11 +249,62 @@ async function processNotificationJob(event: NotificationEvent): Promise<number>
   }
 
   console.log(
-    `[dispatch-worker] Created ${notificationRecords.length} notifications ` +
-      `for flag ${event.flag_id} (severity: ${event.severity})`,
+    `[dispatch-worker] Flag ${event.flag_id} (severity: ${event.severity}): ` +
+      `${immediateCount} immediate, ${delayedCount} delayed, ${skippedCount} skipped`,
   );
 
-  return notificationRecords.length;
+  return immediateCount;
+}
+
+/**
+ * Process a delayed single-user notification that was re-queued after quiet hours.
+ */
+async function processDelayedNotification(event: NotificationEvent & { _targeted_user_id: string }): Promise<number> {
+  const db = getDb();
+  const userId = event._targeted_user_id;
+  const title = buildNotificationTitle(event);
+  const link = buildFlagLink(event);
+  const now = new Date().toISOString();
+
+  const record = {
+    id: crypto.randomUUID(),
+    user_id: userId,
+    type: "ai-flag" as const,
+    title,
+    body: event.summary,
+    link,
+    related_flag_id: event.flag_id,
+    is_urgent: isUrgentFlag(event.severity),
+    is_read: false,
+    created_at: now,
+  };
+
+  await db.insert(notifications).values(record);
+
+  try {
+    await publishNotification(record.user_id, {
+      id: record.id,
+      type: record.type,
+      title: record.title,
+      body: record.body,
+      link: record.link,
+      related_flag_id: record.related_flag_id,
+      is_urgent: record.is_urgent,
+      created_at: record.created_at,
+    });
+  } catch (error) {
+    console.error("[dispatch-worker] Failed to publish delayed notification to Redis", {
+      notificationId: record.id,
+      userId: record.user_id,
+      error,
+    });
+  }
+
+  console.log(
+    `[dispatch-worker] Delivered delayed notification ${record.id} to user ${userId} for flag ${event.flag_id}`,
+  );
+
+  return 1;
 }
 
 /**
@@ -202,7 +314,7 @@ export function startDispatchWorker(): Worker {
   const worker = new Worker(
     QUEUE_NAME,
     async (job: Job) => {
-      const event = job.data as NotificationEvent;
+      const event = job.data as NotificationEvent & { _targeted_user_id?: string };
 
       console.log(
         `[dispatch-worker] Processing job ${job.id} — flag: ${event.flag_id} ` +
@@ -212,7 +324,20 @@ export function startDispatchWorker(): Worker {
       const startTime = Date.now();
 
       try {
-        const count = await processNotificationJob(event);
+        let count: number;
+
+        if (job.name === "delayed-single" && event._targeted_user_id) {
+          console.log(
+            `[dispatch-worker] Processing delayed job ${job.id} — flag: ${event.flag_id} ` +
+              `(user: ${event._targeted_user_id})`,
+          );
+          count = await processDelayedNotification(
+            event as NotificationEvent & { _targeted_user_id: string },
+          );
+        } else {
+          count = await processNotificationJob(event);
+        }
+
         const elapsed = Date.now() - startTime;
         console.log(
           `[dispatch-worker] Job ${job.id} completed in ${elapsed}ms — ${count} notifications created`,
