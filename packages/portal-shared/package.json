@@ -7,6 +7,7 @@
     "./trpc": "./src/trpc.ts",
     "./auth": "./src/auth.tsx",
     "./providers": "./src/providers.tsx",
+    "./auth-guard": "./src/auth-guard.tsx",
     "./password-input": "./src/password-input.tsx"
   },
   "dependencies": {
@@ -16,9 +17,13 @@
     "@tanstack/react-query": "^5.60.0",
     "react": "^19.0.0"
   },
+  "peerDependencies": {
+    "next": ">=14.0.0"
+  },
   "devDependencies": {
     "@carebridge/api-gateway": "workspace:*",
     "@types/react": "^19.0.0",
+    "next": "^15.1.0",
     "typescript": "^5.7.0"
   }
 }
