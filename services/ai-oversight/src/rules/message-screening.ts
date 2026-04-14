@@ -83,7 +83,7 @@ const URGENT_PATTERNS: UrgentKeywordPattern[] = [
   },
   {
     id: "MSG-STROKE-SYMPTOMS",
-    pattern: /face\s*droop|arm\s*weakness|slurred\s*speech|sudden\s*numbness|sudden\s*confusion|vision\s*loss|can'?t\s*move\s*(my|arm|leg)/i,
+    pattern: /face\s*droop|arm\s*weakness|slurred\s*speech|sudden\s*numbness|sudden\s*confusion|vision\s*loss|can'?t\s*move\s*(my\s*)?(arm|leg|hand|foot|side)\b/i,
     severity: "critical",
     summary: "Patient describes possible stroke symptoms in message",
     rationale:

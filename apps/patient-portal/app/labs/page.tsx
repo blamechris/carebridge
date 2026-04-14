@@ -23,7 +23,7 @@ export default function LabsPage() {
   const { user } = useAuth();
   const router = useRouter();
 
-  const { patient: myRecord, isLoading: patientLoading } = useMyPatientRecord();
+  const { patient: myRecord, isLoading: patientLoading, isUnlinked } = useMyPatientRecord();
 
   const labsQuery = trpc.clinicalData.labs.getByPatient.useQuery(
     { patientId: myRecord?.id ?? "" },
@@ -55,6 +55,12 @@ export default function LabsPage() {
           Back to Dashboard
         </button>
       </div>
+
+      {isUnlinked && (
+        <p style={{ color: "#ef4444" }}>
+          Your account is not linked to a patient record. Please contact your care team.
+        </p>
+      )}
 
       {labsQuery.isLoading && (
         <p style={{ color: "#999" }}>Loading lab results...</p>
