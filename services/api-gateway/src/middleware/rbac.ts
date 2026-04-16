@@ -179,7 +179,7 @@ export async function broadcastCareTeamInvalidation(
   try {
     await publisher.publish(
       CARE_TEAM_INVALIDATE_CHANNEL,
-      `${userId}:${patientId}`,
+      cacheKey(userId, patientId),
     );
   } catch {
     // Intentionally swallow — see jsdoc.
@@ -213,9 +213,9 @@ export async function assertCareTeamAccess(
   userId: string,
   patientId: string,
 ): Promise<boolean> {
-  const cacheKey = `${userId}:${patientId}`;
+  const key = cacheKey(userId, patientId);
 
-  const cached = getCached(cacheKey);
+  const cached = getCached(key);
   if (cached !== undefined) return cached;
 
   const db = getDb();
@@ -232,7 +232,7 @@ export async function assertCareTeamAccess(
     .limit(1);
 
   if (rows.length > 0) {
-    setCache(cacheKey, true);
+    setCache(key, true);
     return true;
   }
 
@@ -271,11 +271,11 @@ export async function assertCareTeamAccess(
         // Swallow — audit logging must never block access decisions.
       });
 
-    setCache(cacheKey, true);
+    setCache(key, true);
     return true;
   }
 
-  setCache(cacheKey, false);
+  setCache(key, false);
   return false;
 }
 

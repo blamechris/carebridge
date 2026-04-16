@@ -95,4 +95,20 @@ describe("startCareTeamInvalidationSubscriber", () => {
     const handle = await startCareTeamInvalidationSubscriber();
     await expect(handle.quit()).resolves.toBeUndefined();
   });
+
+  it("returns a no-op handle when subscribe() fails (degrades to TTL-only)", async () => {
+    const warn = vi.fn();
+    mocks.instance.subscribe.mockRejectedValueOnce(
+      new Error("NOAUTH Authentication required"),
+    );
+
+    // Must resolve — startup failure must not propagate to the caller.
+    const handle = await startCareTeamInvalidationSubscriber({ warn });
+
+    expect(warn).toHaveBeenCalled();
+    // Best-effort cleanup of the partially-initialized client.
+    expect(mocks.instance.quit).toHaveBeenCalled();
+    // Handle is a functional no-op so callers don't have to branch.
+    await expect(handle.quit()).resolves.toBeUndefined();
+  });
 });
