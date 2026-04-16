@@ -239,6 +239,13 @@
       "when": 1746547200000,
       "tag": "0031_audit_log_actor_relationship",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1746720000000,
+      "tag": "0033_review_jobs_trigger_event_index",
+      "breakpoints": true
     }
   ]
 }
