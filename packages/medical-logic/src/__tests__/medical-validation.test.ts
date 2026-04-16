@@ -213,6 +213,60 @@ describe("validateLabResult", () => {
     expect(result.valid).toBe(true);
     expect(result.warnings.some((w) => w.includes("does not match expected"))).toBe(true);
   });
+
+  // Unit comparison tolerates case/whitespace variants. Real-world FHIR/HL7
+  // feeds frequently send "mg/dl" (UCUM canonical) or "MG/DL" (lab vendor
+  // shorthand); normalising both sides prevents false-reject errors on
+  // otherwise legitimate readings. See issue #538.
+  it("accepts glucose unit in upper case (MG/DL)", () => {
+    const result = validateLabResult("Glucose", 95, "MG/DL");
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("accepts glucose unit with trailing whitespace (mg/dL )", () => {
+    const result = validateLabResult("Glucose", 95, "mg/dL ");
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("accepts glucose unit with leading whitespace + lowercase ( mg/dl)", () => {
+    const result = validateLabResult("Glucose", 95, " mg/dl");
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("accepts glucose unit in canonical UCUM lowercase (mg/dl)", () => {
+    const result = validateLabResult("Glucose", 95, "mg/dl");
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("accepts glucose unit with internal whitespace (mg / dL)", () => {
+    const result = validateLabResult("Glucose", 95, "mg / dL");
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("accepts potassium submitted as lowercase meq/L", () => {
+    const result = validateLabResult("Potassium", 4.1, "meq/L");
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("still rejects a genuinely wrong unit (dL alone)", () => {
+    const result = validateLabResult("Glucose", 95, "dL");
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("unit"))).toBe(true);
+  });
+
+  it("error message quotes the caller's original (non-normalized) unit", () => {
+    // Normalisation is only used for comparison; the operator's typed
+    // string should surface verbatim so they can see what they entered.
+    const result = validateLabResult("Glucose", 200, "mmol/L");
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes('"mmol/L"'))).toBe(true);
+  });
 });
 
 // ─── isCriticalVital ────────────────────────────────────────────
