@@ -36,6 +36,7 @@ describe("CHEMO-FEVER-001 / CHEMO-NEUTRO-FEVER-001 — ANC-aware rules", () => {
     const flag = checkCrossSpecialtyPatterns(ctx).find(
       (f) => f.rule_id === "CHEMO-NEUTRO-FEVER-001",
     );
+    expect(flag).toBeDefined();
     expect(flag!.suggested_action).toMatch(/Severe neutropenia \(ANC < 500\)/);
     expect(flag!.suggested_action).toMatch(/reverse isolation/);
   });
@@ -45,6 +46,7 @@ describe("CHEMO-FEVER-001 / CHEMO-NEUTRO-FEVER-001 — ANC-aware rules", () => {
     const flag = checkCrossSpecialtyPatterns(ctx).find(
       (f) => f.rule_id === "CHEMO-NEUTRO-FEVER-001",
     );
+    expect(flag).toBeDefined();
     expect(flag!.suggested_action).not.toMatch(/Severe neutropenia/);
   });
 
@@ -77,6 +79,7 @@ describe("CHEMO-FEVER-001 / CHEMO-NEUTRO-FEVER-001 — ANC-aware rules", () => {
     const flag = checkCrossSpecialtyPatterns(ctx).find(
       (f) => f.rule_id === "CHEMO-NEUTRO-FEVER-001",
     );
+    expect(flag).toBeDefined();
     expect(flag!.notify_specialties).toEqual(
       expect.arrayContaining(["oncology", "infectious_disease", "emergency"]),
     );

@@ -313,11 +313,16 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
         "(e.g. cefepime or piperacillin-tazobactam) within 60 minutes of fever onset. Blood and " +
         "urine cultures before antibiotics if no delay. Admit for inpatient management.";
       // Severe neutropenia (ANC < 500) carries the highest sepsis/mortality risk.
+      // The base regimen already provides anti-pseudomonal coverage; severe
+      // neutropenia warrants additional layers rather than redundant coverage.
       if (anc !== undefined && anc < 500) {
         return (
           base +
-          " Severe neutropenia (ANC < 500): add anti-pseudomonal coverage and consider G-CSF; " +
-          "reverse isolation recommended."
+          " Severe neutropenia (ANC < 500): confirm the empiric regimen provides " +
+          "anti-pseudomonal coverage; add empiric anti-MRSA (e.g. vancomycin) if " +
+          "catheter infection, skin/soft tissue involvement, pneumonia, or " +
+          "hemodynamic instability suspected. Consider G-CSF and recommend " +
+          "reverse isolation."
         );
       }
       return base;
