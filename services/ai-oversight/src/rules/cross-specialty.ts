@@ -17,10 +17,34 @@ export interface PatientAllergy {
   reaction?: string | null;
 }
 
+/**
+ * Structured diagnosis record used by rules that need to reason about the
+ * recency or resolution status of a specific condition (e.g. the
+ * ONCO-VTE-NEURO-001 recency gate — see issue #215). When present, the rule
+ * layer uses this in preference to the flat `active_diagnoses` string list.
+ */
+export interface PatientDiagnosis {
+  description: string;
+  icd10_code: string | null;
+  /** Problem-list status string: active, resolved, chronic, etc. */
+  status: string | null;
+  /** ISO 8601 date of onset; null if unknown. */
+  onset_date: string | null;
+  /** ISO 8601 date of resolution; null if still active. */
+  resolved_date: string | null;
+}
+
 export interface PatientContext {
   active_diagnoses: string[];
   /** ICD-10 codes for active diagnoses (parallel to active_diagnoses). */
   active_diagnosis_codes: string[];
+  /**
+   * Optional structured diagnosis list. Populated by
+   * `buildPatientContextForRules`. Carries recency metadata
+   * (onset_date / resolved_date / status) so individual rules can apply
+   * recency gates without round-tripping to the database.
+   */
+  active_diagnoses_detail?: PatientDiagnosis[];
   active_medications: string[];
   /** RxNorm codes for active medications (parallel to active_medications). */
   active_medication_rxnorm_codes?: (string | null)[];
@@ -65,6 +89,68 @@ const FEVER_SYMPTOM_PATTERN = /fever|febrile|temperature|chills/i;
 
 /** ICD-10 pattern for active VTE / DVT / PE diagnoses. */
 const VTE_ICD10_PATTERN = /^(I26|I80|I82)\./;
+
+/** Text pattern matching VTE / DVT / PE descriptions. */
+const VTE_DESCRIPTION_PATTERN =
+  /dvt|deep vein thrombosis|pulmonary embolism|vte|venous thromboembolism|thrombosis|clot/i;
+
+/**
+ * Recency window (months) for treating a VTE diagnosis as "clinically active"
+ * for stroke-risk stratification in the absence of ongoing anticoagulation.
+ *
+ * Rationale: most cancer-associated VTEs are treated for 3–6 months per CHEST
+ * and ASCO guidance; beyond 6 months without active anticoagulation the acute
+ * pro-thrombotic contribution of that specific clot has largely resolved.
+ * Patients with persistent VTE risk should either remain on anticoagulation
+ * (handled by the anticoag branch below) or have a newer VTE episode.
+ */
+const VTE_RECENCY_WINDOW_MONTHS = 6;
+
+/**
+ * Is this diagnosis record a clinically active VTE for ONCO-VTE-NEURO-001?
+ *
+ * Returns true only when:
+ *   1. The diagnosis actually matches VTE (by ICD-10 or description); AND
+ *   2. It is NOT explicitly resolved (status !== "resolved" and no
+ *      resolved_date in the past); AND
+ *   3. Either the onset is within the recency window OR the patient is on
+ *      active anticoagulation (used as a proxy for active treatment of this
+ *      VTE at the caller site).
+ *
+ * Unknown onset dates are treated permissively when on anticoagulation but
+ * require an onset date to trigger on recency alone, to avoid firing on stale
+ * EHR problem-list entries that have no date at all.
+ */
+function isActiveVTEDiagnosis(
+  dx: PatientDiagnosis,
+  onAnticoag: boolean,
+  now: Date = new Date(),
+): boolean {
+  const matchesVTE =
+    (dx.icd10_code !== null && VTE_ICD10_PATTERN.test(dx.icd10_code)) ||
+    VTE_DESCRIPTION_PATTERN.test(dx.description);
+  if (!matchesVTE) return false;
+
+  // Hard exclude: resolved diagnoses. A resolved DVT never qualifies, even if
+  // the EHR problem list mistakenly left status="active".
+  if (dx.status && /^resolved$/i.test(dx.status)) return false;
+  if (dx.resolved_date) {
+    const resolved = new Date(dx.resolved_date);
+    if (!Number.isNaN(resolved.getTime()) && resolved <= now) return false;
+  }
+
+  // Active anticoagulation is an accepted proxy for ongoing VTE treatment,
+  // which keeps the stroke-risk stratification relevant regardless of age.
+  if (onAnticoag) return true;
+
+  // No anticoagulation → require a fresh onset date within the recency window.
+  if (!dx.onset_date) return false;
+  const onset = new Date(dx.onset_date);
+  if (Number.isNaN(onset.getTime())) return false;
+  const cutoff = new Date(now);
+  cutoff.setMonth(cutoff.getMonth() - VTE_RECENCY_WINDOW_MONTHS);
+  return onset >= cutoff;
+}
 
 /**
  * Triple-whammy AKI patterns: NSAID + loop/thiazide diuretic + ACE-I/ARB.
@@ -233,13 +319,32 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       const hasCancer = ctx.active_diagnoses.some((d) =>
         /cancer|malignant|carcinoma|lymphoma|leukemia|tumor|neoplasm/i.test(d),
       );
-      const hasVTE = ctx.active_diagnoses.some((d) =>
-        /dvt|deep vein thrombosis|pulmonary embolism|vte|thrombosis|clot/i.test(d),
-      );
       const hasNeuroSymptom = ctx.new_symptoms.some((s) =>
         /headache|vision change|weakness|numbness|confusion|speech difficulty|dizziness|syncope/i.test(s),
       );
-      return hasCancer && hasVTE && hasNeuroSymptom;
+      if (!hasCancer || !hasNeuroSymptom) return false;
+
+      // Recency gate (issue #215): a years-old resolved DVT must not trigger
+      // urgent neuroimaging. When structured diagnosis detail is available,
+      // require the VTE to be either recently onset (within
+      // VTE_RECENCY_WINDOW_MONTHS) or covered by active anticoagulation
+      // (proxy for ongoing VTE treatment). Fall back to the legacy
+      // description-based match only when no structured detail is provided,
+      // preserving behavior for callers that have not yet been upgraded.
+      const onAnticoag = ctx.active_medications.some((m) =>
+        ANTICOAGULANT_PATTERN.test(m),
+      );
+
+      if (ctx.active_diagnoses_detail && ctx.active_diagnoses_detail.length > 0) {
+        return ctx.active_diagnoses_detail.some((dx) =>
+          isActiveVTEDiagnosis(dx, onAnticoag),
+        );
+      }
+
+      const hasVTE = ctx.active_diagnoses.some((d) =>
+        VTE_DESCRIPTION_PATTERN.test(d),
+      );
+      return hasVTE;
     },
     severity: "critical" as const,
     category: "cross-specialty" as const,
