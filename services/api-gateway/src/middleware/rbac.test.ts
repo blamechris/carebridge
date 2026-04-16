@@ -2,7 +2,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { TRPCError } from "@trpc/server";
 import type { User } from "@carebridge/shared-types";
 import { hasPermission } from "@carebridge/shared-types";
-import { assertCareTeamAccess, assertPermission, clearCareTeamCache } from "./rbac.js";
+import {
+  assertCareTeamAccess,
+  assertPermission,
+  clearCareTeamCache,
+  invalidateCareTeamCacheEntry,
+  invalidateCareTeamCacheForPatient,
+  applyInvalidationMessage,
+  broadcastCareTeamInvalidation,
+  CARE_TEAM_INVALIDATE_CHANNEL,
+} from "./rbac.js";
 
 function makeUser(role: User["role"]): User {
   return {
@@ -118,15 +127,16 @@ describe("care-team cache", () => {
     expect(careTeamSelectMock).toHaveBeenCalledTimes(1);
   });
 
-  it("expires entries after 60 seconds", async () => {
+  it("expires entries after the TTL window", async () => {
     careTeamSelectMock.mockResolvedValueOnce([{ id: "row-1" }]);
     careTeamSelectMock.mockResolvedValueOnce([]); // second call returns no access
 
     await assertCareTeamAccess("user-3", "patient-3");
 
-    // Advance time past the 60 s TTL
+    // Advance past the 2 s TTL (kept tight so missed invalidations converge
+    // quickly — see #277).
     vi.useFakeTimers();
-    vi.advanceTimersByTime(61_000);
+    vi.advanceTimersByTime(3_000);
 
     const result = await assertCareTeamAccess("user-3", "patient-3");
     expect(result).toBe(false);
@@ -268,5 +278,183 @@ describe("assertPermission", () => {
         "Only admins can revoke emergency access",
       );
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Targeted invalidation — #277
+// ---------------------------------------------------------------------------
+
+describe("invalidateCareTeamCacheEntry", () => {
+  beforeEach(() => {
+    clearCareTeamCache();
+    careTeamSelectMock.mockReset();
+    emergencySelectMock.mockReset();
+    emergencySelectMock.mockResolvedValue([]);
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("drops a single entry without affecting others", async () => {
+    careTeamSelectMock
+      .mockResolvedValueOnce([{ id: "r-1" }]) // user-A first call
+      .mockResolvedValueOnce([{ id: "r-2" }]) // user-B first call
+      .mockResolvedValueOnce([]); // user-A re-fetch after invalidation
+    await assertCareTeamAccess("user-A", "patient-1");
+    await assertCareTeamAccess("user-B", "patient-1");
+    expect(careTeamSelectMock).toHaveBeenCalledTimes(2);
+
+    invalidateCareTeamCacheEntry("user-A", "patient-1");
+
+    // A re-queries; B still cached
+    expect(await assertCareTeamAccess("user-A", "patient-1")).toBe(false);
+    expect(await assertCareTeamAccess("user-B", "patient-1")).toBe(true);
+    expect(careTeamSelectMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("no-ops on an entry that is not cached", () => {
+    expect(() =>
+      invalidateCareTeamCacheEntry("nobody", "patient-nobody"),
+    ).not.toThrow();
+  });
+});
+
+describe("invalidateCareTeamCacheForPatient", () => {
+  beforeEach(() => {
+    clearCareTeamCache();
+    careTeamSelectMock.mockReset();
+    emergencySelectMock.mockReset();
+    emergencySelectMock.mockResolvedValue([]);
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("drops every entry for the patient across users", async () => {
+    careTeamSelectMock
+      .mockResolvedValueOnce([{ id: "r-1" }])
+      .mockResolvedValueOnce([{ id: "r-2" }])
+      .mockResolvedValueOnce([{ id: "r-3" }])
+      .mockResolvedValueOnce([]) // user-A re-fetch
+      .mockResolvedValueOnce([]) // user-B re-fetch
+      .mockResolvedValueOnce([{ id: "r-3" }]); // user-C / other patient still cached
+    await assertCareTeamAccess("user-A", "patient-1");
+    await assertCareTeamAccess("user-B", "patient-1");
+    await assertCareTeamAccess("user-C", "patient-2"); // different patient
+
+    invalidateCareTeamCacheForPatient("patient-1");
+
+    expect(await assertCareTeamAccess("user-A", "patient-1")).toBe(false);
+    expect(await assertCareTeamAccess("user-B", "patient-1")).toBe(false);
+    // user-C / patient-2 still cached
+    expect(await assertCareTeamAccess("user-C", "patient-2")).toBe(true);
+    expect(careTeamSelectMock).toHaveBeenCalledTimes(5);
+  });
+});
+
+describe("applyInvalidationMessage (PUBSUB handler)", () => {
+  beforeEach(() => {
+    clearCareTeamCache();
+    careTeamSelectMock.mockReset();
+    emergencySelectMock.mockReset();
+    emergencySelectMock.mockResolvedValue([]);
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("applies a user:patient message by dropping that entry", async () => {
+    careTeamSelectMock
+      .mockResolvedValueOnce([{ id: "r-1" }])
+      .mockResolvedValueOnce([]);
+    await assertCareTeamAccess("user-A", "patient-1");
+
+    applyInvalidationMessage("user-A:patient-1");
+
+    expect(await assertCareTeamAccess("user-A", "patient-1")).toBe(false);
+  });
+
+  it("applies a *:patient message as a patient-wide invalidation", async () => {
+    careTeamSelectMock
+      .mockResolvedValueOnce([{ id: "r-1" }])
+      .mockResolvedValueOnce([{ id: "r-2" }])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    await assertCareTeamAccess("user-A", "patient-1");
+    await assertCareTeamAccess("user-B", "patient-1");
+
+    applyInvalidationMessage("*:patient-1");
+
+    expect(await assertCareTeamAccess("user-A", "patient-1")).toBe(false);
+    expect(await assertCareTeamAccess("user-B", "patient-1")).toBe(false);
+  });
+
+  it("ignores malformed messages", () => {
+    expect(() => applyInvalidationMessage("")).not.toThrow();
+    expect(() => applyInvalidationMessage("only-one-token")).not.toThrow();
+  });
+});
+
+describe("broadcastCareTeamInvalidation", () => {
+  beforeEach(() => {
+    clearCareTeamCache();
+    careTeamSelectMock.mockReset();
+    emergencySelectMock.mockReset();
+    emergencySelectMock.mockResolvedValue([]);
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("publishes to the care-team channel and invalidates locally", async () => {
+    const publisher = { publish: vi.fn(async () => 1) };
+
+    careTeamSelectMock
+      .mockResolvedValueOnce([{ id: "r-1" }])
+      .mockResolvedValueOnce([]);
+    await assertCareTeamAccess("user-A", "patient-1");
+
+    await broadcastCareTeamInvalidation(publisher, "user-A", "patient-1");
+
+    expect(publisher.publish).toHaveBeenCalledWith(
+      CARE_TEAM_INVALIDATE_CHANNEL,
+      "user-A:patient-1",
+    );
+    expect(await assertCareTeamAccess("user-A", "patient-1")).toBe(false);
+  });
+
+  it("swallows publisher errors — local invalidation still happens", async () => {
+    const publisher = {
+      publish: vi.fn(async () => {
+        throw new Error("redis down");
+      }),
+    };
+
+    careTeamSelectMock
+      .mockResolvedValueOnce([{ id: "r-1" }])
+      .mockResolvedValueOnce([]);
+    await assertCareTeamAccess("user-A", "patient-1");
+
+    await expect(
+      broadcastCareTeamInvalidation(publisher, "user-A", "patient-1"),
+    ).resolves.toBeUndefined();
+    expect(await assertCareTeamAccess("user-A", "patient-1")).toBe(false);
+  });
+
+  it("accepts '*' as the user to broadcast a patient-wide invalidation", async () => {
+    const publisher = { publish: vi.fn(async () => 1) };
+    careTeamSelectMock
+      .mockResolvedValueOnce([{ id: "r-1" }])
+      .mockResolvedValueOnce([{ id: "r-2" }])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    await assertCareTeamAccess("user-A", "patient-1");
+    await assertCareTeamAccess("user-B", "patient-1");
+
+    await broadcastCareTeamInvalidation(publisher, "*", "patient-1");
+
+    expect(publisher.publish).toHaveBeenCalledWith(
+      CARE_TEAM_INVALIDATE_CHANNEL,
+      "*:patient-1",
+    );
+    expect(await assertCareTeamAccess("user-A", "patient-1")).toBe(false);
+    expect(await assertCareTeamAccess("user-B", "patient-1")).toBe(false);
   });
 });
