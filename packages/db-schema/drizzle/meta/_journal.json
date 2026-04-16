@@ -174,41 +174,62 @@
       "idx": 24,
       "version": "7",
       "when": 1745769600000,
-      "tag": "0025_encrypt_clinical_events_phi",
+      "tag": "0024_notification_urgency",
       "breakpoints": true
     },
     {
       "idx": 25,
       "version": "7",
       "when": 1745856000000,
-      "tag": "0026_family_access_constraints",
+      "tag": "0025_encrypt_clinical_events_phi",
       "breakpoints": true
     },
     {
       "idx": 26,
       "version": "7",
       "when": 1745942400000,
-      "tag": "0027_flag_escalation_tracking",
+      "tag": "0025_failed_clinical_events",
       "breakpoints": true
     },
     {
       "idx": 27,
       "version": "7",
       "when": 1746028800000,
-      "tag": "0028_encrypt_patient_diagnosis_notes",
+      "tag": "0025_family_access",
       "breakpoints": true
     },
     {
       "idx": 28,
       "version": "7",
       "when": 1746115200000,
-      "tag": "0029_allergy_verification_status",
+      "tag": "0026_family_access_constraints",
       "breakpoints": true
     },
     {
       "idx": 29,
       "version": "7",
       "when": 1746201600000,
+      "tag": "0027_flag_escalation_tracking",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1746288000000,
+      "tag": "0028_encrypt_patient_diagnosis_notes",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1746374400000,
+      "tag": "0029_allergy_verification_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1746460800000,
       "tag": "0030_patient_weight_kg",
       "breakpoints": true
     }
