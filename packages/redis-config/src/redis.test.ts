@@ -79,6 +79,15 @@ describe("getRedisConnection", () => {
 });
 
 describe("CLINICAL_EVENTS_JOB_OPTIONS", () => {
+  it("pins attempts=8 and base delay=2000 ms", () => {
+    // Pin the exact invariants the retry-budget calculation depends on;
+    // the ≥4-min floor below is a derived consequence. Changing either
+    // value without touching these assertions is a silent behavior
+    // change the floor assertion would miss.
+    expect(CLINICAL_EVENTS_JOB_OPTIONS.attempts).toBe(8);
+    expect(CLINICAL_EVENTS_JOB_OPTIONS.backoff.delay).toBe(2000);
+  });
+
   it("provides at least 4 minutes of cumulative retry tolerance", () => {
     // 8 attempts with exponential backoff base 2000 ms:
     // 0 + 2 + 4 + 8 + 16 + 32 + 64 + 128 = 254 s ~= 4.2 min

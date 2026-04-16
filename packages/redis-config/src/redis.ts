@@ -31,10 +31,9 @@ export function getRedisConnection(): RedisConnectionOptions {
  * window is ~4 minutes (2+4+8+16+32+64+128 s), which tolerates the 90 s
  * outage surfaced in issue #267 with generous margin.
  *
- * Exposing this as a shared constant keeps the six producers (api-gateway,
- * clinical-data, clinical-notes, patient-records, messaging, and the
- * clinical events emitted from within services/messaging) in lockstep so
- * future bumps can't drift.
+ * Exposing this as a shared constant keeps the clinical-events publishers
+ * (api-gateway, clinical-data, clinical-notes, patient-records, and
+ * messaging) in lockstep so future bumps can't drift.
  */
 export const CLINICAL_EVENTS_JOB_OPTIONS = {
   attempts: 8,
