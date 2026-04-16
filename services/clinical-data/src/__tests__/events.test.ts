@@ -9,6 +9,12 @@ vi.mock("bullmq", () => ({
 
 vi.mock("@carebridge/redis-config", () => ({
   getRedisConnection: () => ({}),
+  CLINICAL_EVENTS_JOB_OPTIONS: {
+    attempts: 8,
+    backoff: { type: "exponential" as const, delay: 2000 },
+    removeOnComplete: { count: 1000 },
+    removeOnFail: { count: 10000 },
+  },
 }));
 
 // ── Mock DB ─────────────────────────────────────────────────────
