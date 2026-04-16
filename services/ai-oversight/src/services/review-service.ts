@@ -386,6 +386,10 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
         status: jobStatus,
         rules_evaluated: rulesEvaluated,
         rules_fired: rulesFired,
+        // Full rule output (severity, category, rationale, notify_specialties,
+        // rule_id per match) — required for forensic/regulatory audit.
+        // See #241 and migration 0032.
+        rules_output: allRuleFlags as unknown as Array<Record<string, unknown>>,
         flags_generated: flagIds,
         processing_time_ms: processingTime,
         ...(llmFailed ? { error: llmErrorMessage } : {}),
