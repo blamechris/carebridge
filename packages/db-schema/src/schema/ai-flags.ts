@@ -27,10 +27,18 @@ export const clinicalFlags = pgTable("clinical_flags", {
   dismiss_reason: text("dismiss_reason"),
   model_id: text("model_id"),
   prompt_version: text("prompt_version"),
+  escalation_count: integer("escalation_count").notNull().default(0),
+  last_escalated_at: text("last_escalated_at"),
   created_at: text("created_at").notNull(),
 }, (table) => [
   index("idx_flags_patient").on(table.patient_id, table.status),
   index("idx_flags_severity").on(table.severity, table.status),
+  index("idx_flags_escalation_scan").on(
+    table.severity,
+    table.status,
+    table.acknowledged_at,
+    table.escalation_count,
+  ),
   uniqueIndex("idx_flags_open_rule_dedup")
     .on(table.patient_id, table.rule_id)
     .where(sql`status = 'open' AND rule_id IS NOT NULL`),
