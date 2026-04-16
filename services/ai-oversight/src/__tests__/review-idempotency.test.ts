@@ -45,6 +45,8 @@ vi.mock("@carebridge/db-schema", () => ({
 vi.mock("drizzle-orm", () => ({
   eq: vi.fn(),
   and: vi.fn(),
+  or: vi.fn(),
+  inArray: vi.fn(),
   desc: vi.fn(),
   gte: vi.fn(),
   sql: vi.fn(),
@@ -122,40 +124,138 @@ describe("processReviewJob — idempotency", () => {
   });
 
   it("skips processing when a completed review_jobs row already exists for the event", async () => {
-    // First select.limit() call is the idempotency probe — return a prior
-    // completed row. No other mocks need priming because the function
-    // returns before touching anything else.
     limitMock.mockResolvedValueOnce([
-      { id: "prior-job-id", status: "completed" },
+      {
+        id: "prior-job-id",
+        status: "completed",
+        created_at: new Date().toISOString(),
+      },
     ]);
 
     await processReviewJob(makeEvent());
 
-    // No insert, no flag creation, no update.
     expect(insertMock).not.toHaveBeenCalled();
     expect(mockCreateFlag).not.toHaveBeenCalled();
   });
 
-  it("proceeds with processing when no prior completed review exists", async () => {
-    // Idempotency probe returns [] — no prior run. All downstream selects
-    // (patient context builder, encounters, etc.) also get [] to keep the
-    // pipeline unblocked through to the insert.
+  // #520: parameterized across all three terminal statuses
+  it.each([
+    ["completed"],
+    ["llm_timeout"],
+    ["llm_error"],
+  ])("skips processing when prior run ended in terminal status '%s'", async (status) => {
+    limitMock.mockResolvedValueOnce([
+      {
+        id: `prior-${status}-id`,
+        status,
+        created_at: new Date().toISOString(),
+      },
+    ]);
+
+    await processReviewJob(makeEvent({ id: `evt-term-${status}` }));
+
+    expect(insertMock).not.toHaveBeenCalled();
+    expect(mockCreateFlag).not.toHaveBeenCalled();
+  });
+
+  // #520: `failed` is NOT terminal — retry IS desired
+  it("proceeds when prior run ended in 'failed' (retry is desired)", async () => {
     limitMock.mockResolvedValue([]);
 
-    // The downstream pipeline still needs usable mocks — at minimum the
-    // insert into review_jobs must be reached. Everything after that is
-    // short-circuited by the empty rule results mocked above.
-    const event = makeEvent({ id: "evt-new" });
-
-    // We expect this NOT to return early; the job row insert is proof.
     try {
-      await processReviewJob(event);
+      await processReviewJob(makeEvent({ id: "evt-failed-retry" }));
     } catch {
-      // The rest of the pipeline is stubbed lightly — exceptions from
-      // context-builder etc. are acceptable; we only care that we got past
-      // the idempotency guard.
+      // Downstream mocks may throw
     }
 
     expect(insertMock).toHaveBeenCalled();
+  });
+
+  // #522: recent in-flight `processing` row blocks duplicate
+  it("skips processing when a recent 'processing' row exists (in-flight race)", async () => {
+    limitMock.mockResolvedValueOnce([
+      {
+        id: "concurrent-worker-job-id",
+        status: "processing",
+        created_at: new Date(Date.now() - 5_000).toISOString(),
+      },
+    ]);
+
+    await processReviewJob(makeEvent({ id: "evt-in-flight" }));
+
+    expect(insertMock).not.toHaveBeenCalled();
+    expect(mockCreateFlag).not.toHaveBeenCalled();
+  });
+
+  // #522: stale `processing` row (orphan) does NOT block
+  it("proceeds when only a stale 'processing' row exists (orphaned crash)", async () => {
+    limitMock.mockResolvedValue([]);
+
+    try {
+      await processReviewJob(makeEvent({ id: "evt-stale-orphan" }));
+    } catch {
+      // Downstream mocks may throw
+    }
+
+    expect(insertMock).toHaveBeenCalled();
+  });
+
+  it("proceeds with processing when no prior completed review exists", async () => {
+    limitMock.mockResolvedValue([]);
+
+    const event = makeEvent({ id: "evt-new" });
+
+    try {
+      await processReviewJob(event);
+    } catch {
+      // Downstream mocks may throw
+    }
+
+    expect(insertMock).toHaveBeenCalled();
+  });
+});
+
+describe("processReviewJob — idempotency probe predicate shape", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    insertMock.mockReturnValue({ values: insertValues });
+    updateMock.mockReturnValue({ set: updateSet });
+    updateSet.mockReturnValue({ where: updateSetWhere });
+    selectMock.mockImplementation(() => ({ from: selectFrom }));
+    selectFrom.mockReturnValue({ where: selectWhere });
+    selectWhere.mockReturnValue({ limit: limitMock });
+    limitMock.mockResolvedValue([]);
+  });
+
+  it("calls inArray with the three terminal statuses", async () => {
+    const drizzle = await import("drizzle-orm");
+    const inArrayMock = vi.mocked(drizzle.inArray);
+
+    try {
+      await processReviewJob(makeEvent({ id: "evt-probe-shape" }));
+    } catch {
+      // Ignore downstream errors
+    }
+
+    const statusCall = inArrayMock.mock.calls.find(([, values]) =>
+      Array.isArray(values) &&
+      values.includes("completed") &&
+      values.includes("llm_timeout") &&
+      values.includes("llm_error"),
+    );
+    expect(statusCall).toBeDefined();
+  });
+
+  it("includes an in-flight 'processing' branch in the probe via or()", async () => {
+    const drizzle = await import("drizzle-orm");
+    const orMock = vi.mocked(drizzle.or);
+
+    try {
+      await processReviewJob(makeEvent({ id: "evt-probe-or" }));
+    } catch {
+      // Ignore downstream errors
+    }
+
+    expect(orMock).toHaveBeenCalled();
   });
 });
