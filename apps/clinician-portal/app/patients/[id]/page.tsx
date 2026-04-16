@@ -58,10 +58,13 @@ function StaleDataBanner({
   const ageDays = Math.round(ageMs / (24 * 60 * 60 * 1000));
   // role="status" (polite live region) rather than role="alert" (assertive):
   // a chronic chart banner should not interrupt a screen-reader mid-sentence
-  // every time the clinician opens a patient with week-old data.
+  // every time the clinician opens a patient with week-old data. Explicit
+  // aria-live="polite" belt-and-suspenders in case any AT doesn't map
+  // role="status" to a polite region by default. (Issue #525.)
   return (
     <div
       role="status"
+      aria-live="polite"
       style={{
         background: "var(--color-warning-bg, #fff3cd)",
         border: "1px solid var(--color-warning-border, #ffc107)",
