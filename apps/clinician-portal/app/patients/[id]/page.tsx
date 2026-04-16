@@ -398,18 +398,56 @@ function LabsTab({ patientId }: { patientId: string }) {
               <tbody>
                 {panel.results.map((r: Record<string, unknown>, ri: number) => {
                   const flag = (r.flag as string) ?? "";
+                  const value = r.value as number | null | undefined;
+                  const refLow = r.reference_low as number | null | undefined;
+                  const refHigh = r.reference_high as number | null | undefined;
+
+                  // A value is out-of-range when it falls below reference_low or
+                  // above reference_high. This catches "borderline abnormal"
+                  // cases (e.g. K+ 3.2 with ref 3.5–5.0) that the server-side
+                  // `flag` field often leaves unset — the lab instrument may
+                  // only assign "critical" for extreme values, leaving
+                  // clinically meaningful drift unmarked.
+                  const isOutOfRange =
+                    typeof value === "number" &&
+                    ((typeof refLow === "number" && value < refLow) ||
+                      (typeof refHigh === "number" && value > refHigh));
+
+                  const valueColor =
+                    flag === "critical"
+                      ? "var(--critical)"
+                      : flag === "high" || flag === "low"
+                      ? "var(--warning)"
+                      : isOutOfRange
+                      ? "var(--warning)"
+                      : "var(--text-primary)";
+
+                  const referenceRange =
+                    typeof refLow === "number" && typeof refHigh === "number"
+                      ? `${refLow}\u2013${refHigh}`
+                      : typeof refLow === "number"
+                      ? `> ${refLow}`
+                      : typeof refHigh === "number"
+                      ? `< ${refHigh}`
+                      : "\u2014";
+
+                  // Out-of-range without a server flag — surface an inferred
+                  // H/L badge so the clinician has the same visual cue they
+                  // would for an instrument-flagged value.
+                  const inferredFlag =
+                    !flag && isOutOfRange && typeof value === "number"
+                      ? typeof refLow === "number" && value < refLow
+                        ? "low"
+                        : "high"
+                      : "";
+
                   return (
                     <tr key={ri}>
                       <td>{r.test_name as string}</td>
                       <td
                         style={{
                           fontWeight: 600,
-                          color:
-                            flag === "critical"
-                              ? "var(--critical)"
-                              : flag === "high" || flag === "low"
-                              ? "var(--warning)"
-                              : "var(--text-primary)",
+                          color: valueColor,
                         }}
                       >
                         {String(r.value)}
@@ -418,10 +456,10 @@ function LabsTab({ patientId }: { patientId: string }) {
                         {r.unit as string}
                       </td>
                       <td style={{ color: "var(--text-secondary)" }}>
-                        {r.reference_range as string}
+                        {referenceRange}
                       </td>
                       <td>
-                        {flag && (
+                        {flag ? (
                           <span
                             className={`badge ${
                               flag === "critical"
@@ -433,7 +471,16 @@ function LabsTab({ patientId }: { patientId: string }) {
                           >
                             {flag.toUpperCase()}
                           </span>
-                        )}
+                        ) : inferredFlag ? (
+                          <span
+                            className="badge badge-warning"
+                            role="status"
+                            aria-label={`Inferred lab flag (out of reference range): ${inferredFlag}`}
+                            title="Outside reference range (client-derived)"
+                          >
+                            {inferredFlag.toUpperCase()}
+                          </span>
+                        ) : null}
                       </td>
                     </tr>
                   );
