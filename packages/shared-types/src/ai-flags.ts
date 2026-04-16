@@ -77,7 +77,7 @@ export interface ClinicalRule {
 
 // ─── Review Jobs ─────────────────────────────────────────────────
 
-export type ReviewStatus = "pending" | "processing" | "completed" | "failed";
+export type ReviewStatus = "pending" | "processing" | "completed" | "failed" | "llm_timeout" | "llm_error";
 
 export interface ReviewJob extends BaseRecord {
   patient_id: string;
