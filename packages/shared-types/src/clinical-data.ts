@@ -168,10 +168,27 @@ export interface CareEvent extends BaseRecord {
 
 // ─── Reference Data ──────────────────────────────────────────────
 
-export const COMMON_LAB_TESTS: Record<
-  string,
-  { unit: string; typical_low: number; typical_high: number }
-> = {
+/**
+ * Reference entry for a common lab test.
+ *
+ * `unit` is the canonical unit used by CareBridge for the test's typical
+ * range. `allowed_units` (optional) enumerates every unit string the system
+ * will accept from inbound FHIR or manual entry — if a caller submits a
+ * value with a unit outside this set, validation rejects it with an error.
+ *
+ * Populate `allowed_units` for any test where the unit choice is a known
+ * sentinel-event source (e.g. glucose mg/dL vs mmol/L — the 18:1 ratio
+ * turns 200 mg/dL ≈ 11.1 mmol/L into a fatal over/under if confused).
+ * Tests without `allowed_units` trigger a non-fatal warning on mismatch.
+ */
+export interface CommonLabTest {
+  unit: string;
+  typical_low: number;
+  typical_high: number;
+  allowed_units?: string[];
+}
+
+export const COMMON_LAB_TESTS: Record<string, CommonLabTest> = {
   // CBC
   WBC: { unit: "K/uL", typical_low: 4.5, typical_high: 11.0 },
   RBC: { unit: "M/uL", typical_low: 4.0, typical_high: 5.5 },
@@ -191,15 +208,19 @@ export const COMMON_LAB_TESTS: Record<
   Eosinophils: { unit: "%", typical_low: 1, typical_high: 4 },
   Basophils: { unit: "%", typical_low: 0, typical_high: 1 },
   // Comprehensive Metabolic Panel
-  Glucose: { unit: "mg/dL", typical_low: 70, typical_high: 100 },
-  BUN: { unit: "mg/dL", typical_low: 7, typical_high: 20 },
-  Creatinine: { unit: "mg/dL", typical_low: 0.6, typical_high: 1.2 },
+  // High-stakes tests locked to a strict unit allow-list. Any other unit
+  // (including silent absence, handled separately) is a validation error.
+  // mg/dL vs mmol/L glucose is a classic sentinel-event source — 200 mg/dL
+  // administered as 200 mmol/L insulin dosing guidance is fatal.
+  Glucose: { unit: "mg/dL", typical_low: 70, typical_high: 100, allowed_units: ["mg/dL"] },
+  BUN: { unit: "mg/dL", typical_low: 7, typical_high: 20, allowed_units: ["mg/dL"] },
+  Creatinine: { unit: "mg/dL", typical_low: 0.6, typical_high: 1.2, allowed_units: ["mg/dL"] },
   GFR: { unit: "mL/min", typical_low: 90, typical_high: 120 },
-  Sodium: { unit: "mEq/L", typical_low: 136, typical_high: 145 },
-  Potassium: { unit: "mEq/L", typical_low: 3.5, typical_high: 5.0 },
-  Chloride: { unit: "mEq/L", typical_low: 98, typical_high: 106 },
-  CO2: { unit: "mEq/L", typical_low: 23, typical_high: 29 },
-  Calcium: { unit: "mg/dL", typical_low: 8.5, typical_high: 10.5 },
+  Sodium: { unit: "mEq/L", typical_low: 136, typical_high: 145, allowed_units: ["mEq/L", "mmol/L"] },
+  Potassium: { unit: "mEq/L", typical_low: 3.5, typical_high: 5.0, allowed_units: ["mEq/L", "mmol/L"] },
+  Chloride: { unit: "mEq/L", typical_low: 98, typical_high: 106, allowed_units: ["mEq/L", "mmol/L"] },
+  CO2: { unit: "mEq/L", typical_low: 23, typical_high: 29, allowed_units: ["mEq/L", "mmol/L"] },
+  Calcium: { unit: "mg/dL", typical_low: 8.5, typical_high: 10.5, allowed_units: ["mg/dL"] },
   "Total Protein": { unit: "g/dL", typical_low: 6.0, typical_high: 8.3 },
   Albumin: { unit: "g/dL", typical_low: 3.5, typical_high: 5.5 },
   // Hepatic Panel

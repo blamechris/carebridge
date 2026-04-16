@@ -246,6 +246,34 @@ export function validateLabResult(
   const ref = COMMON_LAB_TESTS[testName];
   if (!ref) return { valid: true, warnings, errors };
 
+  // Unit validation — prevents mg/dL vs mmol/L class confusion, a known
+  // sentinel-event source (glucose ×18, creatinine ×88.4). Tests with an
+  // explicit `allowed_units` list reject mismatches as errors; tests
+  // without fall back to a warning when the caller's unit doesn't match
+  // the canonical reference unit.
+  if (unit !== undefined && unit !== null && unit !== "") {
+    if (ref.allowed_units && ref.allowed_units.length > 0) {
+      if (!ref.allowed_units.includes(unit)) {
+        errors.push(
+          `${testName} unit "${unit}" is not accepted — allowed: ` +
+            ref.allowed_units.join(", "),
+        );
+      }
+    } else if (unit !== ref.unit) {
+      warnings.push(
+        `${testName} unit "${unit}" does not match expected "${ref.unit}" — verify unit is correct before interpretation`,
+      );
+    }
+  } else if (ref.allowed_units && ref.allowed_units.length > 0) {
+    // Absent unit on a high-stakes test is an error — a bare number with
+    // no unit is the ambiguity that causes the sentinel events this
+    // allow-list was introduced to prevent.
+    errors.push(
+      `${testName} value submitted without a unit — must be one of: ` +
+        ref.allowed_units.join(", "),
+    );
+  }
+
   if (value < ref.typical_low) {
     warnings.push(
       `${testName} value ${value} ${unit ?? ref.unit} is below typical range (${ref.typical_low}–${ref.typical_high} ${ref.unit})`
