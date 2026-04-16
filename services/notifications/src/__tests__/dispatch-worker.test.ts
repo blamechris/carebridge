@@ -244,4 +244,97 @@ describe("dispatch-worker", () => {
     expect(insertedRecords).toHaveLength(2);
     expect(mockPublishNotification).toHaveBeenCalledTimes(2);
   });
+
+  // ── PHI lock-screen safety (issue #289) ────────────────────────────
+  //
+  // These tests lock in the two-tier split: the Redis pub/sub payload
+  // (what any future APNs/FCM integration hands to the OS for lock-screen
+  // render) must never contain PHI, while the persisted notification row
+  // must still carry the full summary for the authenticated portal fetch.
+
+  describe("PHI lock-screen safety", () => {
+    const phiEvent = (): NotificationEvent =>
+      makeEvent({
+        severity: "critical",
+        category: "critical-value",
+        summary: "Potassium = 7.2 mmol/L for MRN 123456, BP 145/95",
+      });
+
+    it("published body contains no numeric values", async () => {
+      mockSelectResult.push({ user_id: "user-neuro" });
+      mockSelectResult2.push({
+        id: "user-neuro",
+        specialty: "Neurology",
+        role: "physician",
+      });
+
+      const event = phiEvent();
+      await processorFn({ data: event, id: "job-phi-1" });
+
+      expect(mockPublishNotification).toHaveBeenCalledTimes(1);
+      const [, payload] = mockPublishNotification.mock.calls[0];
+      expect(payload.body).not.toMatch(/\d/);
+    });
+
+    it("published body does not contain the raw event.summary text", async () => {
+      mockSelectResult.push({ user_id: "user-neuro" });
+      mockSelectResult2.push({
+        id: "user-neuro",
+        specialty: "Neurology",
+        role: "physician",
+      });
+
+      const event = phiEvent();
+      await processorFn({ data: event, id: "job-phi-2" });
+
+      const [, payload] = mockPublishNotification.mock.calls[0];
+      expect(payload.body).not.toContain(event.summary);
+      // And individual PHI tokens from the summary must not leak.
+      expect(payload.body).not.toContain("Potassium");
+      expect(payload.body).not.toContain("MRN");
+      expect(payload.body).not.toContain("7.2");
+      expect(payload.body).not.toContain("145/95");
+    });
+
+    it("persisted record.summary_safe equals the buildSafeSummary output", async () => {
+      mockSelectResult.push({ user_id: "user-neuro" });
+      mockSelectResult2.push({
+        id: "user-neuro",
+        specialty: "Neurology",
+        role: "physician",
+      });
+
+      const event = phiEvent();
+      await processorFn({ data: event, id: "job-phi-3" });
+
+      // Reproduce buildSafeSummary locally (mirror of the private helper):
+      // a category-only template, PHI-free by construction.
+      const expectedSafe =
+        `Clinical flag — ${event.category.replace(/-/g, " ")}. ` +
+        `Open the portal to view details.`;
+
+      const insertedRecords = mockInsertValues.mock.calls[0][0];
+      expect(insertedRecords).toHaveLength(1);
+      expect(insertedRecords[0].summary_safe).toBe(expectedSafe);
+
+      // Cross-check: the same value is what we publish.
+      const [, payload] = mockPublishNotification.mock.calls[0];
+      expect(payload.body).toBe(expectedSafe);
+    });
+
+    it("persisted record.body still equals event.summary (full, for authenticated fetch)", async () => {
+      mockSelectResult.push({ user_id: "user-neuro" });
+      mockSelectResult2.push({
+        id: "user-neuro",
+        specialty: "Neurology",
+        role: "physician",
+      });
+
+      const event = phiEvent();
+      await processorFn({ data: event, id: "job-phi-4" });
+
+      const insertedRecords = mockInsertValues.mock.calls[0][0];
+      expect(insertedRecords[0].body).toBe(event.summary);
+    });
+  });
 });
