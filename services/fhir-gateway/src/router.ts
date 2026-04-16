@@ -223,6 +223,32 @@ export const fhirGatewayRouter = t.router({
       assertRawPatientAccess(ctx.user, input.patientId, ctx.rbacVerified);
       const db = getDb();
       const { patientId } = input;
+      const exportId = crypto.randomUUID();
+      const exportedAt = new Date().toISOString();
+
+      // HIPAA §164.312(b): every full-patient export is a high-risk PHI
+      // egress. Record it in audit_log BEFORE returning the bundle so a
+      // crash between export-generation and client-delivery still leaves
+      // an audit trail of the attempt.
+      await db.insert(auditLog).values({
+        id: crypto.randomUUID(),
+        user_id: ctx.user.id,
+        action: "export",
+        resource_type: "fhir_bundle",
+        resource_id: exportId,
+        patient_id: patientId,
+        http_status_code: 200,
+        success: true,
+        details: JSON.stringify({
+          export_type: "patient_full_bundle",
+          export_id: exportId,
+          recommended_purge_at: new Date(
+            Date.now() + 15 * 60 * 1000,
+          ).toISOString(), // 15 minutes from now
+        }),
+        ip_address: null,
+        timestamp: exportedAt,
+      });
 
       // 1. Fetch the patient record
       const [patient] = await db
@@ -308,9 +334,27 @@ export const fhirGatewayRouter = t.router({
         });
       }
 
+      // The bundle is returned inline rather than via a signed short-TTL
+      // URL (which is the long-term target; see #290). Until that delivery
+      // layer exists, callers MUST treat the response as ephemeral:
+      //   - persist it only long enough for the immediate use case;
+      //   - never cache it at the CDN or intermediary layer;
+      //   - discard it after `recommended_purge_at`.
+      // recommended_purge_at is set 15 minutes from generation to bound
+      // the window a leaked in-memory copy remains useful.
       return {
         resourceType: "Bundle" as const,
         type: "collection" as const,
+        // Non-FHIR metadata carried alongside the bundle — consumers that
+        // only care about the FHIR contract can ignore these fields.
+        meta: {
+          export_id: exportId,
+          exported_at: exportedAt,
+          recommended_purge_at: new Date(
+            new Date(exportedAt).getTime() + 15 * 60 * 1000,
+          ).toISOString(),
+          ...(ctx.user?.id ? { exported_by: ctx.user.id } : {}),
+        },
         entry,
       };
     }),
