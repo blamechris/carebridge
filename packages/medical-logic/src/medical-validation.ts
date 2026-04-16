@@ -180,6 +180,26 @@ export function validateVital(
     if (secondary < 20 || secondary > 200) {
       errors.push(`Diastolic ${secondary} is outside plausible range (20–200)`);
     }
+
+    // Pulse-pressure plausibility check. Normal adult pulse pressure is
+    // ~30-50 mmHg; a narrow (<20) PP usually indicates shock, tamponade,
+    // or an artifact, and a wide (>100) PP suggests aortic regurgitation
+    // or measurement error. Either extreme is physically implausible
+    // without clinical context that should be confirmed on the record.
+    if (secondary < primary) {
+      const pulsePressure = primary - secondary;
+      if (pulsePressure < 20) {
+        warnings.push(
+          `Narrow pulse pressure ${pulsePressure} mmHg (${primary}/${secondary}) — ` +
+            `consider shock, cardiac tamponade, or measurement artifact`,
+        );
+      } else if (pulsePressure > 100) {
+        warnings.push(
+          `Wide pulse pressure ${pulsePressure} mmHg (${primary}/${secondary}) — ` +
+            `consider aortic regurgitation or measurement error`,
+        );
+      }
+    }
   }
 
   return { valid: errors.length === 0, warnings, errors };

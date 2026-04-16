@@ -64,6 +64,32 @@ describe("validateVital", () => {
     expect(result.valid).toBe(true);
   });
 
+  it("warns on narrow pulse pressure (shock / tamponade)", () => {
+    // 80/75 — PP=5, clinically suggests shock or artifact
+    const result = validateVital("blood_pressure", 80, 75);
+    expect(result.warnings.some((w) => w.toLowerCase().includes("narrow pulse pressure"))).toBe(true);
+  });
+
+  it("warns on wide pulse pressure (aortic regurgitation)", () => {
+    // 140/20 — PP=120, suggests AR or measurement error
+    // Note: diastolic 20 is at the lower plausibility bound but valid.
+    const result = validateVital("blood_pressure", 140, 20);
+    expect(result.warnings.some((w) => w.toLowerCase().includes("wide pulse pressure"))).toBe(true);
+  });
+
+  it("does not warn on typical pulse pressure", () => {
+    // 120/80 — PP=40, normal adult
+    const result = validateVital("blood_pressure", 120, 80);
+    expect(result.warnings.some((w) => w.toLowerCase().includes("pulse pressure"))).toBe(false);
+  });
+
+  it("does not warn on pulse pressure when diastolic >= systolic (error already flagged)", () => {
+    // Invariant: PP warning should not fire when the diastolic >= systolic
+    // error is already flagged — no need to pile on.
+    const result = validateVital("blood_pressure", 120, 130);
+    expect(result.warnings.some((w) => w.toLowerCase().includes("pulse pressure"))).toBe(false);
+  });
+
   it("returns valid for temperature in normal range", () => {
     const result = validateVital("temperature", 98.6);
     expect(result.valid).toBe(true);
