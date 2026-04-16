@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { getRedisConnection } from "./redis.js";
+import {
+  getRedisConnection,
+  CLINICAL_EVENTS_JOB_OPTIONS,
+} from "./redis.js";
 
 describe("getRedisConnection", () => {
   const originalEnv = { ...process.env };
@@ -72,5 +75,35 @@ describe("getRedisConnection", () => {
       password: "p@ss",
       tls: {},
     });
+  });
+});
+
+describe("CLINICAL_EVENTS_JOB_OPTIONS", () => {
+  it("pins attempts=8 and base delay=2000 ms", () => {
+    // Pin the exact invariants the retry-budget calculation depends on;
+    // the ≥4-min floor below is a derived consequence. Changing either
+    // value without touching these assertions is a silent behavior
+    // change the floor assertion would miss.
+    expect(CLINICAL_EVENTS_JOB_OPTIONS.attempts).toBe(8);
+    expect(CLINICAL_EVENTS_JOB_OPTIONS.backoff.delay).toBe(2000);
+  });
+
+  it("provides at least 4 minutes of cumulative retry tolerance", () => {
+    // 8 attempts with exponential backoff base 2000 ms:
+    // 0 + 2 + 4 + 8 + 16 + 32 + 64 + 128 = 254 s ~= 4.2 min
+    const base = CLINICAL_EVENTS_JOB_OPTIONS.backoff.delay;
+    const attempts = CLINICAL_EVENTS_JOB_OPTIONS.attempts;
+    let totalMs = 0;
+    for (let i = 1; i < attempts; i++) totalMs += base * 2 ** (i - 1);
+    expect(totalMs).toBeGreaterThanOrEqual(240_000);
+  });
+
+  it("uses exponential backoff", () => {
+    expect(CLINICAL_EVENTS_JOB_OPTIONS.backoff.type).toBe("exponential");
+  });
+
+  it("keeps history bounded", () => {
+    expect(CLINICAL_EVENTS_JOB_OPTIONS.removeOnComplete).toEqual({ count: 1000 });
+    expect(CLINICAL_EVENTS_JOB_OPTIONS.removeOnFail).toEqual({ count: 10000 });
   });
 });
