@@ -1,5 +1,9 @@
-import { describe, it, expect } from "vitest";
-import { validateLLMResponse } from "../llm-validator.js";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  validateLLMResponse,
+  MAX_FLAGS,
+  SUSPICIOUS_FLAG_THRESHOLD,
+} from "../llm-validator.js";
 
 function makeFlag(overrides: Record<string, unknown> = {}) {
   return {
@@ -157,8 +161,11 @@ describe("validateLLMResponse", () => {
     }
   });
 
-  it("warns on suspicious flag count (>= 15)", () => {
-    const flags = Array.from({ length: 16 }, () => makeFlag());
+  it("warns on suspicious flag count at the threshold boundary", () => {
+    // Exactly at threshold should fire (boundary is inclusive).
+    const flags = Array.from({ length: SUSPICIOUS_FLAG_THRESHOLD }, () =>
+      makeFlag(),
+    );
     const input = JSON.stringify(flags);
     const result = validateLLMResponse(input);
 
@@ -170,11 +177,104 @@ describe("validateLLMResponse", () => {
     }
   });
 
+  it("does not warn on suspicious flag count just below threshold", () => {
+    const flags = Array.from({ length: SUSPICIOUS_FLAG_THRESHOLD - 1 }, () =>
+      makeFlag(),
+    );
+    const input = JSON.stringify(flags);
+    const result = validateLLMResponse(input);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(
+        result.warnings.some((w) => w.includes("Suspiciously high")),
+      ).toBe(false);
+    }
+  });
+
   it("returns ok: false when response is not an array", () => {
     const result = validateLLMResponse(JSON.stringify({ flag: "value" }));
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error).toContain("must be a JSON array");
     }
+  });
+});
+
+describe("validateLLMResponse — configuration constants", () => {
+  it("exposes MAX_FLAGS = 50", () => {
+    expect(MAX_FLAGS).toBe(50);
+  });
+
+  // Regression guard: SUSPICIOUS_FLAG_THRESHOLD was recalibrated after
+  // MAX_FLAGS was raised from 20 -> 50 (issue #511). At MAX_FLAGS=20 the
+  // original threshold of 15 sat at 75% of cap ("near-cap" semantics);
+  // after the raise to 50 we preserve that ratio at floor(50 * 0.75) = 37.
+  it("exposes SUSPICIOUS_FLAG_THRESHOLD = 37 (~75% of MAX_FLAGS)", () => {
+    expect(SUSPICIOUS_FLAG_THRESHOLD).toBe(37);
+    expect(SUSPICIOUS_FLAG_THRESHOLD).toBe(Math.floor(MAX_FLAGS * 0.75));
+  });
+});
+
+describe("validateLLMResponse — truncation observability", () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
+  it("emits a structured console.warn when flags exceed MAX_FLAGS", () => {
+    const criticals = Array.from({ length: 2 }, () =>
+      makeFlag({ severity: "critical" }),
+    );
+    const warnings = Array.from({ length: 3 }, () =>
+      makeFlag({ severity: "warning" }),
+    );
+    const infos = Array.from({ length: 60 }, () =>
+      makeFlag({ severity: "info" }),
+    );
+    const input = JSON.stringify([...criticals, ...warnings, ...infos]);
+
+    const result = validateLLMResponse(input);
+
+    expect(result.ok).toBe(true);
+    // Find the structured truncation log (object arg, not a raw string).
+    const structuredCall = warnSpy.mock.calls.find(
+      (call) =>
+        typeof call[0] === "object" &&
+        call[0] !== null &&
+        (call[0] as { event?: string }).event === "llm_findings_truncated",
+    );
+    expect(structuredCall).toBeDefined();
+    expect(structuredCall![0]).toMatchObject({
+      event: "llm_findings_truncated",
+      received: 65,
+      kept: 50,
+      dropped: 15,
+      droppedBySeverity: {
+        critical: 0,
+        warning: 0,
+        info: 15,
+      },
+      maxFlags: MAX_FLAGS,
+    });
+  });
+
+  it("does not emit a truncation log when flags are at or below MAX_FLAGS", () => {
+    const flags = Array.from({ length: MAX_FLAGS }, () => makeFlag());
+    const result = validateLLMResponse(JSON.stringify(flags));
+
+    expect(result.ok).toBe(true);
+    const structuredCall = warnSpy.mock.calls.find(
+      (call) =>
+        typeof call[0] === "object" &&
+        call[0] !== null &&
+        (call[0] as { event?: string }).event === "llm_findings_truncated",
+    );
+    expect(structuredCall).toBeUndefined();
   });
 });
