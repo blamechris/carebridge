@@ -141,11 +141,12 @@ export function mapReactionToCriticality(
     case "moderate":
       return "high";
     case "mild":
-      // Conservative floor: mild medication allergies retain "low" only when
-      // no red-flag features exist (already checked above). For medication
-      // allergens with unknown reaction, stay at "low" rather than bouncing
-      // to "unable-to-assess" because an explicit mild report is a signal.
-      return allergenCategory === "medication" ? "low" : "low";
+      // Conservative floor: even a reported mild medication allergy is
+      // treated as high risk because drug re-exposure is often deliberate
+      // in a clinical setting and a wrong call can kill a patient inside
+      // the hospital. Non-medication allergens without red-flag features
+      // remain low.
+      return allergenCategory === "medication" ? "high" : "low";
     default:
       return "unable-to-assess";
   }
@@ -163,6 +164,19 @@ function mapSeverity(
       return undefined;
   }
 }
+
+/**
+ * Food SNOMED codes (small curated sample; full mapping is a clinical
+ * data task). Hoisted to module scope so the Set is allocated once per
+ * process rather than once per exported allergy.
+ */
+const FOOD_SNOMED: ReadonlySet<string> = new Set([
+  "91935009", // peanut
+  "102259009", // shellfish
+  "226934009", // egg
+  "3718001", // milk (cow's)
+  "735029006", // soybean protein
+]);
 
 /**
  * Heuristic allergen classification into FHIR categories.
@@ -183,19 +197,11 @@ export function classifyAllergenCategory(
 
   const text = allergen.toLowerCase();
 
-  // Food SNOMED codes (small sample; full mapping is a clinical data task).
-  const FOOD_SNOMED = new Set([
-    "91935009", // peanut
-    "102259009", // shellfish
-    "226934009", // egg
-    "3718001", // milk (cow's)
-    "735029006", // soybean protein
-  ]);
   if (snomedCode && FOOD_SNOMED.has(snomedCode)) return "food";
 
-  // Text-pattern fallback.
+  // Text-pattern fallback. "mollus[ck]s?" matches mollusk/mollusc/mollusks/molluscs.
   if (
-    /\b(peanut|shellfish|egg|milk|soy|wheat|gluten|tree\s*nut|fish|sesame|mollus)\b/i.test(
+    /\b(peanut|shellfish|egg|milk|soy|wheat|gluten|tree\s*nut|fish|sesame|mollus[ck]s?)\b/i.test(
       text,
     )
   ) {

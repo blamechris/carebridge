@@ -8,19 +8,20 @@ import {
 
 type Allergy = Parameters<typeof toFhirAllergyIntolerance>[0];
 
-function makeAllergy(
-  overrides: Partial<Record<keyof Allergy, unknown>> = {},
-): Allergy {
+function makeAllergy(overrides: Partial<Allergy> = {}): Allergy {
   return {
     id: "a1",
-    allergen: "Penicillin",
+    // Default is a non-medication allergen so severity→criticality tests
+    // aren't implicitly elevated by the medication floor (see
+    // mapReactionToCriticality for why mild+medication now maps to high).
+    allergen: "Unknown agent",
     snomed_code: null,
     rxnorm_code: null,
     reaction: null,
     severity: null,
     created_at: "2026-01-01T00:00:00.000Z",
     ...overrides,
-  } as unknown as Allergy;
+  } as Allergy;
 }
 
 describe("toFhirAllergyIntolerance severity -> criticality mapping", () => {
@@ -98,10 +99,19 @@ describe("mapReactionToCriticality — #265 refined rules", () => {
     ).toBe("high");
   });
 
-  it("keeps mild with benign reaction text as low", () => {
+  it("keeps mild + non-medication + benign reaction as low", () => {
     expect(
-      mapReactionToCriticality("mild", "small hives on wrist", "medication"),
+      mapReactionToCriticality("mild", "small hives on wrist", "food"),
     ).toBe("low");
+  });
+
+  it("elevates mild + medication to high even without red flags", () => {
+    // Drug re-exposure is often deliberate in a clinical setting and a
+    // wrong call can kill a patient inside the hospital — treat any
+    // reported medication allergy as high risk.
+    expect(
+      mapReactionToCriticality("mild", "small rash on wrist", "medication"),
+    ).toBe("high");
   });
 
   it("returns unable-to-assess when severity is unknown and no red flags", () => {
