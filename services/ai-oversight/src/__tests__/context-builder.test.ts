@@ -287,4 +287,88 @@ describe("buildPatientContext — event-time snapshot (LLM path)", () => {
     expect(ctx.recent_labs).toBeDefined();
     expect(ctx.recent_labs?.map((l) => l.test_name)).toEqual(["WBC"]);
   });
+
+  // ─── #513 — normalize ISO timestamp comparisons ────────────────────
+  it("compares offset-form (-05:00) timestamps identically to equivalent Z-form", async () => {
+    // The resolved_date is expressed with a UTC-5 offset; the event uses
+    // Z-form. Lex compare mis-sorts them; Date.parse normalization treats
+    // them as the same instant, so the diagnosis is correctly excluded.
+    diagnosesSelect.mockResolvedValue([
+      {
+        description: "Flu (offset-form resolved_date)",
+        icd10_code: "J10.1",
+        status: "active",
+        onset_date: "2026-04-01T00:00:00.000Z",
+        resolved_date: "2026-04-16T07:00:00.000-05:00",
+        created_at: "2026-04-01T00:00:00.000Z",
+      },
+    ]);
+
+    const ctx = await buildPatientContext("p-1", baseEvent);
+
+    expect(ctx.patient.active_diagnoses).not.toContain(
+      "Flu (offset-form resolved_date)",
+    );
+  });
+
+  it("compares bare-date onset timestamps correctly against Z-form event", async () => {
+    diagnosesSelect.mockResolvedValue([
+      {
+        description: "Hypertension (bare-date onset, still active)",
+        icd10_code: "I10",
+        status: "active",
+        onset_date: "2025-01-15",
+        resolved_date: null,
+        created_at: "2025-01-15T00:00:00.000Z",
+      },
+      {
+        description: "Bronchitis (bare-date resolved before event)",
+        icd10_code: "J40",
+        status: "active",
+        onset_date: "2026-04-01",
+        resolved_date: "2026-04-10",
+        created_at: "2026-04-01T00:00:00.000Z",
+      },
+    ]);
+
+    const ctx = await buildPatientContext("p-1", baseEvent);
+
+    expect(ctx.patient.active_diagnoses).toContain(
+      "Hypertension (bare-date onset, still active)",
+    );
+    expect(ctx.patient.active_diagnoses).not.toContain(
+      "Bronchitis (bare-date resolved before event)",
+    );
+  });
+
+  // ─── #515 — exclude logical retractions ────────────────────────────
+  it("excludes a diagnosis with status=entered_in_error even when timestamps say active", async () => {
+    diagnosesSelect.mockResolvedValue([
+      {
+        description: "Myocardial infarction (charting mistake)",
+        icd10_code: "I21.9",
+        status: "entered_in_error",
+        onset_date: "2025-01-01T00:00:00.000Z",
+        resolved_date: null,
+        created_at: "2025-01-01T00:00:00.000Z",
+      },
+      {
+        description: "Breast cancer (chronic, real)",
+        icd10_code: "C50.9",
+        status: "chronic",
+        onset_date: "2025-01-01T00:00:00.000Z",
+        resolved_date: null,
+        created_at: "2025-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const ctx = await buildPatientContext("p-1", baseEvent);
+
+    expect(ctx.patient.active_diagnoses).not.toContain(
+      "Myocardial infarction (charting mistake)",
+    );
+    expect(ctx.patient.active_diagnoses).toContain(
+      "Breast cancer (chronic, real)",
+    );
+  });
 });

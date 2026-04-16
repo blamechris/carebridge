@@ -11,6 +11,10 @@ import {
   type FlagActionModalFlag,
 } from "@/components/flag-action-modal";
 import { VitalsTrendChart } from "@/components/vitals-trend-chart";
+import {
+  deriveAllergyDisplayState,
+  type AllergyStatus,
+} from "@/lib/allergy-display";
 
 const tabs = [
   { key: "overview", label: "Overview" },
@@ -146,13 +150,24 @@ function OverviewTab({ patientId }: { patientId: string }) {
   const allergiesQuery = trpc.patients.allergies.getByPatient.useQuery({ patientId });
   const careTeamQuery = trpc.patients.careTeam.getByPatient.useQuery({ patientId });
 
+  const [showAllergyError, setShowAllergyError] = useState(false);
+
   const patient = patientQuery.data;
   const diagnoses = diagnosesQuery.data ?? [];
-  const allergies = allergiesQuery.data ?? [];
   const careTeam = careTeamQuery.data ?? [];
 
   if (patientQuery.isLoading) return <LoadingState label="overview" />;
   if (patientQuery.isError || !patient) return <ErrorState label="overview" />;
+
+  // Issue #218: allergies must never silently fall back to "NKDA" on fetch
+  // failure. deriveAllergyDisplayState() distinguishes loading / error /
+  // the three empty variants (nkda, unknown, has_allergies) from a
+  // populated list, using the same allergy_status semantics as
+  // formatAllergies() in @carebridge/ai-prompts.
+  const allergyState = deriveAllergyDisplayState(
+    allergiesQuery,
+    (patient.allergy_status as AllergyStatus | null | undefined) ?? null,
+  );
 
   return (
     <div className="detail-grid">
@@ -193,10 +208,53 @@ function OverviewTab({ patientId }: { patientId: string }) {
 
       <div className="detail-card">
         <div className="detail-card-title">Allergies</div>
-        {allergiesQuery.isLoading ? (
-          <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading...</div>
-        ) : allergies.length > 0 ? (
-          allergies.map((allergy, i) => (
+        {allergyState.kind === "loading" ? (
+          <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
+            Loading...
+          </div>
+        ) : allergyState.kind === "error" ? (
+          // Clinical-safety critical (issue #218): on fetch failure we
+          // explicitly surface that allergy data is UNAVAILABLE. We do
+          // NOT render "NKDA" — a silent fallback could lead to
+          // prescribing a contraindicated drug.
+          <div role="alert" style={{ fontSize: 13 }}>
+            <div style={{ color: "var(--critical)", fontWeight: 600 }}>
+              {"\u26A0"} Allergy data unavailable — refresh before
+              prescribing.
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowAllergyError((v) => !v)}
+              style={{
+                marginTop: 6,
+                background: "transparent",
+                border: "none",
+                padding: 0,
+                color: "var(--text-muted)",
+                fontSize: 12,
+                textDecoration: "underline",
+                cursor: "pointer",
+              }}
+              aria-expanded={showAllergyError}
+            >
+              {showAllergyError ? "Hide details" : "Show details"}
+            </button>
+            {showAllergyError ? (
+              <div
+                style={{
+                  marginTop: 6,
+                  color: "var(--text-muted)",
+                  fontFamily: "monospace",
+                  fontSize: 12,
+                  wordBreak: "break-word",
+                }}
+              >
+                {allergyState.message}
+              </div>
+            ) : null}
+          </div>
+        ) : allergyState.kind === "populated" ? (
+          allergyState.allergies.map((allergy, i) => (
             <div
               key={i}
               className="list-item"
@@ -206,8 +264,29 @@ function OverviewTab({ patientId }: { patientId: string }) {
               {allergy.reaction ? ` (${allergy.reaction})` : ""}
             </div>
           ))
+        ) : allergyState.kind === "nkda" ? (
+          <div style={{ color: "var(--success)", fontSize: 13 }}>
+            NKDA (confirmed)
+          </div>
+        ) : allergyState.kind === "has_allergies_undocumented" ? (
+          // Status affirms allergies exist but none are on file — a
+          // documentation gap. Distinct from "unknown" because somebody
+          // has flagged the patient as allergic.
+          <div
+            role="status"
+            style={{ color: "var(--warning)", fontSize: 13 }}
+          >
+            Has allergies — none documented (data gap)
+          </div>
         ) : (
-          <div style={{ color: "var(--success)", fontSize: 13 }}>NKDA</div>
+          // allergyState.kind === "unknown" — never assessed. Must NOT
+          // be conflated with NKDA.
+          <div
+            role="status"
+            style={{ color: "var(--warning)", fontSize: 13 }}
+          >
+            Allergy status unknown — not assessed
+          </div>
         )}
       </div>
 
