@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { pgTable, text, boolean, index } from "drizzle-orm/pg-core";
+import { pgTable, text, boolean, real, index } from "drizzle-orm/pg-core";
 import { encryptedText } from "../encryption.js";
 
 export const patients = pgTable("patients", {
@@ -22,9 +22,8 @@ export const patients = pgTable("patients", {
   emergency_contact_name: encryptedText("emergency_contact_name"),
   emergency_contact_phone: encryptedText("emergency_contact_phone"),
   primary_provider_id: text("primary_provider_id"),
-  // Overall patient allergy status: distinguishes "confirmed no allergies" (nkda)
-  // from "never assessed" (unknown) and "has documented allergies" (has_allergies).
-  allergy_status: text("allergy_status").notNull().default("unknown"), // nkda, unknown, has_allergies
+  allergy_status: text("allergy_status").notNull().default("unknown"),
+  weight_kg: real("weight_kg"),
   created_at: text("created_at").notNull(),
   updated_at: text("updated_at").notNull(),
 });
