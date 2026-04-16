@@ -8,11 +8,12 @@
  * engine. The write-side is the *outbox*. This is the *drain*.
  *
  * Responsibilities:
- *   1. Periodically scan the outbox for rows with status='pending'.
- *   2. Re-enqueue the stored payload on the clinical-events BullMQ queue.
- *   3. On success: mark the row status='processed' (processed_at stamped).
- *   4. On failure below the retry cap: increment retry_count, keep pending.
- *   5. On failure at the retry cap: mark status='failed' — this row is now
+ *   1. Recover any rows stuck in status='processing' from a prior crashed tick.
+ *   2. Atomically claim a batch of status='pending' rows (flip to 'processing').
+ *   3. Re-enqueue each claimed payload on the clinical-events BullMQ queue.
+ *   4. On success: mark the row status='processed' (processed_at stamped).
+ *   5. On failure below the retry cap: increment retry_count, flip back to 'pending'.
+ *   6. On failure at the retry cap: mark status='failed' — this row is now
  *      a candidate for operator-driven review; it will not be retried again.
  *
  * Failure-rate observability comes from the per-run return value:
@@ -23,7 +24,7 @@
 
 import { Queue, Worker } from "bullmq";
 import type { Job } from "bullmq";
-import { and, eq, lt } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import {
   getRedisConnection,
   CLINICAL_EVENTS_JOB_OPTIONS,
@@ -63,50 +64,105 @@ export interface ReconcileResult {
   failed: number;
 }
 
+type ClaimedRow = {
+  id: string;
+  event_type: string;
+  patient_id: string;
+  event_payload: unknown;
+  status: string;
+  retry_count: number | null;
+  created_at: string;
+};
+
 /**
  * Drain one batch of pending outbox rows. Exported for tests.
  *
- * Multi-worker safety:
- *   ai-oversight is horizontally scalable; N pods each tick independently.
- *   The SELECT uses `FOR UPDATE SKIP LOCKED` so two reconcilers that tick
- *   within the same window claim disjoint batches instead of both seeing
- *   — and both re-emitting — the same `status='pending'` rows. The locks
- *   are released when the surrounding statement completes, which for our
- *   flow is effectively the end of this function.
+ * Claim-then-process (issue #507):
+ *   The original drain loop was `SELECT FOR UPDATE SKIP LOCKED` then
+ *   `queue.add` then `UPDATE processed`. Two correctness gaps forced a
+ *   redesign:
  *
- * Idempotency:
- *   `queue.add` is called with `jobId: row.id`. BullMQ dedupes by job id,
- *   so even if the enqueue succeeds and the follow-up status UPDATE fails
- *   (connection blip, pool exhaustion, SIGTERM between the two) the next
- *   tick cannot produce a duplicate clinical-events job for the same
- *   outbox row. This is belt-and-braces with review-service's
- *   trigger_event_id idempotency (PR #492).
+ *   1. `FOR UPDATE SKIP LOCKED` in Drizzle (outside an explicit transaction)
+ *      holds the row lock only for the lifetime of the SELECT statement.
+ *      The lock is gone before `queue.add` runs, so a concurrent pod
+ *      could still see the same row as `status='pending'` and re-enqueue
+ *      it. BullMQ `jobId` dedup masks this on the receiving side, but
+ *      the outbox itself still did double work and double network I/O.
+ *
+ *   2. If `queue.add` succeeded and the terminal UPDATE failed (SIGTERM,
+ *      pool exhaustion), the row stayed `pending` and the next tick
+ *      re-emitted it. Review-service's `trigger_event_id` dedup only
+ *      covers `status='completed'` review_jobs, which leaves a small
+ *      window where a duplicate flag can slip through.
+ *
+ *   The fix: single atomic UPDATE...WHERE id IN (SELECT ... FOR UPDATE
+ *   SKIP LOCKED) RETURNING *. The UPDATE auto-commits as one statement,
+ *   so the transition `pending -> processing` is persistent before
+ *   `queue.add` runs. A crash between claim and enqueue leaves the row
+ *   pinned to `processing`; the next tick's recovery pass resets it to
+ *   `pending` so it becomes claimable again.
+ *
+ * Stale-'processing' recovery:
+ *   The first thing each tick does is reset any `status='processing'`
+ *   rows back to `pending`. Because the reconcile interval is 5 minutes
+ *   and each row's enqueue completes in milliseconds, any row still in
+ *   `processing` at tick start is definitionally orphaned (the pod that
+ *   claimed it crashed before completing). This recovery is safe because
+ *   BullMQ `jobId` dedup prevents a duplicate clinical-events job even
+ *   if the orphaned claim's `queue.add` had succeeded just before the
+ *   crash — the re-emit is a no-op on the receiving side.
+ *
+ * BullMQ idempotency:
+ *   `queue.add` is still called with `jobId: row.id`. Belt-and-braces
+ *   with the atomic claim above and with review-service's
+ *   `trigger_event_id` dedup (PR #492).
  */
 export async function reconcileFailedEvents(): Promise<ReconcileResult> {
   const db = getDb();
   const queue = getClinicalEventsQueue();
 
-  const pending = await db
-    .select()
-    .from(failedClinicalEvents)
+  // Step 1: Recover rows orphaned by a prior crashed tick. Any row in
+  // status='processing' at the start of a tick is orphaned — the reconcile
+  // interval (5 min) is far longer than the per-row work (ms), so if a
+  // previous claim left a row in 'processing', the claiming pod has
+  // crashed. Flipping back to 'pending' makes the row claimable again.
+  // retry_count is left alone: the crashed attempt did not consume a retry.
+  await db
+    .update(failedClinicalEvents)
+    .set({ status: "pending" })
+    .where(eq(failedClinicalEvents.status, "processing"));
+
+  // Step 2: Atomic claim. UPDATE...WHERE id IN (SELECT ... FOR UPDATE
+  // SKIP LOCKED) RETURNING * is a single statement — it auto-commits
+  // the status transition before we proceed to enqueue. Concurrent pods
+  // contending for the same rows have their subquery locks acquired
+  // under SKIP LOCKED, so each pod sees a disjoint batch.
+  const claimed = (await db
+    .update(failedClinicalEvents)
+    .set({ status: "processing" })
     .where(
-      and(
-        eq(failedClinicalEvents.status, "pending"),
-        lt(failedClinicalEvents.retry_count, MAX_RECONCILE_RETRIES),
-      ),
+      sql`${failedClinicalEvents.id} IN (
+        SELECT ${failedClinicalEvents.id}
+        FROM ${failedClinicalEvents}
+        WHERE ${failedClinicalEvents.status} = 'pending'
+          AND ${failedClinicalEvents.retry_count} < ${MAX_RECONCILE_RETRIES}
+        ORDER BY ${failedClinicalEvents.created_at} ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT ${RECONCILE_BATCH_SIZE}
+      )`,
     )
-    .for("update", { skipLocked: true })
-    .limit(RECONCILE_BATCH_SIZE);
+    .returning()) as ClaimedRow[];
 
   let reconciled = 0;
   let retried = 0;
   let failed = 0;
 
-  for (const row of pending) {
+  for (const row of claimed) {
     try {
-      // jobId: row.id -> BullMQ dedupes by outbox row id. If the UPDATE
-      // below fails after this add resolves, the next tick's re-enqueue
-      // of the same row is a no-op on BullMQ's side.
+      // jobId: row.id — BullMQ dedupes by outbox row id. If the UPDATE
+      // below fails after this add resolves, the recovery pass on the
+      // next tick will reset the row to 'pending' and re-claim it; the
+      // subsequent queue.add with the same jobId is a no-op.
       await queue.add(row.event_type, row.event_payload, { jobId: row.id });
 
       await db
@@ -126,6 +182,10 @@ export async function reconcileFailedEvents(): Promise<ReconcileResult> {
       await db
         .update(failedClinicalEvents)
         .set({
+          // Flip from 'processing' back to retryable 'pending', or to
+          // terminal 'failed' at the cap. Leaving the row in 'processing'
+          // would block the recovery pass from acting on it — we explicitly
+          // relinquish the claim here.
           status: isTerminal ? "failed" : "pending",
           retry_count: nextRetry,
           error_message: errorMessage,
