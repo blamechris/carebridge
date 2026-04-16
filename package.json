@@ -11,7 +11,8 @@
     "db:generate": "pnpm --filter @carebridge/db-schema generate",
     "db:migrate": "pnpm --filter @carebridge/db-schema migrate",
     "db:seed": "tsx tooling/seed/index.ts",
-    "clean": "turbo clean"
+    "clean": "turbo clean",
+    "smoke-test": "tsx tooling/smoke-test.ts"
   },
   "devDependencies": {
     "turbo": "^2.4.0",
