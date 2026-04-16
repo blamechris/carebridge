@@ -31,6 +31,7 @@ export async function emitClinicalEvent(event: ClinicalEvent): Promise<void> {
         status: "pending",
         retry_count: 0,
         created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       });
     } catch (dbError) {
       // Both Redis and DB fallback failed — log critical error as last resort
