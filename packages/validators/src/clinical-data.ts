@@ -34,7 +34,10 @@ export const medRouteSchema = z.enum([
   "oral", "IV", "IM", "subcutaneous", "topical", "inhaled", "rectal", "other",
 ]);
 
-export const medStatusSchema = z.enum(["active", "discontinued", "completed"]);
+// `held` = temporarily paused with intent to resume (distinct from `discontinued`,
+// which is a permanent stop). Required by rule ONCO-ANTICOAG-HELD-001, which
+// flags held anticoagulants in patients with active VTE.
+export const medStatusSchema = z.enum(["active", "held", "discontinued", "completed"]);
 
 export const createMedicationSchema = z.object({
   patient_id: z.string().uuid(),
