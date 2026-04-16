@@ -154,6 +154,8 @@ describe("updateMedication", () => {
       data: {
         resourceId: MED_ID,
         changedFields: ["status"],
+        name: "Enoxaparin",
+        status: "discontinued",
       },
     });
   });
@@ -283,6 +285,8 @@ describe("updateMedication", () => {
       data: {
         resourceId: MED_ID,
         changedFields: ["status"],
+        name: "Enoxaparin",
+        status: "held",
       },
     });
   });
