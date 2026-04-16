@@ -43,7 +43,9 @@ describe("severityRank", () => {
 });
 
 describe("categoryRank", () => {
-  it("orders critical-value > medication-safety > cross-specialty > clinical-alert > care-gap", () => {
+  it("ranks the full FlagCategory set from shared-types", () => {
+    // Critical > drug-safety > cross-specialty > trend > patient-reported
+    // > documentation > care-gap
     expect(categoryRank("critical-value")).toBeGreaterThan(
       categoryRank("medication-safety"),
     );
@@ -51,11 +53,29 @@ describe("categoryRank", () => {
       categoryRank("cross-specialty"),
     );
     expect(categoryRank("cross-specialty")).toBeGreaterThan(
-      categoryRank("clinical-alert"),
+      categoryRank("trend-concern"),
     );
-    expect(categoryRank("clinical-alert")).toBeGreaterThan(
+    expect(categoryRank("trend-concern")).toBeGreaterThan(
+      categoryRank("patient-reported"),
+    );
+    expect(categoryRank("patient-reported")).toBeGreaterThan(
+      categoryRank("documentation-discrepancy"),
+    );
+    expect(categoryRank("documentation-discrepancy")).toBeGreaterThan(
       categoryRank("care-gap"),
     );
+  });
+
+  it("treats medication-safety and drug-interaction at the same tier", () => {
+    // Both are drug-safety signals with equivalent clinical urgency.
+    expect(categoryRank("drug-interaction")).toBe(
+      categoryRank("medication-safety"),
+    );
+  });
+
+  it("treats unknown categories as lowest rank", () => {
+    expect(categoryRank("clinical-alert")).toBe(0); // not a real FlagCategory
+    expect(categoryRank("made-up")).toBe(0);
   });
 });
 
@@ -121,9 +141,7 @@ describe("shouldDropAsDuplicate — #266 precedence", () => {
     expect(shouldDropAsDuplicate(finding, [rf1, rf2])).toBe(true);
   });
 
-  it("keeps an LLM finding when the matching rule has ALL new value signals but LLM does not", () => {
-    // Sanity: rule flag notifying broader specialties than LLM — LLM still
-    // contains no new info, should be dropped.
+  it("drops when the rule has broader specialties than the LLM (LLM adds nothing)", () => {
     const rf = ruleFlag({
       notify_specialties: ["oncology", "neurology", "emergency"],
     });
@@ -139,5 +157,22 @@ describe("shouldDropAsDuplicate — #266 precedence", () => {
     const rf = ruleFlag({ notify_specialties: [] });
     const finding = llm({ notify_specialties: [] });
     expect(shouldDropAsDuplicate(finding, [rf])).toBe(true);
+  });
+
+  it("drops when a later rule subsumes, even if an earlier rule does not", () => {
+    // Regression: earlier version returned `false` as soon as it saw ANY
+    // non-subsuming match, so a mix of [non-subsuming, subsuming] incorrectly
+    // kept the LLM finding. Now scans the full list.
+    const nonSubsuming = ruleFlag({ severity: "info" }); // LLM severity is warning → escalation
+    const subsuming = ruleFlag({ severity: "warning" }); // same concept, same severity
+    const finding = llm({ severity: "warning" });
+    expect(shouldDropAsDuplicate(finding, [nonSubsuming, subsuming])).toBe(true);
+  });
+
+  it("keeps when no rule subsumes — even if multiple rules match the concept", () => {
+    const rf1 = ruleFlag({ severity: "info" }); // LLM escalates severity
+    const rf2 = ruleFlag({ severity: "info", notify_specialties: ["cardiology"] });
+    const finding = llm({ severity: "warning" });
+    expect(shouldDropAsDuplicate(finding, [rf1, rf2])).toBe(false);
   });
 });

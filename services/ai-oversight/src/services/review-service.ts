@@ -571,26 +571,38 @@ export function severityRank(severity: string): number {
  * Category ordering for precedence decisions. A rule flag in a higher-
  * precedence category takes primacy when both fire on the same concept.
  *
- * Rationale:
- *   critical-value  — directly reported abnormal (e.g. K+ 7.0); no room for
- *                     second-guessing. Highest precedence.
- *   medication-safety — drug/drug, drug/allergy hard interactions; high
- *                       confidence and high blast radius if missed.
- *   cross-specialty — multi-specialty patterns; high confidence when fired.
- *   clinical-alert  — general alerts.
- *   care-gap        — lower urgency; easiest to merge with LLM additions.
+ * Values ordered by clinical urgency using the full FlagCategory set from
+ * `@carebridge/shared-types`:
+ *
+ *   critical-value          — directly reported abnormal (e.g. K+ 7.0).
+ *                             Requires immediate action. Highest rank.
+ *   medication-safety       — drug/allergy/contraindication. High blast
+ *                             radius if missed.
+ *   drug-interaction        — drug/drug interaction. Safety-equivalent to
+ *                             medication-safety, treated at the same tier.
+ *   cross-specialty         — multi-specialty pattern.
+ *   trend-concern           — decline observed over time.
+ *   patient-reported        — patient-provided symptom.
+ *   documentation-discrepancy — record missing/inconsistent.
+ *   care-gap                — preventive gap. Lowest urgency.
  *
  * Exported for unit testing.
  */
 export function categoryRank(category: string): number {
   switch (category) {
     case "critical-value":
-      return 5;
+      return 8;
     case "medication-safety":
-      return 4;
+      return 7;
+    case "drug-interaction":
+      return 7; // safety-equivalent to medication-safety
     case "cross-specialty":
+      return 5;
+    case "trend-concern":
+      return 4;
+    case "patient-reported":
       return 3;
-    case "clinical-alert":
+    case "documentation-discrepancy":
       return 2;
     case "care-gap":
       return 1;
@@ -645,6 +657,12 @@ export function shouldDropAsDuplicate(
   const findingSeverity = severityRank(finding.severity);
   const findingCategory = categoryRank(finding.category);
 
+  // Scan the FULL rule-flag list and drop only if some rule subsumes the
+  // finding. An earlier loop returned `false` (keep) as soon as it saw a
+  // single non-subsuming match — which missed the case where rule_flags
+  // contained both a non-subsuming version (e.g. info-severity same topic)
+  // AND a subsuming version (e.g. matching-severity same topic). The
+  // subsuming match must win.
   for (const ruleFlag of ruleFlags) {
     const overlap = summaryOverlap(finding.summary, ruleFlag.summary);
 
@@ -653,29 +671,29 @@ export function shouldDropAsDuplicate(
     // "fever", "with") don't false-positive on distinct findings.
     if (overlap < 0.6) continue;
 
+    // LLM escalates severity over this rule flag — this rule is not a
+    // subsuming match, but keep scanning in case a later one is.
     const ruleSeverity = severityRank(ruleFlag.severity);
-    if (findingSeverity > ruleSeverity) {
-      // LLM is escalating severity — keep the LLM finding.
-      return false;
-    }
+    if (findingSeverity > ruleSeverity) continue;
 
-    if (findingCategory > categoryRank(ruleFlag.category)) {
-      // LLM claims a higher-precedence category for the same concept.
-      // Keep both; the rule flag stays, the LLM adds the recategorized
-      // signal.
-      return false;
-    }
+    // LLM claims a higher-precedence category on the same concept — not
+    // subsumed by this rule flag, but keep scanning.
+    if (findingCategory > categoryRank(ruleFlag.category)) continue;
 
+    // LLM adds a notify specialty this rule flag doesn't have — not
+    // subsumed by this rule flag, but keep scanning.
     const ruleSpecialties = new Set(ruleFlag.notify_specialties ?? []);
+    let addsNewSpecialty = false;
     for (const s of findingSpecialties) {
       if (!ruleSpecialties.has(s)) {
-        // LLM is adding a new notify target. Keep.
-        return false;
+        addsNewSpecialty = true;
+        break;
       }
     }
+    if (addsNewSpecialty) continue;
 
-    // Fully subsumed: same concept, not escalating, not adding specialties,
-    // not higher category. Drop this LLM finding.
+    // Fully subsumed by this rule flag: same concept, not escalating, not
+    // upgrading category, not adding a specialty. Drop the LLM finding.
     return true;
   }
 
