@@ -16,7 +16,10 @@ import {
 } from "@carebridge/db-schema";
 import { eq, and, desc, inArray } from "drizzle-orm";
 import { Queue } from "bullmq";
-import { getRedisConnection } from "@carebridge/redis-config";
+import {
+  getRedisConnection,
+  CLINICAL_EVENTS_JOB_OPTIONS,
+} from "@carebridge/redis-config";
 import crypto from "node:crypto";
 import type { Context } from "../context.js";
 
@@ -34,12 +37,7 @@ const protectedProcedure = t.procedure.use(isAuthenticated);
 const connection = getRedisConnection();
 const clinicalEventsQueue = new Queue("clinical-events", {
   connection,
-  defaultJobOptions: {
-    attempts: 5,
-    backoff: { type: "exponential", delay: 2000 },
-    removeOnComplete: { count: 1000 },
-    removeOnFail: { count: 10000 },
-  },
+  defaultJobOptions: CLINICAL_EVENTS_JOB_OPTIONS,
 });
 
 /** Verify the authenticated user is a participant in the conversation. */

@@ -1,7 +1,12 @@
 import type { FastifyRequest, FastifyReply } from "fastify";
 import type { User } from "@carebridge/shared-types";
-import { getDb } from "@carebridge/db-schema";
-import { auditLog } from "@carebridge/db-schema";
+import {
+  getDb,
+  auditLog,
+  familyRelationships,
+  users,
+} from "@carebridge/db-schema";
+import { and, eq } from "drizzle-orm";
 import crypto from "node:crypto";
 
 /** Map HTTP methods to human-readable actions. */
@@ -127,6 +132,89 @@ function extractPatientId(body: unknown): string | null {
 }
 
 /**
+ * Look up the relationship_type a family caregiver has with a patient.
+ *
+ * `family_relationships.patient_id` references the *patient user's* id, but
+ * requests identify the subject by *patient record* id, so this joins through
+ * the users table to resolve the link.
+ *
+ * Returns null when no active relationship exists — callers should treat that
+ * as a silent denial for audit purposes (the request itself is rejected
+ * elsewhere; the audit log still needs to record that a caregiver attempted
+ * it without a valid relationship).
+ */
+export async function getFamilyRelationshipType(
+  caregiverUserId: string,
+  patientRecordId: string,
+): Promise<string | null> {
+  const db = getDb();
+  const [row] = await db
+    .select({ relationship_type: familyRelationships.relationship_type })
+    .from(familyRelationships)
+    .innerJoin(users, eq(users.id, familyRelationships.patient_id))
+    .where(
+      and(
+        eq(familyRelationships.caregiver_id, caregiverUserId),
+        eq(users.patient_id, patientRecordId),
+        eq(familyRelationships.status, "active"),
+      ),
+    )
+    .limit(1);
+  return row?.relationship_type ?? null;
+}
+
+/**
+ * Derive actor_relationship / on_behalf_of_patient_id for the audit row.
+ *
+ * - patient           → "self" ONLY when the target is the patient's own
+ *                       record (patientId absent, or matches user.patient_id).
+ *                       A patient requesting a different patient's record is
+ *                       a cross-patient access attempt — actorRelationship
+ *                       stays null so the audit trail doesn't mislabel it.
+ * - family_caregiver  → active relationship_type from family_relationships
+ *                       ("spouse", "parent", ...). Falls back to the literal
+ *                       "caregiver" when patientId is missing or no active
+ *                       relationship row exists. on_behalf_of_patient_id is
+ *                       the requested patient record id when available.
+ * - clinician / admin → both fields null (no relationship semantics).
+ *
+ * Exported so it can be unit-tested without the Fastify request machinery.
+ */
+export async function deriveActorContext(
+  user: User | undefined,
+  patientId: string | null,
+): Promise<{
+  actorRelationship: string | null;
+  onBehalfOfPatientId: string | null;
+}> {
+  if (!user) {
+    return { actorRelationship: null, onBehalfOfPatientId: null };
+  }
+
+  if (user.role === "patient") {
+    if (!patientId || patientId === user.patient_id) {
+      return { actorRelationship: "self", onBehalfOfPatientId: null };
+    }
+    // Cross-patient attempt by a patient account — leave relationship null
+    // so reviewers can distinguish self-access from denied cross-access.
+    return { actorRelationship: null, onBehalfOfPatientId: null };
+  }
+
+  if ((user.role as string) === "family_caregiver") {
+    if (!patientId) {
+      return { actorRelationship: "caregiver", onBehalfOfPatientId: null };
+    }
+    const relationship = await getFamilyRelationshipType(user.id, patientId);
+    return {
+      actorRelationship: relationship ?? "caregiver",
+      onBehalfOfPatientId: patientId,
+    };
+  }
+
+  return { actorRelationship: null, onBehalfOfPatientId: null };
+}
+
+/**
  * Map an HTTP status code to a short, human-readable reason phrase.
  *
  * HIPAA § 164.312(b) requires audit controls sufficient to distinguish
@@ -203,6 +291,17 @@ export async function auditMiddleware(
   const success = statusCode >= 200 && statusCode < 400;
   const errorMessage = success ? null : statusCodeToMessage(statusCode);
 
+  // Never let derivation failure drop the audit row — fall back to nulls.
+  let actorRelationship: string | null = null;
+  let onBehalfOfPatientId: string | null = null;
+  try {
+    const ctx = await deriveActorContext(user, patientId);
+    actorRelationship = ctx.actorRelationship;
+    onBehalfOfPatientId = ctx.onBehalfOfPatientId;
+  } catch (err) {
+    request.log.warn({ err }, "Failed to derive audit actor context");
+  }
+
   const db = getDb();
 
   try {
@@ -214,6 +313,8 @@ export async function auditMiddleware(
       resource_id: resourceId,
       procedure_name: procedureName,
       patient_id: patientId,
+      actor_relationship: actorRelationship,
+      on_behalf_of_patient_id: onBehalfOfPatientId,
       ip_address: request.ip,
       http_status_code: statusCode,
       success,
