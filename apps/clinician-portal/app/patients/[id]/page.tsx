@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { AuthGuard } from "@/lib/auth-guard";
+import { pickFreshest, mostRecentIso } from "@/lib/freshest";
 import {
   FlagActionModal,
   type FlagAction,
@@ -270,9 +271,15 @@ function VitalsTab({ patientId }: { patientId: string }) {
   }
 
   // Freshest recording across types — drives the staleness banner.
-  const mostRecent = latest.reduce((a, b) =>
-    a.recorded_at > b.recorded_at ? a : b,
-  );
+  // Use epoch-ms normalization (issue #529) rather than lexicographic
+  // string compare: ISO strings that represent the same instant can
+  // differ in suffix (`Z` vs `+00:00`) or sub-second precision and
+  // sort wrong as plain strings.
+  const mostRecent =
+    pickFreshest<{ recorded_at: string }>(
+      latest as Array<{ recorded_at: string }>,
+      (v) => v.recorded_at,
+    ) ?? (latest[0] as { recorded_at: string });
   const isStale =
     Date.now() - new Date(mostRecent.recorded_at).getTime() > STALE_THRESHOLD_MS;
 
@@ -363,13 +370,13 @@ function LabsTab({ patientId }: { patientId: string }) {
     );
   }
 
-  // Panels come back ordered desc by collected_at; pick the freshest.
-  const mostRecentPanelAt =
-    panels
-      .map((p) => p.panel.collected_at ?? p.panel.created_at)
-      .filter((v): v is string => Boolean(v))
-      .sort()
-      .slice(-1)[0] ?? null;
+  // Panels are returned ordered desc by collected_at, but we must still
+  // normalize via Date.parse before comparing (issue #529): lab panels
+  // from ingestion paths use mixed ISO suffixes (`Z` vs `+00:00`) and
+  // lexicographic sort can pick the wrong panel as "most recent".
+  const mostRecentPanelAt = mostRecentIso(
+    panels.map((p) => p.panel.collected_at ?? p.panel.created_at),
+  );
   const labsStale =
     mostRecentPanelAt !== null &&
     Date.now() - new Date(mostRecentPanelAt).getTime() > STALE_THRESHOLD_MS;
