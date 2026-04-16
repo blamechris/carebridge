@@ -145,7 +145,7 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
     return;
   }
 
-    // Step 1: Create a review_jobs record
+  // Step 1: Create a review_jobs record
   await db.insert(reviewJobs).values({
     id: jobId,
     patient_id: event.patient_id,
