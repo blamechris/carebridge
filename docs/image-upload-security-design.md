@@ -31,7 +31,8 @@ waiver from the security lead in the PR description.
 ### 1. Server-side EXIF and GPS scrubbing
 
 - Strip ALL metadata before persisting the object. Library: `sharp`
-  (`.rotate().withMetadata(false)`) for raster; `svgo` with a hardened
+  (re-encode the raster image and do NOT call `.withMetadata()`, since
+  `sharp` strips metadata by default) for raster; `svgo` with a hardened
   plugin set for SVG (or reject SVG outright for patient uploads).
 - Strip on both upload and re-upload / re-encoded paths.
 - Do NOT trust a client "I already stripped it" flag — browsers re-inject
@@ -76,9 +77,9 @@ waiver from the security lead in the PR description.
   equivalent. Server-side encryption alone (SSE-S3) is not sufficient
   because the key is shared across the bucket.
 - Use a dedicated KMS key for image PHI, distinct from the KMS key that
-  would protect DB PHI under the KMS migration (see
-  `docs/phi-key-rotation.md`). Rotating image access should not force a
-  DB re-encrypt.
+  protects DB PHI. Key rotation for image PHI MUST be operationally
+  independent so rotating image access does not force a DB re-encrypt or
+  couple image-key incidents to database-key rollover.
 - Bucket policy MUST deny unencrypted PUTs (`s3:x-amz-server-side-encryption`
   condition).
 
@@ -86,9 +87,16 @@ waiver from the security lead in the PR description.
 
 - Downloads are served exclusively through signed URLs with a TTL of 5
   minutes (configurable down, not up).
-- Generate URLs on a per-request basis with the requesting user's id
-  embedded in an attached `x-amz-meta-requester` header or equivalent so
-  the audit trail ties the download to a user.
+- Generate URLs on a per-request basis and log each issuance event with
+  the requesting user's id, patient id, object key, timestamp, and a
+  unique issuance id so the audit trail ties access to a specific user
+  and object. (Object-metadata headers like `x-amz-meta-*` are set at
+  PUT-time and are NOT usable as per-GET request attribution for
+  presigned URLs — do not rely on them for audit.)
+- If download-time attribution beyond URL issuance is required, either
+  proxy downloads through the API so the authenticated user is captured
+  in application audit logs, or correlate provider access logs /
+  CloudTrail-style events with the issuance id.
 - NEVER return long-lived CDN URLs. Do not cache signed URLs client-side.
 
 ### 7. Object-key scheme that resists guessing and cross-patient access
