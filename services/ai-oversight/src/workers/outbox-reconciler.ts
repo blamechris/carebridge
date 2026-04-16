@@ -65,6 +65,22 @@ export interface ReconcileResult {
 
 /**
  * Drain one batch of pending outbox rows. Exported for tests.
+ *
+ * Multi-worker safety:
+ *   ai-oversight is horizontally scalable; N pods each tick independently.
+ *   The SELECT uses `FOR UPDATE SKIP LOCKED` so two reconcilers that tick
+ *   within the same window claim disjoint batches instead of both seeing
+ *   — and both re-emitting — the same `status='pending'` rows. The locks
+ *   are released when the surrounding statement completes, which for our
+ *   flow is effectively the end of this function.
+ *
+ * Idempotency:
+ *   `queue.add` is called with `jobId: row.id`. BullMQ dedupes by job id,
+ *   so even if the enqueue succeeds and the follow-up status UPDATE fails
+ *   (connection blip, pool exhaustion, SIGTERM between the two) the next
+ *   tick cannot produce a duplicate clinical-events job for the same
+ *   outbox row. This is belt-and-braces with review-service's
+ *   trigger_event_id idempotency (PR #492).
  */
 export async function reconcileFailedEvents(): Promise<ReconcileResult> {
   const db = getDb();
@@ -79,6 +95,7 @@ export async function reconcileFailedEvents(): Promise<ReconcileResult> {
         lt(failedClinicalEvents.retry_count, MAX_RECONCILE_RETRIES),
       ),
     )
+    .for("update", { skipLocked: true })
     .limit(RECONCILE_BATCH_SIZE);
 
   let reconciled = 0;
@@ -87,7 +104,10 @@ export async function reconcileFailedEvents(): Promise<ReconcileResult> {
 
   for (const row of pending) {
     try {
-      await queue.add(row.event_type, row.event_payload);
+      // jobId: row.id -> BullMQ dedupes by outbox row id. If the UPDATE
+      // below fails after this add resolves, the next tick's re-enqueue
+      // of the same row is a no-op on BullMQ's side.
+      await queue.add(row.event_type, row.event_payload, { jobId: row.id });
 
       await db
         .update(failedClinicalEvents)
@@ -138,14 +158,24 @@ export function setupOutboxReconcilerQueue(): Queue {
     },
   });
 
-  queue.add(
-    "reconcile",
-    {},
-    {
-      repeat: { every: RECONCILE_INTERVAL_MS },
-      jobId: "outbox-reconciler-repeatable",
-    },
-  );
+  // Fire-and-log — if Redis isn't ready at boot, surface the error so the
+  // deployment doesn't run silently with no reconciler scheduled. Mirrors
+  // the pattern we'd apply to setupEscalationQueue.
+  queue
+    .add(
+      "reconcile",
+      {},
+      {
+        repeat: { every: RECONCILE_INTERVAL_MS },
+        jobId: "outbox-reconciler-repeatable",
+      },
+    )
+    .catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[outbox-reconciler] failed to register repeatable job: ${message}`,
+      );
+    });
 
   return queue;
 }
