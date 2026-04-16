@@ -87,6 +87,34 @@ export function calculateDelta(values: number[]): Delta | null {
   return { current, previous, change, pctChange };
 }
 
+/**
+ * Compute a delta against an explicit baseline rather than the immediately
+ * preceding point.
+ *
+ * Clinical rationale: for labs like creatinine, BUN, and liver enzymes a
+ * slow drift of 0.7 → 0.8 → 0.9 → 1.1 → 1.2 is a ~70% rise that KDIGO
+ * would classify as stage-1 AKI — but `calculateDelta` reports the
+ * last-two-point change of +0.1 (+9%), which reads as "slightly rising"
+ * or even "stable" under a naive threshold. Computing against baseline
+ * preserves the actual trajectory.
+ *
+ * When `baseline` is omitted, the first value in `values` is used as the
+ * baseline so callers that only know the series still get the correct
+ * "change-from-baseline" semantics.
+ */
+export function calculateDeltaFromBaseline(
+  values: number[],
+  baseline?: number,
+): Delta | null {
+  if (values.length === 0) return null;
+  const current = values[values.length - 1]!;
+  const base = baseline ?? values[0]!;
+  if (values.length < 2 && baseline === undefined) return null;
+  const change = current - base;
+  const pctChange = base !== 0 ? (change / base) * 100 : 0;
+  return { current, previous: base, change, pctChange };
+}
+
 export function getTrendColor(
   change: number,
   goodDirection: GoodDirection,
@@ -111,6 +139,28 @@ export function getTrendInfo(
   isOutOfRange?: boolean
 ): TrendInfo {
   const delta = calculateDelta(values);
+  if (!delta) {
+    return { delta: null, color: "neutral", arrow: "→", hex: TREND_COLORS.neutral };
+  }
+  const color = getTrendColor(delta.change, goodDirection, isOutOfRange);
+  const arrow = Math.abs(delta.change) < 0.01 ? "→" : delta.change > 0 ? "↑" : "↓";
+  return { delta, color, arrow, hex: TREND_COLORS[color] };
+}
+
+/**
+ * Baseline-aware variant of `getTrendInfo`. Use this whenever a per-patient
+ * baseline exists (prior-admission creatinine, known-good BP, etc.) — the
+ * color/arrow will reflect movement from that stable value instead of from
+ * the last noisy reading. For ambiguous cases pass `baseline = undefined`
+ * and the first value in the series acts as the baseline.
+ */
+export function getTrendInfoFromBaseline(
+  values: number[],
+  goodDirection: GoodDirection,
+  baseline?: number,
+  isOutOfRange?: boolean,
+): TrendInfo {
+  const delta = calculateDeltaFromBaseline(values, baseline);
   if (!delta) {
     return { delta: null, color: "neutral", arrow: "→", hex: TREND_COLORS.neutral };
   }

@@ -1,11 +1,13 @@
 import { describe, it, expect } from "vitest";
 import {
   calculateDelta,
+  calculateDeltaFromBaseline,
   classifyTrend,
   detectAKI,
   getGoodDirection,
   getTrendColor,
   getTrendInfo,
+  getTrendInfoFromBaseline,
   isOutOfRange,
   getRangeFlag,
   formatDelta,
@@ -94,6 +96,69 @@ describe("getTrendColor", () => {
 
   it("returns 'neutral' for stable direction regardless of change", () => {
     expect(getTrendColor(10, "stable")).toBe("neutral");
+  });
+});
+
+// ─── calculateDeltaFromBaseline ─────────────────────────────────
+
+describe("calculateDeltaFromBaseline", () => {
+  it("returns null for empty input", () => {
+    expect(calculateDeltaFromBaseline([])).toBeNull();
+  });
+
+  it("uses an explicit baseline and reports change against it", () => {
+    const delta = calculateDeltaFromBaseline([1.2], 0.7);
+    expect(delta).not.toBeNull();
+    expect(delta!.current).toBe(1.2);
+    expect(delta!.previous).toBe(0.7);
+    expect(delta!.change).toBeCloseTo(0.5, 5);
+    expect(delta!.pctChange).toBeCloseTo(71.428, 2);
+  });
+
+  it("falls back to the first value when baseline is omitted", () => {
+    // 0.7 → 0.8 → 0.9 → 1.1 → 1.2 — last-two-point delta = +0.1 (+9%),
+    // baseline-aware delta = +0.5 (+71%).
+    const delta = calculateDeltaFromBaseline([0.7, 0.8, 0.9, 1.1, 1.2]);
+    expect(delta).not.toBeNull();
+    expect(delta!.previous).toBe(0.7);
+    expect(delta!.change).toBeCloseTo(0.5, 5);
+    expect(delta!.pctChange).toBeCloseTo(71.428, 2);
+  });
+
+  it("returns null for a single-value series when baseline is omitted", () => {
+    expect(calculateDeltaFromBaseline([1.2])).toBeNull();
+  });
+
+  it("handles a zero baseline without dividing by zero", () => {
+    const delta = calculateDeltaFromBaseline([5], 0);
+    expect(delta!.pctChange).toBe(0); // falls back to 0 rather than Infinity
+  });
+});
+
+// ─── getTrendInfoFromBaseline ───────────────────────────────────
+
+describe("getTrendInfoFromBaseline", () => {
+  it("surfaces a creatinine rise against baseline instead of last-two-point noise", () => {
+    // Compared against last point (1.1 → 1.2) the slope looks tiny; compared
+    // against baseline 0.7 it's a clear clinically-meaningful rise.
+    const info = getTrendInfoFromBaseline(
+      [0.7, 0.8, 0.9, 1.1, 1.2],
+      getGoodDirection("Creatinine"),
+      0.7,
+    );
+    expect(info.arrow).toBe("↑");
+    expect(info.color).toBe("negative");
+    expect(info.delta?.change).toBeCloseTo(0.5, 5);
+  });
+
+  it("still returns neutral when there is no change from baseline", () => {
+    const info = getTrendInfoFromBaseline(
+      [0.8, 0.8, 0.8],
+      getGoodDirection("Creatinine"),
+      0.8,
+    );
+    expect(info.arrow).toBe("→");
+    expect(info.color).toBe("neutral");
   });
 });
 
