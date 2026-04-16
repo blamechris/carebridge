@@ -28,6 +28,7 @@ export const DIASTOLIC_DANGER_ZONE: DiastolicRange = {
   warningHigh: 90,
 };
 
+/** Adult vital sign danger zones (default, used for age >= 18 or when age is unknown) */
 export const VITAL_DANGER_ZONES: Record<VitalType, VitalRange> = {
   blood_pressure: { min: 60, max: 250, criticalLow: 70, criticalHigh: 180 },
   heart_rate: { min: 20, max: 300, criticalLow: 40, criticalHigh: 200 },
@@ -38,6 +39,100 @@ export const VITAL_DANGER_ZONES: Record<VitalType, VitalRange> = {
   pain_level: { min: 0, max: 10 },
   blood_glucose: { min: 10, max: 800, criticalLow: 54, criticalHigh: 350, warningLow: 70, warningHigh: 250 },
 };
+
+// ─── Age-Stratified Vital Ranges (Pediatric) ───────────────────
+
+export type AgeGroup =
+  | "neonate"    // 0–28 days
+  | "infant"     // 1–12 months
+  | "child"      // 1–5 years
+  | "school_age" // 6–12 years
+  | "adolescent" // 13–17 years
+  | "adult";     // 18+ years
+
+/** Age-stratified vital sign ranges keyed by age group, then by vital type. */
+export const PEDIATRIC_VITAL_RANGES: Record<
+  Exclude<AgeGroup, "adult">,
+  Partial<Record<VitalType, VitalRange>>
+> = {
+  neonate: {
+    heart_rate: { min: 70, max: 220, criticalLow: 100, criticalHigh: 160 },
+    respiratory_rate: { min: 20, max: 80, criticalLow: 30, criticalHigh: 60 },
+    blood_pressure: { min: 40, max: 120, criticalLow: 60, criticalHigh: 90 },
+  },
+  infant: {
+    heart_rate: { min: 70, max: 200, criticalLow: 100, criticalHigh: 150 },
+    respiratory_rate: { min: 15, max: 70, criticalLow: 25, criticalHigh: 50 },
+    blood_pressure: { min: 50, max: 130, criticalLow: 70, criticalHigh: 100 },
+  },
+  child: {
+    heart_rate: { min: 50, max: 200, criticalLow: 80, criticalHigh: 130 },
+    respiratory_rate: { min: 12, max: 40, criticalLow: 20, criticalHigh: 30 },
+    blood_pressure: { min: 60, max: 140, criticalLow: 80, criticalHigh: 110 },
+  },
+  school_age: {
+    heart_rate: { min: 40, max: 200, criticalLow: 70, criticalHigh: 110 },
+    respiratory_rate: { min: 10, max: 35, criticalLow: 16, criticalHigh: 22 },
+    blood_pressure: { min: 60, max: 160, criticalLow: 85, criticalHigh: 120 },
+  },
+  adolescent: {
+    heart_rate: { min: 30, max: 250, criticalLow: 60, criticalHigh: 100 },
+    respiratory_rate: { min: 6, max: 40, criticalLow: 12, criticalHigh: 20 },
+    blood_pressure: { min: 60, max: 200, criticalLow: 95, criticalHigh: 140 },
+  },
+};
+
+/**
+ * Classify age in years into an age group.
+ * Fractional years are used for infants/neonates:
+ *  - neonate: 0 to ~0.077 years (28 days)
+ *  - infant: ~0.077 to 1 year
+ */
+export function classifyAgeGroup(ageYears: number): AgeGroup {
+  if (ageYears < 0) return "adult"; // invalid age, fall back to adult
+  if (ageYears < 28 / 365.25) return "neonate";
+  if (ageYears < 1) return "infant";
+  if (ageYears < 6) return "child";
+  if (ageYears < 13) return "school_age";
+  if (ageYears < 18) return "adolescent";
+  return "adult";
+}
+
+/**
+ * Compute age in fractional years from a date-of-birth ISO string.
+ * Returns undefined if dateOfBirth is falsy or unparseable.
+ */
+export function ageInYearsFromDOB(
+  dateOfBirth: string | undefined | null,
+  referenceDate?: Date
+): number | undefined {
+  if (!dateOfBirth) return undefined;
+  const dob = new Date(dateOfBirth);
+  if (isNaN(dob.getTime())) return undefined;
+  const ref = referenceDate ?? new Date();
+  const diffMs = ref.getTime() - dob.getTime();
+  if (diffMs < 0) return undefined;
+  return diffMs / (365.25 * 24 * 60 * 60 * 1000);
+}
+
+/**
+ * Return the appropriate VitalRange for the given vital type and patient age.
+ * Falls back to adult ranges when age is unknown or no pediatric range is defined
+ * for that vital type.
+ */
+export function getVitalRangeForAge(
+  vitalType: VitalType,
+  ageYears?: number | undefined
+): VitalRange {
+  const adultRange = VITAL_DANGER_ZONES[vitalType];
+  if (ageYears === undefined || ageYears === null) return adultRange;
+
+  const group = classifyAgeGroup(ageYears);
+  if (group === "adult") return adultRange;
+
+  const pediatricRange = PEDIATRIC_VITAL_RANGES[group]?.[vitalType];
+  return pediatricRange ?? adultRange;
+}
 
 export interface ValidationResult {
   valid: boolean;
@@ -145,9 +240,16 @@ export function validateLabResult(
   return { valid: errors.length === 0, warnings, errors };
 }
 
-/** Check if a vital value is in the critical range (used by rules engine) */
-export function isCriticalVital(type: VitalType, value: number): boolean {
-  const range = VITAL_DANGER_ZONES[type];
+/**
+ * Check if a vital value is in the critical range (used by rules engine).
+ * When ageYears is provided, uses age-appropriate pediatric thresholds.
+ */
+export function isCriticalVital(
+  type: VitalType,
+  value: number,
+  ageYears?: number | undefined
+): boolean {
+  const range = getVitalRangeForAge(type, ageYears);
   if (!range) return false;
   if (range.criticalLow !== undefined && value <= range.criticalLow) return true;
   if (range.criticalHigh !== undefined && value >= range.criticalHigh) return true;
