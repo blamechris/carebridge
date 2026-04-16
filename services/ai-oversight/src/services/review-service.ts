@@ -9,7 +9,7 @@
  * The review_jobs table records every run for auditability.
  */
 
-import { eq, desc, gte, and } from "drizzle-orm";
+import { eq, desc, gte, and, inArray, or } from "drizzle-orm";
 import { getDb } from "@carebridge/db-schema";
 import {
   reviewJobs,
@@ -45,9 +45,47 @@ import { screenPatientMessage } from "../rules/message-screening.js";
 import { screenPatientObservation } from "../rules/observation-screening.js";
 import { checkAllergyMedication } from "../rules/allergy-medication.js";
 import type { RuleFlag } from "../rules/critical-values.js";
+import {
+  isoBefore,
+  isoLTE,
+  isDiagnosisRetracted,
+  isAllergyRetracted,
+} from "../utils/event-time-snapshot.js";
 import { buildPatientContext } from "../workers/context-builder.js";
 import { reviewPatientRecord } from "./claude-client.js";
 import { createFlag } from "./flag-service.js";
+
+
+/**
+ * Statuses that represent a fully-run pipeline. A review_jobs row in any of
+ * these states has already executed deterministic rules AND (for the two
+ * `llm_*` statuses) attempted or intentionally skipped the LLM step — so
+ * redelivering the triggering event must NOT re-execute. Adding a new
+ * terminal status to the pipeline requires adding it here as well.
+ *
+ * Intentionally excludes:
+ *   - `pending` / `processing`: non-terminal, handled by the in-flight
+ *     freshness window below (see IN_FLIGHT_WINDOW_MS).
+ *   - `failed`: the pipeline threw before flag writes; a retry IS desired.
+ */
+const TERMINAL_REVIEW_STATUSES: readonly string[] = [
+  "completed",
+  "llm_timeout",
+  "llm_error",
+];
+
+/**
+ * In-flight freshness window for the idempotency probe. A `processing`
+ * row newer than this is treated as another worker actively running the
+ * pipeline — we short-circuit rather than run a concurrent duplicate.
+ * Older `processing` rows are treated as orphans (crashed worker) and
+ * the pipeline proceeds normally.
+ *
+ * Chosen comfortably longer than BullMQ `lockDuration` (120s) so a live
+ * worker still holding its Redis lock cannot have its row fall outside
+ * the window. See #522.
+ */
+const IN_FLIGHT_WINDOW_MS = 150_000;
 
 /**
  * Process a clinical event through the full review pipeline.
@@ -57,27 +95,58 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
   const jobId = crypto.randomUUID();
   const startTime = Date.now();
 
-  // Idempotency: if a completed review already exists for this trigger event,
-  // skip. BullMQ can re-deliver a job when a worker crashes mid-processing
-  // (lock expires → stalled-scan reclaims the job) or the same event is
-  // replayed via the outbox reconciler. Without this check each redelivery
-  // writes an extra review_jobs row and — for rules whose dedup cannot cover
-  // the replay window — potentially duplicate flags.
-  const existingCompleted = await db
-    .select({ id: reviewJobs.id, status: reviewJobs.status })
+  // Idempotency: short-circuit if the pipeline has already run — or is
+  // actively running — for this trigger event.
+  //
+  // BullMQ can re-deliver a job when a worker crashes mid-processing (lock
+  // expires → stalled-scan reclaims the job) or the same event is replayed
+  // via the outbox reconciler / a manual requeue. Without this check each
+  // redelivery writes an extra review_jobs row and — for rules whose dedup
+  // cannot cover the replay window — potentially duplicate flags.
+  //
+  // The probe matches two disjoint cases:
+  //
+  //   1) Terminal run: prior row in a "fully-run" status (completed,
+  //      llm_timeout, llm_error). Re-running would either duplicate flags
+  //      or re-call Claude for a degraded-LLM path we already logged.
+  //      `failed` is intentionally NOT terminal — the pipeline threw before
+  //      flag writes, so a retry is desired. See #520.
+  //
+  //   2) In-flight run: prior row in `processing` that is fresh
+  //      (< IN_FLIGHT_WINDOW_MS old). Another worker is mid-pipeline for
+  //      this event — running concurrently risks duplicate flags for any
+  //      rule whose open-flag dedup can’t span the race window. Stale
+  //      `processing` rows (orphans from crashed workers) fall outside
+  //      the window and do NOT short-circuit — matching the prior
+  //      behavior for crash recovery. See #522.
+  const inFlightCutoff = new Date(Date.now() - IN_FLIGHT_WINDOW_MS).toISOString();
+
+  const existingJob = await db
+    .select({
+      id: reviewJobs.id,
+      status: reviewJobs.status,
+      created_at: reviewJobs.created_at,
+    })
     .from(reviewJobs)
     .where(
       and(
         eq(reviewJobs.trigger_event_id, event.id),
-        eq(reviewJobs.status, "completed"),
+        or(
+          inArray(reviewJobs.status, TERMINAL_REVIEW_STATUSES as string[]),
+          and(
+            eq(reviewJobs.status, "processing"),
+            gte(reviewJobs.created_at, inFlightCutoff),
+          ),
+        ),
       ),
     )
     .limit(1);
 
-  if (existingCompleted.length > 0) {
+  if (existingJob.length > 0) {
+    const prior = existingJob[0]!;
     console.log(
       `[review-service] Skipping duplicate review for event ${event.id} ` +
-        `(prior completed job ${existingCompleted[0]!.id})`,
+        `(prior job ${prior.id}, status=${prior.status})`,
     );
     return;
   }
@@ -527,15 +596,29 @@ export async function buildPatientContextForRules(
   // review time. Without this, a med discontinued or an allergy added between
   // event emit and review causes missed/false flags: the rules see a newer
   // snapshot than the event they are evaluating. See #258.
+  //
+  // All comparisons go through isoBefore/isoLTE (normalized via Date.parse)
+  // rather than lexicographic string compares so offset-form (-05:00) and
+  // bare-date (2025-12-01) timestamps sort correctly against Z-form event
+  // timestamps. See #513.
   const eventAt = event.timestamp;
 
   function wasActiveAt(
-    row: { onset_date?: string | null; resolved_date?: string | null; status: string; created_at: string },
+    row: {
+      onset_date?: string | null;
+      resolved_date?: string | null;
+      status?: string | null;
+      created_at: string;
+    },
     at: string,
   ): boolean {
+    // Logical retraction (#515): a diagnosis marked entered_in_error is a
+    // charting correction and must never appear in the active set,
+    // regardless of its onset/resolved timestamps.
+    if (isDiagnosisRetracted(row)) return false;
     const start = row.onset_date ?? row.created_at;
-    if (start > at) return false; // not yet started at event time
-    if (row.resolved_date && row.resolved_date <= at) return false; // resolved before event
+    if (isoBefore(at, start)) return false; // not yet started at event time
+    if (row.resolved_date && isoLTE(row.resolved_date, at)) return false; // resolved before event
     return true;
   }
 
@@ -548,7 +631,7 @@ export async function buildPatientContextForRules(
   const seenLabs = new Set<string>();
   const recentLabs: Array<{ name: string; value: number }> = [];
   for (const row of recentLabRows) {
-    if (row.created_at > eventAt) continue;
+    if (isoBefore(eventAt, row.created_at)) continue;
     if (seenLabs.has(row.test_name)) continue;
     seenLabs.add(row.test_name);
     recentLabs.push({ name: row.test_name, value: row.value });
@@ -561,14 +644,19 @@ export async function buildPatientContextForRules(
   // schema constraint but guards against partial records.
   const activeMedsList = allMeds.filter((m) => {
     const start = m.started_at ?? m.created_at;
-    if (start > eventAt) return false;
-    if (m.ended_at && m.ended_at <= eventAt) return false;
+    if (isoBefore(eventAt, start)) return false;
+    if (m.ended_at && isoLTE(m.ended_at, eventAt)) return false;
     return true;
   });
 
-  // An allergy is relevant iff it was already recorded before the event.
-  // A post-hoc addition must not retroactively flag the triggering event.
-  const patientAllergies = allAllergies.filter((a) => a.created_at <= eventAt);
+  // An allergy is relevant iff it was already recorded before the event
+  // AND has not been logically retracted (entered_in_error / refuted —
+  // charting corrections that must not drive rule decisions). See #515.
+  const patientAllergies = allAllergies.filter((a) => {
+    if (isoBefore(eventAt, a.created_at)) return false;
+    if (isAllergyRetracted(a)) return false;
+    return true;
+  });
 
   return {
     active_diagnoses: activeDx.map((d) => d.description),

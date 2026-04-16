@@ -280,7 +280,12 @@ export async function updateMedication(
     type: "medication.updated",
     patient_id: existing.patient_id,
     timestamp: now,
-    data: { resourceId: id, changedFields: Object.keys(fields) },
+    data: {
+      resourceId: id,
+      changedFields: Object.keys(fields),
+      name: (fields.name ?? existing.name) as string,
+      status: (fields.status ?? existing.status) as string,
+    },
   });
 
   // Re-fetch the updated record

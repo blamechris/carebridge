@@ -26,6 +26,56 @@ import { filterRecipientsBySpecialty } from "./specialty-filter.js";
 import type { CandidateRecipient } from "./specialty-filter.js";
 import { getUserPreferences, evaluateDelivery } from "./preferences.js";
 
+/**
+ * Whitelist of clinical flag categories that are safe to surface on a
+ * device lock screen. This mirrors the `FlagCategory` union in
+ * `@carebridge/shared-types/ai-flags` — kept as a local constant (rather
+ * than deriving it from the type) so that new rule/LLM categories cannot
+ * reach the lock screen without a reviewer also extending this map.
+ *
+ * HIPAA lock-screen safety (issue #551): `NotificationEvent.category` is
+ * typed as `string` (set by rule authors and LLM output) so a
+ * free-form value like `psychiatric-symptoms-self-harm` could otherwise
+ * surface verbatim in a push-notification title. Every value admitted
+ * here is a generic, PHI-free clinical taxonomy bucket; anything outside
+ * this set falls back to `UNKNOWN_CATEGORY_LABEL` and is logged.
+ */
+const CATEGORY_LABELS = {
+  "cross-specialty": "Cross-specialty concern",
+  "drug-interaction": "Drug interaction",
+  "medication-safety": "Medication safety",
+  "care-gap": "Care gap",
+  "critical-value": "Critical value",
+  "trend-concern": "Trend concern",
+  "documentation-discrepancy": "Documentation discrepancy",
+  "patient-reported": "Patient-reported concern",
+} as const satisfies Record<string, string>;
+
+type SafeCategory = keyof typeof CATEGORY_LABELS;
+
+const UNKNOWN_CATEGORY_LABEL = "Clinical alert";
+
+function isSafeCategory(category: string): category is SafeCategory {
+  return Object.prototype.hasOwnProperty.call(CATEGORY_LABELS, category);
+}
+
+/**
+ * Resolve a category string to a lock-screen-safe human-readable label.
+ * Unknown categories are replaced with a generic label and logged as a
+ * structured warning so the operator can detect new rule/LLM taxonomies
+ * that need review before being admitted to the whitelist.
+ */
+function resolveCategoryLabel(category: string): string {
+  if (isSafeCategory(category)) {
+    return CATEGORY_LABELS[category];
+  }
+  console.warn(
+    "[dispatch-worker] Unknown notification category — falling back to generic label",
+    { category, fallback: UNKNOWN_CATEGORY_LABEL },
+  );
+  return UNKNOWN_CATEGORY_LABEL;
+}
+
 const QUEUE_NAME = "notifications";
 const DLQ_NAME = "notifications-failed";
 
@@ -106,22 +156,28 @@ async function findNotificationRecipients(
  *
  * HIPAA lock-screen safety: the title MUST NOT contain patient identifiers
  * or clinical numeric values. This function produces a generic
- * "CRITICAL: Clinical flag — critical value" form with no PHI. Upstream
+ * "CRITICAL: Clinical flag — Critical value" form with no PHI. Upstream
  * push-notification integrations (APNs, FCM) should render only this
  * title on device lock screens; clinical detail is behind the
  * authenticated portal fetch keyed off related_flag_id.
+ *
+ * The category portion is resolved via `resolveCategoryLabel`, which
+ * enforces a whitelist and falls back to "Clinical alert" for any
+ * unexpected value (see `CATEGORY_LABELS`).
  */
 function buildNotificationTitle(event: NotificationEvent): string {
   const severityLabel = event.severity === "critical" ? "CRITICAL" : event.severity === "warning" ? "Warning" : "Info";
-  return `${severityLabel}: Clinical flag — ${event.category.replace(/-/g, " ")}`;
+  const categoryLabel = resolveCategoryLabel(event.category);
+  return `${severityLabel}: Clinical flag — ${categoryLabel}`;
 }
 
 /**
  * Produce a lock-screen-safe rendering of the flag summary for push-layer
- * delivery. Returns a template string built from `event.category` alone;
- * `event.summary` is intentionally discarded (it may contain PHI such as
- * patient identifiers or clinical numeric values like "BP 145/95" or
- * "K+ 7.2 mmol/L" that must not surface on a locked device).
+ * delivery. Returns a template string built from the whitelisted category
+ * label alone; `event.summary` is intentionally discarded (it may contain
+ * PHI such as patient identifiers or clinical numeric values like
+ * "BP 145/95" or "K+ 7.2 mmol/L" that must not surface on a locked
+ * device).
  *
  * The full summary is still persisted on `notifications.body` (encrypted
  * at rest) for authenticated portal render once the device is unlocked;
@@ -131,9 +187,10 @@ function buildNotificationTitle(event: NotificationEvent): string {
  * variant without re-deriving it.
  */
 function buildSafeSummary(event: NotificationEvent): string {
-  // Trust nothing from the event.summary — always fall back to category.
-  return `Clinical flag — ${event.category.replace(/-/g, " ")}. ` +
-    `Open the portal to view details.`;
+  // Trust nothing from the event.summary — always fall back to the
+  // whitelisted category label (which itself guards against unknown values).
+  const categoryLabel = resolveCategoryLabel(event.category);
+  return `Clinical flag — ${categoryLabel}. Open the portal to view details.`;
 }
 
 /**

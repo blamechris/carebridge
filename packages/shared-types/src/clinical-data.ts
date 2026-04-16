@@ -12,7 +12,18 @@ export type MedRoute =
   | "rectal"
   | "other";
 
-export type MedStatus = "active" | "discontinued" | "completed";
+/**
+ * Medication lifecycle status.
+ *
+ * - `active`       — currently administered / taken.
+ * - `held`         — temporarily paused (peri-op, adverse event, awaiting labs)
+ *                    with intent to resume. Required by rule
+ *                    `ONCO-ANTICOAG-HELD-001`, which flags held anticoagulants
+ *                    in patients with active VTE.
+ * - `discontinued` — permanently stopped.
+ * - `completed`    — finished planned course (e.g. antibiotic regimen done).
+ */
+export type MedStatus = "active" | "held" | "discontinued" | "completed";
 
 export interface Medication extends MutableRecord {
   patient_id: string;

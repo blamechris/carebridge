@@ -117,6 +117,7 @@ export const failedClinicalEvents = pgTable("failed_clinical_events", {
   status: text("status").notNull().default("pending"), // pending, retried, failed
   retry_count: real("retry_count").notNull().default(0),
   created_at: text("created_at").notNull(),
+  updated_at: text("updated_at"),
   processed_at: text("processed_at"),
 }, (table) => [
   index("idx_failed_events_status").on(table.status, table.created_at),
