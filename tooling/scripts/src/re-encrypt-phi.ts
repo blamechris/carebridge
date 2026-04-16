@@ -6,12 +6,16 @@
  * docs/phi-key-rotation.md.
  *
  * Strategy:
- *   For every (table, column) pair that uses the `encryptedText` or
- *   `encryptedJsonb` custom type, read ciphertext directly from the DB
- *   (bypassing the Drizzle custom type), decrypt with fallback, and
- *   write the re-encrypted value back. Rows whose ciphertext already
- *   decrypts under the current key (auth-tag mismatch on the previous
- *   key) are skipped.
+ *   Bulk migration — bypass the Drizzle custom type and work on raw
+ *   ciphertext. For every (table, column) pair listed below the script
+ *   reads the stored ciphertext directly, tries `decrypt` with the
+ *   current key first (to skip already-migrated rows), falls back to the
+ *   previous key, and writes the re-encrypted value back under the
+ *   current key. The two-step try/catch is what lets the script be
+ *   idempotent.
+ *
+ *   Pagination is keyset (WHERE id > $lastId) rather than LIMIT/OFFSET so
+ *   the runtime stays linear on large tables.
  *
  * Usage:
  *   pnpm --filter @carebridge/scripts tsx src/re-encrypt-phi.ts --dry-run
@@ -23,6 +27,8 @@
  *   - No table drops, no schema changes.
  *   - Fails loudly if `PHI_ENCRYPTION_KEY_PREVIOUS` is unset (nothing to
  *     migrate from) or if a row cannot be decrypted under either key.
+ *   - JSONB columns are validated as JSON after decrypt so a schema/list
+ *     mismatch is caught before a round-trip writes garbage.
  */
 
 import postgres from "postgres";
@@ -36,18 +42,28 @@ import {
 interface EncryptedColumn {
   table: string;
   column: string;
-  /** True for encryptedJsonb columns — after decrypt, the plaintext is JSON. */
+  /**
+   * True for encryptedJsonb columns — after decrypt the plaintext is a JSON
+   * document. The script validates it with JSON.parse so a wrong column
+   * mapping surfaces before we re-encrypt garbage.
+   */
   jsonb?: boolean;
 }
 
 /**
- * Enumerated from grep across packages/db-schema/src/schema. If a schema
- * adds a new encrypted column, update this list — there is no runtime
- * reflection of Drizzle custom types that would let us discover them.
+ * Enumerated from grep across packages/db-schema/src/schema. Table names
+ * are the actual pgTable names, NOT the Drizzle constant names. If a
+ * schema adds a new encrypted column, update this list — there is no
+ * runtime reflection of Drizzle custom types that would let us discover
+ * them. A drift check lives in the integration tests; run
+ *   pnpm --filter @carebridge/scripts test
+ * after editing this list.
  */
 const ENCRYPTED_COLUMNS: EncryptedColumn[] = [
+  // packages/db-schema/src/schema/auth.ts
   { table: "users", column: "mfa_secret" },
 
+  // packages/db-schema/src/schema/patients.ts
   { table: "patients", column: "name" },
   { table: "patients", column: "date_of_birth" },
   { table: "patients", column: "diagnosis" },
@@ -56,36 +72,44 @@ const ENCRYPTED_COLUMNS: EncryptedColumn[] = [
   { table: "patients", column: "insurance_id" },
   { table: "patients", column: "emergency_contact_name" },
   { table: "patients", column: "emergency_contact_phone" },
-
   { table: "diagnoses", column: "description" },
-
   { table: "allergies", column: "allergen" },
   { table: "allergies", column: "reaction" },
 
+  // packages/db-schema/src/schema/patient-observations.ts
   { table: "patient_observations", column: "description" },
 
+  // packages/db-schema/src/schema/notifications.ts
   { table: "notifications", column: "title" },
   { table: "notifications", column: "body" },
 
-  { table: "scheduling", column: "notes" },
+  // packages/db-schema/src/schema/scheduling.ts — the encrypted column lives
+  // on the appointments table, not a 'scheduling' table.
+  { table: "appointments", column: "notes" },
 
+  // packages/db-schema/src/schema/emergency-access.ts
   { table: "emergency_access", column: "justification" },
 
+  // packages/db-schema/src/schema/encounters.ts
   { table: "encounters", column: "notes" },
 
-  { table: "notes", column: "sections", jsonb: true },
+  // packages/db-schema/src/schema/notes.ts — JSONB sections on BOTH the
+  // primary note row and every immutable version snapshot.
+  { table: "clinical_notes", column: "sections", jsonb: true },
+  { table: "note_versions", column: "sections", jsonb: true },
 
+  // packages/db-schema/src/schema/messaging.ts
   { table: "messages", column: "body" },
 
+  // packages/db-schema/src/schema/clinical-data.ts
   { table: "medications", column: "name" },
   { table: "medications", column: "brand_name" },
   { table: "medications", column: "notes" },
-
-  { table: "labs", column: "notes" },
-  { table: "procedures", column: "notes" },
   { table: "vitals", column: "notes" },
-  { table: "care_plans", column: "title" },
-  { table: "care_plans", column: "body" },
+  { table: "lab_results", column: "notes" },
+  { table: "procedures", column: "notes" },
+  { table: "events", column: "title" },
+  { table: "events", column: "body" },
 ];
 
 interface Options {
@@ -131,15 +155,32 @@ async function reencryptTableColumn(
     );
   }
 
-  let offset = 0;
   let rewritten = 0;
   let skipped = 0;
   let total = 0;
 
+  // Keyset pagination: walk the (ordered by id) stream without OFFSET, so
+  // runtime is linear even on tables with millions of rows.
+  let lastId: string | null = null;
+
   for (;;) {
-    const rows = (await sql.unsafe(
-      `SELECT id, "${col.column}" AS value FROM "${col.table}" WHERE "${col.column}" IS NOT NULL ORDER BY id LIMIT ${opts.batchSize} OFFSET ${offset}`,
-    )) as Array<{ id: string; value: string }>;
+    const query = lastId === null
+      ? `SELECT id, "${col.column}" AS value FROM "${col.table}"
+         WHERE "${col.column}" IS NOT NULL
+         ORDER BY id
+         LIMIT ${opts.batchSize}`
+      : `SELECT id, "${col.column}" AS value FROM "${col.table}"
+         WHERE "${col.column}" IS NOT NULL
+           AND id > $1
+         ORDER BY id
+         LIMIT ${opts.batchSize}`;
+
+    const rows = (lastId === null
+      ? await sql.unsafe(query)
+      : await sql.unsafe(query, [lastId])) as Array<{
+      id: string;
+      value: string;
+    }>;
     if (rows.length === 0) break;
     total += rows.length;
 
@@ -148,9 +189,8 @@ async function reencryptTableColumn(
       // know the row is already under the new key and we can skip it
       // without touching it.
       let plaintext: string;
-      let wasUnderPreviousKey = false;
       try {
-        plaintext = decryptWithFallback(row.value, currentKey, null);
+        decryptWithFallback(row.value, currentKey, null);
         skipped += 1;
         continue;
       } catch {
@@ -159,7 +199,6 @@ async function reencryptTableColumn(
 
       try {
         plaintext = decryptWithFallback(row.value, previousKey, null);
-        wasUnderPreviousKey = true;
       } catch (err) {
         throw new Error(
           `Row ${col.table}.${col.column} id=${row.id} failed to decrypt under both keys: ${
@@ -168,7 +207,21 @@ async function reencryptTableColumn(
         );
       }
 
-      if (!wasUnderPreviousKey) continue;
+      // Validate JSONB plaintext is well-formed JSON before re-encrypting.
+      // Catches schema/list mismatches (e.g. marking a text column as jsonb)
+      // before we silently rewrite garbage.
+      if (col.jsonb) {
+        try {
+          JSON.parse(plaintext);
+        } catch (err) {
+          throw new Error(
+            `Row ${col.table}.${col.column} id=${row.id} decrypted to invalid JSON — ` +
+              `column-list may be wrong. Details: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+          );
+        }
+      }
 
       const reencrypted = encrypt(plaintext, currentKey);
       if (!opts.dryRun) {
@@ -180,7 +233,7 @@ async function reencryptTableColumn(
       rewritten += 1;
     }
 
-    offset += rows.length;
+    lastId = rows[rows.length - 1]!.id;
   }
 
   return { total, rewritten, skipped };

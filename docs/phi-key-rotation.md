@@ -70,6 +70,17 @@ fallback can eventually be removed.
 
 ### 1.4 Re-encrypt historical rows
 
+Before running the script, ensure `DATABASE_URL` is set in your shell.
+`re-encrypt-phi.ts` exits immediately with `DATABASE_URL is not set` if
+it is missing. Use the same production connection string you would use
+for other maintenance tasks, including any required SSL parameters.
+
+```bash
+export DATABASE_URL='<postgres connection string>'
+# Example if your environment requires SSL:
+# export DATABASE_URL='postgres://user:pass@host:5432/dbname?sslmode=require'
+```
+
 Run the re-encryption script:
 
 ```bash
@@ -77,10 +88,15 @@ pnpm --filter @carebridge/scripts tsx src/re-encrypt-phi.ts --dry-run
 pnpm --filter @carebridge/scripts tsx src/re-encrypt-phi.ts
 ```
 
-The script iterates every table with encrypted columns, reads each row
-via the Drizzle custom type (which uses the fallback), and rewrites it so
-the row persists under the new key. It prints per-table progress and a
-final summary.
+The script iterates every table with encrypted columns, reads the stored
+ciphertext directly, explicitly calls the same fallback-aware decryption
+logic used during rotation (`decryptWithFallback`), and rewrites the row
+so it persists under the new key. It bypasses the Drizzle custom type
+intentionally: this is a bulk migration script, so it handles decryption
+and re-encryption itself while still allowing rows encrypted with either
+the current or previous key to be processed. Pagination is keyset
+(`WHERE id > $lastId`) so runtime stays linear on large tables. It prints
+per-table progress and a final summary.
 
 For large datasets, the script supports `--batch-size=N` (default 500) and
 `--table=<name>` to scope to one table at a time. Re-encrypting is
