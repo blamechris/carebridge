@@ -124,13 +124,54 @@ export const patientRecordsRbacRouter = t.router({
     }),
 
   // Reading a specific patient record is patient-scoped: input.id is the patientId.
+  //
+  // Explicit field selection (HIPAA §164.502(b) minimum necessary): insurance_id,
+  // emergency_contact_*, and patient-level free-text notes are intentionally
+  // NOT returned here. Callers that need them must use a dedicated endpoint —
+  // that scopes the PHI exposure to the use case rather than every getById
+  // implicitly leaking billing and contact data to every consumer.
   getById: protectedProcedure
     .input(z.object({ id: z.string() }))
     .query(async ({ ctx, input }) => {
       await enforcePatientAccess(ctx.user, input.id);
       const db = getDb();
       const [patient] = await db
-        .select()
+        .select({
+          id: patients.id,
+          name: patients.name,
+          date_of_birth: patients.date_of_birth,
+          biological_sex: patients.biological_sex,
+          diagnosis: patients.diagnosis,
+          mrn: patients.mrn,
+          mrn_hmac: patients.mrn_hmac,
+          primary_provider_id: patients.primary_provider_id,
+          allergy_status: patients.allergy_status,
+          weight_kg: patients.weight_kg,
+          created_at: patients.created_at,
+          updated_at: patients.updated_at,
+        })
+        .from(patients)
+        .where(eq(patients.id, input.id));
+      return patient ?? null;
+    }),
+
+  // Minimum-necessary summary for banner / lookup use cases.
+  //
+  // Returns only the fields needed to identify a patient — no date-of-birth,
+  // no diagnosis, no weight, no billing data. Callers that need richer data
+  // should prefer `getById`; callers that only need a name/MRN tile should
+  // use this endpoint to avoid incidentally fetching PHI.
+  getSummary: protectedProcedure
+    .input(z.object({ id: z.string() }))
+    .query(async ({ ctx, input }) => {
+      await enforcePatientAccess(ctx.user, input.id);
+      const db = getDb();
+      const [patient] = await db
+        .select({
+          id: patients.id,
+          name: patients.name,
+          mrn: patients.mrn,
+        })
         .from(patients)
         .where(eq(patients.id, input.id));
       return patient ?? null;
