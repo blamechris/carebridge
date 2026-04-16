@@ -1,5 +1,8 @@
 import { Queue } from "bullmq";
-import { getRedisConnection } from "@carebridge/redis-config";
+import {
+  getRedisConnection,
+  CLINICAL_EVENTS_JOB_OPTIONS,
+} from "@carebridge/redis-config";
 import { getDb, failedClinicalEvents } from "@carebridge/db-schema";
 import type { ClinicalEvent } from "@carebridge/shared-types";
 
@@ -9,12 +12,7 @@ const connection = getRedisConnection();
 
 const clinicalEventsQueue = new Queue("clinical-events", {
   connection,
-  defaultJobOptions: {
-    attempts: 5,
-    backoff: { type: "exponential", delay: 2000 },
-    removeOnComplete: { count: 1000 },
-    removeOnFail: { count: 10000 },
-  },
+  defaultJobOptions: CLINICAL_EVENTS_JOB_OPTIONS,
 });
 
 export async function emitClinicalEvent(event: ClinicalEvent): Promise<void> {
