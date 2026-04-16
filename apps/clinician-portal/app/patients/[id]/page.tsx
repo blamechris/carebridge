@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { AuthGuard } from "@/lib/auth-guard";
+import { pickFreshest, mostRecentIso } from "@/lib/freshest";
 import {
   FlagActionModal,
   type FlagAction,
@@ -62,10 +63,13 @@ function StaleDataBanner({
   const ageDays = Math.round(ageMs / (24 * 60 * 60 * 1000));
   // role="status" (polite live region) rather than role="alert" (assertive):
   // a chronic chart banner should not interrupt a screen-reader mid-sentence
-  // every time the clinician opens a patient with week-old data.
+  // every time the clinician opens a patient with week-old data. Explicit
+  // aria-live="polite" belt-and-suspenders in case any AT doesn't map
+  // role="status" to a polite region by default. (Issue #525.)
   return (
     <div
       role="status"
+      aria-live="polite"
       style={{
         background: "var(--color-warning-bg, #fff3cd)",
         border: "1px solid var(--color-warning-border, #ffc107)",
@@ -346,15 +350,44 @@ function VitalsTab({ patientId }: { patientId: string }) {
   }
 
   // Freshest recording across types — drives the staleness banner.
-  const mostRecent = latest.reduce((a, b) =>
-    a.recorded_at > b.recorded_at ? a : b,
+  // Use epoch-ms normalization (issue #529) rather than lexicographic
+  // string compare: ISO strings that represent the same instant can
+  // differ in suffix (`Z` vs `+00:00`) or sub-second precision and
+  // sort wrong as plain strings.
+  const mostRecent = pickFreshest<{ recorded_at: string }>(
+    latest as Array<{ recorded_at: string }>,
+    (v) => v.recorded_at,
   );
-  const isStale =
-    Date.now() - new Date(mostRecent.recorded_at).getTime() > STALE_THRESHOLD_MS;
+  // Fail-safe: when all timestamps are unparseable, pickFreshest returns
+  // null and we cannot determine freshness. In that case we must still
+  // surface a staleness warning — hiding it would be clinically unsafe
+  // because the clinician would have no cue that displayed values may be
+  // outdated. (PR #571 review finding.)
+  const freshnessUnknown = mostRecent === null && latest.length > 0;
+  const isStale = freshnessUnknown
+    || (mostRecent !== null &&
+        Date.now() - new Date(mostRecent.recorded_at).getTime() > STALE_THRESHOLD_MS);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      {isStale ? (
+      {freshnessUnknown ? (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            background: "var(--color-warning-bg, #fff3cd)",
+            border: "1px solid var(--color-warning-border, #ffc107)",
+            color: "var(--color-warning-text, #856404)",
+            padding: "12px 16px",
+            borderRadius: 6,
+            fontSize: 14,
+          }}
+        >
+          <strong>Stale vitals:</strong> unable to determine data freshness
+          &mdash; verify manually. Values shown may not reflect the
+          patient&rsquo;s current state.
+        </div>
+      ) : isStale && mostRecent ? (
         <StaleDataBanner
           lastRecordedAt={mostRecent.recorded_at}
           label="vitals"
@@ -439,13 +472,13 @@ function LabsTab({ patientId }: { patientId: string }) {
     );
   }
 
-  // Panels come back ordered desc by collected_at; pick the freshest.
-  const mostRecentPanelAt =
-    panels
-      .map((p) => p.panel.collected_at ?? p.panel.created_at)
-      .filter((v): v is string => Boolean(v))
-      .sort()
-      .slice(-1)[0] ?? null;
+  // Panels are returned ordered desc by collected_at, but we must still
+  // normalize via Date.parse before comparing (issue #529): lab panels
+  // from ingestion paths use mixed ISO suffixes (`Z` vs `+00:00`) and
+  // lexicographic sort can pick the wrong panel as "most recent".
+  const mostRecentPanelAt = mostRecentIso(
+    panels.map((p) => p.panel.collected_at ?? p.panel.created_at),
+  );
   const labsStale =
     mostRecentPanelAt !== null &&
     Date.now() - new Date(mostRecentPanelAt).getTime() > STALE_THRESHOLD_MS;

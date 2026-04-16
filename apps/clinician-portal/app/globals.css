@@ -21,6 +21,18 @@
   --success-border: rgba(48, 209, 88, 0.25);
   --accent: #0a84ff;
   --accent-hover: #409cff;
+  /* Semantic surface tokens for staleness / warning / muted banners and
+     cards. These alias the Apple-dark warning palette above and add a
+     neutral "muted" surface for the >24h "stale" tier. Defined explicitly
+     so inline styles like `var(--color-warning-bg, #fff3cd)` resolve to
+     the themed value instead of the light-mode hex fallback, and so
+     dark-mode overrides take effect. Keep in sync with --warning /
+     --warning-bg / --warning-border. (Closes #523, #526, #530.) */
+  --color-warning-bg: var(--warning-bg);
+  --color-warning-border: var(--warning);
+  --color-warning-text: var(--warning);
+  --color-muted-bg: rgba(255, 255, 255, 0.04);
+  --color-muted-border: var(--border-light);
   --sidebar-width: 240px;
   --radius-sm: 6px;
   --radius-md: 8px;
