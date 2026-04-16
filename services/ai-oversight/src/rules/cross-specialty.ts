@@ -67,6 +67,100 @@ const FEVER_SYMPTOM_PATTERN = /fever|febrile|temperature|chills/i;
 const VTE_ICD10_PATTERN = /^(I26|I80|I82)\./;
 
 /**
+ * Triple-whammy AKI patterns: NSAID + loop/thiazide diuretic + ACE-I/ARB.
+ * Each of the three arms must match independently for the rule to fire.
+ * Celecoxib is a COX-2 but still confers AKI risk in this triad.
+ */
+const NSAID_PATTERN =
+  /ibuprofen|advil|motrin|naproxen|aleve|diclofenac|voltaren|celecoxib|celebrex|indomethacin|ketorolac|toradol|meloxicam|piroxicam|nabumetone|etodolac|sulindac|ketoprofen/i;
+
+const LOOP_THIAZIDE_DIURETIC_PATTERN =
+  /furosemide|lasix|bumetanide|bumex|torsemide|demadex|ethacrynic|edecrin|hydrochlorothiazide|hctz|chlorthalidone|thalitone|indapamide|lozol|metolazone|zaroxolyn|chlorothiazide|diuril/i;
+
+const ACE_ARB_PATTERN =
+  /lisinopril|enalapril|vasotec|captopril|capoten|ramipril|altace|benazepril|lotensin|quinapril|accupril|fosinopril|monopril|perindopril|aceon|trandolapril|mavik|moexipril|univasc|losartan|cozaar|valsartan|diovan|irbesartan|avapro|candesartan|atacand|olmesartan|benicar|telmisartan|micardis|azilsartan|edarbi|eprosartan|teveten/i;
+
+/**
+ * Hepatic disease diagnosis patterns.
+ * ICD-10: K70 (alcoholic liver disease), K71 (toxic liver disease),
+ * K72 (hepatic failure), K73 (chronic hepatitis), K74 (fibrosis/cirrhosis),
+ * K75 (inflammatory liver disease incl. NASH), K76 (other liver disease),
+ * B15-B19 (viral hepatitis).
+ */
+const HEPATIC_DISEASE_ICD10_PATTERN = /^(K7[0-6]|B1[5-9])(\.|$)/;
+
+const HEPATIC_DISEASE_DESCRIPTION_PATTERN =
+  /cirrhosis|hepatic failure|liver failure|hepatitis|hepatic impairment|hepatic insufficiency|chronic liver disease|alcoholic liver|steatohepatitis|nash|nafld|liver disease|portal hypertension|esophageal varices|ascites.*liver/i;
+
+/**
+ * Hepatotoxic medications. Acetaminophen and statins require high-dose matching —
+ * see dose-aware helpers below. Other drugs are always flagged in hepatic disease.
+ */
+const HEPATOTOXIN_ALWAYS_PATTERN =
+  /methotrexate|trexall|isoniazid|laniazid|amiodarone|cordarone|pacerone|valproic acid|valproate|depakote|depakene|divalproex/i;
+
+/**
+ * Acetaminophen match. Dose threshold for hepatic-impairment risk is ≥ 3 g/day.
+ * We rely on the medication string containing an explicit dose cue indicating
+ * ≥ 3g/day (1g QID, 4g/day, 1000mg q6h, etc.) since structured dose data is
+ * not available in the rule's PatientContext input.
+ */
+const ACETAMINOPHEN_PATTERN = /acetaminophen|tylenol|paracetamol|apap/i;
+
+/** Matches explicit high daily dose cues for acetaminophen (≥ 3g/day). */
+const ACETAMINOPHEN_HIGH_DOSE_PATTERN =
+  /\b(3|3\.\d+|4|4\.\d+|5)\s*g(?:\/day|\s*\/\s*d|\s*daily|\b)|\b(3000|4000|5000)\s*mg(?:\/day)?|\b1\s*g(?:ram)?\b.*\b(?:qid|q6h|q\s*6|four times|4x\/day|4 times)|\b1000\s*mg\b.*\b(?:qid|q6h|q\s*6|four times|4x\/day|4 times)/i;
+
+/** Statin medication match. High-dose cutoffs vary per statin (see helper). */
+const STATIN_PATTERN =
+  /atorvastatin|lipitor|rosuvastatin|crestor|simvastatin|zocor|pravastatin|pravachol|lovastatin|mevacor|fluvastatin|lescol|pitavastatin|livalo/i;
+
+/**
+ * Match a statin at hepatotoxicity-relevant high dose. Thresholds (per day):
+ * atorvastatin ≥ 40 mg, rosuvastatin ≥ 20 mg, simvastatin ≥ 40 mg,
+ * pravastatin ≥ 40 mg, lovastatin ≥ 40 mg.
+ */
+function isHighDoseStatin(med: string): boolean {
+  const m = med.toLowerCase();
+  const doseMatch = m.match(/(\d+(?:\.\d+)?)\s*mg/);
+  if (!doseMatch) return false;
+  const dose = Number(doseMatch[1]);
+  if (!Number.isFinite(dose)) return false;
+  if (/atorvastatin|lipitor/.test(m)) return dose >= 40;
+  if (/rosuvastatin|crestor/.test(m)) return dose >= 20;
+  if (/simvastatin|zocor/.test(m)) return dose >= 40;
+  if (/pravastatin|pravachol/.test(m)) return dose >= 40;
+  if (/lovastatin|mevacor/.test(m)) return dose >= 40;
+  if (/fluvastatin|lescol/.test(m)) return dose >= 40;
+  if (/pitavastatin|livalo/.test(m)) return dose >= 4;
+  return false;
+}
+
+/** True if the medication string is a hepatotoxin relevant for this rule. */
+function isHepatotoxicMedication(med: string): boolean {
+  if (HEPATOTOXIN_ALWAYS_PATTERN.test(med)) return true;
+  if (ACETAMINOPHEN_PATTERN.test(med) && ACETAMINOPHEN_HIGH_DOSE_PATTERN.test(med))
+    return true;
+  if (STATIN_PATTERN.test(med) && isHighDoseStatin(med)) return true;
+  return false;
+}
+
+/**
+ * Renal impairment / reduced eGFR diagnosis patterns.
+ * ICD-10: N17 (acute kidney failure), N18 (CKD), N19 (unspecified kidney
+ * failure), N28 (other renal disorders incl. insufficiency),
+ * R94.4 (abnormal kidney function studies / reduced eGFR).
+ */
+const RENAL_IMPAIRMENT_ICD10_PATTERN = /^(N1[789]|N28|R94\.4)(\.|$)/;
+
+const RENAL_IMPAIRMENT_DESCRIPTION_PATTERN =
+  /chronic kidney|\bckd\b|renal failure|renal insufficiency|nephropathy|dialysis|acute kidney injury|\baki\b|end.?stage renal|\besrd\b|reduced egfr|low egfr|decreased egfr|impaired renal/i;
+
+/** Aminoglycoside antibiotics — nephrotoxic and ototoxic, especially in CKD. */
+const AMINOGLYCOSIDE_PATTERN =
+  /gentamicin|garamycin|tobramycin|nebcin|tobi|amikacin|amikin|streptomycin|neomycin|kanamycin|paromomycin|plazomicin|zemdri/i;
+
+/**
  * ANTICOAG-BLEED severity stratification patterns.
  *
  * CRITICAL: frank hemorrhage terms that require immediate evaluation.
@@ -408,6 +502,96 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
     suggested_action:
       "Increase glucose monitoring frequency. Consider prophylactic insulin dose adjustment. Review steroid taper plan.",
     notify_specialties: ["endocrinology"],
+  },
+  {
+    id: "RENAL-NSAID-DIURETIC-ACE-001",
+    name: "Triple whammy AKI — NSAID + loop/thiazide diuretic + ACE-I/ARB",
+    check: (ctx: PatientContext) => {
+      const onNSAID = ctx.active_medications.some((m) => NSAID_PATTERN.test(m));
+      const onDiuretic = ctx.active_medications.some((m) =>
+        LOOP_THIAZIDE_DIURETIC_PATTERN.test(m),
+      );
+      const onACEARB = ctx.active_medications.some((m) => ACE_ARB_PATTERN.test(m));
+      return onNSAID && onDiuretic && onACEARB;
+    },
+    severity: "warning" as const,
+    category: "cross-specialty" as const,
+    summary:
+      "Triple whammy: NSAID + diuretic + ACE-I/ARB — elevated risk of acute kidney injury",
+    rationale:
+      "Concurrent use of an NSAID, a loop or thiazide diuretic, and an ACE-inhibitor or ARB — the " +
+      '"triple whammy" — produces a synergistic reduction in renal perfusion. NSAIDs constrict the ' +
+      "afferent arteriole, ACE-Is/ARBs dilate the efferent arteriole, and diuretics reduce effective " +
+      "circulating volume. This triad is a leading avoidable cause of acute kidney injury, with a " +
+      "reported 30-day AKI hazard ratio of 1.3–1.8 even in patients with baseline-normal renal function, " +
+      "and substantially higher in the elderly or volume-depleted.",
+    suggested_action:
+      "Review necessity of the NSAID — consider acetaminophen or topical NSAID as safer analgesic. " +
+      "If all three must be continued, hold the NSAID during acute illness or dehydration, ensure " +
+      "adequate hydration, and obtain a baseline creatinine with follow-up within 5–7 days.",
+    notify_specialties: ["nephrology"],
+  },
+  {
+    id: "HEPATIC-HEPATOTOXIN-001",
+    name: "Active hepatic disease + hepatotoxic medication",
+    check: (ctx: PatientContext) => {
+      const hasHepaticDisease =
+        ctx.active_diagnosis_codes.some((code) =>
+          HEPATIC_DISEASE_ICD10_PATTERN.test(code),
+        ) ||
+        ctx.active_diagnoses.some((d) =>
+          HEPATIC_DISEASE_DESCRIPTION_PATTERN.test(d),
+        );
+      if (!hasHepaticDisease) return false;
+      return ctx.active_medications.some((m) => isHepatotoxicMedication(m));
+    },
+    severity: "warning" as const,
+    category: "cross-specialty" as const,
+    summary:
+      "Patient with active hepatic disease is on a hepatotoxic medication — risk of decompensation",
+    rationale:
+      "Patients with cirrhosis, hepatitis, or hepatic failure have reduced metabolic reserve and are " +
+      "highly susceptible to drug-induced liver injury. High-risk agents include acetaminophen at ≥ 3 g/day " +
+      "(glutathione depletion, even therapeutic doses can precipitate failure), methotrexate (fibrosis), " +
+      "isoniazid (idiosyncratic hepatitis, 0.5–1% incidence rising sharply with underlying liver disease), " +
+      "amiodarone (phospholipidosis and steatohepatitis), valproate (microvesicular steatosis and " +
+      "hyperammonemia), and high-dose statins (transaminitis; rarely acute liver injury).",
+    suggested_action:
+      "Review medication necessity and consider an alternative without hepatic metabolism. If continued, " +
+      "obtain baseline LFTs (AST/ALT/bilirubin/INR), document indication, cap acetaminophen at < 2 g/day, " +
+      "and schedule LFT recheck within 2–4 weeks. Consult hepatology for Child-Pugh B/C cirrhosis.",
+    notify_specialties: ["hepatology", "gastroenterology"],
+  },
+  {
+    id: "RENAL-AMINOGLYCOSIDE-001",
+    name: "Renal impairment + aminoglycoside antibiotic",
+    check: (ctx: PatientContext) => {
+      const hasRenalImpairment =
+        ctx.active_diagnosis_codes.some((code) =>
+          RENAL_IMPAIRMENT_ICD10_PATTERN.test(code),
+        ) ||
+        ctx.active_diagnoses.some((d) =>
+          RENAL_IMPAIRMENT_DESCRIPTION_PATTERN.test(d),
+        );
+      if (!hasRenalImpairment) return false;
+      return ctx.active_medications.some((m) => AMINOGLYCOSIDE_PATTERN.test(m));
+    },
+    severity: "warning" as const,
+    category: "cross-specialty" as const,
+    summary:
+      "Renal-impaired patient on aminoglycoside — risk of acute tubular necrosis and ototoxicity",
+    rationale:
+      "Aminoglycosides (gentamicin, tobramycin, amikacin, streptomycin) are renally excreted and " +
+      "accumulate in proximal tubular cells, producing dose- and duration-dependent nephrotoxicity. " +
+      "Incidence of AKI rises from ~10% in normal renal function to 30–50% in pre-existing CKD, often " +
+      "with irreversible ototoxicity or vestibulotoxicity. Risk compounds with concurrent loop diuretics, " +
+      "vancomycin, contrast, or advanced age.",
+    suggested_action:
+      "Reassess antibiotic selection — consider an equally effective non-nephrotoxic agent if available. " +
+      "If aminoglycoside must be used, dose by lean body weight with extended-interval dosing, target " +
+      "trough < 1 mcg/mL (gentamicin/tobramycin) or < 5 mcg/mL (amikacin), monitor creatinine daily and " +
+      "audiometry if duration > 5 days, and minimize total exposure. Nephrology consultation recommended.",
+    notify_specialties: ["nephrology", "infectious_disease"],
   },
   {
     id: "OBSTETRIC-TERATOGEN-X-001",
