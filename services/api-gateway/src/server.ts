@@ -13,6 +13,7 @@ import { makeAcceptInviteRateLimitHook } from "./middleware/accept-invite-rate-l
 import { registerNotificationSSE } from "./routes/notifications-sse.js";
 import { redactUrlIds } from "@carebridge/phi-sanitizer";
 import { startBackgroundWorkers } from "./workers.js";
+import { startCareTeamInvalidationSubscriber } from "./middleware/rbac-invalidation-subscriber.js";
 
 const API_PORT = Number(process.env.API_PORT) || 4000;
 const API_HOST = process.env.API_HOST ?? "0.0.0.0";
@@ -202,6 +203,15 @@ async function main() {
   // Must run before listen() so the session cleanup worker is enforcing the
   // 15-minute idle timeout the moment the gateway starts accepting traffic.
   await startBackgroundWorkers();
+
+  // Subscribe to care-team cache invalidation broadcasts so revocation on any
+  // replica clears the local Map immediately, not after the 2 s TTL.
+  const careTeamInvalidationSub = await startCareTeamInvalidationSubscriber({
+    warn: (obj, msg) => server.log.warn(obj, msg),
+  });
+  server.addHook("onClose", async () => {
+    await careTeamInvalidationSub.quit();
+  });
 
   // --- Start ---
   await server.listen({ port: API_PORT, host: API_HOST });

@@ -66,12 +66,18 @@ async function logAccessDenial(
 /*  In-memory TTL cache for care-team lookups                         */
 /* ------------------------------------------------------------------ */
 
-// Trade-off: shorter TTL means more DB load but fresher revocation of care-team
-// access. 5s bounds worst-case staleness for revoked access while still absorbing
-// bursty per-request lookups. Proper fix is a Redis-backed cache with PUBSUB
-// invalidation so revocations propagate instantly across replicas (follow-up issue).
-const CACHE_TTL_MS = 5_000; // 5 seconds
+// Hot path for HIPAA access checks: most requests hit it twice. Keep the
+// local map for per-replica speed and layer Redis PUBSUB-backed invalidation
+// on top so revocations propagate across replicas without waiting on TTL.
+//
+// TTL is kept as a defense-in-depth guard against dropped invalidation
+// messages — 2 s bounds the worst-case staleness window if Redis PUBSUB
+// misses a hop.
+const CACHE_TTL_MS = 2_000;
 const CACHE_MAX_ENTRIES = 10_000;
+
+/** Redis PUBSUB channel carrying care-team cache invalidation messages. */
+export const CARE_TEAM_INVALIDATE_CHANNEL = "rbac:care_team:invalidate";
 
 interface CacheEntry {
   value: boolean;
@@ -79,6 +85,10 @@ interface CacheEntry {
 }
 
 const cache = new Map<string, CacheEntry>();
+
+function cacheKey(userId: string, patientId: string): string {
+  return `${userId}:${patientId}`;
+}
 
 function getCached(key: string): boolean | undefined {
   const entry = cache.get(key);
@@ -102,6 +112,85 @@ function setCache(key: string, value: boolean): void {
 /** Clear the entire care-team cache. Useful for testing and invalidation. */
 export function clearCareTeamCache(): void {
   cache.clear();
+}
+
+/**
+ * Invalidate a single care-team cache entry on this replica.
+ *
+ * Use {@link broadcastCareTeamInvalidation} to propagate invalidation across
+ * all replicas via Redis PUBSUB.
+ */
+export function invalidateCareTeamCacheEntry(
+  userId: string,
+  patientId: string,
+): void {
+  cache.delete(cacheKey(userId, patientId));
+}
+
+/**
+ * Invalidate every cache entry referring to the given patient on this
+ * replica. Useful when the removal scope is the patient row rather than a
+ * specific (user, patient) pair — e.g. bulk care-team rotations.
+ */
+export function invalidateCareTeamCacheForPatient(patientId: string): void {
+  const suffix = `:${patientId}`;
+  for (const key of cache.keys()) {
+    if (key.endsWith(suffix)) cache.delete(key);
+  }
+}
+
+/**
+ * Apply an invalidation message received over Redis PUBSUB.
+ *
+ * Messages are of the form "userId:patientId" (from
+ * {@link invalidateCareTeamCacheEntry}) or "*:patientId" to invalidate every
+ * entry for that patient.
+ *
+ * Exported for unit testing the subscriber wiring.
+ */
+export function applyInvalidationMessage(message: string): void {
+  if (!message) return;
+  const [userIdRaw, patientIdRaw] = message.split(":", 2);
+  if (!userIdRaw || !patientIdRaw) return;
+  if (userIdRaw === "*") {
+    invalidateCareTeamCacheForPatient(patientIdRaw);
+    return;
+  }
+  invalidateCareTeamCacheEntry(userIdRaw, patientIdRaw);
+}
+
+/**
+ * Publish an invalidation message to every replica listening on
+ * {@link CARE_TEAM_INVALIDATE_CHANNEL}. Accepts a Redis-compatible
+ * publisher (ioredis exposes `.publish(channel, message)`) so callers
+ * inject their own connection — this module stays decoupled from any
+ * specific Redis client.
+ *
+ * Fire-and-forget: a publish failure must never block the surrounding
+ * mutation (e.g. marking a care-team assignment as removed), because
+ * the source-of-truth change has already been written. Other replicas
+ * will fall back to the 2 s TTL.
+ */
+export async function broadcastCareTeamInvalidation(
+  publisher: { publish: (channel: string, message: string) => Promise<unknown> },
+  userId: string | "*",
+  patientId: string,
+): Promise<void> {
+  try {
+    await publisher.publish(
+      CARE_TEAM_INVALIDATE_CHANNEL,
+      `${userId}:${patientId}`,
+    );
+  } catch {
+    // Intentionally swallow — see jsdoc.
+  }
+  // Invalidate locally so the caller doesn't have to loop through its own
+  // subscriber just to clear its own replica's cache.
+  if (userId === "*") {
+    invalidateCareTeamCacheForPatient(patientId);
+  } else {
+    invalidateCareTeamCacheEntry(userId, patientId);
+  }
 }
 
 /* ------------------------------------------------------------------ */
