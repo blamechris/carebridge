@@ -56,9 +56,12 @@ function StaleDataBanner({
 }) {
   const ageMs = Date.now() - new Date(lastRecordedAt).getTime();
   const ageDays = Math.round(ageMs / (24 * 60 * 60 * 1000));
+  // role="status" (polite live region) rather than role="alert" (assertive):
+  // a chronic chart banner should not interrupt a screen-reader mid-sentence
+  // every time the clinician opens a patient with week-old data.
   return (
     <div
-      role="alert"
+      role="status"
       style={{
         background: "var(--color-warning-bg, #fff3cd)",
         border: "1px solid var(--color-warning-border, #ffc107)",
