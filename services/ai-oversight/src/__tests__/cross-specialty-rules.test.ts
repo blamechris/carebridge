@@ -189,6 +189,191 @@ describe("ONCO-VTE-NEURO-001 — Cancer + VTE + neurological symptom", () => {
     expect(flag).toBeDefined();
     expect(flag!.suggested_action).toContain("NOT on anticoagulation");
   });
+
+  // --- Recency gate (issue #215) ---
+  //
+  // When structured diagnosis detail is provided, the rule must treat stale /
+  // resolved DVTs as non-qualifying. Without this gate, cancer patients with
+  // a years-old resolved DVT still listed in their chart trigger unnecessary
+  // CT head / CT angiography with IV contrast whenever they present with any
+  // common neurological complaint (e.g. tension headache).
+
+  it("does NOT fire when the VTE is resolved years ago (status=resolved)", () => {
+    const today = new Date();
+    const sixYearsAgo = new Date(today);
+    sixYearsAgo.setFullYear(today.getFullYear() - 6);
+    const fiveYearsAgo = new Date(today);
+    fiveYearsAgo.setFullYear(today.getFullYear() - 5);
+
+    const ctx: PatientContext = {
+      active_diagnoses: ["Pancreatic cancer", "Deep vein thrombosis"],
+      active_diagnosis_codes: ["C25.9", "I82.401"],
+      active_medications: [],
+      new_symptoms: ["tension headache"],
+      care_team_specialties: ["oncology"],
+      active_diagnoses_detail: [
+        {
+          description: "Pancreatic cancer",
+          icd10_code: "C25.9",
+          status: "active",
+          onset_date: null,
+          resolved_date: null,
+        },
+        {
+          description: "Deep vein thrombosis",
+          icd10_code: "I82.401",
+          status: "resolved",
+          onset_date: sixYearsAgo.toISOString(),
+          resolved_date: fiveYearsAgo.toISOString(),
+        },
+      ],
+    };
+
+    const flags = checkCrossSpecialtyPatterns(ctx);
+    const flag = flags.find((f) => f.rule_id === "ONCO-VTE-NEURO-001");
+    expect(flag).toBeUndefined();
+  });
+
+  it("does NOT fire when VTE onset is >6 months ago and patient is off anticoagulation", () => {
+    const today = new Date();
+    const twoYearsAgo = new Date(today);
+    twoYearsAgo.setFullYear(today.getFullYear() - 2);
+
+    const ctx: PatientContext = {
+      active_diagnoses: ["Pancreatic cancer", "History of DVT"],
+      active_diagnosis_codes: ["C25.9", "I82.401"],
+      active_medications: [], // off anticoagulation
+      new_symptoms: ["headache"],
+      care_team_specialties: ["oncology"],
+      active_diagnoses_detail: [
+        {
+          description: "Pancreatic cancer",
+          icd10_code: "C25.9",
+          status: "active",
+          onset_date: null,
+          resolved_date: null,
+        },
+        {
+          description: "History of DVT",
+          icd10_code: "I82.401",
+          status: "active", // still listed as active in the problem list
+          onset_date: twoYearsAgo.toISOString(),
+          resolved_date: null,
+        },
+      ],
+    };
+
+    const flags = checkCrossSpecialtyPatterns(ctx);
+    const flag = flags.find((f) => f.rule_id === "ONCO-VTE-NEURO-001");
+    expect(flag).toBeUndefined();
+  });
+
+  it("fires when VTE onset is recent (<6 months) even without anticoagulation", () => {
+    const today = new Date();
+    const threeMonthsAgo = new Date(today);
+    threeMonthsAgo.setMonth(today.getMonth() - 3);
+
+    const ctx: PatientContext = {
+      active_diagnoses: ["Pancreatic cancer", "Deep vein thrombosis"],
+      active_diagnosis_codes: ["C25.9", "I82.401"],
+      active_medications: [],
+      new_symptoms: ["new onset severe headache"],
+      care_team_specialties: ["oncology"],
+      active_diagnoses_detail: [
+        {
+          description: "Pancreatic cancer",
+          icd10_code: "C25.9",
+          status: "active",
+          onset_date: null,
+          resolved_date: null,
+        },
+        {
+          description: "Deep vein thrombosis",
+          icd10_code: "I82.401",
+          status: "active",
+          onset_date: threeMonthsAgo.toISOString(),
+          resolved_date: null,
+        },
+      ],
+    };
+
+    const flags = checkCrossSpecialtyPatterns(ctx);
+    const flag = flags.find((f) => f.rule_id === "ONCO-VTE-NEURO-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("critical");
+  });
+
+  it("fires when VTE onset is old but patient is on active anticoagulation (proxy for active disease)", () => {
+    const today = new Date();
+    const twoYearsAgo = new Date(today);
+    twoYearsAgo.setFullYear(today.getFullYear() - 2);
+
+    const ctx: PatientContext = {
+      active_diagnoses: ["Pancreatic cancer", "Chronic DVT"],
+      active_diagnosis_codes: ["C25.9", "I82.401"],
+      active_medications: ["Apixaban 5mg BID"], // still anticoagulated
+      new_symptoms: ["new headache"],
+      care_team_specialties: ["oncology", "hematology"],
+      active_diagnoses_detail: [
+        {
+          description: "Pancreatic cancer",
+          icd10_code: "C25.9",
+          status: "active",
+          onset_date: null,
+          resolved_date: null,
+        },
+        {
+          description: "Chronic DVT",
+          icd10_code: "I82.401",
+          status: "active",
+          onset_date: twoYearsAgo.toISOString(),
+          resolved_date: null,
+        },
+      ],
+    };
+
+    const flags = checkCrossSpecialtyPatterns(ctx);
+    const flag = flags.find((f) => f.rule_id === "ONCO-VTE-NEURO-001");
+    expect(flag).toBeDefined();
+  });
+
+  it("does NOT fire when VTE has a resolved_date in the past even if status string is 'active'", () => {
+    // EHR data is messy: some problem lists leave status='active' even after
+    // the diagnosis is resolved. A non-null resolved_date wins.
+    const today = new Date();
+    const oneYearAgo = new Date(today);
+    oneYearAgo.setFullYear(today.getFullYear() - 1);
+    const eighteenMonthsAgo = new Date(today);
+    eighteenMonthsAgo.setMonth(today.getMonth() - 18);
+
+    const ctx: PatientContext = {
+      active_diagnoses: ["Pancreatic cancer", "Deep vein thrombosis"],
+      active_diagnosis_codes: ["C25.9", "I82.401"],
+      active_medications: [],
+      new_symptoms: ["headache"],
+      care_team_specialties: ["oncology"],
+      active_diagnoses_detail: [
+        {
+          description: "Pancreatic cancer",
+          icd10_code: "C25.9",
+          status: "active",
+          onset_date: null,
+          resolved_date: null,
+        },
+        {
+          description: "Deep vein thrombosis",
+          icd10_code: "I82.401",
+          status: "active",
+          onset_date: eighteenMonthsAgo.toISOString(),
+          resolved_date: oneYearAgo.toISOString(),
+        },
+      ],
+    };
+
+    const flags = checkCrossSpecialtyPatterns(ctx);
+    const flag = flags.find((f) => f.rule_id === "ONCO-VTE-NEURO-001");
+    expect(flag).toBeUndefined();
+  });
 });
 
 describe("ONCO-ANTICOAG-HELD-001 — Anticoagulant held/discontinued with active VTE", () => {
