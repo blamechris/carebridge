@@ -19,6 +19,12 @@ const ROLE_IDS: Record<string, string> = {
   family_caregiver: "77777777-7777-4777-8777-777777777777",
 };
 
+// Record-id fixtures — semantically distinct from user ids. Used for the
+// revokeAccess / cancelInvite tests where the input is a relationship /
+// invite primary key, not a user id.
+const RELATIONSHIP_ID = "88888888-8888-4888-8888-888888888888";
+const INVITE_ID = "99999999-9999-4999-8999-999999999999";
+
 const mocks = vi.hoisted(() => ({
   createFamilyInvite: vi.fn(async () => ({ id: "invite-1", token: "tok-1" })),
   acceptFamilyInvite: vi.fn(async () => ({
@@ -43,12 +49,19 @@ vi.mock("@carebridge/auth/family-invite-flow", () => ({
 import { familyAccessRbacRouter } from "../routers/family-access.js";
 import type { Context } from "../context.js";
 
-function makeUser(role: User["role"], id = ROLE_IDS[role]!): User {
+/**
+ * Test-only role union. `User["role"]` from `@carebridge/shared-types` does
+ * not include "family_caregiver" yet; this alias keeps the `as User["role"]`
+ * cast localized to `makeUser` so future union-expansion is a single edit.
+ */
+type TestRole = User["role"] | "family_caregiver";
+
+function makeUser(role: TestRole, id = ROLE_IDS[role]!): User {
   return {
     id,
     email: `${role}@carebridge.dev`,
     name: `Test ${role}`,
-    role,
+    role: role as User["role"],
     is_active: true,
     created_at: "2026-01-01T00:00:00.000Z",
     updated_at: "2026-01-01T00:00:00.000Z",
@@ -104,13 +117,15 @@ describe("familyAccessRbacRouter — createInvite RBAC", () => {
     await expect(caller.createInvite(inviteInput)).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
+    expect(mocks.createFamilyInvite).not.toHaveBeenCalled();
   });
 
   it("denies a family_caregiver (FORBIDDEN)", async () => {
-    const caller = callerFor(makeUser("family_caregiver" as User["role"]));
+    const caller = callerFor(makeUser("family_caregiver"));
     await expect(caller.createInvite(inviteInput)).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
+    expect(mocks.createFamilyInvite).not.toHaveBeenCalled();
   });
 
   it("rejects unauthenticated caller (UNAUTHORIZED)", async () => {
@@ -147,7 +162,7 @@ describe("familyAccessRbacRouter — acceptInvite", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("forwards the token and accepting user.id to the service", async () => {
-    const caller = callerFor(makeUser("family_caregiver" as User["role"]));
+    const caller = callerFor(makeUser("family_caregiver"));
     await caller.acceptInvite({ invite_token: "tok-abc" });
     expect(mocks.acceptFamilyInvite).toHaveBeenCalledWith(
       "tok-abc",
@@ -186,9 +201,9 @@ describe("familyAccessRbacRouter — revokeAccess", () => {
 
   it("forwards relationship_id, user.id, user.role to the service", async () => {
     const caller = callerFor(makeUser("patient"));
-    await caller.revokeAccess({ relationship_id: ROLE_IDS.family_caregiver });
+    await caller.revokeAccess({ relationship_id: RELATIONSHIP_ID });
     expect(mocks.revokeFamilyAccess).toHaveBeenCalledWith(
-      ROLE_IDS.family_caregiver,
+      RELATIONSHIP_ID,
       PATIENT_ID,
       "patient",
     );
@@ -197,7 +212,7 @@ describe("familyAccessRbacRouter — revokeAccess", () => {
   it("returns { revoked: true } on success", async () => {
     const caller = callerFor(makeUser("patient"));
     await expect(
-      caller.revokeAccess({ relationship_id: ROLE_IDS.family_caregiver }),
+      caller.revokeAccess({ relationship_id: RELATIONSHIP_ID }),
     ).resolves.toEqual({ revoked: true });
   });
 
@@ -212,7 +227,7 @@ describe("familyAccessRbacRouter — revokeAccess", () => {
   it("rejects unauthenticated caller (UNAUTHORIZED)", async () => {
     const caller = callerFor(null);
     await expect(
-      caller.revokeAccess({ relationship_id: ROLE_IDS.family_caregiver }),
+      caller.revokeAccess({ relationship_id: RELATIONSHIP_ID }),
     ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   });
 });
@@ -222,9 +237,9 @@ describe("familyAccessRbacRouter — cancelInvite", () => {
 
   it("forwards invite_id, user.id, user.role to the service", async () => {
     const caller = callerFor(makeUser("patient"));
-    await caller.cancelInvite({ invite_id: ROLE_IDS.family_caregiver });
+    await caller.cancelInvite({ invite_id: INVITE_ID });
     expect(mocks.cancelFamilyInvite).toHaveBeenCalledWith(
-      ROLE_IDS.family_caregiver,
+      INVITE_ID,
       PATIENT_ID,
       "patient",
     );
@@ -233,7 +248,7 @@ describe("familyAccessRbacRouter — cancelInvite", () => {
   it("returns { cancelled: true } on success", async () => {
     const caller = callerFor(makeUser("patient"));
     await expect(
-      caller.cancelInvite({ invite_id: ROLE_IDS.family_caregiver }),
+      caller.cancelInvite({ invite_id: INVITE_ID }),
     ).resolves.toEqual({ cancelled: true });
   });
 
@@ -242,6 +257,14 @@ describe("familyAccessRbacRouter — cancelInvite", () => {
     await expect(
       caller.cancelInvite({ invite_id: "not-a-uuid" }),
     ).rejects.toBeDefined();
+    expect(mocks.cancelFamilyInvite).not.toHaveBeenCalled();
+  });
+
+  it("rejects unauthenticated caller (UNAUTHORIZED)", async () => {
+    const caller = callerFor(null);
+    await expect(
+      caller.cancelInvite({ invite_id: INVITE_ID }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     expect(mocks.cancelFamilyInvite).not.toHaveBeenCalled();
   });
 });
@@ -270,7 +293,7 @@ describe("familyAccessRbacRouter — listRelationships RBAC", () => {
   });
 
   it("denies a family_caregiver (FORBIDDEN) — caregivers list via their own view", async () => {
-    const caller = callerFor(makeUser("family_caregiver" as User["role"]));
+    const caller = callerFor(makeUser("family_caregiver"));
     await expect(caller.listRelationships()).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
@@ -293,9 +316,10 @@ describe("familyAccessRbacRouter — listInvites RBAC", () => {
     expect(mocks.listFamilyInvites).toHaveBeenCalledWith(PATIENT_ID);
   });
 
-  it("allows an admin", async () => {
+  it("allows an admin and forwards ctx.user.id to the service", async () => {
     const caller = callerFor(makeUser("admin"));
     await expect(caller.listInvites()).resolves.toEqual([]);
+    expect(mocks.listFamilyInvites).toHaveBeenCalledWith(ROLE_IDS.admin);
   });
 
   it("denies nurse, specialist, physician, family_caregiver", async () => {
@@ -305,10 +329,18 @@ describe("familyAccessRbacRouter — listInvites RBAC", () => {
       "physician",
       "family_caregiver",
     ] as const) {
-      const caller = callerFor(makeUser(role as User["role"]));
+      const caller = callerFor(makeUser(role));
       await expect(caller.listInvites()).rejects.toMatchObject({
         code: "FORBIDDEN",
       });
     }
+  });
+
+  it("rejects unauthenticated caller (UNAUTHORIZED)", async () => {
+    const caller = callerFor(null);
+    await expect(caller.listInvites()).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+    });
+    expect(mocks.listFamilyInvites).not.toHaveBeenCalled();
   });
 });
