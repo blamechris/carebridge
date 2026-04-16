@@ -508,6 +508,7 @@ function MedicationsTab({ patientId }: { patientId: string }) {
   if (medsQuery.isError) return <ErrorState label="medications" />;
 
   const active = medications.filter((m) => m.status === "active");
+  const held = medications.filter((m) => m.status === "held");
   const discontinued = medications.filter((m) => m.status === "discontinued");
 
   if (medications.length === 0) {
@@ -546,6 +547,45 @@ function MedicationsTab({ patientId }: { patientId: string }) {
                   <td style={{ color: "var(--text-secondary)" }}>{med.frequency}</td>
                   <td>
                     <span className="badge badge-success">Active</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {held.length > 0 && (
+        <div className="table-container">
+          <div className="table-header">
+            <span className="table-title">Held</span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Medication</th>
+                <th>Dose</th>
+                <th>Route</th>
+                <th>Frequency</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {held.map((med) => (
+                <tr key={med.id}>
+                  <td style={{ fontWeight: 500 }}>{med.name}</td>
+                  <td style={{ color: "var(--text-secondary)" }}>
+                    {med.dose_amount} {med.dose_unit}
+                  </td>
+                  <td style={{ color: "var(--text-secondary)" }}>{med.route}</td>
+                  <td style={{ color: "var(--text-secondary)" }}>{med.frequency}</td>
+                  <td>
+                    <span
+                      className="badge badge-warning"
+                      title="Temporarily paused — intent to resume"
+                    >
+                      Held
+                    </span>
                   </td>
                 </tr>
               ))}

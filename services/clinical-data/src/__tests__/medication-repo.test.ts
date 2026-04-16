@@ -243,6 +243,50 @@ describe("updateMedication", () => {
     expect(emitClinicalEvent).not.toHaveBeenCalled();
   });
 
+  it("persists 'held' status and emits event with status='held' (unblocks ONCO-ANTICOAG-HELD)", async () => {
+    const existingRow = {
+      id: MED_ID,
+      patient_id: PATIENT_ID,
+      name: "Enoxaparin",
+      brand_name: "Lovenox",
+      dose_amount: 40,
+      dose_unit: "mg",
+      route: "subcutaneous",
+      frequency: "BID",
+      status: "active",
+      started_at: null,
+      ended_at: null,
+      prescribed_by: null,
+      notes: null,
+      rxnorm_code: null,
+      ordering_provider_id: null,
+      encounter_id: null,
+      source_system: null,
+      created_at: "2026-03-15T10:00:00.000Z",
+      updated_at: "2026-03-15T10:00:00.000Z",
+    };
+
+    selectFromWhereLimitMock.mockResolvedValueOnce([existingRow]);
+    updateReturningMock.mockResolvedValueOnce([{ id: MED_ID }]);
+    selectFromWhereLimitMock.mockResolvedValueOnce([
+      { ...existingRow, status: "held", updated_at: "2026-03-16T10:00:00.000Z" },
+    ]);
+
+    const result = await updateMedication(MED_ID, { status: "held" });
+
+    expect(result.status).toBe("held");
+    expect(emitClinicalEvent).toHaveBeenCalledOnce();
+    const emittedEvent = emitClinicalEvent.mock.calls[0][0];
+    expect(emittedEvent).toMatchObject({
+      type: "medication.updated",
+      patient_id: PATIENT_ID,
+      data: {
+        resourceId: MED_ID,
+        changedFields: ["status"],
+      },
+    });
+  });
+
   it("does not check optimistic locking when expectedUpdatedAt is omitted", async () => {
     const existingRow = {
       id: MED_ID,

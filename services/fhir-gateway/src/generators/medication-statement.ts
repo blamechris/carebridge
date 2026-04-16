@@ -78,6 +78,9 @@ function mapMedicationStatus(status: string): string {
     case "discontinued":
     case "stopped":
       return "stopped";
+    // Internal `held` (temporarily paused, intent to resume) maps to FHIR
+    // R4 MedicationStatement.status `on-hold`.
+    case "held":
     case "on-hold":
       return "on-hold";
     default:
