@@ -45,6 +45,12 @@ import { screenPatientMessage } from "../rules/message-screening.js";
 import { screenPatientObservation } from "../rules/observation-screening.js";
 import { checkAllergyMedication } from "../rules/allergy-medication.js";
 import type { RuleFlag } from "../rules/critical-values.js";
+import {
+  isoBefore,
+  isoLTE,
+  isDiagnosisRetracted,
+  isAllergyRetracted,
+} from "../utils/event-time-snapshot.js";
 import { buildPatientContext } from "../workers/context-builder.js";
 import { reviewPatientRecord } from "./claude-client.js";
 import { createFlag } from "./flag-service.js";
@@ -590,15 +596,29 @@ export async function buildPatientContextForRules(
   // review time. Without this, a med discontinued or an allergy added between
   // event emit and review causes missed/false flags: the rules see a newer
   // snapshot than the event they are evaluating. See #258.
+  //
+  // All comparisons go through isoBefore/isoLTE (normalized via Date.parse)
+  // rather than lexicographic string compares so offset-form (-05:00) and
+  // bare-date (2025-12-01) timestamps sort correctly against Z-form event
+  // timestamps. See #513.
   const eventAt = event.timestamp;
 
   function wasActiveAt(
-    row: { onset_date?: string | null; resolved_date?: string | null; status: string; created_at: string },
+    row: {
+      onset_date?: string | null;
+      resolved_date?: string | null;
+      status?: string | null;
+      created_at: string;
+    },
     at: string,
   ): boolean {
+    // Logical retraction (#515): a diagnosis marked entered_in_error is a
+    // charting correction and must never appear in the active set,
+    // regardless of its onset/resolved timestamps.
+    if (isDiagnosisRetracted(row)) return false;
     const start = row.onset_date ?? row.created_at;
-    if (start > at) return false; // not yet started at event time
-    if (row.resolved_date && row.resolved_date <= at) return false; // resolved before event
+    if (isoBefore(at, start)) return false; // not yet started at event time
+    if (row.resolved_date && isoLTE(row.resolved_date, at)) return false; // resolved before event
     return true;
   }
 
@@ -611,7 +631,7 @@ export async function buildPatientContextForRules(
   const seenLabs = new Set<string>();
   const recentLabs: Array<{ name: string; value: number }> = [];
   for (const row of recentLabRows) {
-    if (row.created_at > eventAt) continue;
+    if (isoBefore(eventAt, row.created_at)) continue;
     if (seenLabs.has(row.test_name)) continue;
     seenLabs.add(row.test_name);
     recentLabs.push({ name: row.test_name, value: row.value });
@@ -624,18 +644,34 @@ export async function buildPatientContextForRules(
   // schema constraint but guards against partial records.
   const activeMedsList = allMeds.filter((m) => {
     const start = m.started_at ?? m.created_at;
-    if (start > eventAt) return false;
-    if (m.ended_at && m.ended_at <= eventAt) return false;
+    if (isoBefore(eventAt, start)) return false;
+    if (m.ended_at && isoLTE(m.ended_at, eventAt)) return false;
     return true;
   });
 
-  // An allergy is relevant iff it was already recorded before the event.
-  // A post-hoc addition must not retroactively flag the triggering event.
-  const patientAllergies = allAllergies.filter((a) => a.created_at <= eventAt);
+  // An allergy is relevant iff it was already recorded before the event
+  // AND has not been logically retracted (entered_in_error / refuted —
+  // charting corrections that must not drive rule decisions). See #515.
+  const patientAllergies = allAllergies.filter((a) => {
+    if (isoBefore(eventAt, a.created_at)) return false;
+    if (isAllergyRetracted(a)) return false;
+    return true;
+  });
 
   return {
     active_diagnoses: activeDx.map((d) => d.description),
     active_diagnosis_codes: activeDx.map((d) => d.icd10_code ?? ""),
+    // Structured diagnosis detail with recency metadata (issue #215).
+    // Enables rules like ONCO-VTE-NEURO-001 to suppress stale/resolved VTE
+    // false positives without losing the flat `active_diagnoses` shape that
+    // other rules rely on.
+    active_diagnoses_detail: activeDx.map((d) => ({
+      description: d.description,
+      icd10_code: d.icd10_code ?? null,
+      status: d.status ?? null,
+      onset_date: d.onset_date ?? null,
+      resolved_date: d.resolved_date ?? null,
+    })),
     active_medications: activeMedsList.map((m) => m.name),
     active_medication_rxnorm_codes: activeMedsList.map((m) => m.rxnorm_code),
     new_symptoms: newSymptoms,
