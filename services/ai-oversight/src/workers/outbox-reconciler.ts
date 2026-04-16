@@ -24,7 +24,7 @@
 
 import { Queue, Worker } from "bullmq";
 import type { Job } from "bullmq";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
   getRedisConnection,
   CLINICAL_EVENTS_JOB_OPTIONS,
@@ -42,6 +42,13 @@ export const RECONCILE_BATCH_SIZE = 100;
 
 /** How often the reconciler runs. */
 const RECONCILE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Rows stuck in 'processing' are only recovered if their updated_at is older
+ * than this threshold. This prevents a concurrent pod's in-flight rows from
+ * being stolen — only genuinely stale rows (from a crashed pod) are reset.
+ */
+export const STALE_PROCESSING_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
 const connection = getRedisConnection();
 
@@ -72,6 +79,7 @@ type ClaimedRow = {
   status: string;
   retry_count: number | null;
   created_at: string;
+  updated_at: string | null;
 };
 
 /**
@@ -103,14 +111,15 @@ type ClaimedRow = {
  *   `pending` so it becomes claimable again.
  *
  * Stale-'processing' recovery:
- *   The first thing each tick does is reset any `status='processing'`
- *   rows back to `pending`. Because the reconcile interval is 5 minutes
- *   and each row's enqueue completes in milliseconds, any row still in
- *   `processing` at tick start is definitionally orphaned (the pod that
- *   claimed it crashed before completing). This recovery is safe because
- *   BullMQ `jobId` dedup prevents a duplicate clinical-events job even
- *   if the orphaned claim's `queue.add` had succeeded just before the
- *   crash — the re-emit is a no-op on the receiving side.
+ *   The first thing each tick does is reset stale `status='processing'`
+ *   rows back to `pending`. A row is considered stale when its
+ *   `updated_at` is older than `STALE_PROCESSING_THRESHOLD_MS` (5 min)
+ *   or NULL (pre-migration rows). This time guard ensures that a
+ *   concurrent pod's in-flight rows (recently claimed, fresh updated_at)
+ *   are NOT stolen. Only genuinely orphaned rows — where the claiming
+ *   pod has crashed — get recovered. BullMQ `jobId` dedup prevents a
+ *   duplicate clinical-events job even if the orphaned claim's
+ *   `queue.add` had succeeded just before the crash.
  *
  * BullMQ idempotency:
  *   `queue.add` is still called with `jobId: row.id`. Belt-and-braces
@@ -121,16 +130,25 @@ export async function reconcileFailedEvents(): Promise<ReconcileResult> {
   const db = getDb();
   const queue = getClinicalEventsQueue();
 
-  // Step 1: Recover rows orphaned by a prior crashed tick. Any row in
-  // status='processing' at the start of a tick is orphaned — the reconcile
-  // interval (5 min) is far longer than the per-row work (ms), so if a
-  // previous claim left a row in 'processing', the claiming pod has
-  // crashed. Flipping back to 'pending' makes the row claimable again.
-  // retry_count is left alone: the crashed attempt did not consume a retry.
+  // Step 1: Recover rows orphaned by a prior crashed tick. A row in
+  // status='processing' whose updated_at is older than the stale threshold
+  // is orphaned — the claiming pod has crashed. Flipping back to 'pending'
+  // makes the row claimable again. The time guard ensures in-flight rows
+  // from a concurrent pod (recently claimed, updated_at is fresh) are NOT
+  // stolen. retry_count is left alone: the crashed attempt did not consume
+  // a retry. Rows with NULL updated_at (pre-migration) are treated as stale.
+  const staleCutoff = new Date(
+    Date.now() - STALE_PROCESSING_THRESHOLD_MS,
+  ).toISOString();
   await db
     .update(failedClinicalEvents)
-    .set({ status: "pending" })
-    .where(eq(failedClinicalEvents.status, "processing"));
+    .set({ status: "pending", updated_at: new Date().toISOString() })
+    .where(
+      and(
+        eq(failedClinicalEvents.status, "processing"),
+        sql`(${failedClinicalEvents.updated_at} IS NULL OR ${failedClinicalEvents.updated_at} < ${staleCutoff})`,
+      ),
+    );
 
   // Step 2: Atomic claim. UPDATE...WHERE id IN (SELECT ... FOR UPDATE
   // SKIP LOCKED) RETURNING * is a single statement — it auto-commits
@@ -139,7 +157,7 @@ export async function reconcileFailedEvents(): Promise<ReconcileResult> {
   // under SKIP LOCKED, so each pod sees a disjoint batch.
   const claimed = (await db
     .update(failedClinicalEvents)
-    .set({ status: "processing" })
+    .set({ status: "processing", updated_at: new Date().toISOString() })
     .where(
       sql`${failedClinicalEvents.id} IN (
         SELECT ${failedClinicalEvents.id}
@@ -165,11 +183,13 @@ export async function reconcileFailedEvents(): Promise<ReconcileResult> {
       // subsequent queue.add with the same jobId is a no-op.
       await queue.add(row.event_type, row.event_payload, { jobId: row.id });
 
+      const now = new Date().toISOString();
       await db
         .update(failedClinicalEvents)
         .set({
           status: "processed",
-          processed_at: new Date().toISOString(),
+          updated_at: now,
+          processed_at: now,
         })
         .where(eq(failedClinicalEvents.id, row.id));
 
@@ -179,6 +199,7 @@ export async function reconcileFailedEvents(): Promise<ReconcileResult> {
       const isTerminal = nextRetry >= MAX_RECONCILE_RETRIES;
       const errorMessage = err instanceof Error ? err.message : String(err);
 
+      const failNow = new Date().toISOString();
       await db
         .update(failedClinicalEvents)
         .set({
@@ -189,9 +210,10 @@ export async function reconcileFailedEvents(): Promise<ReconcileResult> {
           status: isTerminal ? "failed" : "pending",
           retry_count: nextRetry,
           error_message: errorMessage,
+          updated_at: failNow,
           // Stamp processed_at on terminal failure so ops can see when we
           // gave up. Kept null for retryable failures — we're not done yet.
-          processed_at: isTerminal ? new Date().toISOString() : null,
+          processed_at: isTerminal ? failNow : null,
         })
         .where(eq(failedClinicalEvents.id, row.id));
 

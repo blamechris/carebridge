@@ -34,6 +34,7 @@ vi.mock("@carebridge/db-schema", () => ({
     status: "status",
     retry_count: "retry_count",
     created_at: "created_at",
+    updated_at: "updated_at",
     processed_at: "processed_at",
     error_message: "error_message",
   },
@@ -66,6 +67,7 @@ import {
   reconcileFailedEvents,
   MAX_RECONCILE_RETRIES,
   RECONCILE_BATCH_SIZE,
+  STALE_PROCESSING_THRESHOLD_MS,
 } from "../workers/outbox-reconciler.js";
 
 type ClaimedRow = {
@@ -76,6 +78,7 @@ type ClaimedRow = {
   status: string;
   retry_count: number;
   created_at: string;
+  updated_at: string | null;
 };
 
 function makeRow(overrides: Partial<ClaimedRow> = {}): ClaimedRow {
@@ -93,6 +96,7 @@ function makeRow(overrides: Partial<ClaimedRow> = {}): ClaimedRow {
     status: "processing",
     retry_count: 0,
     created_at: "2026-04-16T00:00:00.000Z",
+    updated_at: null,
     ...overrides,
   };
 }
@@ -185,6 +189,7 @@ describe("reconcileFailedEvents", () => {
     const terminalPayload = mockSet.mock.calls[2][0];
     expect(terminalPayload.status).toBe("processed");
     expect(terminalPayload.processed_at).toEqual(expect.any(String));
+    expect(terminalPayload.updated_at).toEqual(expect.any(String));
   });
 
   it("increments retry_count and keeps status='pending' when re-emit fails below the cap", async () => {
@@ -250,20 +255,25 @@ describe("reconcileFailedEvents", () => {
     expect(opts).toEqual({ jobId: "outbox-race-1" });
   });
 
-  it("recovers rows stuck in status='processing' at the start of each tick", async () => {
+  it("recovers rows stuck in status='processing' at the start of each tick with a time guard", async () => {
     // Rationale: a prior pod crashed between atomic claim and queue.add,
     // leaving a row pinned to 'processing'. The next tick's recovery pass
     // must reset these back to 'pending' so the row becomes claimable again.
-    // Without this, a crashed claim would permanently orphan the row.
+    // The time guard (STALE_PROCESSING_THRESHOLD_MS) ensures only genuinely
+    // stale rows are recovered — not in-flight rows from a concurrent pod.
     const row = makeRow({ id: "o-recovered" });
     queueUpdateChain([row]);
 
     await reconcileFailedEvents();
 
     // The *first* set() call in the tick is the recovery: processing -> pending
+    // with an updated_at stamp so recovered rows aren't immediately re-recovered.
     expect(mockSet).toHaveBeenCalled();
     const recoveryPayload = mockSet.mock.calls[0][0];
     expect(recoveryPayload.status).toBe("pending");
+    expect(recoveryPayload.updated_at).toEqual(expect.any(String));
+    // Verify the STALE_PROCESSING_THRESHOLD_MS constant is exported and sensible
+    expect(STALE_PROCESSING_THRESHOLD_MS).toBeGreaterThanOrEqual(60_000);
   });
 
   it("atomic claim is a single UPDATE ... RETURNING — the row is persisted as 'processing' before queue.add runs", async () => {
@@ -307,16 +317,12 @@ describe("reconcileFailedEvents", () => {
     const rowsForPodA = [makeRow({ id: "o-a1" }), makeRow({ id: "o-a2" })];
     const rowsForPodB = [makeRow({ id: "o-b1" })];
 
-    // Pod A: recovery .where(), claim .returning(), 2 terminal .where()s.
-    // Pod B: recovery .where(), claim .returning(), 1 terminal .where().
-    //
-    // Because we're awaiting two reconciles concurrently and the mocks are
-    // FIFO queues, the exact interleave depends on JS microtask scheduling.
-    // What we assert is structural: the union of enqueued ids equals the
-    // union of claimed rows with no duplicates.
-    mockReturning
-      .mockResolvedValueOnce(rowsForPodA)
-      .mockResolvedValueOnce(rowsForPodB);
+    // Wire both invocations in sequence. Each reconcileFailedEvents() call
+    // consumes: 1 recovery .where(), 1 claim .returning(), N terminal .where()s.
+    // Pod A: recovery, claim (2 rows), 2 terminal updates.
+    // Pod B: recovery, claim (1 row), 1 terminal update.
+    queueUpdateChain(rowsForPodA);
+    queueUpdateChain(rowsForPodB);
 
     const [resultA, resultB] = await Promise.all([
       reconcileFailedEvents(),
