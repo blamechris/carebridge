@@ -113,16 +113,31 @@ export type UpdateDiagnosisInput = z.infer<typeof updateDiagnosisSchema>;
 
 export const allergySeveritySchema = z.enum(["mild", "moderate", "severe", "critical"]);
 
+export const allergyVerificationStatusSchema = z.enum([
+  "confirmed",
+  "unconfirmed",
+  "entered_in_error",
+  "refuted",
+]);
+
+export const patientAllergyStatusSchema = z.enum([
+  "nkda",       // No Known Drug Allergies — actively confirmed
+  "unknown",    // Never assessed / not yet asked
+  "has_allergies",
+]);
+
 export const createAllergySchema = z.object({
   patient_id: z.string().uuid(),
   allergen: z.string().min(1).max(200),
   reaction: z.string().min(1).max(500),
   severity: allergySeveritySchema,
+  verification_status: allergyVerificationStatusSchema.default("unconfirmed"),
 });
 
 export const updateAllergySchema = z.object({
   severity: allergySeveritySchema.optional(),
   reaction: z.string().min(1).max(500).optional(),
+  verification_status: allergyVerificationStatusSchema.optional(),
 });
 
 export type CreateAllergyInput = z.infer<typeof createAllergySchema>;

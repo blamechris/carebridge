@@ -22,6 +22,9 @@ export const patients = pgTable("patients", {
   emergency_contact_name: encryptedText("emergency_contact_name"),
   emergency_contact_phone: encryptedText("emergency_contact_phone"),
   primary_provider_id: text("primary_provider_id"),
+  // Overall patient allergy status: distinguishes "confirmed no allergies" (nkda)
+  // from "never assessed" (unknown) and "has documented allergies" (has_allergies).
+  allergy_status: text("allergy_status").notNull().default("unknown"), // nkda, unknown, has_allergies
   created_at: text("created_at").notNull(),
   updated_at: text("updated_at").notNull(),
 });
@@ -49,6 +52,9 @@ export const allergies = pgTable("allergies", {
   rxnorm_code: text("rxnorm_code"),
   reaction: encryptedText("reaction"),
   severity: text("severity"), // mild, moderate, severe
+  // Tracks clinical verification of this allergy record: confirmed (verified reaction),
+  // unconfirmed (reported but not verified), entered_in_error, or refuted (tested negative).
+  verification_status: text("verification_status").notNull().default("unconfirmed"), // confirmed, unconfirmed, entered_in_error, refuted
   created_at: text("created_at").notNull(),
 }, (table) => [
   index("idx_allergies_patient").on(table.patient_id),

@@ -197,8 +197,12 @@ export async function buildPatientContext(
     patient: {
       age,
       sex: patientRow?.biological_sex ?? "unknown",
+      allergy_status: (patientRow?.allergy_status as "nkda" | "unknown" | "has_allergies") ?? "unknown",
       active_diagnoses: activeDiagnoses.map((d) => d.description),
-      allergies: patientAllergies.map((a) => a.allergen),
+      allergies: patientAllergies.map((a) => ({
+        allergen: a.allergen,
+        verification_status: a.verification_status ?? "unconfirmed",
+      })),
     },
     active_medications: activeMeds.map((m) => ({
       name: m.name,

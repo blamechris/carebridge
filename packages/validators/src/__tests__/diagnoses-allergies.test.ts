@@ -6,6 +6,8 @@ import {
   createAllergySchema,
   updateAllergySchema,
   allergySeveritySchema,
+  allergyVerificationStatusSchema,
+  patientAllergyStatusSchema,
 } from "../clinical-data.js";
 
 // ─── Diagnosis Validators ──────────────────────────────────────
@@ -212,6 +214,33 @@ describe("createAllergySchema", () => {
     });
     expect(result.success).toBe(false);
   });
+
+  it("defaults verification_status to unconfirmed", () => {
+    const result = createAllergySchema.safeParse(validAllergy);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.verification_status).toBe("unconfirmed");
+    }
+  });
+
+  it("accepts explicit verification_status", () => {
+    const result = createAllergySchema.safeParse({
+      ...validAllergy,
+      verification_status: "confirmed",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.verification_status).toBe("confirmed");
+    }
+  });
+
+  it("rejects invalid verification_status", () => {
+    const result = createAllergySchema.safeParse({
+      ...validAllergy,
+      verification_status: "invalid",
+    });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe("updateAllergySchema", () => {
@@ -225,6 +254,11 @@ describe("updateAllergySchema", () => {
     expect(result.success).toBe(true);
   });
 
+  it("accepts partial update with verification_status only", () => {
+    const result = updateAllergySchema.safeParse({ verification_status: "confirmed" });
+    expect(result.success).toBe(true);
+  });
+
   it("accepts empty object (no updates)", () => {
     const result = updateAllergySchema.safeParse({});
     expect(result.success).toBe(true);
@@ -232,6 +266,43 @@ describe("updateAllergySchema", () => {
 
   it("rejects invalid severity value", () => {
     const result = updateAllergySchema.safeParse({ severity: "invalid" });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects invalid verification_status value", () => {
+    const result = updateAllergySchema.safeParse({ verification_status: "maybe" });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ─── Allergy Verification Status ──────────────────────────────
+
+describe("allergyVerificationStatusSchema", () => {
+  it("accepts all valid verification statuses", () => {
+    for (const status of ["confirmed", "unconfirmed", "entered_in_error", "refuted"]) {
+      const result = allergyVerificationStatusSchema.safeParse(status);
+      expect(result.success, `Expected verification status "${status}" to pass`).toBe(true);
+    }
+  });
+
+  it("rejects invalid verification status", () => {
+    const result = allergyVerificationStatusSchema.safeParse("pending");
+    expect(result.success).toBe(false);
+  });
+});
+
+// ─── Patient Allergy Status ───────────────────────────────────
+
+describe("patientAllergyStatusSchema", () => {
+  it("accepts all valid patient allergy statuses", () => {
+    for (const status of ["nkda", "unknown", "has_allergies"]) {
+      const result = patientAllergyStatusSchema.safeParse(status);
+      expect(result.success, `Expected allergy status "${status}" to pass`).toBe(true);
+    }
+  });
+
+  it("rejects invalid patient allergy status", () => {
+    const result = patientAllergyStatusSchema.safeParse("none");
     expect(result.success).toBe(false);
   });
 });
