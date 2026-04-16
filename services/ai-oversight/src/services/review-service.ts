@@ -549,40 +549,164 @@ function extractSymptoms(event: ClinicalEvent): string[] {
 }
 
 /**
- * Check if an LLM finding duplicates an existing rule-based flag from the current job.
+ * Severity order used for LLM-vs-rule precedence decisions.
+ * Rank higher = more important.
  *
- * Uses word-overlap heuristic: if the LLM finding's summary shares significant
- * overlap with any rule flag's summary, consider it a duplicate. The former
- * category+severity catch-all has been removed — it incorrectly suppressed
- * distinct findings that happened to share the same severity and category.
- * DB-level deduplication in createFlag() handles cross-job duplicates.
+ * Exported for unit testing.
  */
-function isDuplicate(
-  finding: LLMFlagOutput,
-  ruleFlags: RuleFlag[],
-): boolean {
-  const findingWords = new Set(
-    finding.summary.toLowerCase().split(/\s+/).filter((w) => w.length > 3),
+export function severityRank(severity: string): number {
+  switch (severity) {
+    case "critical":
+      return 3;
+    case "warning":
+      return 2;
+    case "info":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+/**
+ * Category ordering for precedence decisions. A rule flag in a higher-
+ * precedence category takes primacy when both fire on the same concept.
+ *
+ * Values ordered by clinical urgency using the full FlagCategory set from
+ * `@carebridge/shared-types`:
+ *
+ *   critical-value          — directly reported abnormal (e.g. K+ 7.0).
+ *                             Requires immediate action. Highest rank.
+ *   medication-safety       — drug/allergy/contraindication. High blast
+ *                             radius if missed.
+ *   drug-interaction        — drug/drug interaction. Safety-equivalent to
+ *                             medication-safety, treated at the same tier.
+ *   cross-specialty         — multi-specialty pattern.
+ *   trend-concern           — decline observed over time.
+ *   patient-reported        — patient-provided symptom.
+ *   documentation-discrepancy — record missing/inconsistent.
+ *   care-gap                — preventive gap. Lowest urgency.
+ *
+ * Exported for unit testing.
+ */
+export function categoryRank(category: string): number {
+  switch (category) {
+    case "critical-value":
+      return 8;
+    case "medication-safety":
+      return 7;
+    case "drug-interaction":
+      return 7; // safety-equivalent to medication-safety
+    case "cross-specialty":
+      return 5;
+    case "trend-concern":
+      return 4;
+    case "patient-reported":
+      return 3;
+    case "documentation-discrepancy":
+      return 2;
+    case "care-gap":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+/** Normalize a summary into a Set of significant lowercase words. */
+function significantWords(text: string): Set<string> {
+  return new Set(
+    text.toLowerCase().split(/\s+/).filter((w) => w.length > 3),
   );
+}
 
+/**
+ * Jaccard-style word overlap between two summaries. Returns a value in
+ * [0, 1] indicating how much the two summaries describe the same concept.
+ */
+function summaryOverlap(a: string, b: string): number {
+  const setA = significantWords(a);
+  const setB = significantWords(b);
+  if (setA.size === 0 || setB.size === 0) return 0;
+  let shared = 0;
+  for (const w of setA) if (setB.has(w)) shared++;
+  const union = new Set([...setA, ...setB]).size;
+  return shared / union;
+}
+
+/**
+ * Decide whether an LLM finding should be dropped as a duplicate of an
+ * existing deterministic rule flag.
+ *
+ * Drop only when the LLM finding is fully subsumed by an existing rule
+ * flag — i.e. same concept, no higher severity, no new specialty, no
+ * higher-precedence category. Otherwise keep both because the LLM is
+ * adding value (escalation, comorbidity context, or a new notify target).
+ *
+ * Exported for unit testing. Replaces the prior 40% word-overlap-only
+ * heuristic, which suppressed LLM findings that added clinical context
+ * or escalated severity. See #266.
+ */
+export function shouldDropAsDuplicate(
+  finding: LLMFlagOutput,
+  ruleFlags: readonly RuleFlag[],
+): boolean {
+  // A high-severity LLM finding is NEVER dropped — the extra review is
+  // the floor we want regardless of rule-flag overlap.
+  if (finding.severity === "critical") return false;
+
+  const findingSpecialties = new Set(finding.notify_specialties ?? []);
+  const findingSeverity = severityRank(finding.severity);
+  const findingCategory = categoryRank(finding.category);
+
+  // Scan the FULL rule-flag list and drop only if some rule subsumes the
+  // finding. An earlier loop returned `false` (keep) as soon as it saw a
+  // single non-subsuming match — which missed the case where rule_flags
+  // contained both a non-subsuming version (e.g. info-severity same topic)
+  // AND a subsuming version (e.g. matching-severity same topic). The
+  // subsuming match must win.
   for (const ruleFlag of ruleFlags) {
-    const ruleWords = ruleFlag.summary
-      .toLowerCase()
-      .split(/\s+/)
-      .filter((w) => w.length > 3);
+    const overlap = summaryOverlap(finding.summary, ruleFlag.summary);
 
-    // Count overlapping significant words
-    let overlap = 0;
-    for (const word of ruleWords) {
-      if (findingWords.has(word)) overlap++;
-    }
+    // Same-concept threshold. Raised from 0.40 (the prior bug) to 0.60
+    // of the Jaccard overlap so shared function words ("patient",
+    // "fever", "with") don't false-positive on distinct findings.
+    if (overlap < 0.6) continue;
 
-    // If more than 40% of the rule flag's significant words appear in the
-    // LLM finding, consider it a duplicate
-    if (ruleWords.length > 0 && overlap / ruleWords.length > 0.4) {
-      return true;
+    // LLM escalates severity over this rule flag — this rule is not a
+    // subsuming match, but keep scanning in case a later one is.
+    const ruleSeverity = severityRank(ruleFlag.severity);
+    if (findingSeverity > ruleSeverity) continue;
+
+    // LLM claims a higher-precedence category on the same concept — not
+    // subsumed by this rule flag, but keep scanning.
+    if (findingCategory > categoryRank(ruleFlag.category)) continue;
+
+    // LLM adds a notify specialty this rule flag doesn't have — not
+    // subsumed by this rule flag, but keep scanning.
+    const ruleSpecialties = new Set(ruleFlag.notify_specialties ?? []);
+    let addsNewSpecialty = false;
+    for (const s of findingSpecialties) {
+      if (!ruleSpecialties.has(s)) {
+        addsNewSpecialty = true;
+        break;
+      }
     }
+    if (addsNewSpecialty) continue;
+
+    // Fully subsumed by this rule flag: same concept, not escalating, not
+    // upgrading category, not adding a specialty. Drop the LLM finding.
+    return true;
   }
 
   return false;
+}
+
+/**
+ * Backwards-compatible alias so call sites that still use the old name
+ * keep compiling. New code should prefer shouldDropAsDuplicate.
+ */
+function isDuplicate(
+  finding: LLMFlagOutput,
+  ruleFlags: readonly RuleFlag[],
+): boolean {
+  return shouldDropAsDuplicate(finding, ruleFlags);
 }
