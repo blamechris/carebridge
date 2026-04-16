@@ -53,6 +53,16 @@ const CATEGORY_D_TERATOGEN_PATTERN =
 const ANTICOAGULANT_PATTERN =
   /warfarin|coumadin|heparin|enoxaparin|lovenox|rivaroxaban|xarelto|apixaban|eliquis|dabigatran|pradaxa|edoxaban|savaysa|fondaparinux|arixtra/i;
 
+/**
+ * Chemotherapy agent name pattern. Shared by CHEMO-FEVER-001 and
+ * CHEMO-NEUTRO-FEVER-001 so both rules classify the same set of regimens.
+ */
+const CHEMO_MED_PATTERN =
+  /chemo|capecitabine|xeloda|cisplatin|carboplatin|doxorubicin|cyclophosphamide|paclitaxel|docetaxel|methotrexate|5-fu|fluorouracil/i;
+
+/** Fever-symptom pattern shared across CHEMO-* rules. */
+const FEVER_SYMPTOM_PATTERN = /fever|febrile|temperature|chills/i;
+
 /** ICD-10 pattern for active VTE / DVT / PE diagnoses. */
 const VTE_ICD10_PATTERN = /^(I26|I80|I82)\./;
 
@@ -252,37 +262,77 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
   },
   {
     id: "CHEMO-FEVER-001",
-    name: "Chemotherapy patient with fever (ANC-aware)",
+    name: "Chemotherapy patient with fever (ANC unknown)",
     check: (ctx: PatientContext) => {
       const onChemo = ctx.active_medications.some((m) =>
-        /chemo|capecitabine|xeloda|cisplatin|carboplatin|doxorubicin|cyclophosphamide|paclitaxel|docetaxel|methotrexate|5-fu|fluorouracil/i.test(m),
+        CHEMO_MED_PATTERN.test(m),
       );
       const hasFever = ctx.new_symptoms.some((s) =>
-        /fever|febrile|temperature|chills/i.test(s),
+        FEVER_SYMPTOM_PATTERN.test(s),
       );
       if (!onChemo || !hasFever) return false;
       const anc = ctx.recent_labs?.find((l) => /\bANC\b/i.test(l.name))?.value;
-      // If we have a recent ANC and it's normal, suppress the flag —
-      // avoids the false-confidence alert that the previous version produced.
-      if (anc !== undefined && anc >= 1500) return false;
+      // ANC >= 1500 → normal neutrophil count, suppress (avoid alert fatigue).
+      // ANC <  1500 → confirmed febrile neutropenia, owned by CHEMO-NEUTRO-FEVER-001.
+      // ANC unknown  → fire this warning to prompt an urgent CBC.
+      if (anc !== undefined) return false;
       return true;
-    },
-    buildSeverity: (ctx: PatientContext) => {
-      const anc = ctx.recent_labs?.find((l) => /\bANC\b/i.test(l.name))?.value;
-      // ANC < 1500 → confirmed febrile neutropenia → critical.
-      // ANC unknown → warning so clinicians review without alert fatigue.
-      return anc !== undefined && anc < 1500 ? "critical" : "warning";
     },
     severity: "warning" as const,
     category: "cross-specialty" as const,
     summary:
-      "Chemotherapy patient presenting with fever — evaluate for febrile neutropenia and infection",
+      "Chemotherapy patient presenting with fever — obtain CBC urgently to rule out febrile neutropenia",
     rationale:
-      "Obtain CBC with differential urgently. If ANC < 1500, treat as febrile neutropenia per protocol. " +
-      "Consider broad-spectrum antibiotics while awaiting results.",
+      "Recent ANC is unknown. In a chemotherapy patient, any fever must be treated as potential " +
+      "febrile neutropenia until a current ANC confirms otherwise — delayed antibiotics in true " +
+      "febrile neutropenia double 30-day mortality.",
     suggested_action:
-      "Obtain CBC with differential urgently. If ANC < 1500, treat as febrile neutropenia per protocol. Consider broad-spectrum antibiotics while awaiting results.",
+      "Obtain CBC with differential STAT. If ANC < 1500, escalate to febrile-neutropenia protocol " +
+      "and start broad-spectrum antibiotics within 60 minutes of fever onset.",
     notify_specialties: ["oncology", "infectious_disease"],
+  },
+  {
+    id: "CHEMO-NEUTRO-FEVER-001",
+    name: "Confirmed febrile neutropenia (chemo + fever + ANC < 1500)",
+    check: (ctx: PatientContext) => {
+      const onChemo = ctx.active_medications.some((m) =>
+        CHEMO_MED_PATTERN.test(m),
+      );
+      const hasFever = ctx.new_symptoms.some((s) =>
+        FEVER_SYMPTOM_PATTERN.test(s),
+      );
+      if (!onChemo || !hasFever) return false;
+      const anc = ctx.recent_labs?.find((l) => /\bANC\b/i.test(l.name))?.value;
+      // Only fire when ANC is known AND below the febrile-neutropenia threshold.
+      return anc !== undefined && anc < 1500;
+    },
+    buildSuggestedAction: (ctx: PatientContext) => {
+      const anc = ctx.recent_labs?.find((l) => /\bANC\b/i.test(l.name))?.value;
+      const base =
+        "ED-level emergency: confirmed febrile neutropenia. Start broad-spectrum IV antibiotics " +
+        "(e.g. cefepime or piperacillin-tazobactam) within 60 minutes of fever onset. Blood and " +
+        "urine cultures before antibiotics if no delay. Admit for inpatient management.";
+      // Severe neutropenia (ANC < 500) carries the highest sepsis/mortality risk.
+      if (anc !== undefined && anc < 500) {
+        return (
+          base +
+          " Severe neutropenia (ANC < 500): add anti-pseudomonal coverage and consider G-CSF; " +
+          "reverse isolation recommended."
+        );
+      }
+      return base;
+    },
+    severity: "critical" as const,
+    category: "cross-specialty" as const,
+    summary:
+      "Febrile neutropenia confirmed — ED-level emergency, antibiotics within 60 minutes",
+    rationale:
+      "Chemotherapy + fever + ANC < 1500 meets the IDSA definition of febrile neutropenia. " +
+      "Infection-related mortality rises sharply for every hour antibiotics are delayed; this is " +
+      "one of the few oncology emergencies where time-to-antibiotic is a direct mortality driver.",
+    suggested_action:
+      "Start broad-spectrum IV antibiotics within 60 minutes of fever onset. Cultures before antibiotics if no delay. Admit.",
+    notify_specialties: ["oncology", "infectious_disease", "emergency"],
   },
   {
     id: "RENAL-NSAID-001",

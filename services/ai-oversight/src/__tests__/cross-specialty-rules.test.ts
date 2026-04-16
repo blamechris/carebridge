@@ -8,7 +8,7 @@ import {
   type PatientContext,
 } from "../rules/cross-specialty.js";
 
-describe("CHEMO-FEVER-001 — ANC-aware behavior", () => {
+describe("CHEMO-FEVER-001 / CHEMO-NEUTRO-FEVER-001 — ANC-aware rules", () => {
   const baseCtx = (overrides: Partial<PatientContext> = {}): PatientContext => ({
     active_diagnoses: ["Breast cancer"],
     active_diagnosis_codes: ["C50.9"],
@@ -18,30 +18,80 @@ describe("CHEMO-FEVER-001 — ANC-aware behavior", () => {
     ...overrides,
   });
 
-  it("fires CRITICAL when ANC < 1500 (febrile neutropenia)", () => {
+  it("fires CHEMO-NEUTRO-FEVER-001 (critical) when ANC < 1500 — and suppresses the warning rule", () => {
+    const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 800 }] });
+    const flags = checkCrossSpecialtyPatterns(ctx);
+
+    const critical = flags.find((f) => f.rule_id === "CHEMO-NEUTRO-FEVER-001");
+    expect(critical).toBeDefined();
+    expect(critical!.severity).toBe("critical");
+
+    // CHEMO-FEVER-001 must NOT fire once febrile neutropenia is confirmed —
+    // the critical rule owns that case; the warning rule only prompts a CBC.
+    expect(flags.find((f) => f.rule_id === "CHEMO-FEVER-001")).toBeUndefined();
+  });
+
+  it("adds a severe-neutropenia addendum when ANC < 500", () => {
+    const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 200 }] });
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "CHEMO-NEUTRO-FEVER-001",
+    );
+    expect(flag!.suggested_action).toMatch(/Severe neutropenia \(ANC < 500\)/);
+    expect(flag!.suggested_action).toMatch(/reverse isolation/);
+  });
+
+  it("omits the severe-neutropenia addendum when 500 <= ANC < 1500", () => {
+    const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 1200 }] });
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "CHEMO-NEUTRO-FEVER-001",
+    );
+    expect(flag!.suggested_action).not.toMatch(/Severe neutropenia/);
+  });
+
+  it("fires CHEMO-FEVER-001 (warning) when ANC is unknown", () => {
+    const ctx = baseCtx({ recent_labs: [] });
+    const flags = checkCrossSpecialtyPatterns(ctx);
+
+    const warning = flags.find((f) => f.rule_id === "CHEMO-FEVER-001");
+    expect(warning).toBeDefined();
+    expect(warning!.severity).toBe("warning");
+
+    // Critical rule must NOT fire without confirmed ANC data.
+    expect(
+      flags.find((f) => f.rule_id === "CHEMO-NEUTRO-FEVER-001"),
+    ).toBeUndefined();
+  });
+
+  it("fires neither rule when ANC is normal (>= 1500)", () => {
+    const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 3200 }] });
+    const flags = checkCrossSpecialtyPatterns(ctx);
+
+    expect(flags.find((f) => f.rule_id === "CHEMO-FEVER-001")).toBeUndefined();
+    expect(
+      flags.find((f) => f.rule_id === "CHEMO-NEUTRO-FEVER-001"),
+    ).toBeUndefined();
+  });
+
+  it("CHEMO-NEUTRO-FEVER-001 notifies emergency as well as oncology/infectious_disease", () => {
     const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 800 }] });
     const flag = checkCrossSpecialtyPatterns(ctx).find(
-      (f) => f.rule_id === "CHEMO-FEVER-001",
+      (f) => f.rule_id === "CHEMO-NEUTRO-FEVER-001",
     );
-    expect(flag).toBeDefined();
-    expect(flag!.severity).toBe("critical");
+    expect(flag!.notify_specialties).toEqual(
+      expect.arrayContaining(["oncology", "infectious_disease", "emergency"]),
+    );
   });
 
-  it("fires only WARNING when ANC is unknown (no recent labs)", () => {
-    const ctx = baseCtx({ recent_labs: [] });
-    const flag = checkCrossSpecialtyPatterns(ctx).find(
-      (f) => f.rule_id === "CHEMO-FEVER-001",
-    );
-    expect(flag).toBeDefined();
-    expect(flag!.severity).toBe("warning");
-  });
-
-  it("does NOT fire when ANC is normal (>= 1500)", () => {
-    const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 3200 }] });
-    const flag = checkCrossSpecialtyPatterns(ctx).find(
-      (f) => f.rule_id === "CHEMO-FEVER-001",
-    );
-    expect(flag).toBeUndefined();
+  it("does not fire either rule when patient is not on chemo", () => {
+    const ctx = baseCtx({
+      active_medications: ["Lisinopril"],
+      recent_labs: [{ name: "ANC", value: 800 }],
+    });
+    const flags = checkCrossSpecialtyPatterns(ctx);
+    expect(flags.find((f) => f.rule_id === "CHEMO-FEVER-001")).toBeUndefined();
+    expect(
+      flags.find((f) => f.rule_id === "CHEMO-NEUTRO-FEVER-001"),
+    ).toBeUndefined();
   });
 });
 
