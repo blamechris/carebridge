@@ -276,6 +276,20 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
         );
       }
 
+      // Truncation is an alert-level event: the LLM produced more clinical
+      // signal than we kept. Emit as console.error so ops dashboards surface
+      // it distinct from generic warnings.
+      if (validationResult.truncation) {
+        const t = validationResult.truncation;
+        console.error(
+          `[review-service] ALERT: LLM findings truncated for job ${jobId} ` +
+            `(patient: ${redactPatientId(event.patient_id)}, event: ${event.type}/${event.id}): ` +
+            `received=${t.receivedCount}, kept=${t.keptCount}, dropped=${t.droppedCount} ` +
+            `[critical=${t.droppedBySeverity.critical}, ` +
+            `warning=${t.droppedBySeverity.warning}, info=${t.droppedBySeverity.info}]`,
+        );
+      }
+
       llmFindings = validationResult.flags.map((f) => ({
         severity: f.severity,
         category: f.category,

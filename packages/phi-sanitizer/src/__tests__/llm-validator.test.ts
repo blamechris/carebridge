@@ -63,15 +63,79 @@ describe("validateLLMResponse", () => {
     }
   });
 
-  it("caps flags at 20", () => {
-    const flags = Array.from({ length: 25 }, () => makeFlag());
+  it("caps flags at the configured MAX and records truncation detail", () => {
+    // 60 info-severity flags — above the 50 MAX_FLAGS cap.
+    const flags = Array.from({ length: 60 }, () =>
+      makeFlag({ severity: "info" }),
+    );
     const input = JSON.stringify(flags);
     const result = validateLLMResponse(input);
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.flags).toHaveLength(20);
+      expect(result.flags).toHaveLength(50);
       expect(result.warnings.some((w) => w.includes("truncated"))).toBe(true);
+      expect(result.truncation).toBeDefined();
+      expect(result.truncation?.receivedCount).toBe(60);
+      expect(result.truncation?.keptCount).toBe(50);
+      expect(result.truncation?.droppedCount).toBe(10);
+      expect(result.truncation?.droppedBySeverity).toEqual({
+        critical: 0,
+        warning: 0,
+        info: 10,
+      });
+    }
+  });
+
+  it("preserves all critical flags under truncation", () => {
+    // 3 critical + 60 info (total 63, cap 50). Critical must all survive;
+    // info is dropped first.
+    const criticals = Array.from({ length: 3 }, (_, i) =>
+      makeFlag({ severity: "critical", summary: `crit-${i}` }),
+    );
+    const infos = Array.from({ length: 60 }, (_, i) =>
+      makeFlag({ severity: "info", summary: `info-${i}` }),
+    );
+    // Input order: infos first, then criticals. After severity sort, criticals come first.
+    const input = JSON.stringify([...infos, ...criticals]);
+    const result = validateLLMResponse(input);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.flags).toHaveLength(50);
+      const kept = result.flags.filter((f) => f.severity === "critical");
+      expect(kept).toHaveLength(3);
+      expect(result.truncation?.droppedBySeverity.critical).toBe(0);
+      expect(result.truncation?.droppedBySeverity.info).toBe(13);
+    }
+  });
+
+  it("drops warning before critical when both would overflow", () => {
+    const criticals = Array.from({ length: 40 }, () =>
+      makeFlag({ severity: "critical" }),
+    );
+    const warnings = Array.from({ length: 20 }, () =>
+      makeFlag({ severity: "warning" }),
+    );
+    const input = JSON.stringify([...warnings, ...criticals]); // 60 total
+    const result = validateLLMResponse(input);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.flags.filter((f) => f.severity === "critical")).toHaveLength(40);
+      expect(result.flags.filter((f) => f.severity === "warning")).toHaveLength(10);
+      expect(result.truncation?.droppedBySeverity.critical).toBe(0);
+      expect(result.truncation?.droppedBySeverity.warning).toBe(10);
+    }
+  });
+
+  it("does not set truncation when at or below the cap", () => {
+    const flags = Array.from({ length: 45 }, () => makeFlag());
+    const result = validateLLMResponse(JSON.stringify(flags));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.truncation).toBeUndefined();
+      expect(result.flags).toHaveLength(45);
     }
   });
 

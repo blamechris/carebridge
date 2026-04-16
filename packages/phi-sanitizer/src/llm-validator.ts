@@ -17,8 +17,15 @@ const VALID_CATEGORIES = [
   "documentation-discrepancy",
 ] as const;
 
-const MAX_FLAGS = 20;
+const MAX_FLAGS = 50;
 const SUSPICIOUS_FLAG_THRESHOLD = 15;
+
+/** Ordering used when a response overflows MAX_FLAGS: critical survive first. */
+const SEVERITY_RANK: Record<(typeof VALID_SEVERITIES)[number], number> = {
+  critical: 3,
+  warning: 2,
+  info: 1,
+};
 
 export interface LLMFlag {
   severity: (typeof VALID_SEVERITIES)[number];
@@ -29,10 +36,25 @@ export interface LLMFlag {
   notify_specialties: string[];
 }
 
+/**
+ * Structured record of an over-cap truncation. Present only when the LLM
+ * returned more flags than MAX_FLAGS. Callers are expected to emit an
+ * ALERT-level log when this is set so ops can tell when clinical signal
+ * is being dropped rather than being quietly surfaced as a warning string.
+ */
+export interface TruncationInfo {
+  receivedCount: number;
+  keptCount: number;
+  droppedCount: number;
+  droppedBySeverity: Record<(typeof VALID_SEVERITIES)[number], number>;
+}
+
 export interface ValidationSuccess {
   ok: true;
   flags: LLMFlag[];
   warnings: string[];
+  /** Set only when findings were dropped to stay under MAX_FLAGS. */
+  truncation?: TruncationInfo;
 }
 
 export interface ValidationFailure {
@@ -175,13 +197,37 @@ export function validateLLMResponse(raw: string): ValidationResult {
     );
   }
 
+  // Sort by severity before capping so critical findings survive a truncation.
+  // Array.prototype.sort is stable in Node ≥ 12, so ordering within a severity
+  // bucket matches the LLM's original output (preserves rank/tie-break intent).
+  const all = [...(parsed as LLMFlag[])].sort(
+    (a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity],
+  );
+
   // Cap at MAX_FLAGS
-  const capped = parsed.slice(0, MAX_FLAGS) as LLMFlag[];
-  if (parsed.length > MAX_FLAGS) {
+  const capped = all.slice(0, MAX_FLAGS);
+  let truncation: TruncationInfo | undefined;
+  if (all.length > MAX_FLAGS) {
+    const dropped = all.slice(MAX_FLAGS);
+    const droppedBySeverity: Record<
+      (typeof VALID_SEVERITIES)[number],
+      number
+    > = { critical: 0, warning: 0, info: 0 };
+    for (const f of dropped) {
+      droppedBySeverity[f.severity]++;
+    }
+    truncation = {
+      receivedCount: all.length,
+      keptCount: capped.length,
+      droppedCount: dropped.length,
+      droppedBySeverity,
+    };
     warnings.push(
-      `Flag count ${parsed.length} exceeds maximum ${MAX_FLAGS}, truncated`,
+      `Flag count ${all.length} exceeds maximum ${MAX_FLAGS}, truncated ` +
+        `(dropped: critical=${droppedBySeverity.critical}, ` +
+        `warning=${droppedBySeverity.warning}, info=${droppedBySeverity.info})`,
     );
   }
 
-  return { ok: true, flags: capped, warnings };
+  return { ok: true, flags: capped, warnings, ...(truncation ? { truncation } : {}) };
 }
