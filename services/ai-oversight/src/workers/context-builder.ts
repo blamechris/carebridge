@@ -46,21 +46,53 @@ function sanitizeEventData(data: unknown): unknown {
 }
 
 /**
+ * Was this diagnosis active AS OF `at` (event time)? Mirrors the helper in
+ * buildPatientContextForRules so the LLM and rule paths share the same
+ * snapshot semantics. See #258 and #512.
+ */
+function diagnosisWasActiveAt(
+  row: {
+    onset_date?: string | null;
+    resolved_date?: string | null;
+    status?: string | null;
+    created_at: string;
+  },
+  at: string,
+): boolean {
+  const start = row.onset_date ?? row.created_at;
+  if (start > at) return false; // not yet started at event time
+  if (row.resolved_date && row.resolved_date <= at) return false; // resolved before event
+  return true;
+}
+
+/**
  * Build the full patient context needed for LLM clinical review.
+ *
+ * Filters diagnoses, medications, allergies, vitals, and labs to the
+ * patient snapshot AS OF `triggerEvent.timestamp`. This keeps the LLM's
+ * view aligned with the deterministic rule-path view (see
+ * `buildPatientContextForRules`) so dedup/precedence reasoning compares
+ * apples to apples. Without this, a med discontinued between event emit
+ * and LLM review would disappear from the LLM context while the rules
+ * still see it, producing inconsistent flags. See #258, #512.
  */
 export async function buildPatientContext(
   patientId: string,
   triggerEvent: ClinicalEvent,
 ): Promise<ReviewContext> {
   const db = getDb();
+  const eventAt = triggerEvent.timestamp;
 
-  // Run all queries in parallel for speed
+  // Run all queries in parallel for speed. We fetch the full history for
+  // diagnoses / medications / allergies and then filter in-memory to the
+  // event-time snapshot (same approach as the rule context builder;
+  // moving the predicate into SQL is tracked in #514).
   const [
     patientRow,
-    activeDiagnoses,
-    patientAllergies,
-    activeMeds,
-    latestVitals,
+    allDiagnoses,
+    allAllergies,
+    allMeds,
+    allVitals,
     recentPanels,
     recentFlags,
     careTeam,
@@ -68,37 +100,21 @@ export async function buildPatientContext(
     db.query.patients.findFirst({
       where: eq(patients.id, patientId),
     }),
-    db
-      .select()
-      .from(diagnoses)
-      .where(
-        and(eq(diagnoses.patient_id, patientId), eq(diagnoses.status, "active")),
-      ),
-    db
-      .select()
-      .from(allergies)
-      .where(eq(allergies.patient_id, patientId)),
-    db
-      .select()
-      .from(medications)
-      .where(
-        and(
-          eq(medications.patient_id, patientId),
-          eq(medications.status, "active"),
-        ),
-      ),
+    db.select().from(diagnoses).where(eq(diagnoses.patient_id, patientId)),
+    db.select().from(allergies).where(eq(allergies.patient_id, patientId)),
+    db.select().from(medications).where(eq(medications.patient_id, patientId)),
     db
       .select()
       .from(vitals)
       .where(eq(vitals.patient_id, patientId))
       .orderBy(desc(vitals.recorded_at))
-      .limit(20),
+      .limit(100),
     db
       .select()
       .from(labPanels)
       .where(eq(labPanels.patient_id, patientId))
       .orderBy(desc(labPanels.collected_at))
-      .limit(5),
+      .limit(20),
     db
       .select()
       .from(clinicalFlags)
@@ -115,6 +131,43 @@ export async function buildPatientContext(
         ),
       ),
   ]);
+
+  // Event-time snapshot filtering — diagnoses active at event time.
+  const activeDiagnoses = allDiagnoses.filter((d) =>
+    diagnosisWasActiveAt(d, eventAt),
+  );
+
+  // Event-time snapshot filtering — medications active at event time.
+  // A med is active if it started at/before event time AND either is
+  // still open (no ended_at) or ended strictly after event time. Falls
+  // back to created_at if started_at is null (defensive; see #516).
+  const activeMeds = allMeds.filter((m) => {
+    const start = m.started_at ?? m.created_at;
+    if (start > eventAt) return false;
+    if (m.ended_at && m.ended_at <= eventAt) return false;
+    return true;
+  });
+
+  // Event-time snapshot — allergies recorded at/before the event.
+  // Also exclude logical retractions (entered_in_error, refuted); these
+  // are charting corrections and must not appear in the LLM context.
+  // See #515.
+  const patientAllergies = allAllergies.filter((a) => {
+    if (a.created_at > eventAt) return false;
+    if (
+      a.verification_status === "entered_in_error" ||
+      a.verification_status === "refuted"
+    ) {
+      return false;
+    }
+    return true;
+  });
+
+  // Event-time snapshot — vitals recorded at/before the event. Keep the
+  // 20 most recent eligible rows to match the previous budget.
+  const latestVitals = allVitals
+    .filter((v) => v.recorded_at <= eventAt)
+    .slice(0, 20);
 
   // Calculate patient age
   let age = 0;
@@ -155,7 +208,9 @@ export async function buildPatientContext(
     };
   }
 
-  // Fetch lab results for recent panels
+  // Fetch lab results for recent panels, then filter to pre-event rows.
+  // Prevents "future leakage" of labs reported after the triggering event
+  // into the LLM context (mirrors the rule-path behavior).
   let recentLabResults: ReviewContext["recent_labs"] = [];
   if (recentPanels.length > 0) {
     const panelIds = recentPanels.map((p) => p.id);
@@ -164,13 +219,16 @@ export async function buildPatientContext(
       .from(labResults)
       .where(inArray(labResults.panel_id, panelIds));
 
-    recentLabResults = allResults.map((r) => ({
-      test_name: r.test_name,
-      value: r.value,
-      unit: r.unit,
-      flag: r.flag ?? null,
-      collected_at: r.created_at,
-    }));
+    recentLabResults = allResults
+      .filter((r) => r.created_at <= eventAt)
+      .slice(0, 50)
+      .map((r) => ({
+        test_name: r.test_name,
+        value: r.value,
+        unit: r.unit,
+        flag: r.flag ?? null,
+        collected_at: r.created_at,
+      }));
   }
 
   // Resolve care team member names
