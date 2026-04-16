@@ -32,6 +32,14 @@ interface DrugInteractionPair {
   notify_specialties: string[];
 }
 
+/**
+ * Shared regex for QTc-prolonging drugs. Used by both drugA and drugB in the
+ * DI-QTC-COMBO rule so the pattern is defined in exactly one place. Curated
+ * from CredibleMeds QTDrugs (Known Risk + Possible Risk) and FDA labeling.
+ */
+const QTC_PATTERN =
+  /amiodarone|pacerone|cordarone|sotalol|betapace|dofetilide|tikosyn|dronedarone|multaq|ibutilide|corvert|quinidine|procainamide|disopyramide|norpace|flecainide|tambocor|haloperidol|haldol|thioridazine|mellaril|chlorpromazine|thorazine|pimozide|orap|droperidol|quetiapine|seroquel|risperidone|risperdal|olanzapine|zyprexa|ziprasidone|geodon|aripiprazole|abilify|paliperidone|invega|iloperidone|fanapt|azithromycin|zithromax|erythromycin|clarithromycin|biaxin|levofloxacin|levaquin|moxifloxacin|avelox|ciprofloxacin|cipro|gemifloxacin|factive|ofloxacin|floxin|ondansetron|zofran|granisetron|kytril|dolasetron|anzemet|domperidone|motilium|hydroxychloroquine|plaquenil|chloroquine|aralen|quinine|methadone|dolophine|citalopram|celexa|escitalopram|lexapro|donepezil|aricept|amitriptyline|elavil|imipramine|tofranil|nortriptyline|pamelor|clomipramine|anafranil|sevoflurane|ultane|oxaliplatin|eloxatin|vandetanib|caprelsa|sunitinib|sutent|nilotinib|tasigna/i;
+
 const INTERACTION_PAIRS: DrugInteractionPair[] = [
   {
     id: "DI-WARFARIN-ASPIRIN",
@@ -430,9 +438,10 @@ const INTERACTION_PAIRS: DrugInteractionPair[] = [
   // DI-QTC-COMBO: any two distinct QT-prolonging agents.
   //
   // Drug set curated from CredibleMeds QTDrugs (Known Risk + Possible Risk)
-  // and FDA labeling. Both drugA and drugB use the same pattern so that
-  // any pair of distinct QT-prolongers — including intra-class combinations
-  // like two antipsychotics, or antipsychotic + fluoroquinolone — is caught.
+  // and FDA labeling. Both drugA and drugB reference the shared QTC_PATTERN
+  // so that any pair of distinct QT-prolongers — including intra-class
+  // combinations like two antipsychotics, or antipsychotic + fluoroquinolone
+  // — is caught without duplicating the regex.
   //
   // Class coverage:
   //   - Class IA antiarrhythmics: quinidine, procainamide, disopyramide
@@ -455,10 +464,8 @@ const INTERACTION_PAIRS: DrugInteractionPair[] = [
   // pacerone, cordarone, seroquel, risperdal, zyprexa, geodon, abilify).
   {
     id: "DI-QTC-COMBO",
-    drugA:
-      /amiodarone|pacerone|cordarone|sotalol|betapace|dofetilide|tikosyn|dronedarone|multaq|ibutilide|corvert|quinidine|procainamide|disopyramide|norpace|flecainide|tambocor|haloperidol|haldol|thioridazine|mellaril|chlorpromazine|thorazine|pimozide|orap|droperidol|quetiapine|seroquel|risperidone|risperdal|olanzapine|zyprexa|ziprasidone|geodon|aripiprazole|abilify|paliperidone|invega|iloperidone|fanapt|azithromycin|zithromax|erythromycin|clarithromycin|biaxin|levofloxacin|levaquin|moxifloxacin|avelox|ciprofloxacin|cipro|gemifloxacin|factive|ofloxacin|floxin|ondansetron|zofran|granisetron|kytril|dolasetron|anzemet|domperidone|motilium|hydroxychloroquine|plaquenil|chloroquine|aralen|quinine|methadone|dolophine|citalopram|celexa|escitalopram|lexapro|donepezil|aricept|amitriptyline|elavil|imipramine|tofranil|nortriptyline|pamelor|clomipramine|anafranil|sevoflurane|ultane|oxaliplatin|eloxatin|vandetanib|caprelsa|sunitinib|sutent|nilotinib|tasigna/i,
-    drugB:
-      /amiodarone|pacerone|cordarone|sotalol|betapace|dofetilide|tikosyn|dronedarone|multaq|ibutilide|corvert|quinidine|procainamide|disopyramide|norpace|flecainide|tambocor|haloperidol|haldol|thioridazine|mellaril|chlorpromazine|thorazine|pimozide|orap|droperidol|quetiapine|seroquel|risperidone|risperdal|olanzapine|zyprexa|ziprasidone|geodon|aripiprazole|abilify|paliperidone|invega|iloperidone|fanapt|azithromycin|zithromax|erythromycin|clarithromycin|biaxin|levofloxacin|levaquin|moxifloxacin|avelox|ciprofloxacin|cipro|gemifloxacin|factive|ofloxacin|floxin|ondansetron|zofran|granisetron|kytril|dolasetron|anzemet|domperidone|motilium|hydroxychloroquine|plaquenil|chloroquine|aralen|quinine|methadone|dolophine|citalopram|celexa|escitalopram|lexapro|donepezil|aricept|amitriptyline|elavil|imipramine|tofranil|nortriptyline|pamelor|clomipramine|anafranil|sevoflurane|ultane|oxaliplatin|eloxatin|vandetanib|caprelsa|sunitinib|sutent|nilotinib|tasigna/i,
+    drugA: QTC_PATTERN,
+    drugB: QTC_PATTERN,
     severity: "warning",
     summary:
       "Multiple QTc-prolonging agents: increased risk of torsades de pointes",
@@ -478,39 +485,50 @@ export function checkDrugInteractions(medications: string[]): RuleFlag[] {
   const normalizedMeds = medications.map((m) => m.toLowerCase());
 
   for (const pair of INTERACTION_PAIRS) {
-    // When drugA and drugB use the same regex source (e.g. DI-QTC-COMBO, where
+    // When drugA and drugB reference the same regex (e.g. DI-QTC-COMBO, where
     // we want to catch any two distinct drugs from a single class list),
-    // we need to find two *different* medications that both match the pattern.
-    // Otherwise the same first-matching med gets assigned to both drugAMatch
-    // and drugBMatch, and the rule fails to fire.
-    const sameList = pair.drugA.source === pair.drugB.source;
+    // we need two medications at *different indices* that both match the
+    // pattern.  Comparing by index (not string value) prevents a false-
+    // positive when the same drug appears twice in the medication list and
+    // also prevents a miss when two genuinely different drugs happen to
+    // normalize to the same string.
+    const sameList = pair.drugA === pair.drugB;
 
-    let drugAMatch: string | null = null;
-    let drugBMatch: string | null = null;
+    let drugAIdx = -1;
+    let drugBIdx = -1;
 
     if (sameList) {
-      for (const med of normalizedMeds) {
-        if (!pair.drugA.test(med)) continue;
-        if (!drugAMatch) {
-          drugAMatch = med;
-        } else if (med !== drugAMatch) {
-          drugBMatch = med;
+      for (let i = 0; i < normalizedMeds.length; i++) {
+        if (!pair.drugA.test(normalizedMeds[i])) continue;
+        if (drugAIdx < 0) {
+          drugAIdx = i;
+        } else if (i !== drugAIdx) {
+          drugBIdx = i;
           break;
         }
       }
     } else {
-      for (const med of normalizedMeds) {
-        if (pair.drugA.test(med) && !drugAMatch) {
-          drugAMatch = med;
+      for (let i = 0; i < normalizedMeds.length; i++) {
+        if (pair.drugA.test(normalizedMeds[i]) && drugAIdx < 0) {
+          drugAIdx = i;
         }
-        if (pair.drugB.test(med) && !drugBMatch) {
-          drugBMatch = med;
+        if (pair.drugB.test(normalizedMeds[i]) && drugBIdx < 0) {
+          drugBIdx = i;
         }
       }
     }
 
-    // Make sure they are different actual medications (avoid matching same med to both)
-    if (drugAMatch && drugBMatch && drugAMatch !== drugBMatch) {
+    // Ensure both sides matched, they refer to different medication entries
+    // (by index), AND the underlying medication strings differ.  The index
+    // check prevents the same list entry from satisfying both sides; the
+    // string check prevents duplicate entries for the same drug (e.g.
+    // "sotalol 80mg" listed twice) from triggering a false flag.
+    if (
+      drugAIdx >= 0 &&
+      drugBIdx >= 0 &&
+      drugAIdx !== drugBIdx &&
+      normalizedMeds[drugAIdx] !== normalizedMeds[drugBIdx]
+    ) {
       flags.push({
         severity: pair.severity,
         category: "drug-interaction" as FlagCategory,

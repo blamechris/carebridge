@@ -495,6 +495,15 @@ describe("checkDrugInteractions", () => {
       const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
       expect(match).toBeUndefined();
     });
+
+    it("does not flag the same QT drug listed twice (duplicate med entry)", () => {
+      const flags = checkDrugInteractions([
+        "sotalol 80mg",
+        "sotalol 80mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeUndefined();
+    });
   });
 
   describe("no false positives", () => {
