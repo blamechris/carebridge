@@ -223,96 +223,188 @@ export const fhirGatewayRouter = t.router({
       assertRawPatientAccess(ctx.user, input.patientId, ctx.rbacVerified);
       const db = getDb();
       const { patientId } = input;
+      const exportId = crypto.randomUUID();
+      const exportedAt = new Date().toISOString();
+      const recommendedPurgeAt = new Date(
+        new Date(exportedAt).getTime() + 15 * 60 * 1000,
+      ).toISOString();
 
-      // 1. Fetch the patient record
-      const [patient] = await db
-        .select()
-        .from(patients)
-        .where(eq(patients.id, patientId));
-
-      if (!patient) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: `Patient ${patientId} not found`,
+      // HIPAA § 164.312(b) audit writer. Called AFTER the bundle is
+      // assembled (success path) or inside the failure branch so the
+      // recorded success/http_status_code reflects the actual outcome
+      // rather than an optimistic pre-flight "200". Per PR #503 review.
+      const writeAudit = async (args: {
+        success: boolean;
+        httpStatusCode: number;
+        errorMessage?: string;
+      }) => {
+        await db.insert(auditLog).values({
+          id: crypto.randomUUID(),
+          user_id: ctx.user.id,
+          action: "fhir_export",
+          resource_type: "fhir_bundle",
+          resource_id: exportId,
+          procedure_name: "fhir.exportPatient",
+          patient_id: patientId,
+          http_status_code: args.httpStatusCode,
+          success: args.success,
+          error_message: args.errorMessage ?? null,
+          details: JSON.stringify({
+            export_type: "patient_full_bundle",
+            export_id: exportId,
+            recommended_purge_at: recommendedPurgeAt,
+          }),
+          ip_address: null,
+          timestamp: new Date().toISOString(),
         });
-      }
-
-      // 2. Fetch all related clinical data in parallel
-      const [
-        patientVitals,
-        patientPanels,
-        patientMedications,
-        patientDiagnoses,
-        patientAllergies,
-      ] = await Promise.all([
-        db.select().from(vitals).where(eq(vitals.patient_id, patientId)),
-        db.select().from(labPanels).where(eq(labPanels.patient_id, patientId)),
-        db.select().from(medications).where(eq(medications.patient_id, patientId)),
-        db.select().from(diagnoses).where(eq(diagnoses.patient_id, patientId)),
-        db.select().from(allergies).where(eq(allergies.patient_id, patientId)),
-      ]);
-
-      // Fetch lab results for all panels
-      const panelIds = patientPanels.map((p) => p.id);
-      const allLabResults: (typeof labResults.$inferSelect)[] = [];
-      for (const panelId of panelIds) {
-        const results = await db
-          .select()
-          .from(labResults)
-          .where(eq(labResults.panel_id, panelId));
-        allLabResults.push(...results);
-      }
-
-      // 3. Convert to FHIR resources
-      const fhirPatient = toFhirPatient(patient);
-
-      const entry: { fullUrl: string; resource: unknown }[] = [
-        {
-          fullUrl: `urn:uuid:${patientId}`,
-          resource: fhirPatient,
-        },
-      ];
-
-      for (const vital of patientVitals) {
-        entry.push({
-          fullUrl: `urn:uuid:${vital.id}`,
-          resource: toFhirVitalObservation(vital as unknown as Vital, patientId),
-        });
-      }
-
-      for (const lab of allLabResults) {
-        entry.push({
-          fullUrl: `urn:uuid:${lab.id}`,
-          resource: toFhirLabObservation(lab as unknown as LabResult, patientId),
-        });
-      }
-
-      for (const dx of patientDiagnoses) {
-        entry.push({
-          fullUrl: `urn:uuid:${dx.id}`,
-          resource: toFhirCondition(dx, patientId),
-        });
-      }
-
-      for (const med of patientMedications) {
-        entry.push({
-          fullUrl: `urn:uuid:${med.id}`,
-          resource: toFhirMedicationStatement(med, patientId),
-        });
-      }
-
-      for (const allergy of patientAllergies) {
-        entry.push({
-          fullUrl: `urn:uuid:${allergy.id}`,
-          resource: toFhirAllergyIntolerance(allergy, patientId),
-        });
-      }
-
-      return {
-        resourceType: "Bundle" as const,
-        type: "collection" as const,
-        entry,
       };
+
+      try {
+        // 1. Fetch the patient record
+        const [patient] = await db
+          .select()
+          .from(patients)
+          .where(eq(patients.id, patientId));
+
+        if (!patient) {
+          await writeAudit({
+            success: false,
+            httpStatusCode: 404,
+            errorMessage: `Patient ${patientId} not found`,
+          });
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: `Patient ${patientId} not found`,
+          });
+        }
+
+        // 2. Fetch all related clinical data in parallel
+        const [
+          patientVitals,
+          patientPanels,
+          patientMedications,
+          patientDiagnoses,
+          patientAllergies,
+        ] = await Promise.all([
+          db.select().from(vitals).where(eq(vitals.patient_id, patientId)),
+          db.select().from(labPanels).where(eq(labPanels.patient_id, patientId)),
+          db.select().from(medications).where(eq(medications.patient_id, patientId)),
+          db.select().from(diagnoses).where(eq(diagnoses.patient_id, patientId)),
+          db.select().from(allergies).where(eq(allergies.patient_id, patientId)),
+        ]);
+
+        // Fetch lab results for all panels
+        const panelIds = patientPanels.map((p) => p.id);
+        const allLabResults: (typeof labResults.$inferSelect)[] = [];
+        for (const panelId of panelIds) {
+          const results = await db
+            .select()
+            .from(labResults)
+            .where(eq(labResults.panel_id, panelId));
+          allLabResults.push(...results);
+        }
+
+        // 3. Convert to FHIR resources
+        const fhirPatient = toFhirPatient(patient);
+
+        const entry: { fullUrl: string; resource: unknown }[] = [
+          {
+            fullUrl: `urn:uuid:${patientId}`,
+            resource: fhirPatient,
+          },
+        ];
+
+        for (const vital of patientVitals) {
+          entry.push({
+            fullUrl: `urn:uuid:${vital.id}`,
+            resource: toFhirVitalObservation(vital as unknown as Vital, patientId),
+          });
+        }
+
+        for (const lab of allLabResults) {
+          entry.push({
+            fullUrl: `urn:uuid:${lab.id}`,
+            resource: toFhirLabObservation(lab as unknown as LabResult, patientId),
+          });
+        }
+
+        for (const dx of patientDiagnoses) {
+          entry.push({
+            fullUrl: `urn:uuid:${dx.id}`,
+            resource: toFhirCondition(dx, patientId),
+          });
+        }
+
+        for (const med of patientMedications) {
+          entry.push({
+            fullUrl: `urn:uuid:${med.id}`,
+            resource: toFhirMedicationStatement(med, patientId),
+          });
+        }
+
+        for (const allergy of patientAllergies) {
+          entry.push({
+            fullUrl: `urn:uuid:${allergy.id}`,
+            resource: toFhirAllergyIntolerance(allergy, patientId),
+          });
+        }
+
+        // HIPAA § 164.312(b): record the successful PHI egress AFTER the
+        // bundle is fully assembled, so success=true only if the data
+        // was actually produced. Per PR #503 review.
+        await writeAudit({ success: true, httpStatusCode: 200 });
+
+        // The bundle is returned inline rather than via a signed short-TTL
+        // URL (which is the long-term target; see #290). Until that delivery
+        // layer exists, callers MUST treat the response as ephemeral:
+        //   - persist it only long enough for the immediate use case;
+        //   - never cache it at the CDN or intermediary layer;
+        //   - discard it after `recommended_purge_at`.
+        // recommended_purge_at is set 15 minutes from generation to bound
+        // the window a leaked in-memory copy remains useful.
+        //
+        // Export metadata (export_id, exported_at, recommended_purge_at,
+        // exported_by) is carried as a FHIR R4 Meta.extension entry rather
+        // than ad-hoc top-level Meta keys. Strict FHIR consumers (HAPI,
+        // IBM FHIR Server, Smile CDR) ignore unknown extensions but reject
+        // unknown primitive fields on Meta. Per PR #503 review.
+        const exportMetaExtensionUrl =
+          "https://carebridge.dev/fhir/StructureDefinition/export-meta";
+        return {
+          resourceType: "Bundle" as const,
+          type: "collection" as const,
+          meta: {
+            lastUpdated: exportedAt,
+            extension: [
+              {
+                url: exportMetaExtensionUrl,
+                valueString: JSON.stringify({
+                  export_id: exportId,
+                  exported_at: exportedAt,
+                  recommended_purge_at: recommendedPurgeAt,
+                  ...(ctx.user?.id ? { exported_by: ctx.user.id } : {}),
+                }),
+              },
+            ],
+          },
+          entry,
+        };
+      } catch (err) {
+        // If the failure path wasn't already audited above (e.g. NOT_FOUND
+        // writes its own row before throwing), record a failure audit row
+        // now so the attempt is never silently lost. TRPCError from the
+        // NOT_FOUND branch has already been audited; re-throw without a
+        // duplicate write.
+        if (!(err instanceof TRPCError)) {
+          const message = err instanceof Error ? err.message : String(err);
+          await writeAudit({
+            success: false,
+            httpStatusCode: 500,
+            errorMessage: message,
+          });
+        }
+        throw err;
+      }
     }),
 });
 
