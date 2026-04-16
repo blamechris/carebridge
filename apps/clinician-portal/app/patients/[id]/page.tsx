@@ -275,17 +275,40 @@ function VitalsTab({ patientId }: { patientId: string }) {
   // string compare: ISO strings that represent the same instant can
   // differ in suffix (`Z` vs `+00:00`) or sub-second precision and
   // sort wrong as plain strings.
-  const mostRecent =
-    pickFreshest<{ recorded_at: string }>(
-      latest as Array<{ recorded_at: string }>,
-      (v) => v.recorded_at,
-    ) ?? (latest[0] as { recorded_at: string });
-  const isStale =
-    Date.now() - new Date(mostRecent.recorded_at).getTime() > STALE_THRESHOLD_MS;
+  const mostRecent = pickFreshest<{ recorded_at: string }>(
+    latest as Array<{ recorded_at: string }>,
+    (v) => v.recorded_at,
+  );
+  // Fail-safe: when all timestamps are unparseable, pickFreshest returns
+  // null and we cannot determine freshness. In that case we must still
+  // surface a staleness warning — hiding it would be clinically unsafe
+  // because the clinician would have no cue that displayed values may be
+  // outdated. (PR #571 review finding.)
+  const freshnessUnknown = mostRecent === null && latest.length > 0;
+  const isStale = freshnessUnknown
+    || (mostRecent !== null &&
+        Date.now() - new Date(mostRecent.recorded_at).getTime() > STALE_THRESHOLD_MS);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      {isStale ? (
+      {freshnessUnknown ? (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            background: "var(--color-warning-bg, #fff3cd)",
+            border: "1px solid var(--color-warning-border, #ffc107)",
+            color: "var(--color-warning-text, #856404)",
+            padding: "12px 16px",
+            borderRadius: 6,
+            fontSize: 14,
+          }}
+        >
+          <strong>Stale vitals:</strong> unable to determine data freshness
+          &mdash; verify manually. Values shown may not reflect the
+          patient&rsquo;s current state.
+        </div>
+      ) : isStale && mostRecent ? (
         <StaleDataBanner
           lastRecordedAt={mostRecent.recorded_at}
           label="vitals"

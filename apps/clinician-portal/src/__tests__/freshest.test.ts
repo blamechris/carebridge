@@ -67,6 +67,18 @@ describe("pickFreshest", () => {
       pickFreshest([{ ts: null }, { ts: undefined }, { ts: "bad" }], (x) => x.ts),
     ).toBeNull();
   });
+
+  it("returns null (fail-safe) so callers surface a staleness warning", () => {
+    // Regression: when all timestamps are unparseable, pickFreshest returns
+    // null. Callers (VitalsTab) must treat null + non-empty data as
+    // "freshness unknown" and show a staleness banner — hiding it is
+    // clinically unsafe.
+    const items = [{ ts: "garbage" }, { ts: "also-not-a-date" }];
+    const result = pickFreshest(items, (x) => x.ts);
+    expect(result).toBeNull();
+    // Caller contract: null + items.length > 0 → show staleness warning
+    expect(items.length).toBeGreaterThan(0);
+  });
 });
 
 describe("mostRecentIso", () => {
