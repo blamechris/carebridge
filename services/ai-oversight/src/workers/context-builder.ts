@@ -25,6 +25,13 @@ import type { ClinicalEvent } from "@carebridge/shared-types";
 import { calculateDelta } from "@carebridge/medical-logic";
 import { sanitizeFreeText } from "@carebridge/phi-sanitizer";
 
+import {
+  isoBefore,
+  isoLTE,
+  isDiagnosisRetracted,
+  isAllergyRetracted,
+} from "../utils/event-time-snapshot.js";
+
 /**
  * Recursively sanitize all string values in an arbitrary event-data object
  * before it is serialized into an LLM prompt. Prevents semantic prompt
@@ -49,6 +56,11 @@ function sanitizeEventData(data: unknown): unknown {
  * Was this diagnosis active AS OF `at` (event time)? Mirrors the helper in
  * buildPatientContextForRules so the LLM and rule paths share the same
  * snapshot semantics. See #258 and #512.
+ *
+ * Excludes logical retractions (status=entered_in_error) per #515 — a
+ * charting correction is not clinically true and must not enter the LLM
+ * context. Timestamp comparisons go through isoBefore/isoLTE so
+ * offset-form and bare-date values normalize correctly (#513).
  */
 function diagnosisWasActiveAt(
   row: {
@@ -59,9 +71,10 @@ function diagnosisWasActiveAt(
   },
   at: string,
 ): boolean {
+  if (isDiagnosisRetracted(row)) return false;
   const start = row.onset_date ?? row.created_at;
-  if (start > at) return false; // not yet started at event time
-  if (row.resolved_date && row.resolved_date <= at) return false; // resolved before event
+  if (isoBefore(at, start)) return false; // not yet started at event time
+  if (row.resolved_date && isoLTE(row.resolved_date, at)) return false; // resolved before event
   return true;
 }
 
@@ -143,8 +156,8 @@ export async function buildPatientContext(
   // back to created_at if started_at is null (defensive; see #516).
   const activeMeds = allMeds.filter((m) => {
     const start = m.started_at ?? m.created_at;
-    if (start > eventAt) return false;
-    if (m.ended_at && m.ended_at <= eventAt) return false;
+    if (isoBefore(eventAt, start)) return false;
+    if (m.ended_at && isoLTE(m.ended_at, eventAt)) return false;
     return true;
   });
 
@@ -153,20 +166,15 @@ export async function buildPatientContext(
   // are charting corrections and must not appear in the LLM context.
   // See #515.
   const patientAllergies = allAllergies.filter((a) => {
-    if (a.created_at > eventAt) return false;
-    if (
-      a.verification_status === "entered_in_error" ||
-      a.verification_status === "refuted"
-    ) {
-      return false;
-    }
+    if (isoBefore(eventAt, a.created_at)) return false;
+    if (isAllergyRetracted(a)) return false;
     return true;
   });
 
   // Event-time snapshot — vitals recorded at/before the event. Keep the
   // 20 most recent eligible rows to match the previous budget.
   const latestVitals = allVitals
-    .filter((v) => v.recorded_at <= eventAt)
+    .filter((v) => isoLTE(v.recorded_at, eventAt))
     .slice(0, 20);
 
   // Calculate patient age
@@ -220,7 +228,7 @@ export async function buildPatientContext(
       .where(inArray(labResults.panel_id, panelIds));
 
     recentLabResults = allResults
-      .filter((r) => r.created_at <= eventAt)
+      .filter((r) => isoLTE(r.created_at, eventAt))
       .slice(0, 50)
       .map((r) => ({
         test_name: r.test_name,

@@ -308,10 +308,11 @@ describe("dispatch-worker", () => {
       await processorFn({ data: event, id: "job-phi-3" });
 
       // Reproduce buildSafeSummary locally (mirror of the private helper):
-      // a category-only template, PHI-free by construction.
+      // a category-only template, PHI-free by construction. The category
+      // is rendered through the whitelist label (`critical-value` →
+      // "Critical value") rather than a raw dash→space transform.
       const expectedSafe =
-        `Clinical flag — ${event.category.replace(/-/g, " ")}. ` +
-        `Open the portal to view details.`;
+        "Clinical flag — Critical value. Open the portal to view details.";
 
       const insertedRecords = mockInsertValues.mock.calls[0][0];
       expect(insertedRecords).toHaveLength(1);
@@ -335,6 +336,129 @@ describe("dispatch-worker", () => {
 
       const insertedRecords = mockInsertValues.mock.calls[0][0];
       expect(insertedRecords[0].body).toBe(event.summary);
+    });
+  });
+
+  // Category whitelist (issue #551).
+  // `NotificationEvent.category` is typed as `string`, so a future rule
+  // author or LLM could pass something like `"psychiatric-symptoms"` that
+  // would otherwise render verbatim on a device lock screen. These tests
+  // lock in the whitelist + generic fallback + observability behaviour.
+  describe("category whitelist", () => {
+    const primeRecipients = (): void => {
+      mockSelectResult.push({ user_id: "user-neuro" });
+      mockSelectResult2.push({
+        id: "user-neuro",
+        specialty: "Neurology",
+        role: "physician",
+      });
+    };
+
+    const knownCategoryCases: Array<[string, string]> = [
+      ["cross-specialty", "Cross-specialty concern"],
+      ["drug-interaction", "Drug interaction"],
+      ["medication-safety", "Medication safety"],
+      ["care-gap", "Care gap"],
+      ["critical-value", "Critical value"],
+      ["trend-concern", "Trend concern"],
+      ["documentation-discrepancy", "Documentation discrepancy"],
+      ["patient-reported", "Patient-reported concern"],
+    ];
+
+    for (const [category, label] of knownCategoryCases) {
+      it(`renders whitelisted category "${category}" as "${label}"`, async () => {
+        primeRecipients();
+
+        const warnSpy = vi
+          .spyOn(console, "warn")
+          .mockImplementation(() => undefined);
+
+        const event = makeEvent({ severity: "warning", category });
+        await processorFn({ data: event, id: `job-cat-${category}` });
+
+        const insertedRecords = mockInsertValues.mock.calls[0][0];
+        expect(insertedRecords[0].title).toBe(
+          `Warning: Clinical flag — ${label}`,
+        );
+        expect(insertedRecords[0].summary_safe).toBe(
+          `Clinical flag — ${label}. Open the portal to view details.`,
+        );
+        // Known categories must not trigger the unknown-category warning.
+        expect(warnSpy).not.toHaveBeenCalled();
+
+        warnSpy.mockRestore();
+      });
+    }
+
+    it("falls back to 'Clinical alert' for unknown categories", async () => {
+      primeRecipients();
+
+      const warnSpy = vi
+        .spyOn(console, "warn")
+        .mockImplementation(() => undefined);
+
+      const event = makeEvent({
+        severity: "critical",
+        // Unknown, PHI-adjacent category that MUST NOT surface verbatim.
+        category: "hiv-status-change",
+      });
+      await processorFn({ data: event, id: "job-cat-unknown" });
+
+      const insertedRecords = mockInsertValues.mock.calls[0][0];
+      const title = insertedRecords[0].title as string;
+      const safeSummary = insertedRecords[0].summary_safe as string;
+
+      expect(title).toBe("CRITICAL: Clinical flag — Clinical alert");
+      expect(safeSummary).toBe(
+        "Clinical flag — Clinical alert. Open the portal to view details.",
+      );
+      // The raw, unknown category must not leak into either field.
+      expect(title).not.toContain("hiv");
+      expect(title).not.toContain("status");
+      expect(safeSummary).not.toContain("hiv");
+
+      // Observability: unknown categories are logged with structured context
+      // so the operator can triage and either admit them to the whitelist
+      // or fix the upstream rule/LLM output.
+      expect(warnSpy).toHaveBeenCalled();
+      const warnCall = warnSpy.mock.calls.find((call) =>
+        String(call[0]).includes("Unknown notification category"),
+      );
+      expect(warnCall).toBeDefined();
+      const context = warnCall![1] as { category: string; fallback: string };
+      expect(context.category).toBe("hiv-status-change");
+      expect(context.fallback).toBe("Clinical alert");
+
+      warnSpy.mockRestore();
+    });
+
+    it("published lock-screen payload uses fallback label and carries no PHI for unknown categories", async () => {
+      primeRecipients();
+
+      const warnSpy = vi
+        .spyOn(console, "warn")
+        .mockImplementation(() => undefined);
+
+      const event = makeEvent({
+        severity: "warning",
+        category: "psychiatric-symptoms-self-harm",
+        summary: "Patient MRN 987654 reports ideation; BP 145/95",
+      });
+      await processorFn({ data: event, id: "job-cat-unknown-phi" });
+
+      expect(mockPublishNotification).toHaveBeenCalledTimes(1);
+      const [, payload] = mockPublishNotification.mock.calls[0];
+      expect(payload.title).toBe("Warning: Clinical flag — Clinical alert");
+      expect(payload.body).toBe(
+        "Clinical flag — Clinical alert. Open the portal to view details.",
+      );
+      // Neither the raw summary nor the suspicious category should leak.
+      expect(payload.title).not.toContain("psychiatric");
+      expect(payload.body).not.toContain("psychiatric");
+      expect(payload.body).not.toContain("MRN");
+      expect(payload.body).not.toMatch(/\d/);
+
+      warnSpy.mockRestore();
     });
   });
 });
