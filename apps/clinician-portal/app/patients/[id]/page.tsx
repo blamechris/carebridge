@@ -38,6 +38,47 @@ function ErrorState({ label }: { label: string }) {
   );
 }
 
+/** Minimum age (ms) at which a latest vital/lab is flagged as stale. 7 days. */
+const STALE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Distinguishes "data present but stale" from "data present and current".
+ * Without this banner, a 30-day-old BP reading renders the same way as one
+ * taken an hour ago — the clinician cannot tell at a glance that the
+ * displayed number is not a current assessment.
+ */
+function StaleDataBanner({
+  lastRecordedAt,
+  label,
+}: {
+  lastRecordedAt: string;
+  label: string;
+}) {
+  const ageMs = Date.now() - new Date(lastRecordedAt).getTime();
+  const ageDays = Math.round(ageMs / (24 * 60 * 60 * 1000));
+  // role="status" (polite live region) rather than role="alert" (assertive):
+  // a chronic chart banner should not interrupt a screen-reader mid-sentence
+  // every time the clinician opens a patient with week-old data.
+  return (
+    <div
+      role="status"
+      style={{
+        background: "var(--color-warning-bg, #fff3cd)",
+        border: "1px solid var(--color-warning-border, #ffc107)",
+        color: "var(--color-warning-text, #856404)",
+        padding: "12px 16px",
+        borderRadius: 6,
+        fontSize: 14,
+      }}
+    >
+      <strong>Stale {label}:</strong> last recorded {ageDays} day
+      {ageDays === 1 ? "" : "s"} ago (
+      {new Date(lastRecordedAt).toLocaleString()}). Values shown may not
+      reflect the patient&rsquo;s current state.
+    </div>
+  );
+}
+
 function OverviewTab({ patientId }: { patientId: string }) {
   const patientQuery = trpc.patients.getById.useQuery({ id: patientId });
   const diagnosesQuery = trpc.patients.diagnoses.getByPatient.useQuery({ patientId });
@@ -146,14 +187,39 @@ function VitalsTab({ patientId }: { patientId: string }) {
 
   if (latest.length === 0) {
     return (
-      <div className="empty-state">
-        <div className="empty-state-text">No vitals recorded for this patient</div>
+      <div className="empty-state" role="status">
+        <div className="empty-state-text" style={{ fontWeight: 600 }}>
+          No vitals have ever been recorded for this patient.
+        </div>
+        <div
+          style={{
+            color: "var(--text-muted)",
+            fontSize: 13,
+            marginTop: 4,
+          }}
+        >
+          This does NOT mean vitals are normal. A clinical assessment is
+          required.
+        </div>
       </div>
     );
   }
 
+  // Freshest recording across types — drives the staleness banner.
+  const mostRecent = latest.reduce((a, b) =>
+    a.recorded_at > b.recorded_at ? a : b,
+  );
+  const isStale =
+    Date.now() - new Date(mostRecent.recorded_at).getTime() > STALE_THRESHOLD_MS;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+      {isStale ? (
+        <StaleDataBanner
+          lastRecordedAt={mostRecent.recorded_at}
+          label="vitals"
+        />
+      ) : null}
       <div className="detail-grid">
         {latest.map((vital, i) => (
           <div key={i} className="stat-card">
@@ -193,14 +259,40 @@ function LabsTab({ patientId }: { patientId: string }) {
 
   if (panels.length === 0) {
     return (
-      <div className="empty-state">
-        <div className="empty-state-text">No lab results for this patient</div>
+      <div className="empty-state" role="status">
+        <div className="empty-state-text" style={{ fontWeight: 600 }}>
+          No lab results have ever been recorded for this patient.
+        </div>
+        <div
+          style={{
+            color: "var(--text-muted)",
+            fontSize: 13,
+            marginTop: 4,
+          }}
+        >
+          This does NOT imply normal labs. Order labs as clinically
+          indicated.
+        </div>
       </div>
     );
   }
 
+  // Panels come back ordered desc by collected_at; pick the freshest.
+  const mostRecentPanelAt =
+    panels
+      .map((p) => p.panel.collected_at ?? p.panel.created_at)
+      .filter((v): v is string => Boolean(v))
+      .sort()
+      .slice(-1)[0] ?? null;
+  const labsStale =
+    mostRecentPanelAt !== null &&
+    Date.now() - new Date(mostRecentPanelAt).getTime() > STALE_THRESHOLD_MS;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {labsStale && mostRecentPanelAt ? (
+        <StaleDataBanner lastRecordedAt={mostRecentPanelAt} label="labs" />
+      ) : null}
       {panels.map((panel, pi) => (
         <div key={pi} className="table-container">
           <div className="table-header">
