@@ -49,13 +49,18 @@ import { deriveActorContext, getFamilyRelationshipType } from "../middleware/aud
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeUser(role: string, id = "user-1"): User {
+function makeUser(
+  role: string,
+  id = "user-1",
+  patient_id?: string,
+): User {
   return {
     id,
     email: `${role}@carebridge.dev`,
     name: `Test ${role}`,
     role: role as User["role"],
     is_active: true,
+    patient_id,
     created_at: "2026-01-01T00:00:00.000Z",
     updated_at: "2026-01-01T00:00:00.000Z",
   };
@@ -78,10 +83,33 @@ describe("deriveActorContext", () => {
     });
   });
 
-  it('returns "self" and no on_behalf for patients', async () => {
+  it('returns "self" when patient accesses their own record (patient_id matches)', async () => {
     expect(
-      await deriveActorContext(makeUser("patient"), "pat-1"),
+      await deriveActorContext(
+        makeUser("patient", "user-1", "pat-1"),
+        "pat-1",
+      ),
     ).toEqual({ actorRelationship: "self", onBehalfOfPatientId: null });
+  });
+
+  it('returns "self" for patients when patientId is null', async () => {
+    expect(
+      await deriveActorContext(
+        makeUser("patient", "user-1", "pat-1"),
+        null,
+      ),
+    ).toEqual({ actorRelationship: "self", onBehalfOfPatientId: null });
+  });
+
+  it("returns null when a patient attempts cross-patient access", async () => {
+    // Cross-patient attempt — audit row must NOT claim "self" or it will
+    // mislabel the denied access in the trail.
+    expect(
+      await deriveActorContext(
+        makeUser("patient", "user-1", "pat-1"),
+        "pat-other",
+      ),
+    ).toEqual({ actorRelationship: null, onBehalfOfPatientId: null });
   });
 
   it("returns null for clinicians (physician, nurse, specialist)", async () => {

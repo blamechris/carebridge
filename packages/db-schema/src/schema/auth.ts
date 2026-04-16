@@ -40,9 +40,11 @@ export const auditLog = pgTable("audit_log", {
   resource_id: text("resource_id").notNull(),
   procedure_name: text("procedure_name"), // tRPC procedure name, e.g. "patients.getById"
   patient_id: text("patient_id"), // explicit patient ID for HIPAA audit trails
-  // "self" for patients acting on their own record, the family_relationships
-  // relationship_type for caregivers ("spouse", "parent", ...), NULL for
-  // clinicians/admins. See migration 0031.
+  // "self" for patients acting on their own record; for family caregivers,
+  // the family_relationships.relationship_type when available ("spouse",
+  // "parent", ...) or the literal "caregiver" fallback when no active
+  // relationship row exists; NULL for clinicians/admins and for cross-
+  // patient access attempts by a patient account. See migration 0031.
   actor_relationship: text("actor_relationship"),
   // When a family caregiver acts on behalf of a patient, records the patient
   // record id so revocation audits can reconstruct affected subjects.

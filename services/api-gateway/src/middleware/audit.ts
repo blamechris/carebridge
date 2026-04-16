@@ -166,11 +166,17 @@ export async function getFamilyRelationshipType(
 /**
  * Derive actor_relationship / on_behalf_of_patient_id for the audit row.
  *
- * - patient           → relationship "self", no on_behalf_of (the subject is
- *                       themselves, already captured by user_id + patient_id)
- * - family_caregiver  → relationship_type from family_relationships, patient
- *                       record id as on_behalf_of_patient_id
- * - clinician / admin → both fields null (no relationship semantics)
+ * - patient           → "self" ONLY when the target is the patient's own
+ *                       record (patientId absent, or matches user.patient_id).
+ *                       A patient requesting a different patient's record is
+ *                       a cross-patient access attempt — actorRelationship
+ *                       stays null so the audit trail doesn't mislabel it.
+ * - family_caregiver  → active relationship_type from family_relationships
+ *                       ("spouse", "parent", ...). Falls back to the literal
+ *                       "caregiver" when patientId is missing or no active
+ *                       relationship row exists. on_behalf_of_patient_id is
+ *                       the requested patient record id when available.
+ * - clinician / admin → both fields null (no relationship semantics).
  *
  * Exported so it can be unit-tested without the Fastify request machinery.
  */
@@ -186,7 +192,12 @@ export async function deriveActorContext(
   }
 
   if (user.role === "patient") {
-    return { actorRelationship: "self", onBehalfOfPatientId: null };
+    if (!patientId || patientId === user.patient_id) {
+      return { actorRelationship: "self", onBehalfOfPatientId: null };
+    }
+    // Cross-patient attempt by a patient account — leave relationship null
+    // so reviewers can distinguish self-access from denied cross-access.
+    return { actorRelationship: null, onBehalfOfPatientId: null };
   }
 
   if ((user.role as string) === "family_caregiver") {

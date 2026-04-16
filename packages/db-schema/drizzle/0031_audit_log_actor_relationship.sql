@@ -10,7 +10,12 @@
 --   'spouse','parent','child','sibling','healthcare_poa','other'
 --                            — family caregiver acting on a patient (mirrors
 --                              family_relationships.relationship_type)
---   NULL                     — clinician/admin (no relationship semantics)
+--   'caregiver'              — fallback literal when the caller is a family
+--                              caregiver but no active family_relationships
+--                              row exists (or patientId is missing)
+--   NULL                     — clinician/admin (no relationship semantics),
+--                              or a patient account attempting cross-patient
+--                              access (which should be blocked by RBAC)
 --
 -- on_behalf_of_patient_id is populated for family-caregiver actions only so
 -- that revocation audits can reconstruct which patient was affected.
