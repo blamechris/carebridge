@@ -79,6 +79,67 @@ function StaleDataBanner({
   );
 }
 
+/**
+ * Compute a human-readable "N units ago" string for a clinical-data timestamp.
+ * Fixed clinical thresholds (not locale-based) so the age string is
+ * diagnostic at a glance: hours for <24h, days beyond that.
+ */
+function formatAge(recordedAtIso: string): string {
+  const ageMs = Date.now() - new Date(recordedAtIso).getTime();
+  if (ageMs < 60_000) return "just now";
+  const mins = Math.round(ageMs / 60_000);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(ageMs / 3_600_000);
+  if (hours < 48) return `${hours}h ago`;
+  const days = Math.round(ageMs / 86_400_000);
+  return `${days}d ago`;
+}
+
+/**
+ * Classify a recorded-at timestamp into a staleness tier.
+ *
+ * Thresholds mirror the clinical expectation for acute-care inpatient
+ * monitoring: vitals taken more than 4h ago are due for re-check, and
+ * vitals older than 24h should not be read as "current" at all.
+ *
+ *  - "current":  <= 4h — no visual treatment
+ *  - "overdue":  4h < age <= 24h — amber tint, "recheck due"
+ *  - "stale":    > 24h — gray, "stale" label, reader should not trust
+ */
+type StalenessTier = "current" | "overdue" | "stale";
+
+function classifyStaleness(recordedAtIso: string): StalenessTier {
+  const ageMs = Date.now() - new Date(recordedAtIso).getTime();
+  if (ageMs > 24 * 60 * 60 * 1000) return "stale";
+  if (ageMs > 4 * 60 * 60 * 1000) return "overdue";
+  return "current";
+}
+
+function stalenessStyles(tier: StalenessTier): {
+  color?: string;
+  background?: string;
+  border?: string;
+  note?: string;
+} {
+  switch (tier) {
+    case "overdue":
+      return {
+        background: "var(--color-warning-bg, #fff8e1)",
+        border: "1px solid var(--color-warning-border, #f0b429)",
+        note: "recheck due",
+      };
+    case "stale":
+      return {
+        background: "var(--color-muted-bg, #f4f4f5)",
+        color: "var(--text-muted)",
+        border: "1px solid var(--color-muted-border, #d4d4d8)",
+        note: "stale",
+      };
+    default:
+      return {};
+  }
+}
+
 function OverviewTab({ patientId }: { patientId: string }) {
   const patientQuery = trpc.patients.getById.useQuery({ id: patientId });
   const diagnosesQuery = trpc.patients.diagnoses.getByPatient.useQuery({ patientId });
@@ -221,20 +282,42 @@ function VitalsTab({ patientId }: { patientId: string }) {
         />
       ) : null}
       <div className="detail-grid">
-        {latest.map((vital, i) => (
-          <div key={i} className="stat-card">
-            <span className="stat-label">{vital.type}</span>
-            <span
-              className="stat-value"
-              style={{ fontSize: 24, color: "var(--text-primary)" }}
+        {latest.map((vital, i) => {
+          const tier = classifyStaleness(vital.recorded_at);
+          const s = stalenessStyles(tier);
+          return (
+            <div
+              key={i}
+              className="stat-card"
+              style={{
+                background: s.background,
+                border: s.border,
+                color: s.color,
+              }}
             >
-              {vital.value_primary} {vital.unit}
-            </span>
-            <span className="stat-detail">
-              {new Date(vital.recorded_at).toLocaleString()}
-            </span>
-          </div>
-        ))}
+              <span className="stat-label">{vital.type}</span>
+              <span
+                className="stat-value"
+                style={{
+                  fontSize: 24,
+                  color: s.color ?? "var(--text-primary)",
+                }}
+              >
+                {vital.value_primary} {vital.unit}
+              </span>
+              <span className="stat-detail">
+                {formatAge(vital.recorded_at)}
+                {s.note ? ` — ${s.note}` : ""}
+              </span>
+              <span
+                className="stat-detail"
+                style={{ fontSize: 11, opacity: 0.7 }}
+              >
+                {new Date(vital.recorded_at).toLocaleString()}
+              </span>
+            </div>
+          );
+        })}
       </div>
       <VitalsTrendChart
         vitals={history.map((v) => ({
