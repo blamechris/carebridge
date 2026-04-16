@@ -103,10 +103,37 @@ async function findNotificationRecipients(
 
 /**
  * Build a notification title based on flag severity and category.
+ *
+ * HIPAA lock-screen safety: the title MUST NOT contain patient identifiers
+ * or clinical numeric values. This function produces a generic
+ * "CRITICAL: Clinical flag — critical value" form with no PHI. Upstream
+ * push-notification integrations (APNs, FCM) should render only this
+ * title on device lock screens; clinical detail is behind the
+ * authenticated portal fetch keyed off related_flag_id.
  */
 function buildNotificationTitle(event: NotificationEvent): string {
   const severityLabel = event.severity === "critical" ? "CRITICAL" : event.severity === "warning" ? "Warning" : "Info";
   return `${severityLabel}: Clinical flag — ${event.category.replace(/-/g, " ")}`;
+}
+
+/**
+ * Produce a lock-screen-safe rendering of the flag summary for push-layer
+ * delivery. The persisted notification row keeps the full summary for
+ * authenticated render inside the portal; the *push* payload must not
+ * include patient name or numeric values (BP 145/95, K+ 7.2 mmol/L) that
+ * could surface on a locked device.
+ *
+ * We strip:
+ *  - every number (integers, decimals, ratios) → "…"
+ *  - common clinical identifiers (MRN-like strings)
+ *
+ * Output is a generic cue like "Clinical flag — critical value" that
+ * signals urgency without disclosing PHI.
+ */
+function buildSafeSummary(event: NotificationEvent): string {
+  // Trust nothing from the event.summary — always fall back to category.
+  return `Clinical flag — ${event.category.replace(/-/g, " ")}. ` +
+    `Open the portal to view details.`;
 }
 
 /**
@@ -227,13 +254,22 @@ async function processNotificationJob(event: NotificationEvent): Promise<number>
   // Publish to Redis pub/sub for real-time SSE delivery.
   // Best-effort: failures are logged but do not cause job retry
   // (which would duplicate the already-inserted notification rows).
+  //
+  // Lock-screen safety — the published payload is what any future
+  // push-notification integration (APNs/FCM) will hand to the OS. It
+  // MUST NOT contain patient identifiers or clinical numeric values. We
+  // replace `body` with a generic cue generated from category alone;
+  // the authenticated clinician-portal fetch keyed off related_flag_id
+  // is responsible for rendering full clinical detail once the device
+  // is unlocked. The DB `body` (full summary) remains for that fetch.
+  const safeSummary = buildSafeSummary(event);
   for (const record of immediateRecords) {
     try {
       await publishNotification(record.user_id, {
         id: record.id,
         type: record.type,
         title: record.title,
-        body: record.body,
+        body: safeSummary,
         link: record.link,
         related_flag_id: record.related_flag_id,
         is_urgent: record.is_urgent,
@@ -282,11 +318,15 @@ async function processDelayedNotification(event: NotificationEvent & { _targeted
   await db.insert(notifications).values(record);
 
   try {
+    // Same lock-screen safety as the immediate path — strip PHI from the
+    // pushed body; full detail remains in the persisted notification row
+    // for post-unlock fetch.
+    const safeSummary = buildSafeSummary(event);
     await publishNotification(record.user_id, {
       id: record.id,
       type: record.type,
       title: record.title,
-      body: record.body,
+      body: safeSummary,
       link: record.link,
       related_flag_id: record.related_flag_id,
       is_urgent: record.is_urgent,
