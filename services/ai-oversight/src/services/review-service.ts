@@ -598,6 +598,17 @@ export async function buildPatientContextForRules(
   return {
     active_diagnoses: activeDx.map((d) => d.description),
     active_diagnosis_codes: activeDx.map((d) => d.icd10_code ?? ""),
+    // Structured diagnosis detail with recency metadata (issue #215).
+    // Enables rules like ONCO-VTE-NEURO-001 to suppress stale/resolved VTE
+    // false positives without losing the flat `active_diagnoses` shape that
+    // other rules rely on.
+    active_diagnoses_detail: activeDx.map((d) => ({
+      description: d.description,
+      icd10_code: d.icd10_code ?? null,
+      status: d.status ?? null,
+      onset_date: d.onset_date ?? null,
+      resolved_date: d.resolved_date ?? null,
+    })),
     active_medications: activeMedsList.map((m) => m.name),
     active_medication_rxnorm_codes: activeMedsList.map((m) => m.rxnorm_code),
     new_symptoms: newSymptoms,
