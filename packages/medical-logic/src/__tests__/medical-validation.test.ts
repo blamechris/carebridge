@@ -5,6 +5,7 @@ import {
   validateLabResult,
   isCriticalVital,
   getVitalSeverity,
+  checkSystolicBP,
   VITAL_DANGER_ZONES,
   PEDIATRIC_VITAL_RANGES,
   classifyAgeGroup,
@@ -351,5 +352,35 @@ describe("getVitalRangeForAge", () => {
   it("returns adult range for age 20", () => {
     const range = getVitalRangeForAge("heart_rate", 20);
     expect(range).toEqual(VITAL_DANGER_ZONES.heart_rate);
+  });
+});
+
+// ─── checkSystolicBP ──────────────────────────────────────────
+
+describe("checkSystolicBP", () => {
+  it("returns critical for SBP <= 55 (circulatory shock)", () => {
+    expect(checkSystolicBP(50)).toBe("critical");
+    expect(checkSystolicBP(55)).toBe("critical");
+  });
+
+  it("returns warning for SBP 56-89 (symptomatic hypotension)", () => {
+    expect(checkSystolicBP(56)).toBe("warning");
+    expect(checkSystolicBP(75)).toBe("warning");
+    expect(checkSystolicBP(82)).toBe("warning");
+    expect(checkSystolicBP(89)).toBe("warning");
+  });
+
+  it("returns null for SBP 90 (normal lower bound)", () => {
+    expect(checkSystolicBP(90)).toBeNull();
+  });
+
+  it("returns null for SBP in normal range", () => {
+    expect(checkSystolicBP(120)).toBeNull();
+    expect(checkSystolicBP(140)).toBeNull();
+  });
+
+  it("returns critical for SBP >= 180 (hypertensive crisis)", () => {
+    expect(checkSystolicBP(180)).toBe("critical");
+    expect(checkSystolicBP(200)).toBe("critical");
   });
 });

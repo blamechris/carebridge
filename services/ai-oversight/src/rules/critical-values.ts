@@ -11,6 +11,7 @@ import type { ClinicalEvent, FlagSeverity, FlagCategory } from "@carebridge/shar
 import {
   DIASTOLIC_DANGER_ZONE,
   checkDiastolicBP,
+  checkSystolicBP,
   getVitalRangeForAge,
   ageInYearsFromDOB,
 } from "@carebridge/medical-logic";
@@ -343,7 +344,8 @@ export function checkCriticalValues(event: ClinicalEvent): RuleFlag[] {
     const vitalType = event.data.type as VitalType | undefined;
     const value = event.data.value_primary as number | undefined;
 
-    if (vitalType && value !== undefined) {
+    // Blood pressure is handled separately by checkSystolicBP / checkDiastolicBP below.
+    if (vitalType && vitalType !== "blood_pressure" && value !== undefined) {
       const range = getVitalRangeForAge(vitalType, patientAgeYears);
 
       let severity: "critical" | "warning" | null = null;
@@ -386,6 +388,37 @@ export function checkCriticalValues(event: ClinicalEvent): RuleFlag[] {
               : `Review ${vitalType.replace(/_/g, " ")} trend and assess patient. Consider repeat measurement and clinical correlation.`,
           notify_specialties: [],
           rule_id: `CRITICAL-VITAL-${vitalType.toUpperCase()}`,
+        });
+      }
+    }
+
+    // Evaluate systolic BP (critical + warning) independently for blood pressure vitals
+    if (vitalType === "blood_pressure" && value !== undefined) {
+      const systolicSeverity = checkSystolicBP(value);
+      if (systolicSeverity) {
+        const range = getVitalRangeForAge("blood_pressure", patientAgeYears);
+        const isLow = range.criticalLow !== undefined && value <= (range.warningLow ?? range.criticalLow);
+        const direction = isLow ? "low" : "high";
+        flags.push({
+          severity: systolicSeverity,
+          category: "critical-value",
+          summary: systolicSeverity === "critical"
+            ? `Critically ${direction} systolic blood pressure: ${value} ${(event.data.unit as string) ?? "mmHg"}`.trim()
+            : `Low systolic blood pressure: ${value} ${(event.data.unit as string) ?? "mmHg"}`.trim(),
+          rationale: systolicSeverity === "critical"
+            ? `Patient's systolic blood pressure of ${value} mmHg is in the critical range. ` +
+              `Immediate clinical assessment is recommended.`
+            : `Patient's systolic blood pressure of ${value} mmHg is below ${range.warningLow} mmHg, ` +
+              `indicating symptomatic hypotension. SBP in this range may cause dizziness, syncope, ` +
+              `and inadequate organ perfusion. Clinical evaluation is recommended.`,
+          suggested_action: systolicSeverity === "critical"
+            ? `Assess patient immediately. Evaluate for causes of critically ${direction} ` +
+              `systolic blood pressure and initiate appropriate intervention.`
+            : `Assess patient for symptoms of hypotension (dizziness, lightheadedness, syncope). ` +
+              `Review medications that may contribute to hypotension (antihypertensives, diuretics). ` +
+              `Consider IV fluid bolus if symptomatic. Monitor closely for further decline.`,
+          notify_specialties: systolicSeverity === "critical" ? ["cardiology", "critical_care"] : [],
+          rule_id: systolicSeverity === "critical" ? `CRITICAL-VITAL-BLOOD_PRESSURE` : `WARNING-VITAL-SYSTOLIC_BP`,
         });
       }
     }
