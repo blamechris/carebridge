@@ -69,6 +69,12 @@ export const reviewJobs = pgTable("review_jobs", {
   context_hash: text("context_hash"),
   rules_evaluated: jsonb("rules_evaluated").$type<string[]>().default([]),
   rules_fired: jsonb("rules_fired").$type<string[]>().default([]),
+  // Full rule-evaluation output: for each fired rule we persist the exact
+  // RuleFlag (severity, category, summary, rationale, suggested_action,
+  // notify_specialties, rule_id) so regulatory and forensic audits can
+  // reconstruct the decision without replaying the rule engine against
+  // (possibly-mutated) patient state. See migration 0032.
+  rules_output: jsonb("rules_output").$type<Array<Record<string, unknown>>>().default([]),
   llm_request_tokens: integer("llm_request_tokens"),
   llm_response_tokens: integer("llm_response_tokens"),
   redacted_prompt: text("redacted_prompt"),
