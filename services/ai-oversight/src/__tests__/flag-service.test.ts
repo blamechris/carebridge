@@ -24,6 +24,7 @@ vi.mock("@carebridge/db-schema", () => ({
     category: "category",
     severity: "severity",
     created_at: "created_at",
+    trigger_event_ids: "trigger_event_ids",
   },
 }));
 
@@ -161,10 +162,11 @@ describe("createFlag", () => {
       ...baseFlag,
       created_at: "2026-01-01T00:00:00.000Z",
     };
-    // First call: dedup SELECT -> [] (no dup found at app level)
-    // Second call (after conflict): fetch winner -> [winnerFlag]
+    // Call sequence: (1) trigger_event_id idempotency check -> [],
+    // (2) app-level rule dedup -> [], (3) post-conflict fetch -> [winnerFlag]
     mockLimit
-      .mockResolvedValueOnce([])       // initial dedup check
+      .mockResolvedValueOnce([])           // idempotency pre-check
+      .mockResolvedValueOnce([])           // initial dedup check
       .mockResolvedValueOnce([winnerFlag]); // post-conflict fetch
 
     const result = await createFlag(baseFlag);
@@ -196,8 +198,10 @@ describe("createFlag", () => {
 
     // ON CONFLICT DO NOTHING returns empty
     mockReturning.mockResolvedValueOnce([]);
-    // First SELECT (app-level dedup) -> no match; second SELECT (post-conflict) -> winner
+    // (1) idempotency pre-check -> []; (2) app-level LLM dedup -> [];
+    // (3) post-conflict fetch -> [winnerFlag]
     mockLimit
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([winnerFlag]);
 
@@ -261,6 +265,47 @@ describe("createFlag", () => {
         notify_specialties: [],
       }),
     );
+  });
+
+  it("returns existing flag when a trigger_event_id matches, regardless of status", async () => {
+    // A prior flag — already resolved — was cited against evt-99. When an
+    // event replay arrives citing evt-99 again, createFlag must return the
+    // prior flag instead of inserting a duplicate. The open-status partial
+    // indexes would miss this because the prior flag is no longer open.
+    const replayedFlag = {
+      ...baseFlag,
+      trigger_event_ids: ["evt-99"],
+    };
+
+    const resolvedExistingFlag = {
+      id: "prior-resolved-flag",
+      ...replayedFlag,
+      status: "resolved",
+      trigger_event_ids: ["evt-99"],
+      created_at: "2026-01-01T00:00:00.000Z",
+    };
+
+    // First (and only) SELECT is the trigger-event-id idempotency check.
+    mockLimit.mockResolvedValueOnce([resolvedExistingFlag]);
+
+    const result = await createFlag(replayedFlag);
+
+    expect(mockInsert).not.toHaveBeenCalled();
+    expect(mockEmitNotificationEvent).not.toHaveBeenCalled();
+    expect(result.id).toBe("prior-resolved-flag");
+  });
+
+  it("does not short-circuit when trigger_event_ids is empty", async () => {
+    // Some callers may legitimately omit trigger_event_ids (e.g. manual
+    // flags). The idempotency check must not fire in that case — otherwise
+    // no flags could ever be created without an event id.
+    const manualFlag = { ...baseFlag, trigger_event_ids: [] };
+
+    const result = await createFlag(manualFlag);
+
+    // Insert proceeds via the rule-based dedup path.
+    expect(mockInsert).toHaveBeenCalledTimes(1);
+    expect(result.id).toBeDefined();
   });
 
   it("does not emit a notification event when a duplicate flag is returned", async () => {

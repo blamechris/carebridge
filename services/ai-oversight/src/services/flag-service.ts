@@ -6,7 +6,7 @@
  * only moved through their lifecycle.
  */
 
-import { eq, and, gte, sql } from "drizzle-orm";
+import { eq, and, or, gte, sql } from "drizzle-orm";
 import { getDb } from "@carebridge/db-schema";
 import { clinicalFlags } from "@carebridge/db-schema";
 import type { ClinicalFlag, FlagStatus } from "@carebridge/shared-types";
@@ -34,6 +34,40 @@ export async function createFlag(
   flag: Omit<ClinicalFlag, "id" | "created_at">,
 ): Promise<ClinicalFlag> {
   const db = getDb();
+
+  // Idempotency check — replay safety.
+  //
+  // The existing (patient, rule_id) and (patient, category, severity) dedup
+  // only fires when the prior flag is still `status='open'`. If a previously
+  // resolved/acknowledged flag's trigger event is replayed (outbox reconciler,
+  // BullMQ retry, manual requeue), the partial-unique indexes won't match and
+  // a duplicate flag for the same clinical event is created.
+  //
+  // Guard against that here by refusing to create a flag when any *existing*
+  // flag (regardless of status) already records one of the incoming
+  // trigger_event_ids. jsonb `@>` checks containment per event id; OR across
+  // them so the check is correct even when a flag cites multiple events.
+  if (flag.trigger_event_ids && flag.trigger_event_ids.length > 0) {
+    const eventIdMatchers = flag.trigger_event_ids.map(
+      (id) =>
+        sql`${clinicalFlags.trigger_event_ids} @> ${JSON.stringify([id])}::jsonb`,
+    );
+
+    const byEventId = await db
+      .select()
+      .from(clinicalFlags)
+      .where(
+        and(
+          eq(clinicalFlags.patient_id, flag.patient_id),
+          or(...eventIdMatchers),
+        ),
+      )
+      .limit(1);
+
+    if (byEventId.length > 0) {
+      return byEventId[0] as unknown as ClinicalFlag;
+    }
+  }
 
   // Check for existing open duplicate before inserting
   if (flag.rule_id) {
