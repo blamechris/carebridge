@@ -86,4 +86,11 @@ export const reviewJobs = pgTable("review_jobs", {
   created_at: text("created_at").notNull(),
 }, (table) => [
   index("idx_review_jobs_patient").on(table.patient_id, table.status),
+  // Supports the pre-insert idempotency probe in review-service.ts which
+  // filters by (trigger_event_id, status='completed') to suppress duplicate
+  // reviews when a trigger event is redelivered. See migration 0033.
+  index("idx_review_jobs_trigger_event").on(
+    table.trigger_event_id,
+    table.status,
+  ),
 ]);
