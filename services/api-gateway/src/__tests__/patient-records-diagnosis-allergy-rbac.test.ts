@@ -292,32 +292,33 @@ describe("patientRecordsRbacRouter — care-team enforcement (diagnoses)", () =>
     mocks.state.limitResult = [{ id: DIAGNOSIS_ID, patient_id: PATIENT_ID }];
   });
 
-  it("denies non-care-team physician on create (FORBIDDEN)", async () => {
-    mocks.assertCareTeamAccess.mockResolvedValueOnce(false);
-    const caller = callerFor(makeUser("physician"));
-    await expect(caller.diagnoses.create(diagnosisInput)).rejects.toMatchObject({
-      code: "FORBIDDEN",
-    });
-    expect(mocks.createDiagnosis).not.toHaveBeenCalled();
-  });
-
-  it("denies non-care-team nurse on create (FORBIDDEN)", async () => {
-    mocks.assertCareTeamAccess.mockResolvedValueOnce(false);
-    const caller = callerFor(makeUser("nurse"));
-    await expect(caller.diagnoses.create(diagnosisInput)).rejects.toMatchObject({
-      code: "FORBIDDEN",
-    });
-    expect(mocks.createDiagnosis).not.toHaveBeenCalled();
-  });
-
-  it("denies non-care-team physician on update (FORBIDDEN)", async () => {
-    mocks.assertCareTeamAccess.mockResolvedValueOnce(false);
-    const caller = callerFor(makeUser("physician"));
-    await expect(
-      caller.diagnoses.update({ id: DIAGNOSIS_ID, status: "resolved" }),
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
-    expect(mocks.updateDiagnosis).not.toHaveBeenCalled();
-  });
+  // Care-team denial: every clinician role × (create, update) combination.
+  // Full matrix so the test file can be read as a coverage contract.
+  it.each([
+    ["physician", "create"],
+    ["physician", "update"],
+    ["nurse", "create"],
+    ["nurse", "update"],
+    ["specialist", "create"],
+    ["specialist", "update"],
+  ] as const)(
+    "denies non-care-team %s on %s (FORBIDDEN)",
+    async (role, action) => {
+      mocks.assertCareTeamAccess.mockResolvedValueOnce(false);
+      const caller = callerFor(makeUser(role));
+      if (action === "create") {
+        await expect(
+          caller.diagnoses.create(diagnosisInput),
+        ).rejects.toMatchObject({ code: "FORBIDDEN" });
+        expect(mocks.createDiagnosis).not.toHaveBeenCalled();
+      } else {
+        await expect(
+          caller.diagnoses.update({ id: DIAGNOSIS_ID, status: "resolved" }),
+        ).rejects.toMatchObject({ code: "FORBIDDEN" });
+        expect(mocks.updateDiagnosis).not.toHaveBeenCalled();
+      }
+    },
+  );
 
   it("allows care-team physician to update", async () => {
     const caller = callerFor(makeUser("physician"));
@@ -358,13 +359,26 @@ describe("patientRecordsRbacRouter — care-team enforcement (diagnoses)", () =>
     expect(mocks.updateDiagnosis).not.toHaveBeenCalled();
   });
 
-  it("rejects unauthenticated caller on create (UNAUTHORIZED)", async () => {
-    const caller = callerFor(null);
-    await expect(caller.diagnoses.create(diagnosisInput)).rejects.toMatchObject({
-      code: "UNAUTHORIZED",
-    });
-    expect(mocks.createDiagnosis).not.toHaveBeenCalled();
-  });
+  it.each([
+    ["create"],
+    ["update"],
+  ] as const)(
+    "rejects unauthenticated caller on %s (UNAUTHORIZED)",
+    async (action) => {
+      const caller = callerFor(null);
+      if (action === "create") {
+        await expect(
+          caller.diagnoses.create(diagnosisInput),
+        ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+        expect(mocks.createDiagnosis).not.toHaveBeenCalled();
+      } else {
+        await expect(
+          caller.diagnoses.update({ id: DIAGNOSIS_ID, status: "resolved" }),
+        ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+        expect(mocks.updateDiagnosis).not.toHaveBeenCalled();
+      }
+    },
+  );
 });
 
 describe("patientRecordsRbacRouter — care-team enforcement (allergies)", () => {
@@ -374,23 +388,32 @@ describe("patientRecordsRbacRouter — care-team enforcement (allergies)", () =>
     mocks.state.limitResult = [{ id: ALLERGY_ID, patient_id: PATIENT_ID }];
   });
 
-  it("denies non-care-team physician on create (FORBIDDEN)", async () => {
-    mocks.assertCareTeamAccess.mockResolvedValueOnce(false);
-    const caller = callerFor(makeUser("physician"));
-    await expect(caller.allergies.create(allergyInput)).rejects.toMatchObject({
-      code: "FORBIDDEN",
-    });
-    expect(mocks.createAllergy).not.toHaveBeenCalled();
-  });
-
-  it("denies non-care-team specialist on update (FORBIDDEN)", async () => {
-    mocks.assertCareTeamAccess.mockResolvedValueOnce(false);
-    const caller = callerFor(makeUser("specialist"));
-    await expect(
-      caller.allergies.update({ id: ALLERGY_ID, severity: "severe" }),
-    ).rejects.toMatchObject({ code: "FORBIDDEN" });
-    expect(mocks.updateAllergy).not.toHaveBeenCalled();
-  });
+  // Full clinician-role × action matrix. See diagnoses block above.
+  it.each([
+    ["physician", "create"],
+    ["physician", "update"],
+    ["nurse", "create"],
+    ["nurse", "update"],
+    ["specialist", "create"],
+    ["specialist", "update"],
+  ] as const)(
+    "denies non-care-team %s on %s (FORBIDDEN)",
+    async (role, action) => {
+      mocks.assertCareTeamAccess.mockResolvedValueOnce(false);
+      const caller = callerFor(makeUser(role));
+      if (action === "create") {
+        await expect(
+          caller.allergies.create(allergyInput),
+        ).rejects.toMatchObject({ code: "FORBIDDEN" });
+        expect(mocks.createAllergy).not.toHaveBeenCalled();
+      } else {
+        await expect(
+          caller.allergies.update({ id: ALLERGY_ID, severity: "severe" }),
+        ).rejects.toMatchObject({ code: "FORBIDDEN" });
+        expect(mocks.updateAllergy).not.toHaveBeenCalled();
+      }
+    },
+  );
 
   it("allows care-team nurse to update", async () => {
     const caller = callerFor(makeUser("nurse"));
@@ -423,11 +446,24 @@ describe("patientRecordsRbacRouter — care-team enforcement (allergies)", () =>
     expect(mocks.updateAllergy).not.toHaveBeenCalled();
   });
 
-  it("rejects unauthenticated caller on update (UNAUTHORIZED)", async () => {
-    const caller = callerFor(null);
-    await expect(
-      caller.allergies.update({ id: ALLERGY_ID, severity: "severe" }),
-    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-    expect(mocks.updateAllergy).not.toHaveBeenCalled();
-  });
+  it.each([
+    ["create"],
+    ["update"],
+  ] as const)(
+    "rejects unauthenticated caller on %s (UNAUTHORIZED)",
+    async (action) => {
+      const caller = callerFor(null);
+      if (action === "create") {
+        await expect(
+          caller.allergies.create(allergyInput),
+        ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+        expect(mocks.createAllergy).not.toHaveBeenCalled();
+      } else {
+        await expect(
+          caller.allergies.update({ id: ALLERGY_ID, severity: "severe" }),
+        ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+        expect(mocks.updateAllergy).not.toHaveBeenCalled();
+      }
+    },
+  );
 });
