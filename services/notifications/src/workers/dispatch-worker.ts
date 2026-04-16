@@ -103,10 +103,37 @@ async function findNotificationRecipients(
 
 /**
  * Build a notification title based on flag severity and category.
+ *
+ * HIPAA lock-screen safety: the title MUST NOT contain patient identifiers
+ * or clinical numeric values. This function produces a generic
+ * "CRITICAL: Clinical flag — critical value" form with no PHI. Upstream
+ * push-notification integrations (APNs, FCM) should render only this
+ * title on device lock screens; clinical detail is behind the
+ * authenticated portal fetch keyed off related_flag_id.
  */
 function buildNotificationTitle(event: NotificationEvent): string {
   const severityLabel = event.severity === "critical" ? "CRITICAL" : event.severity === "warning" ? "Warning" : "Info";
   return `${severityLabel}: Clinical flag — ${event.category.replace(/-/g, " ")}`;
+}
+
+/**
+ * Produce a lock-screen-safe rendering of the flag summary for push-layer
+ * delivery. Returns a template string built from `event.category` alone;
+ * `event.summary` is intentionally discarded (it may contain PHI such as
+ * patient identifiers or clinical numeric values like "BP 145/95" or
+ * "K+ 7.2 mmol/L" that must not surface on a locked device).
+ *
+ * The full summary is still persisted on `notifications.body` (encrypted
+ * at rest) for authenticated portal render once the device is unlocked;
+ * the value returned here is what a future APNs/FCM push integration
+ * will hand to the OS, and it is also persisted on
+ * `notifications.summary_safe` so later fetches can surface the safe
+ * variant without re-deriving it.
+ */
+function buildSafeSummary(event: NotificationEvent): string {
+  // Trust nothing from the event.summary — always fall back to category.
+  return `Clinical flag — ${event.category.replace(/-/g, " ")}. ` +
+    `Open the portal to view details.`;
 }
 
 /**
@@ -156,6 +183,7 @@ async function processNotificationJob(event: NotificationEvent): Promise<number>
   const link = buildFlagLink(event);
   const now = new Date().toISOString();
   const urgent = isUrgentFlag(event.severity);
+  const safeSummary = buildSafeSummary(event);
 
   let immediateCount = 0;
   let delayedCount = 0;
@@ -167,6 +195,7 @@ async function processNotificationJob(event: NotificationEvent): Promise<number>
     type: "ai-flag";
     title: string;
     body: string;
+    summary_safe: string;
     link: string;
     related_flag_id: string;
     is_urgent: boolean;
@@ -210,6 +239,7 @@ async function processNotificationJob(event: NotificationEvent): Promise<number>
       type: "ai-flag" as const,
       title,
       body: event.summary,
+      summary_safe: safeSummary,
       link,
       related_flag_id: event.flag_id,
       is_urgent: urgent,
@@ -227,13 +257,22 @@ async function processNotificationJob(event: NotificationEvent): Promise<number>
   // Publish to Redis pub/sub for real-time SSE delivery.
   // Best-effort: failures are logged but do not cause job retry
   // (which would duplicate the already-inserted notification rows).
+  //
+  // Lock-screen safety — the published payload is what any future
+  // push-notification integration (APNs/FCM) will hand to the OS. It
+  // MUST NOT contain patient identifiers or clinical numeric values. We
+  // replace `body` with the persisted `summary_safe` column (a generic
+  // cue generated from category alone); the authenticated
+  // clinician-portal fetch keyed off related_flag_id is responsible for
+  // rendering full clinical detail once the device is unlocked. The DB
+  // `body` (full summary) remains for that fetch.
   for (const record of immediateRecords) {
     try {
       await publishNotification(record.user_id, {
         id: record.id,
         type: record.type,
         title: record.title,
-        body: record.body,
+        body: record.summary_safe,
         link: record.link,
         related_flag_id: record.related_flag_id,
         is_urgent: record.is_urgent,
@@ -266,12 +305,14 @@ async function processDelayedNotification(event: NotificationEvent & { _targeted
   const link = buildFlagLink(event);
   const now = new Date().toISOString();
 
+  const safeSummary = buildSafeSummary(event);
   const record = {
     id: crypto.randomUUID(),
     user_id: userId,
     type: "ai-flag" as const,
     title,
     body: event.summary,
+    summary_safe: safeSummary,
     link,
     related_flag_id: event.flag_id,
     is_urgent: isUrgentFlag(event.severity),
@@ -282,11 +323,13 @@ async function processDelayedNotification(event: NotificationEvent & { _targeted
   await db.insert(notifications).values(record);
 
   try {
+    // Same lock-screen safety as the immediate path — publish the
+    // PHI-free summary_safe rather than the persisted (encrypted) body.
     await publishNotification(record.user_id, {
       id: record.id,
       type: record.type,
       title: record.title,
-      body: record.body,
+      body: record.summary_safe,
       link: record.link,
       related_flag_id: record.related_flag_id,
       is_urgent: record.is_urgent,
