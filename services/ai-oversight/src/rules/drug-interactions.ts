@@ -7,6 +7,15 @@
  *
  * For comprehensive interaction checking, the LLM review layer considers the
  * full medication list in clinical context.
+ *
+ * QTc-prolonging drug list (DI-QTC-COMBO) is curated from:
+ *   - CredibleMeds QTDrugs list (https://www.crediblemeds.org/healthcare-providers/drug-list)
+ *     Known Risk and Possible Risk categories.
+ *   - FDA labeling and FDA Drug Safety Communications for QT prolongation.
+ *
+ * Both regex groups (drugA, drugB) for DI-QTC-COMBO use the same pattern so
+ * that any two distinct QT-prolonging agents — including intra-class pairs such
+ * as two antipsychotics, or antipsychotic + fluoroquinolone — trigger the flag.
  */
 
 import type { FlagSeverity, FlagCategory } from "@carebridge/shared-types";
@@ -418,15 +427,46 @@ const INTERACTION_PAIRS: DrugInteractionPair[] = [
       "and seek medical attention at first sign of tendon pain or swelling. Consider alternative antibiotic.",
     notify_specialties: ["orthopedics", "infectious_disease"],
   },
+  // DI-QTC-COMBO: any two distinct QT-prolonging agents.
+  //
+  // Drug set curated from CredibleMeds QTDrugs (Known Risk + Possible Risk)
+  // and FDA labeling. Both drugA and drugB use the same pattern so that
+  // any pair of distinct QT-prolongers — including intra-class combinations
+  // like two antipsychotics, or antipsychotic + fluoroquinolone — is caught.
+  //
+  // Class coverage:
+  //   - Class IA antiarrhythmics: quinidine, procainamide, disopyramide
+  //   - Class IC antiarrhythmics: flecainide
+  //   - Class III antiarrhythmics: amiodarone, sotalol, dofetilide, dronedarone, ibutilide
+  //   - First-gen antipsychotics: haloperidol, thioridazine, chlorpromazine, pimozide, droperidol
+  //   - Second-gen antipsychotics: quetiapine, risperidone, olanzapine, ziprasidone,
+  //     aripiprazole, paliperidone, iloperidone
+  //   - Macrolides: azithromycin, erythromycin, clarithromycin
+  //   - Fluoroquinolones: levofloxacin, moxifloxacin, ciprofloxacin, gemifloxacin, ofloxacin
+  //   - Antiemetics: ondansetron, granisetron, dolasetron, domperidone
+  //   - Antimalarials: hydroxychloroquine, chloroquine, quinine
+  //   - Opioids: methadone
+  //   - SSRIs with documented QT risk: citalopram, escitalopram
+  //   - Cholinesterase inhibitors: donepezil
+  //   - TCAs: amitriptyline, imipramine, nortriptyline, clomipramine
+  //   - Other: sevoflurane, oxaliplatin, vandetanib, sunitinib, nilotinib
+  //
+  // Brand names included where commonly prescribed (e.g., zithromax, zofran,
+  // pacerone, cordarone, seroquel, risperdal, zyprexa, geodon, abilify).
   {
     id: "DI-QTC-COMBO",
-    drugA: /amiodarone|sotalol|dofetilide|dronedarone|haloperidol|thioridazine/i,
-    drugB: /azithromycin|zithromax|erythromycin|clarithromycin|ondansetron|zofran|methadone|levofloxacin|moxifloxacin/i,
+    drugA:
+      /amiodarone|pacerone|cordarone|sotalol|betapace|dofetilide|tikosyn|dronedarone|multaq|ibutilide|corvert|quinidine|procainamide|disopyramide|norpace|flecainide|tambocor|haloperidol|haldol|thioridazine|mellaril|chlorpromazine|thorazine|pimozide|orap|droperidol|quetiapine|seroquel|risperidone|risperdal|olanzapine|zyprexa|ziprasidone|geodon|aripiprazole|abilify|paliperidone|invega|iloperidone|fanapt|azithromycin|zithromax|erythromycin|clarithromycin|biaxin|levofloxacin|levaquin|moxifloxacin|avelox|ciprofloxacin|cipro|gemifloxacin|factive|ofloxacin|floxin|ondansetron|zofran|granisetron|kytril|dolasetron|anzemet|domperidone|motilium|hydroxychloroquine|plaquenil|chloroquine|aralen|quinine|methadone|dolophine|citalopram|celexa|escitalopram|lexapro|donepezil|aricept|amitriptyline|elavil|imipramine|tofranil|nortriptyline|pamelor|clomipramine|anafranil|sevoflurane|ultane|oxaliplatin|eloxatin|vandetanib|caprelsa|sunitinib|sutent|nilotinib|tasigna/i,
+    drugB:
+      /amiodarone|pacerone|cordarone|sotalol|betapace|dofetilide|tikosyn|dronedarone|multaq|ibutilide|corvert|quinidine|procainamide|disopyramide|norpace|flecainide|tambocor|haloperidol|haldol|thioridazine|mellaril|chlorpromazine|thorazine|pimozide|orap|droperidol|quetiapine|seroquel|risperidone|risperdal|olanzapine|zyprexa|ziprasidone|geodon|aripiprazole|abilify|paliperidone|invega|iloperidone|fanapt|azithromycin|zithromax|erythromycin|clarithromycin|biaxin|levofloxacin|levaquin|moxifloxacin|avelox|ciprofloxacin|cipro|gemifloxacin|factive|ofloxacin|floxin|ondansetron|zofran|granisetron|kytril|dolasetron|anzemet|domperidone|motilium|hydroxychloroquine|plaquenil|chloroquine|aralen|quinine|methadone|dolophine|citalopram|celexa|escitalopram|lexapro|donepezil|aricept|amitriptyline|elavil|imipramine|tofranil|nortriptyline|pamelor|clomipramine|anafranil|sevoflurane|ultane|oxaliplatin|eloxatin|vandetanib|caprelsa|sunitinib|sutent|nilotinib|tasigna/i,
     severity: "warning",
-    summary: "Multiple QTc-prolonging agents: increased risk of torsades de pointes",
+    summary:
+      "Multiple QTc-prolonging agents: increased risk of torsades de pointes",
     rationale:
       "Concurrent use of multiple QTc-prolonging drugs has a synergistic effect on QT interval " +
-      "prolongation, increasing the risk of torsades de pointes ventricular tachycardia, which can be fatal.",
+      "prolongation, increasing the risk of torsades de pointes ventricular tachycardia, which can be fatal. " +
+      "Risk is amplified by hypokalemia, hypomagnesemia, bradycardia, heart failure, and hepatic/renal impairment. " +
+      "Drug list curated from CredibleMeds QTDrugs (Known Risk and Possible Risk) and FDA labeling.",
     suggested_action:
       "Obtain baseline ECG and monitor QTc interval. Ensure electrolytes (K+, Mg2+) are within normal limits. Consider alternative agents.",
     notify_specialties: ["cardiology"],
@@ -438,15 +478,34 @@ export function checkDrugInteractions(medications: string[]): RuleFlag[] {
   const normalizedMeds = medications.map((m) => m.toLowerCase());
 
   for (const pair of INTERACTION_PAIRS) {
+    // When drugA and drugB use the same regex source (e.g. DI-QTC-COMBO, where
+    // we want to catch any two distinct drugs from a single class list),
+    // we need to find two *different* medications that both match the pattern.
+    // Otherwise the same first-matching med gets assigned to both drugAMatch
+    // and drugBMatch, and the rule fails to fire.
+    const sameList = pair.drugA.source === pair.drugB.source;
+
     let drugAMatch: string | null = null;
     let drugBMatch: string | null = null;
 
-    for (const med of normalizedMeds) {
-      if (pair.drugA.test(med) && !drugAMatch) {
-        drugAMatch = med;
+    if (sameList) {
+      for (const med of normalizedMeds) {
+        if (!pair.drugA.test(med)) continue;
+        if (!drugAMatch) {
+          drugAMatch = med;
+        } else if (med !== drugAMatch) {
+          drugBMatch = med;
+          break;
+        }
       }
-      if (pair.drugB.test(med) && !drugBMatch) {
-        drugBMatch = med;
+    } else {
+      for (const med of normalizedMeds) {
+        if (pair.drugA.test(med) && !drugAMatch) {
+          drugAMatch = med;
+        }
+        if (pair.drugB.test(med) && !drugBMatch) {
+          drugBMatch = med;
+        }
       }
     }
 
