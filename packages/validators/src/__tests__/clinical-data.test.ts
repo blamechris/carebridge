@@ -126,10 +126,27 @@ describe("createMedicationSchema", () => {
   });
 
   it("accepts all valid statuses", () => {
-    for (const status of ["active", "discontinued", "completed"]) {
+    for (const status of ["active", "discontinued", "completed", "held"]) {
       const result = medStatusSchema.safeParse(status);
       expect(result.success, `Expected status "${status}" to pass`).toBe(true);
     }
+  });
+
+  it("accepts 'held' status on create payload (unblocks ONCO-ANTICOAG-HELD rule)", () => {
+    const result = createMedicationSchema.safeParse({
+      patient_id: "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      name: "Enoxaparin",
+      status: "held",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.status).toBe("held");
+    }
+  });
+
+  it("rejects unknown status values", () => {
+    const result = medStatusSchema.safeParse("paused");
+    expect(result.success).toBe(false);
   });
 
   it("rejects negative dose_amount", () => {

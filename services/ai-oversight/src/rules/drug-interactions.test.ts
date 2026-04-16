@@ -266,6 +266,246 @@ describe("checkDrugInteractions", () => {
     });
   });
 
+  describe("QTc-prolonging drug combinations (DI-QTC-COMBO)", () => {
+    it("flags amiodarone + azithromycin (existing pair)", () => {
+      const flags = checkDrugInteractions([
+        "amiodarone 200mg",
+        "azithromycin 500mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+      expect(match!.severity).toBe("warning");
+    });
+
+    it("flags haloperidol + methadone (existing pair)", () => {
+      const flags = checkDrugInteractions([
+        "haloperidol 5mg",
+        "methadone 10mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    // Second-generation antipsychotics (Group A additions)
+    it("flags quetiapine + azithromycin", () => {
+      const flags = checkDrugInteractions([
+        "quetiapine 200mg",
+        "azithromycin 500mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    it("flags risperidone + ondansetron", () => {
+      const flags = checkDrugInteractions([
+        "risperidone 2mg",
+        "ondansetron 8mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    it("flags olanzapine + levofloxacin", () => {
+      const flags = checkDrugInteractions([
+        "olanzapine 10mg",
+        "levofloxacin 750mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    it("flags ziprasidone + moxifloxacin", () => {
+      const flags = checkDrugInteractions([
+        "ziprasidone 40mg",
+        "moxifloxacin 400mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    it("flags aripiprazole + clarithromycin", () => {
+      const flags = checkDrugInteractions([
+        "aripiprazole 10mg",
+        "clarithromycin 500mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    it("flags paliperidone + erythromycin", () => {
+      const flags = checkDrugInteractions([
+        "paliperidone 6mg",
+        "erythromycin 500mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    it("flags iloperidone + azithromycin", () => {
+      const flags = checkDrugInteractions([
+        "iloperidone 6mg",
+        "azithromycin 500mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    // Class IC antiarrhythmics (Group A additions)
+    it("flags flecainide + azithromycin", () => {
+      const flags = checkDrugInteractions([
+        "flecainide 100mg",
+        "azithromycin 500mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    it("flags procainamide + ondansetron", () => {
+      const flags = checkDrugInteractions([
+        "procainamide 500mg",
+        "ondansetron 4mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    it("flags disopyramide + methadone", () => {
+      const flags = checkDrugInteractions([
+        "disopyramide 150mg",
+        "methadone 10mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    // Fluoroquinolones (Group B additions)
+    it("flags amiodarone + ciprofloxacin", () => {
+      const flags = checkDrugInteractions([
+        "amiodarone 200mg",
+        "ciprofloxacin 500mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    it("flags sotalol + gemifloxacin", () => {
+      const flags = checkDrugInteractions([
+        "sotalol 80mg",
+        "gemifloxacin 320mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    it("flags dofetilide + ofloxacin", () => {
+      const flags = checkDrugInteractions([
+        "dofetilide 500mcg",
+        "ofloxacin 400mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    // Antiemetics / other additions (Group B)
+    it("flags amiodarone + domperidone", () => {
+      const flags = checkDrugInteractions([
+        "amiodarone 200mg",
+        "domperidone 10mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    it("flags haloperidol + hydroxychloroquine", () => {
+      const flags = checkDrugInteractions([
+        "haloperidol 5mg",
+        "hydroxychloroquine 400mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    it("flags amiodarone + chloroquine", () => {
+      const flags = checkDrugInteractions([
+        "amiodarone 200mg",
+        "chloroquine 500mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    it("flags sotalol + citalopram", () => {
+      const flags = checkDrugInteractions([
+        "sotalol 80mg",
+        "citalopram 40mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    it("flags amiodarone + escitalopram", () => {
+      const flags = checkDrugInteractions([
+        "amiodarone 200mg",
+        "escitalopram 20mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    it("flags haloperidol + donepezil", () => {
+      const flags = checkDrugInteractions([
+        "haloperidol 2mg",
+        "donepezil 10mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    // Cross-class combinations (antipsychotic + fluoroquinolone)
+    it("flags quetiapine + ciprofloxacin (antipsychotic + fluoroquinolone)", () => {
+      const flags = checkDrugInteractions([
+        "quetiapine 200mg",
+        "ciprofloxacin 500mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    it("flags olanzapine + moxifloxacin", () => {
+      const flags = checkDrugInteractions([
+        "olanzapine 10mg",
+        "moxifloxacin 400mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    // Negative / no-false-positive cases
+    it("does not flag a single QT-prolonging drug alone", () => {
+      const flags = checkDrugInteractions(["quetiapine 200mg"]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeUndefined();
+    });
+
+    it("does not flag two non-QT drugs", () => {
+      const flags = checkDrugInteractions([
+        "acetaminophen 500mg",
+        "amoxicillin 500mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeUndefined();
+    });
+
+    it("does not flag the same QT drug listed twice (duplicate med entry)", () => {
+      const flags = checkDrugInteractions([
+        "sotalol 80mg",
+        "sotalol 80mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeUndefined();
+    });
+  });
+
   describe("no false positives", () => {
     it("does not flag unrelated medications", () => {
       const flags = checkDrugInteractions([

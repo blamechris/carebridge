@@ -230,6 +230,24 @@ export function validateMedicationDose(
   return { valid: errors.length === 0, warnings, errors };
 }
 
+/**
+ * Normalise a lab unit string for allow-list comparison.
+ *
+ * Real-world FHIR/HL7 feeds send units with inconsistent casing and
+ * whitespace: `"mg/dL"`, `"mg/dl"`, `"MG/DL"`, `" mg/dL"`, `"mg / dL"`
+ * are all the same unit. Exact-string comparison would reject the
+ * legitimate reading the allow-list was designed to protect.
+ *
+ * The compare drops whitespace entirely (including internal whitespace
+ * around `/`) and lowercases. Slashes and digits are preserved so
+ * `"10*3/uL"` and `"K/uL"` remain distinguishable. Error messages quote
+ * the caller's original (non-normalised) string so clinicians see what
+ * they typed.
+ */
+function normalizeUnit(u: string): string {
+  return u.trim().toLowerCase().replace(/\s+/g, "");
+}
+
 export function validateLabResult(
   testName: string,
   value: number,
@@ -250,16 +268,20 @@ export function validateLabResult(
   // sentinel-event source (glucose ×18, creatinine ×88.4). Tests with an
   // explicit `allowed_units` list reject mismatches as errors; tests
   // without fall back to a warning when the caller's unit doesn't match
-  // the canonical reference unit.
+  // the canonical reference unit. The compare normalises case and
+  // whitespace on both sides so UCUM-canonical lowercase (`mg/dl`) and
+  // lab-vendor shorthand (`MG/DL`) both match the canonical `mg/dL`.
   if (unit !== undefined && unit !== null && unit !== "") {
     if (ref.allowed_units && ref.allowed_units.length > 0) {
-      if (!ref.allowed_units.includes(unit)) {
+      const normalizedInput = normalizeUnit(unit);
+      const normalizedAllowed = ref.allowed_units.map(normalizeUnit);
+      if (!normalizedAllowed.includes(normalizedInput)) {
         errors.push(
           `${testName} unit "${unit}" is not accepted — allowed: ` +
             ref.allowed_units.join(", "),
         );
       }
-    } else if (unit !== ref.unit) {
+    } else if (normalizeUnit(unit) !== normalizeUnit(ref.unit)) {
       warnings.push(
         `${testName} unit "${unit}" does not match expected "${ref.unit}" — verify unit is correct before interpretation`,
       );

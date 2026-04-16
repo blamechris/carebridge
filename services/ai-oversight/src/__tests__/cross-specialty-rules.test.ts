@@ -749,3 +749,242 @@ describe("ANTICOAG-BLEED-001 — severity stratification", () => {
     expect(flag!.severity).toBe("critical");
   });
 });
+
+describe("RENAL-NSAID-DIURETIC-ACE-001 — Triple whammy AKI", () => {
+  const tripleCtx = (
+    meds: string[],
+    overrides: Partial<PatientContext> = {},
+  ): PatientContext => ({
+    active_diagnoses: ["Hypertension"],
+    active_diagnosis_codes: ["I10"],
+    active_medications: meds,
+    new_symptoms: [],
+    care_team_specialties: ["primary_care"],
+    ...overrides,
+  });
+
+  it.each([
+    ["ibuprofen", "furosemide", "lisinopril"],
+    ["Naproxen 500mg BID", "Bumetanide 1mg", "Losartan 50mg"],
+    ["Meloxicam 15mg", "Torsemide 10mg", "enalapril"],
+    ["Diclofenac", "Hydrochlorothiazide 25mg", "valsartan"],
+    ["Celecoxib 200mg", "Chlorthalidone 25mg", "ramipril 10mg"],
+  ])(
+    "fires WARNING when all three drug classes co-active: %s + %s + %s",
+    (nsaid, diuretic, acearb) => {
+      const flags = checkCrossSpecialtyPatterns(
+        tripleCtx([nsaid, diuretic, acearb]),
+      );
+      const flag = flags.find(
+        (f) => f.rule_id === "RENAL-NSAID-DIURETIC-ACE-001",
+      );
+      expect(flag).toBeDefined();
+      expect(flag!.severity).toBe("warning");
+      expect(flag!.category).toBe("cross-specialty");
+      expect(flag!.notify_specialties).toContain("nephrology");
+    },
+  );
+
+  it("does NOT fire with only two of the three drug classes (NSAID + diuretic, no ACE/ARB)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      tripleCtx(["ibuprofen", "furosemide"]),
+    );
+    const flag = flags.find(
+      (f) => f.rule_id === "RENAL-NSAID-DIURETIC-ACE-001",
+    );
+    expect(flag).toBeUndefined();
+  });
+
+  it("does NOT fire with only two of the three drug classes (diuretic + ACE/ARB, no NSAID)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      tripleCtx(["furosemide", "lisinopril"]),
+    );
+    const flag = flags.find(
+      (f) => f.rule_id === "RENAL-NSAID-DIURETIC-ACE-001",
+    );
+    expect(flag).toBeUndefined();
+  });
+
+  it("does NOT fire with only two of the three drug classes (NSAID + ACE/ARB, no diuretic)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      tripleCtx(["naproxen", "lisinopril"]),
+    );
+    const flag = flags.find(
+      (f) => f.rule_id === "RENAL-NSAID-DIURETIC-ACE-001",
+    );
+    expect(flag).toBeUndefined();
+  });
+
+  it("does NOT fire with no relevant drugs", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      tripleCtx(["Metformin 500mg", "Atorvastatin 20mg"]),
+    );
+    const flag = flags.find(
+      (f) => f.rule_id === "RENAL-NSAID-DIURETIC-ACE-001",
+    );
+    expect(flag).toBeUndefined();
+  });
+});
+
+describe("HEPATIC-HEPATOTOXIN-001 — Hepatic disease + hepatotoxic medication", () => {
+  const hepaticCtx = (
+    meds: string[],
+    overrides: Partial<PatientContext> = {},
+  ): PatientContext => ({
+    active_diagnoses: ["Cirrhosis of liver"],
+    active_diagnosis_codes: ["K74.60"],
+    active_medications: meds,
+    new_symptoms: [],
+    care_team_specialties: ["gastroenterology"],
+    ...overrides,
+  });
+
+  it.each([
+    ["acetaminophen 1000mg QID"],
+    ["Tylenol 1g four times daily"],
+    ["paracetamol 4g/day"],
+    ["methotrexate 15mg weekly"],
+    ["isoniazid 300mg daily"],
+    ["amiodarone 200mg daily"],
+    ["valproic acid 500mg BID"],
+    ["Depakote 1000mg"],
+    ["atorvastatin 80mg daily"],
+    ["rosuvastatin 40mg"],
+    ["simvastatin 80mg"],
+  ])("fires WARNING for hepatotoxic medication: %s", (drug) => {
+    const flags = checkCrossSpecialtyPatterns(hepaticCtx([drug]));
+    const flag = flags.find((f) => f.rule_id === "HEPATIC-HEPATOTOXIN-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("warning");
+    expect(flag!.category).toBe("cross-specialty");
+    expect(flag!.notify_specialties).toContain("hepatology");
+    expect(flag!.notify_specialties).toContain("gastroenterology");
+  });
+
+  it.each([
+    ["Hepatitis C, chronic", "K75.9"],
+    ["Alcoholic liver disease", "K70.9"],
+    ["Hepatic failure, acute", "K72.00"],
+    ["Non-alcoholic steatohepatitis (NASH)", "K75.81"],
+    ["Chronic hepatitis B", "B18.1"],
+  ])(
+    "fires for hepatic diagnosis variant: %s (%s)",
+    (diagnosis, code) => {
+      const ctx = hepaticCtx(["isoniazid"], {
+        active_diagnoses: [diagnosis],
+        active_diagnosis_codes: [code],
+      });
+      const flag = checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "HEPATIC-HEPATOTOXIN-001",
+      );
+      expect(flag).toBeDefined();
+    },
+  );
+
+  it("does NOT fire for low-dose acetaminophen (< 3g/day)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      hepaticCtx(["acetaminophen 500mg PRN"]),
+    );
+    const flag = flags.find((f) => f.rule_id === "HEPATIC-HEPATOTOXIN-001");
+    expect(flag).toBeUndefined();
+  });
+
+  it("does NOT fire for low-dose statin (atorvastatin 10mg)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      hepaticCtx(["atorvastatin 10mg daily"]),
+    );
+    const flag = flags.find((f) => f.rule_id === "HEPATIC-HEPATOTOXIN-001");
+    expect(flag).toBeUndefined();
+  });
+
+  it("does NOT fire without hepatic diagnosis", () => {
+    const ctx: PatientContext = {
+      active_diagnoses: ["Hypertension"],
+      active_diagnosis_codes: ["I10"],
+      active_medications: ["isoniazid 300mg"],
+      new_symptoms: [],
+      care_team_specialties: [],
+    };
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "HEPATIC-HEPATOTOXIN-001",
+    );
+    expect(flag).toBeUndefined();
+  });
+
+  it("does NOT fire without hepatotoxic medication", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      hepaticCtx(["lisinopril 10mg", "metformin 500mg"]),
+    );
+    const flag = flags.find((f) => f.rule_id === "HEPATIC-HEPATOTOXIN-001");
+    expect(flag).toBeUndefined();
+  });
+});
+
+describe("RENAL-AMINOGLYCOSIDE-001 — Renal impairment + aminoglycoside", () => {
+  const renalCtx = (
+    meds: string[],
+    overrides: Partial<PatientContext> = {},
+  ): PatientContext => ({
+    active_diagnoses: ["Chronic kidney disease, stage 3"],
+    active_diagnosis_codes: ["N18.30"],
+    active_medications: meds,
+    new_symptoms: [],
+    care_team_specialties: ["nephrology"],
+    ...overrides,
+  });
+
+  it.each([
+    ["gentamicin 80mg IV q8h"],
+    ["tobramycin 120mg"],
+    ["amikacin 500mg IV"],
+    ["streptomycin 1g IM"],
+    ["Garamycin"],
+    ["Nebcin"],
+  ])("fires WARNING for aminoglycoside: %s", (drug) => {
+    const flags = checkCrossSpecialtyPatterns(renalCtx([drug]));
+    const flag = flags.find((f) => f.rule_id === "RENAL-AMINOGLYCOSIDE-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("warning");
+    expect(flag!.category).toBe("cross-specialty");
+    expect(flag!.notify_specialties).toContain("nephrology");
+  });
+
+  it.each([
+    ["Chronic kidney disease, stage 4", "N18.4"],
+    ["End-stage renal disease", "N18.6"],
+    ["Acute kidney injury", "N17.9"],
+    ["Renal insufficiency", "N28.9"],
+    ["Reduced eGFR (< 60)", "R94.4"],
+  ])("fires for renal impairment variant: %s (%s)", (diagnosis, code) => {
+    const ctx = renalCtx(["gentamicin"], {
+      active_diagnoses: [diagnosis],
+      active_diagnosis_codes: [code],
+    });
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "RENAL-AMINOGLYCOSIDE-001",
+    );
+    expect(flag).toBeDefined();
+  });
+
+  it("does NOT fire without aminoglycoside", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      renalCtx(["cefepime 1g IV q8h", "vancomycin 1g IV"]),
+    );
+    const flag = flags.find((f) => f.rule_id === "RENAL-AMINOGLYCOSIDE-001");
+    expect(flag).toBeUndefined();
+  });
+
+  it("does NOT fire without renal impairment", () => {
+    const ctx: PatientContext = {
+      active_diagnoses: ["Pseudomonas pneumonia"],
+      active_diagnosis_codes: ["J15.1"],
+      active_medications: ["tobramycin 120mg IV q8h"],
+      new_symptoms: [],
+      care_team_specialties: ["infectious_disease"],
+    };
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "RENAL-AMINOGLYCOSIDE-001",
+    );
+    expect(flag).toBeUndefined();
+  });
+});

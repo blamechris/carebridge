@@ -1,0 +1,31 @@
+-- Migration: Expand medication status vocabulary to include 'held'.
+--
+-- Background
+-- ----------
+-- `medications.status` is stored as plain `text` (not a PG enum type), so the
+-- set of valid values is enforced at the application layer by the Zod schema
+-- in `packages/validators/src/clinical-data.ts` and the TypeScript union in
+-- `packages/shared-types/src/clinical-data.ts`. No `ALTER TYPE ... ADD VALUE`
+-- is required.
+--
+-- This migration is therefore a no-op at the DB level. It is committed to keep
+-- the numbered migration trail aligned with the schema-level change (valid
+-- status values expanded from {active, discontinued, completed} to
+-- {active, held, discontinued, completed}) so reviewers can locate the
+-- corresponding code change via migration number.
+--
+-- Clinical rationale
+-- ------------------
+-- Prior to this change the status enum could not represent a temporary hold
+-- (peri-op anticoag pause, adverse-event pause awaiting labs, bridging). Rule
+-- ONCO-ANTICOAG-HELD-001 checks for anticoagulants transitioning to 'held' in
+-- patients with active VTE; because the app layer rejected 'held' on write,
+-- the rule was unreachable end-to-end. Adding 'held' at the validator + type
+-- layer closes that gap without requiring a DB migration.
+--
+-- Existing rows are unaffected: only new writes are newly permitted to carry
+-- status='held'. No index changes are required — `idx_medications_patient`
+-- continues to cover lookups by (patient_id, status) regardless of value.
+
+-- Intentionally empty: no DDL required.
+SELECT 1;

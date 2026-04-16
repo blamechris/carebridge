@@ -231,4 +231,182 @@ describe("buildPatientContextForRules — recent_labs wiring", () => {
 
     expect(ctx.recent_labs).toEqual([{ name: "WBC", value: 2.1 }]);
   });
+
+  // ─── #513 — normalize ISO timestamp comparisons ────────────────────
+  it("compares offset-form (-05:00) timestamps identically to equivalent Z-form", async () => {
+    // The event timestamp uses UTC Z-form; the diagnosis resolved_date is
+    // the identical instant expressed as -05:00 offset. Lex-compare would
+    // mis-sort these because "T07:00:00.000-05:00" sorts BEFORE
+    // "T12:00:00.000Z" as strings. After Date.parse normalization, both
+    // reduce to the same epoch and the diagnosis is correctly excluded.
+    const event: ClinicalEvent = {
+      ...stubEvent,
+      timestamp: "2026-04-16T12:00:00.000Z",
+    };
+
+    diagnosesSelect.mockResolvedValue([
+      {
+        description: "Flu (offset-form resolved_date)",
+        icd10_code: "J10.1",
+        status: "active",
+        onset_date: "2026-04-01T00:00:00.000Z",
+        // Same instant as event timestamp, different suffix — equal, so
+        // `resolved_date <= eventAt` is true and the diagnosis is excluded.
+        resolved_date: "2026-04-16T07:00:00.000-05:00",
+        created_at: "2026-04-01T00:00:00.000Z",
+      },
+    ]);
+    medicationsSelect.mockResolvedValue([]);
+    labsSelect.mockResolvedValue([]);
+
+    const ctx = await buildPatientContextForRules("p-1", event);
+
+    expect(ctx.active_diagnoses).not.toContain("Flu (offset-form resolved_date)");
+  });
+
+  it("compares bare-date (YYYY-MM-DD) timestamps correctly against Z-form event", async () => {
+    // FHIR + seed data sometimes emit bare dates. Date.parse treats
+    // "2026-04-10" as UTC midnight, so a diagnosis with
+    // resolved_date="2026-04-10" IS before event_ts=2026-04-16T12:00Z and
+    // must be excluded.
+    const event: ClinicalEvent = {
+      ...stubEvent,
+      timestamp: "2026-04-16T12:00:00.000Z",
+    };
+
+    diagnosesSelect.mockResolvedValue([
+      {
+        description: "Bronchitis (bare-date resolved_date)",
+        icd10_code: "J40",
+        status: "active",
+        onset_date: "2026-04-01",
+        resolved_date: "2026-04-10", // bare date, before event
+        created_at: "2026-04-01T00:00:00.000Z",
+      },
+      {
+        description: "Hypertension (bare-date onset, still active)",
+        icd10_code: "I10",
+        status: "active",
+        onset_date: "2025-01-15", // bare date, well before event
+        resolved_date: null,
+        created_at: "2025-01-15T00:00:00.000Z",
+      },
+    ]);
+    medicationsSelect.mockResolvedValue([]);
+    labsSelect.mockResolvedValue([]);
+
+    const ctx = await buildPatientContextForRules("p-1", event);
+
+    expect(ctx.active_diagnoses).not.toContain(
+      "Bronchitis (bare-date resolved_date)",
+    );
+    expect(ctx.active_diagnoses).toContain(
+      "Hypertension (bare-date onset, still active)",
+    );
+  });
+
+  // ─── #515 — exclude logical retractions ────────────────────────────
+  it("excludes a diagnosis with status=entered_in_error even when timestamps say active", async () => {
+    const event: ClinicalEvent = {
+      ...stubEvent,
+      timestamp: "2026-04-16T12:00:00.000Z",
+    };
+
+    diagnosesSelect.mockResolvedValue([
+      {
+        description: "Myocardial infarction (charting mistake)",
+        icd10_code: "I21.9",
+        status: "entered_in_error", // charting correction
+        onset_date: "2025-01-01T00:00:00.000Z",
+        resolved_date: null,
+        created_at: "2025-01-01T00:00:00.000Z",
+      },
+      {
+        description: "Breast cancer (chronic, real)",
+        icd10_code: "C50.9",
+        status: "chronic",
+        onset_date: "2025-01-01T00:00:00.000Z",
+        resolved_date: null,
+        created_at: "2025-01-01T00:00:00.000Z",
+      },
+    ]);
+    medicationsSelect.mockResolvedValue([]);
+    labsSelect.mockResolvedValue([]);
+
+    const ctx = await buildPatientContextForRules("p-1", event);
+
+    expect(ctx.active_diagnoses).not.toContain(
+      "Myocardial infarction (charting mistake)",
+    );
+    expect(ctx.active_diagnoses).toContain("Breast cancer (chronic, real)");
+  });
+
+  it("excludes allergies with verification_status=entered_in_error or refuted", async () => {
+    const event: ClinicalEvent = {
+      ...stubEvent,
+      timestamp: "2026-04-16T12:00:00.000Z",
+    };
+
+    diagnosesSelect.mockResolvedValue([]);
+    medicationsSelect.mockResolvedValue([]);
+    allergiesSelect.mockResolvedValue([
+      {
+        allergen: "penicillin",
+        verification_status: "entered_in_error",
+        rxnorm_code: "7980",
+        severity: "severe",
+        reaction: "rash",
+        created_at: "2025-01-01T00:00:00.000Z",
+      },
+      {
+        allergen: "latex",
+        verification_status: "refuted",
+        rxnorm_code: null,
+        severity: "moderate",
+        reaction: "contact dermatitis",
+        created_at: "2025-01-01T00:00:00.000Z",
+      },
+      {
+        allergen: "sulfa",
+        verification_status: "confirmed",
+        rxnorm_code: "10180",
+        severity: "severe",
+        reaction: "anaphylaxis",
+        created_at: "2025-01-01T00:00:00.000Z",
+      },
+    ]);
+    labsSelect.mockResolvedValue([]);
+
+    const ctx = await buildPatientContextForRules("p-1", event);
+
+    const allergens = (ctx.allergies ?? []).map((a) => a.allergen);
+    expect(allergens).toEqual(["sulfa"]);
+  });
+
+  it("keeps allergies with verification_status=null (schema default `unconfirmed`)", async () => {
+    // Pre-existing rows may have null verification_status prior to the
+    // #515 migration default. They must NOT be treated as retracted.
+    const event: ClinicalEvent = {
+      ...stubEvent,
+      timestamp: "2026-04-16T12:00:00.000Z",
+    };
+
+    diagnosesSelect.mockResolvedValue([]);
+    medicationsSelect.mockResolvedValue([]);
+    allergiesSelect.mockResolvedValue([
+      {
+        allergen: "peanut",
+        verification_status: null,
+        rxnorm_code: null,
+        severity: "severe",
+        reaction: "anaphylaxis",
+        created_at: "2025-01-01T00:00:00.000Z",
+      },
+    ]);
+    labsSelect.mockResolvedValue([]);
+
+    const ctx = await buildPatientContextForRules("p-1", event);
+
+    expect((ctx.allergies ?? []).map((a) => a.allergen)).toEqual(["peanut"]);
+  });
 });
