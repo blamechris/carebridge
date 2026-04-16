@@ -57,6 +57,31 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
   const jobId = crypto.randomUUID();
   const startTime = Date.now();
 
+  // Idempotency: if a completed review already exists for this trigger event,
+  // skip. BullMQ can re-deliver a job when a worker crashes mid-processing
+  // (lock expires → stalled-scan reclaims the job) or the same event is
+  // replayed via the outbox reconciler. Without this check each redelivery
+  // writes an extra review_jobs row and — for rules whose dedup cannot cover
+  // the replay window — potentially duplicate flags.
+  const existingCompleted = await db
+    .select({ id: reviewJobs.id, status: reviewJobs.status })
+    .from(reviewJobs)
+    .where(
+      and(
+        eq(reviewJobs.trigger_event_id, event.id),
+        eq(reviewJobs.status, "completed"),
+      ),
+    )
+    .limit(1);
+
+  if (existingCompleted.length > 0) {
+    console.log(
+      `[review-service] Skipping duplicate review for event ${event.id} ` +
+        `(prior completed job ${existingCompleted[0]!.id})`,
+    );
+    return;
+  }
+
   // Step 1: Create a review_jobs record
   await db.insert(reviewJobs).values({
     id: jobId,

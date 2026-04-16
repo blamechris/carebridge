@@ -18,6 +18,24 @@ const DLQ_NAME = "clinical-events-failed";
 
 const connection = getRedisConnection();
 
+/**
+ * Worker lock tuning.
+ *
+ * A clinical review can take up to ~90s end-to-end (DB context fetch +
+ * Claude call + flag writes). BullMQ's default 30s lockDuration would let
+ * a slow-but-healthy job be reclaimed by another worker and double-processed
+ * mid-flight. Raise to 2 minutes so only a genuinely-crashed worker loses
+ * its lock, then let `maxStalledCount` surface the crash as a retry rather
+ * than a silent duplicate.
+ *
+ * With stalledInterval=30s + maxStalledCount=1, a truly stuck job takes at
+ * most ~60s to be noticed after its lock expires — balancing fast recovery
+ * against wrongly reclaiming a long-running but healthy job.
+ */
+const WORKER_LOCK_DURATION_MS = 120_000; // 2 minutes
+const WORKER_STALLED_INTERVAL_MS = 30_000; // scan for stalled jobs every 30s
+const WORKER_MAX_STALLED_COUNT = 1;
+
 const dlq = new Queue(DLQ_NAME, {
   connection,
   defaultJobOptions: {
@@ -66,6 +84,11 @@ export function startReviewWorker(): Worker {
         max: 10,
         duration: 60_000, // Max 10 jobs per minute to respect API rate limits
       },
+      // Crash-recovery tuning — see constants above. Explicit values so a
+      // BullMQ default change can't silently shift our recovery window.
+      lockDuration: WORKER_LOCK_DURATION_MS,
+      stalledInterval: WORKER_STALLED_INTERVAL_MS,
+      maxStalledCount: WORKER_MAX_STALLED_COUNT,
     },
   );
 
