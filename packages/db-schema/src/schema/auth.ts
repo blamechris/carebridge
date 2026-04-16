@@ -40,6 +40,13 @@ export const auditLog = pgTable("audit_log", {
   resource_id: text("resource_id").notNull(),
   procedure_name: text("procedure_name"), // tRPC procedure name, e.g. "patients.getById"
   patient_id: text("patient_id"), // explicit patient ID for HIPAA audit trails
+  // "self" for patients acting on their own record, the family_relationships
+  // relationship_type for caregivers ("spouse", "parent", ...), NULL for
+  // clinicians/admins. See migration 0031.
+  actor_relationship: text("actor_relationship"),
+  // When a family caregiver acts on behalf of a patient, records the patient
+  // record id so revocation audits can reconstruct affected subjects.
+  on_behalf_of_patient_id: text("on_behalf_of_patient_id"),
   details: text("details"), // JSON string of additional context
   ip_address: text("ip_address"),
   http_status_code: integer("http_status_code"), // HTTP response status (200, 401, 403, 500, ...)
@@ -51,4 +58,6 @@ export const auditLog = pgTable("audit_log", {
   index("idx_audit_resource").on(table.resource_type, table.resource_id),
   index("idx_audit_patient").on(table.patient_id, table.timestamp),
   index("idx_audit_success_timestamp").on(table.success, table.timestamp),
+  index("idx_audit_actor_relationship").on(table.actor_relationship, table.timestamp),
+  index("idx_audit_on_behalf_of").on(table.on_behalf_of_patient_id, table.timestamp),
 ]);
