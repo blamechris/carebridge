@@ -131,21 +131,19 @@ describe("validateMedicationDose", () => {
 
 describe("validateLabResult", () => {
   it("returns valid for value in typical range", () => {
-    const result = validateLabResult("WBC", 7.5, "10^3/uL");
+    const result = validateLabResult("WBC", 7.5, "K/uL");
     expect(result.valid).toBe(true);
     expect(result.warnings).toHaveLength(0);
   });
 
   it("warns on value below typical range", () => {
-    const result = validateLabResult("WBC", 1.0, "10^3/uL");
-    expect(result.warnings.length).toBeGreaterThan(0);
-    expect(result.warnings[0]).toContain("below typical range");
+    const result = validateLabResult("WBC", 1.0, "K/uL");
+    expect(result.warnings.some((w) => w.includes("below typical range"))).toBe(true);
   });
 
   it("warns on value above typical range", () => {
-    const result = validateLabResult("WBC", 50.0, "10^3/uL");
-    expect(result.warnings.length).toBeGreaterThan(0);
-    expect(result.warnings[0]).toContain("above typical range");
+    const result = validateLabResult("WBC", 50.0, "K/uL");
+    expect(result.warnings.some((w) => w.includes("above typical range"))).toBe(true);
   });
 
   it("returns valid for unknown test name (no reference data)", () => {
@@ -156,6 +154,38 @@ describe("validateLabResult", () => {
   it("errors on NaN value", () => {
     const result = validateLabResult("WBC", NaN);
     expect(result.valid).toBe(false);
+  });
+
+  it("rejects glucose submitted with mmol/L (not in allowed_units)", () => {
+    const result = validateLabResult("Glucose", 200, "mmol/L");
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("unit"))).toBe(true);
+    expect(result.errors.some((e) => e.includes("mg/dL"))).toBe(true);
+  });
+
+  it("accepts glucose submitted with canonical mg/dL", () => {
+    const result = validateLabResult("Glucose", 95, "mg/dL");
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("rejects glucose submitted without a unit (ambiguous)", () => {
+    const result = validateLabResult("Glucose", 200);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("without a unit"))).toBe(true);
+  });
+
+  it("accepts potassium in either mEq/L or mmol/L", () => {
+    expect(validateLabResult("Potassium", 4.1, "mEq/L").valid).toBe(true);
+    expect(validateLabResult("Potassium", 4.1, "mmol/L").valid).toBe(true);
+  });
+
+  it("warns (not errors) on unit mismatch for a test without allowed_units", () => {
+    // HbA1c uses %, no allowed_units allow-list — so a different unit is a
+    // warning, not a blocking error.
+    const result = validateLabResult("HbA1c", 5.5, "mmol/mol");
+    expect(result.valid).toBe(true);
+    expect(result.warnings.some((w) => w.includes("does not match expected"))).toBe(true);
   });
 });
 
