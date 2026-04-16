@@ -454,7 +454,7 @@ export async function buildPatientContextForRules(
     Date.now() - LAB_WINDOW_HOURS * 60 * 60 * 1000,
   ).toISOString();
 
-  const [activeDiagnoses, activeMeds, patientAllergies, recentLabRows] = await Promise.all([
+  const [allDiagnoses, allMeds, allAllergies, recentLabRows] = await Promise.all([
     db.select().from(diagnoses).where(eq(diagnoses.patient_id, patientId)),
     db.select().from(medications).where(eq(medications.patient_id, patientId)),
     db.select().from(allergies).where(eq(allergies.patient_id, patientId)),
@@ -480,19 +480,52 @@ export async function buildPatientContextForRules(
   // Extract new symptoms from the event data
   const newSymptoms = extractSymptoms(event);
 
-  const activeDx = activeDiagnoses.filter((d) => d.status === "active");
+  // TOCTOU fix — filter rows to their state AS OF event.timestamp, not as of
+  // review time. Without this, a med discontinued or an allergy added between
+  // event emit and review causes missed/false flags: the rules see a newer
+  // snapshot than the event they are evaluating. See #258.
+  const eventAt = event.timestamp;
+
+  function wasActiveAt(
+    row: { onset_date?: string | null; resolved_date?: string | null; status: string; created_at: string },
+    at: string,
+  ): boolean {
+    const start = row.onset_date ?? row.created_at;
+    if (start > at) return false; // not yet started at event time
+    if (row.resolved_date && row.resolved_date <= at) return false; // resolved before event
+    return true;
+  }
+
+  const activeDx = allDiagnoses.filter((d) => wasActiveAt(d, eventAt));
 
   // Dedupe recent labs by test_name, keeping the freshest value per name.
   // labRows are ordered desc by created_at, so the first occurrence wins.
+  // Also exclude labs reported *after* event time so the rule doesn't "see
+  // the future".
   const seenLabs = new Set<string>();
   const recentLabs: Array<{ name: string; value: number }> = [];
   for (const row of recentLabRows) {
+    if (row.created_at > eventAt) continue;
     if (seenLabs.has(row.test_name)) continue;
     seenLabs.add(row.test_name);
     recentLabs.push({ name: row.test_name, value: row.value });
   }
 
-  const activeMedsList = activeMeds.filter((m) => m.status === "active");
+  // A medication was "active at event time" if it had started (started_at
+  // present and <= event time) and had not yet ended (ended_at null or
+  // strictly after event time). Falls back to created_at when started_at
+  // is missing — defensive, should not be needed under the non-null
+  // schema constraint but guards against partial records.
+  const activeMedsList = allMeds.filter((m) => {
+    const start = m.started_at ?? m.created_at;
+    if (start > eventAt) return false;
+    if (m.ended_at && m.ended_at <= eventAt) return false;
+    return true;
+  });
+
+  // An allergy is relevant iff it was already recorded before the event.
+  // A post-hoc addition must not retroactively flag the triggering event.
+  const patientAllergies = allAllergies.filter((a) => a.created_at <= eventAt);
 
   return {
     active_diagnoses: activeDx.map((d) => d.description),
