@@ -206,12 +206,36 @@ describe("validateLabResult", () => {
     expect(validateLabResult("Potassium", 4.1, "mmol/L").valid).toBe(true);
   });
 
-  it("warns (not errors) on unit mismatch for a test without allowed_units", () => {
-    // HbA1c uses %, no allowed_units allow-list — so a different unit is a
-    // warning, not a blocking error.
-    const result = validateLabResult("HbA1c", 5.5, "mmol/mol");
+  it("accepts HbA1c in NGSP % with value in typical range", () => {
+    const result = validateLabResult("HbA1c", 5.4, "%");
     expect(result.valid).toBe(true);
-    expect(result.warnings.some((w) => w.includes("does not match expected"))).toBe(true);
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it("accepts HbA1c in IFCC mmol/mol — 37 mmol/mol (~5.5 %) in range, no warnings", () => {
+    // 37 mmol/mol ≈ 5.54 % NGSP → within 4.0–5.6 typical range
+    const result = validateLabResult("HbA1c", 37, "mmol/mol");
+    expect(result.valid).toBe(true);
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it("warns on HbA1c 75 mmol/mol (above typical range — ~9.0 %)", () => {
+    // 75 mmol/mol ≈ 9.01 % NGSP → above 5.6 % typical high
+    const result = validateLabResult("HbA1c", 75, "mmol/mol");
+    expect(result.valid).toBe(true);
+    expect(result.warnings.some((w) => w.includes("above typical range"))).toBe(true);
+  });
+
+  it("rejects HbA1c with an unrecognized unit", () => {
+    const result = validateLabResult("HbA1c", 5.5, "g/dL");
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("unit"))).toBe(true);
+  });
+
+  it("requires a unit for HbA1c (allowed_units is set)", () => {
+    const result = validateLabResult("HbA1c", 5.5);
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("without a unit"))).toBe(true);
   });
 
   // Unit comparison tolerates case/whitespace variants. Real-world FHIR/HL7

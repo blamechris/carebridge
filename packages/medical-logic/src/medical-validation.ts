@@ -248,6 +248,24 @@ function normalizeUnit(u: string): string {
   return u.trim().toLowerCase().replace(/\s+/g, "");
 }
 
+/**
+ * Unit conversion definitions for tests where the canonical unit differs
+ * from an accepted alternate unit. Each entry maps a normalized
+ * `fromUnit` to a function that converts a value to the canonical unit.
+ *
+ * Currently supported:
+ *  - HbA1c: IFCC mmol/mol → NGSP % via the IFCC master equation
+ *    NGSP% = (IFCC / 10.929) + 2.15
+ */
+const UNIT_CONVERSIONS: Record<
+  string,
+  Record<string, (value: number) => number>
+> = {
+  HbA1c: {
+    "mmol/mol": (v: number) => v / 10.929 + 2.15,
+  },
+};
+
 export function validateLabResult(
   testName: string,
   value: number,
@@ -296,12 +314,25 @@ export function validateLabResult(
     );
   }
 
-  if (value < ref.typical_low) {
+  // Convert submitted value to canonical unit for range comparison when the
+  // caller used an accepted alternate unit (e.g. IFCC mmol/mol → NGSP %).
+  // Without this, a valid 37 mmol/mol HbA1c (≈ 5.5 %) would be flagged as
+  // below the 4.0–5.6 % typical range.
+  let compareValue = value;
+  if (unit && normalizeUnit(unit) !== normalizeUnit(ref.unit)) {
+    const conversions = UNIT_CONVERSIONS[testName];
+    const converter = conversions?.[normalizeUnit(unit)];
+    if (converter) {
+      compareValue = converter(value);
+    }
+  }
+
+  if (compareValue < ref.typical_low) {
     warnings.push(
       `${testName} value ${value} ${unit ?? ref.unit} is below typical range (${ref.typical_low}–${ref.typical_high} ${ref.unit})`
     );
   }
-  if (value > ref.typical_high) {
+  if (compareValue > ref.typical_high) {
     warnings.push(
       `${testName} value ${value} ${unit ?? ref.unit} is above typical range (${ref.typical_low}–${ref.typical_high} ${ref.unit})`
     );
