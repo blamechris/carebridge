@@ -507,15 +507,48 @@ function LabsTab({ patientId }: { patientId: string }) {
 
                   const referenceRange = formatReferenceRange(refLow, refHigh);
 
-                  // Out-of-range without a server flag — surface an inferred
-                  // H/L badge so the clinician has the same visual cue they
-                  // would for an instrument-flagged value.
+                  /*
+                   * Flag precedence contract:
+                   *
+                   * The server-side `flag` field (from the lab instrument or
+                   * LIS) is authoritative when present. It reflects the
+                   * performing lab's own reference ranges, delta checks, and
+                   * critical-value logic — all of which may be more nuanced
+                   * than a simple low/high boundary comparison.
+                   *
+                   * Client-inferred H/L is a safety net for instruments and
+                   * legacy result feeds that do not flag borderline
+                   * out-of-range values. It only renders when `!flag &&
+                   * isOutOfRange`, ensuring the server flag always wins when
+                   * both are available.
+                   */
                   const inferredFlag =
                     !flag && isOutOfRange && typeof value === "number"
                       ? typeof refLow === "number" && value < refLow
                         ? "low"
                         : "high"
                       : "";
+
+                  // Dev-only: warn when the server flag and client-inferred
+                  // direction disagree. This catches mapping bugs and stale
+                  // reference ranges early without polluting production logs.
+                  if (process.env.NODE_ENV !== "production" && flag && isOutOfRange && typeof value === "number") {
+                    const clientDirection =
+                      typeof refLow === "number" && value < refLow
+                        ? "low"
+                        : "high";
+                    const serverNorm = flag.toLowerCase();
+                    const disagrees =
+                      (serverNorm === "h" && clientDirection === "low") ||
+                      (serverNorm === "l" && clientDirection === "high") ||
+                      (serverNorm === "high" && clientDirection === "low") ||
+                      (serverNorm === "low" && clientDirection === "high");
+                    if (disagrees) {
+                      console.warn(
+                        `[LabsTab] Server flag "${flag}" disagrees with client-inferred "${clientDirection}" for "${r.test_name}" (value=${value}, refLow=${refLow}, refHigh=${refHigh}). Review reference range or flag mapping.`,
+                      );
+                    }
+                  }
 
                   return (
                     <tr key={ri}>
