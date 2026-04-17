@@ -47,6 +47,14 @@ const mocks = vi.hoisted(() => {
   let joinCondition: unknown = undefined;
   let whereConditions: unknown[] = [];
   let resolvedData: unknown[] = [];
+  let resolvedDataQueue: unknown[][] = [];
+
+  function nextData() {
+    if (resolvedDataQueue.length > 0) {
+      return resolvedDataQueue.shift()!;
+    }
+    return resolvedData;
+  }
 
   function makeSelectChain() {
     const chain: Record<string, unknown> = {};
@@ -58,9 +66,9 @@ const mocks = vi.hoisted(() => {
     });
     chain.where = fn((...args: unknown[]) => {
       whereConditions = args;
-      return Promise.resolve(resolvedData);
+      return Promise.resolve(nextData());
     });
-    chain.limit = fn(async () => resolvedData);
+    chain.limit = fn(async () => nextData());
     // When no where/join is called, resolve via then
     (chain as Record<string | symbol, unknown>)[Symbol.toStringTag] =
       "Promise";
@@ -71,7 +79,7 @@ const mocks = vi.hoisted(() => {
       (result as Record<string, unknown>).then = (
         resolve: (v: unknown) => void,
       ) => {
-        resolve(resolvedData);
+        resolve(nextData());
         return result;
       };
       return result;
@@ -86,6 +94,9 @@ const mocks = vi.hoisted(() => {
     getWhereConditions: () => whereConditions,
     setResolvedData: (data: unknown[]) => {
       resolvedData = data;
+    },
+    setResolvedDataQueue: (queue: unknown[][]) => {
+      resolvedDataQueue = [...queue];
     },
     makeSelectChain,
     mockDb: {
@@ -106,6 +117,10 @@ vi.mock("@carebridge/db-schema", () => ({
     name: "patients.name",
     date_of_birth: "patients.date_of_birth",
     biological_sex: "patients.biological_sex",
+    diagnosis: "patients.diagnosis",
+    primary_provider_id: "patients.primary_provider_id",
+    allergy_status: "patients.allergy_status",
+    weight_kg: "patients.weight_kg",
     mrn: "patients.mrn",
     mrn_hmac: "patients.mrn_hmac",
     created_at: "patients.created_at",
@@ -120,12 +135,23 @@ vi.mock("@carebridge/db-schema", () => ({
     patient_id: "care_team_assignments.patient_id",
     removed_at: "care_team_assignments.removed_at",
   },
+  familyRelationships: {
+    caregiver_id: "family_relationships.caregiver_id",
+    patient_id: "family_relationships.patient_id",
+    status: "family_relationships.status",
+  },
+  users: {
+    id: "users.id",
+    patient_id: "users.patient_id",
+  },
 }));
 
 vi.mock("drizzle-orm", () => ({
   eq: (col: unknown, val: unknown) => ({ op: "eq", col, val }),
   and: (...args: unknown[]) => ({ op: "and", args }),
   isNull: (col: unknown) => ({ op: "isNull", col }),
+  isNotNull: (col: unknown) => ({ op: "isNotNull", col }),
+  inArray: (col: unknown, vals: unknown) => ({ op: "inArray", col, vals }),
 }));
 
 vi.mock("../middleware/rbac.js", () => ({
@@ -223,19 +249,25 @@ describe("patientRecordsRbacRouter.list — HIPAA minimum-necessary filtering", 
     });
   });
 
-  it("returns all patients for admin role", async () => {
+  it("returns all patients for admin role with projection", async () => {
     const admin = makeUser("admin", ADMIN_ID);
     const caller = callerFor(admin);
 
     const result = await caller.list();
 
     expect(result).toEqual(ALL_PATIENTS);
-    // Admin select should NOT pass column subset — full select()
-    const selectCall = mocks.mockDb.select.mock.calls[0];
-    expect(selectCall).toBeDefined();
+    // Admin select should now pass a column subset (HIPAA projection)
+    const selectArg = mocks.mockDb.select.mock.calls[0]?.[0];
+    expect(selectArg).toBeDefined();
+    expect(selectArg).toHaveProperty("id");
+    expect(selectArg).toHaveProperty("name");
+    expect(selectArg).not.toHaveProperty("insurance_id");
+    expect(selectArg).not.toHaveProperty("emergency_contact_name");
+    expect(selectArg).not.toHaveProperty("emergency_contact_phone");
+    expect(selectArg).not.toHaveProperty("notes");
   });
 
-  it("returns only the patient's own record for patient role", async () => {
+  it("returns only the patient's own record for patient role with projection", async () => {
     mocks.setResolvedData([PATIENT_RECORD_1]);
     const patient = makeUser("patient", "user-patient-id", {
       patient_id: PATIENT_RECORD_1.id,
@@ -245,6 +277,12 @@ describe("patientRecordsRbacRouter.list — HIPAA minimum-necessary filtering", 
     const result = await caller.list();
 
     expect(result).toEqual([PATIENT_RECORD_1]);
+    // Patient self-lookup should also use column projection
+    const selectArg = mocks.mockDb.select.mock.calls[0]?.[0];
+    expect(selectArg).toBeDefined();
+    expect(selectArg).toHaveProperty("id");
+    expect(selectArg).not.toHaveProperty("insurance_id");
+    expect(selectArg).not.toHaveProperty("notes");
   });
 
   it("returns empty list for patient with no patient_id link", async () => {
@@ -296,4 +334,79 @@ describe("patientRecordsRbacRouter.list — HIPAA minimum-necessary filtering", 
 
     expect(result).toEqual([PATIENT_RECORD_1]);
   });
+
+  it("returns only linked patients for family_caregiver role with projection", async () => {
+    const CAREGIVER_ID = "77777777-7777-4777-8777-777777777777";
+    const CAREGIVER_USER_ID = "88888888-8888-4888-8888-888888888888";
+    // Queue: 1) familyRelationships query, 2) users query, 3) patients query
+    mocks.setResolvedDataQueue([
+      [{ patient_user_id: CAREGIVER_USER_ID }],
+      [{ patient_id: PATIENT_RECORD_1.id }],
+      [PATIENT_RECORD_1],
+    ]);
+    const caregiver = makeUser("family_caregiver" as User["role"], CAREGIVER_ID);
+    const caller = callerFor(caregiver);
+
+    const result = await caller.list();
+
+    expect(result).toEqual([PATIENT_RECORD_1]);
+    // The final select (3rd call) should use column projection
+    const selectArg = mocks.mockDb.select.mock.calls[2]?.[0];
+    expect(selectArg).toBeDefined();
+    expect(selectArg).toHaveProperty("id");
+    expect(selectArg).toHaveProperty("name");
+    expect(selectArg).not.toHaveProperty("insurance_id");
+    expect(selectArg).not.toHaveProperty("notes");
+  });
+
+  it("returns empty list for family_caregiver with no active relationships", async () => {
+    const CAREGIVER_ID = "77777777-7777-4777-8777-777777777777";
+    // Queue: familyRelationships returns empty
+    mocks.setResolvedDataQueue([[]]);
+    const caregiver = makeUser("family_caregiver" as User["role"], CAREGIVER_ID);
+    const caller = callerFor(caregiver);
+
+    const result = await caller.list();
+
+    expect(result).toEqual([]);
+  });
+
+  // ---------------------------------------------------------------------------
+  // HIPAA minimum-necessary projection regression (issue #550)
+  // ---------------------------------------------------------------------------
+
+  const EXCLUDED_FIELDS = [
+    "insurance_id",
+    "emergency_contact_name",
+    "emergency_contact_phone",
+    "notes",
+  ] as const;
+
+  for (const role of ["admin", "patient", "physician", "nurse", "specialist"] as const) {
+    it(`excludes sensitive columns from list response for ${role} role`, async () => {
+      mocks.setResolvedData(role === "patient" ? [PATIENT_RECORD_1] : ALL_PATIENTS);
+      const overrides: Partial<User> =
+        role === "patient" ? { patient_id: PATIENT_RECORD_1.id } : {};
+      const userId =
+        role === "admin"
+          ? ADMIN_ID
+          : role === "physician"
+            ? PHYSICIAN_ID
+            : role === "nurse"
+              ? NURSE_ID
+              : role === "patient"
+                ? "user-patient-id"
+                : "55555555-5555-4555-8555-555555555555";
+      const user = makeUser(role, userId, overrides);
+      const caller = callerFor(user);
+
+      await caller.list();
+
+      const selectArg = mocks.mockDb.select.mock.calls[0]?.[0];
+      expect(selectArg).toBeDefined();
+      for (const field of EXCLUDED_FIELDS) {
+        expect(selectArg).not.toHaveProperty(field);
+      }
+    });
+  }
 });
