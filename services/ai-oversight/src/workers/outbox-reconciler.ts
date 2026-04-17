@@ -235,7 +235,7 @@ export function setupOutboxReconcilerQueue(): Queue {
   const queue = new Queue(RECONCILER_QUEUE_NAME, {
     connection,
     defaultJobOptions: {
-      removeOnComplete: { count: 100 },
+      removeOnComplete: { age: 2 * RECONCILE_INTERVAL_MS / 1000, count: 100 },
       removeOnFail: { count: 100 },
     },
   });
