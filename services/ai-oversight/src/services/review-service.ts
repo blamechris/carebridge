@@ -9,7 +9,7 @@
  * The review_jobs table records every run for auditability.
  */
 
-import { eq, desc, gte, and, inArray, or } from "drizzle-orm";
+import { eq, desc, gte, and, inArray, or, sql } from "drizzle-orm";
 import { getDb } from "@carebridge/db-schema";
 import {
   reviewJobs,
@@ -23,7 +23,7 @@ import {
   labResults,
   encounters,
 } from "@carebridge/db-schema";
-import type { ClinicalEvent, FlagSource } from "@carebridge/shared-types";
+import type { ClinicalEvent, FlagSource, RuleFlag } from "@carebridge/shared-types";
 import {
   CLINICAL_REVIEW_SYSTEM_PROMPT,
   PROMPT_VERSION,
@@ -44,12 +44,12 @@ import { checkDrugInteractions } from "../rules/drug-interactions.js";
 import { screenPatientMessage } from "../rules/message-screening.js";
 import { screenPatientObservation } from "../rules/observation-screening.js";
 import { checkAllergyMedication } from "../rules/allergy-medication.js";
-import type { RuleFlag } from "../rules/critical-values.js";
 import {
   isoBefore,
   isoLTE,
   isDiagnosisRetracted,
   isAllergyRetracted,
+  isMedicationRetracted,
 } from "../utils/event-time-snapshot.js";
 import { buildPatientContext } from "../workers/context-builder.js";
 import { validateEventTimestamp } from "../utils/validate-event-timestamp.js";
@@ -120,7 +120,7 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
   //      `processing` rows (orphans from crashed workers) fall outside
   //      the window and do NOT short-circuit — matching the prior
   //      behavior for crash recovery. See #522.
-  const inFlightCutoff = new Date(Date.now() - IN_FLIGHT_WINDOW_MS).toISOString();
+  const inFlightCutoff = sql`NOW() - interval '150 seconds'`;
 
   const existingJob = await db
     .select({
@@ -498,7 +498,7 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
         // Full rule output (severity, category, rationale, notify_specialties,
         // rule_id per match) — required for forensic/regulatory audit.
         // See #241 and migration 0032.
-        rules_output: allRuleFlags as unknown as Array<Record<string, unknown>>,
+        rules_output: allRuleFlags,
         flags_generated: flagIds,
         processing_time_ms: processingTime,
         ...(llmFailed ? { error: llmErrorMessage } : {}),
@@ -648,6 +648,7 @@ export async function buildPatientContextForRules(
   // is missing — defensive, should not be needed under the non-null
   // schema constraint but guards against partial records.
   const activeMedsList = allMeds.filter((m) => {
+    if (isMedicationRetracted(m)) return false;
     const start = m.started_at ?? m.created_at;
     if (isoBefore(eventAt, start)) return false;
     if (m.ended_at && isoLTE(m.ended_at, eventAt)) return false;

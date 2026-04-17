@@ -106,4 +106,17 @@ describe("validateEventTimestamp", () => {
     });
     expect(warnSpy.mock.calls[0][0]).toContain("[context-builder]");
   });
+
+  it("calls now() exactly once even when the fallback path is taken (#585)", () => {
+    let callCount = 0;
+    const countingNow = () => {
+      callCount++;
+      return NOW_MS;
+    };
+    // Trigger the future-timestamp fallback so both the skew check and
+    // the fallback ISO conversion would previously each call now().
+    const future = new Date(NOW_MS + 5 * 60 * 1000).toISOString();
+    validateEventTimestamp(future, { now: countingNow, eventId: "evt-once" });
+    expect(callCount).toBe(1);
+  });
 });

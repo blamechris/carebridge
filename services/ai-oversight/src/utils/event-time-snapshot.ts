@@ -16,7 +16,7 @@
  * variant the platform ingests.
  *
  * ─── Logical retraction (#515) ────────────────────────────────────────
- * A row marked `entered_in_error` (diagnoses) or
+ * A row marked `entered_in_error` (diagnoses, medications) or
  * `entered_in_error` / `refuted` (allergies) is a charting correction.
  * It was never clinically true and must never drive rule or LLM output,
  * regardless of its timestamps.
@@ -77,4 +77,14 @@ export function isAllergyRetracted(row: { verification_status?: string | null })
     row.verification_status === "entered_in_error" ||
     row.verification_status === "refuted"
   );
+}
+
+/**
+ * Logical retraction for a medication row. `status === 'entered_in_error'`
+ * means the prescription was recorded by mistake — it was never actually
+ * ordered and must be excluded from drug-interaction checks, allergy
+ * cross-refs, and LLM context. See #581.
+ */
+export function isMedicationRetracted(row: { status?: string | null }): boolean {
+  return row.status === "entered_in_error";
 }

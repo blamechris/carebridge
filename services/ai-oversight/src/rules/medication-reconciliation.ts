@@ -9,8 +9,7 @@
  * Fires on encounter status changes via the clinical-events queue.
  */
 
-import type { FlagSeverity, FlagCategory, ClinicalEvent } from "@carebridge/shared-types";
-import type { RuleFlag } from "./critical-values.js";
+import type { FlagSeverity, FlagCategory, ClinicalEvent, RuleFlag } from "@carebridge/shared-types";
 import { getDb } from "@carebridge/db-schema";
 import { medications, encounters } from "@carebridge/db-schema";
 import { eq, and, desc } from "drizzle-orm";
