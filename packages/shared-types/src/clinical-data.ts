@@ -284,7 +284,23 @@ export const COMMON_LAB_TESTS: Record<string, CommonLabTest> = {
   // Other
   Lipase: { unit: "U/L", typical_low: 0, typical_high: 160 },
   Amylase: { unit: "U/L", typical_low: 28, typical_high: 100 },
-  HbA1c: { unit: "%", typical_low: 4.0, typical_high: 5.6 },
+  /**
+   * HbA1c — glycated hemoglobin.
+   *
+   * Two reporting standards exist:
+   *  - NGSP (US): `%`       — normal < 5.7 %, diabetic >= 6.5 %
+   *  - IFCC (international): `mmol/mol` — normal < 42, diabetic >= 48
+   *
+   * Canonical unit is `%` (NGSP). Values submitted in `mmol/mol` are
+   * converted to NGSP for range comparison using the IFCC master equation:
+   *   NGSP% = (IFCC mmol/mol / 10.929) + 2.15
+   */
+  HbA1c: {
+    unit: "%",
+    typical_low: 4.0,
+    typical_high: 5.6,
+    allowed_units: ["%", "mmol/mol"],
+  },
 };
 
 export function getLabRange(

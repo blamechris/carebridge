@@ -843,6 +843,11 @@ describe("HEPATIC-HEPATOTOXIN-001 — Hepatic disease + hepatotoxic medication",
     ["acetaminophen 1000mg QID"],
     ["Tylenol 1g four times daily"],
     ["paracetamol 4g/day"],
+    ["acetaminophen 1000mg TID"],
+    ["Tylenol 1g three times daily"],
+    ["paracetamol 1000mg q8h"],
+    ["acetaminophen 1g 3x/day"],
+    ["APAP 1000mg 3 times daily"],
     ["methotrexate 15mg weekly"],
     ["isoniazid 300mg daily"],
     ["amiodarone 200mg daily"],
@@ -897,6 +902,48 @@ describe("HEPATIC-HEPATOTOXIN-001 — Hepatic disease + hepatotoxic medication",
     expect(flag).toBeUndefined();
   });
 
+  // --- Fluvastatin / Pitavastatin high-dose thresholds ---
+
+  it("fires WARNING for fluvastatin at high dose (>= 40mg)", () => {
+    const flags = checkCrossSpecialtyPatterns(hepaticCtx(["fluvastatin 40mg daily"]));
+    const flag = flags.find((f) => f.rule_id === "HEPATIC-HEPATOTOXIN-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("warning");
+  });
+
+  it("fires WARNING for fluvastatin at 80mg (Lescol XL)", () => {
+    const flags = checkCrossSpecialtyPatterns(hepaticCtx(["Lescol XL 80mg"]));
+    const flag = flags.find((f) => f.rule_id === "HEPATIC-HEPATOTOXIN-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("warning");
+  });
+
+  it("does NOT fire for low-dose fluvastatin (< 40mg)", () => {
+    const flags = checkCrossSpecialtyPatterns(hepaticCtx(["fluvastatin 20mg daily"]));
+    const flag = flags.find((f) => f.rule_id === "HEPATIC-HEPATOTOXIN-001");
+    expect(flag).toBeUndefined();
+  });
+
+  it("fires WARNING for pitavastatin at high dose (>= 4mg)", () => {
+    const flags = checkCrossSpecialtyPatterns(hepaticCtx(["pitavastatin 4mg daily"]));
+    const flag = flags.find((f) => f.rule_id === "HEPATIC-HEPATOTOXIN-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("warning");
+  });
+
+  it("fires WARNING for pitavastatin via brand name (Livalo 4mg)", () => {
+    const flags = checkCrossSpecialtyPatterns(hepaticCtx(["Livalo 4mg"]));
+    const flag = flags.find((f) => f.rule_id === "HEPATIC-HEPATOTOXIN-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("warning");
+  });
+
+  it("does NOT fire for low-dose pitavastatin (< 4mg)", () => {
+    const flags = checkCrossSpecialtyPatterns(hepaticCtx(["pitavastatin 2mg daily"]));
+    const flag = flags.find((f) => f.rule_id === "HEPATIC-HEPATOTOXIN-001");
+    expect(flag).toBeUndefined();
+  });
+
   it("does NOT fire without hepatic diagnosis", () => {
     const ctx: PatientContext = {
       active_diagnoses: ["Hypertension"],
@@ -938,8 +985,15 @@ describe("RENAL-AMINOGLYCOSIDE-001 — Renal impairment + aminoglycoside", () =>
     ["tobramycin 120mg"],
     ["amikacin 500mg IV"],
     ["streptomycin 1g IM"],
+    ["neomycin 500mg PO q6h"],
+    ["kanamycin 15mg/kg IV"],
+    ["paromomycin 500mg PO TID"],
+    ["plazomicin 15mg/kg IV q24h"],
     ["Garamycin"],
     ["Nebcin"],
+    ["TOBI 300mg inhaled"],
+    ["Amikin 500mg IV"],
+    ["Zemdri 15mg/kg IV"],
   ])("fires WARNING for aminoglycoside: %s", (drug) => {
     const flags = checkCrossSpecialtyPatterns(renalCtx([drug]));
     const flag = flags.find((f) => f.rule_id === "RENAL-AMINOGLYCOSIDE-001");
@@ -947,6 +1001,7 @@ describe("RENAL-AMINOGLYCOSIDE-001 — Renal impairment + aminoglycoside", () =>
     expect(flag!.severity).toBe("warning");
     expect(flag!.category).toBe("cross-specialty");
     expect(flag!.notify_specialties).toContain("nephrology");
+    expect(flag!.notify_specialties).toContain("infectious_disease");
   });
 
   it.each([

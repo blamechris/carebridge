@@ -22,6 +22,26 @@
 
 export type AllergyStatus = "nkda" | "unknown" | "has_allergies";
 
+const VALID_ALLERGY_STATUSES: ReadonlySet<string> = new Set<string>([
+  "nkda",
+  "unknown",
+  "has_allergies",
+]);
+
+/**
+ * Runtime guard for allergy_status values coming from the DB or API.
+ * Returns null for any value not in the known set so the downstream
+ * helper defaults to "unknown" (the clinically safer assumption).
+ */
+export function parseAllergyStatus(
+  value: unknown,
+): AllergyStatus | null {
+  if (typeof value === "string" && VALID_ALLERGY_STATUSES.has(value)) {
+    return value as AllergyStatus;
+  }
+  return null;
+}
+
 export type AllergyDisplayState =
   | { kind: "loading" }
   | { kind: "error"; message: string }

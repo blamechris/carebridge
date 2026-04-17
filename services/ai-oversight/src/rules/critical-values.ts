@@ -7,7 +7,7 @@
 
 import type { VitalType } from "@carebridge/shared-types";
 import { COMMON_LAB_TESTS } from "@carebridge/shared-types";
-import type { ClinicalEvent, FlagSeverity, FlagCategory } from "@carebridge/shared-types";
+import type { ClinicalEvent, FlagSeverity, FlagCategory, RuleFlag } from "@carebridge/shared-types";
 import {
   DIASTOLIC_DANGER_ZONE,
   checkDiastolicBP,
@@ -323,15 +323,7 @@ function matchesCriticalLab(
   return false;
 }
 
-export interface RuleFlag {
-  severity: FlagSeverity;
-  category: FlagCategory;
-  summary: string;
-  rationale: string;
-  suggested_action: string;
-  notify_specialties: string[];
-  rule_id: string;
-}
+export type { RuleFlag };
 
 export function checkCriticalValues(event: ClinicalEvent): RuleFlag[] {
   const flags: RuleFlag[] = [];

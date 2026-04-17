@@ -480,6 +480,71 @@ describe("checkDrugInteractions", () => {
       expect(match).toBeDefined();
     });
 
+    // Brand-name matching
+    it("flags seroquel (quetiapine) + zithromax (azithromycin)", () => {
+      const flags = checkDrugInteractions([
+        "seroquel 200mg",
+        "zithromax 500mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    it("flags cipro (ciprofloxacin) + haldol (haloperidol)", () => {
+      const flags = checkDrugInteractions([
+        "cipro 500mg",
+        "haldol 5mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    it("flags pacerone (amiodarone) + lexapro (escitalopram)", () => {
+      const flags = checkDrugInteractions([
+        "pacerone 200mg",
+        "lexapro 20mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    it("flags geodon (ziprasidone) + zofran (ondansetron)", () => {
+      const flags = checkDrugInteractions([
+        "geodon 40mg",
+        "zofran 8mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    it("flags abilify (aripiprazole) + avelox (moxifloxacin)", () => {
+      const flags = checkDrugInteractions([
+        "abilify 10mg",
+        "avelox 400mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeDefined();
+    });
+
+    // Same-drug-different-dose deduplication
+    it("does not flag the same QT drug at different doses (amiodarone 200mg + 400mg)", () => {
+      const flags = checkDrugInteractions([
+        "amiodarone 200mg",
+        "amiodarone 400mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeUndefined();
+    });
+
+    it("does not flag the same QT drug at different doses (sotalol 80mg + 160mg)", () => {
+      const flags = checkDrugInteractions([
+        "sotalol 80mg",
+        "sotalol 160mg",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-QTC-COMBO");
+      expect(match).toBeUndefined();
+    });
+
     // Negative / no-false-positive cases
     it("does not flag a single QT-prolonging drug alone", () => {
       const flags = checkDrugInteractions(["quetiapine 200mg"]);

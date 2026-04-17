@@ -7,8 +7,7 @@
  * specialists might miss because they only see their piece.
  */
 
-import type { FlagSeverity, FlagCategory, ClinicalEvent } from "@carebridge/shared-types";
-import type { RuleFlag } from "./critical-values.js";
+import type { FlagSeverity, FlagCategory, ClinicalEvent, RuleFlag } from "@carebridge/shared-types";
 
 export interface PatientAllergy {
   allergen: string;
@@ -195,7 +194,7 @@ const ACETAMINOPHEN_PATTERN = /acetaminophen|tylenol|paracetamol|apap/i;
 
 /** Matches explicit high daily dose cues for acetaminophen (≥ 3g/day). */
 const ACETAMINOPHEN_HIGH_DOSE_PATTERN =
-  /\b(3|3\.\d+|4|4\.\d+|5)\s*g(?:\/day|\s*\/\s*d|\s*daily|\b)|\b(3000|4000|5000)\s*mg(?:\/day)?|\b1\s*g(?:ram)?\b.*\b(?:qid|q6h|q\s*6|four times|4x\/day|4 times)|\b1000\s*mg\b.*\b(?:qid|q6h|q\s*6|four times|4x\/day|4 times)/i;
+  /\b(3|3\.\d+|4|4\.\d+|5)\s*g(?:\/day|\s*\/\s*d|\s*daily|\b)|\b(3000|4000|5000)\s*mg(?:\/day)?|\b1\s*g(?:ram)?\b.*\b(?:qid|q6h|q\s*6|four times|4x\/day|4 times|tid|q8h|q\s*8|three times|3x\/day|3 times)|\b1000\s*mg\b.*\b(?:qid|q6h|q\s*6|four times|4x\/day|4 times|tid|q8h|q\s*8|three times|3x\/day|3 times)/i;
 
 /** Statin medication match. High-dose cutoffs vary per statin (see helper). */
 const STATIN_PATTERN =
