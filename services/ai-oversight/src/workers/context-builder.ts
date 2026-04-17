@@ -31,6 +31,7 @@ import {
   isDiagnosisRetracted,
   isAllergyRetracted,
   isMedicationRetracted,
+  isLabRetracted,
 } from "../utils/event-time-snapshot.js";
 import { validateEventTimestamp } from "../utils/validate-event-timestamp.js";
 
@@ -237,7 +238,7 @@ export async function buildPatientContext(
       .where(inArray(labResults.panel_id, panelIds));
 
     recentLabResults = allResults
-      .filter((r) => isoLTE(r.created_at, eventAt))
+      .filter((r) => !isLabRetracted(r) && isoLTE(r.created_at, eventAt))
       .slice(0, 50)
       .map((r) => ({
         test_name: r.test_name,

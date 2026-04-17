@@ -50,6 +50,7 @@ import {
   isDiagnosisRetracted,
   isAllergyRetracted,
   isMedicationRetracted,
+  isLabRetracted,
 } from "../utils/event-time-snapshot.js";
 import { buildPatientContext } from "../workers/context-builder.js";
 import { validateEventTimestamp } from "../utils/validate-event-timestamp.js";
@@ -578,6 +579,7 @@ export async function buildPatientContextForRules(
         test_name: labResults.test_name,
         value: labResults.value,
         created_at: labResults.created_at,
+        flag: labResults.flag,
       })
       .from(labResults)
       .innerJoin(labPanels, eq(labResults.panel_id, labPanels.id))
@@ -636,6 +638,7 @@ export async function buildPatientContextForRules(
   const seenLabs = new Set<string>();
   const recentLabs: Array<{ name: string; value: number }> = [];
   for (const row of recentLabRows) {
+    if (isLabRetracted(row)) continue;
     if (isoBefore(eventAt, row.created_at)) continue;
     if (seenLabs.has(row.test_name)) continue;
     seenLabs.add(row.test_name);

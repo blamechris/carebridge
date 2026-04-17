@@ -6,6 +6,8 @@ import {
   isDiagnosisRetracted,
   isAllergyRetracted,
   isMedicationRetracted,
+  isLabRetracted,
+  isProcedureRetracted,
 } from "../utils/event-time-snapshot.js";
 
 describe("event-time-snapshot helpers", () => {
@@ -99,6 +101,43 @@ describe("event-time-snapshot helpers", () => {
       expect(isMedicationRetracted({ status: "stopped" })).toBe(false);
       expect(isMedicationRetracted({ status: null })).toBe(false);
       expect(isMedicationRetracted({})).toBe(false);
+    });
+  });
+
+  describe("isLabRetracted", () => {
+    it("returns true for status=entered_in_error", () => {
+      expect(isLabRetracted({ status: "entered_in_error" })).toBe(true);
+    });
+
+    it("returns true for flag=entered_in_error (current schema path)", () => {
+      expect(isLabRetracted({ flag: "entered_in_error" })).toBe(true);
+    });
+
+    it("returns true when both status and flag indicate retraction", () => {
+      expect(isLabRetracted({ status: "entered_in_error", flag: "entered_in_error" })).toBe(true);
+    });
+
+    it("returns false for normal flag values / null / missing", () => {
+      expect(isLabRetracted({ flag: "H" })).toBe(false);
+      expect(isLabRetracted({ flag: "L" })).toBe(false);
+      expect(isLabRetracted({ status: "final" })).toBe(false);
+      expect(isLabRetracted({ status: "preliminary" })).toBe(false);
+      expect(isLabRetracted({ status: null, flag: null })).toBe(false);
+      expect(isLabRetracted({})).toBe(false);
+    });
+  });
+
+  describe("isProcedureRetracted", () => {
+    it("returns true only for status=entered_in_error", () => {
+      expect(isProcedureRetracted({ status: "entered_in_error" })).toBe(true);
+    });
+
+    it("returns false for scheduled / completed / cancelled / null", () => {
+      expect(isProcedureRetracted({ status: "scheduled" })).toBe(false);
+      expect(isProcedureRetracted({ status: "completed" })).toBe(false);
+      expect(isProcedureRetracted({ status: "cancelled" })).toBe(false);
+      expect(isProcedureRetracted({ status: null })).toBe(false);
+      expect(isProcedureRetracted({})).toBe(false);
     });
   });
 });
