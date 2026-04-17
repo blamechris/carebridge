@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { formatAge, classifyStaleness } from "../lib/vitals-staleness.js";
 
 const SECOND = 1_000;
@@ -6,13 +6,20 @@ const MINUTE = 60 * SECOND;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
-/** Helper: ISO string for `ms` milliseconds before the faked "now". */
+const PINNED_NOW = new Date("2025-06-15T12:00:00.000Z");
+
+/** Helper: ISO string for `ms` milliseconds before the pinned clock. */
 function ago(ms: number): string {
-  return new Date(Date.now() - ms).toISOString();
+  return new Date(PINNED_NOW.getTime() - ms).toISOString();
 }
 
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(PINNED_NOW);
+});
+
 afterEach(() => {
-  vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 // ---------------------------------------------------------------------------
@@ -98,14 +105,13 @@ describe("classifyStaleness", () => {
   });
 
   it('future-dated timestamp (clock skew) returns "current"', () => {
-    const future = new Date(Date.now() + 5 * MINUTE).toISOString();
+    const future = new Date(PINNED_NOW.getTime() + 5 * MINUTE).toISOString();
     expect(classifyStaleness(future)).toBe("current");
   });
 
-  it('invalid ISO string results in "stale" (NaN age > 24h threshold)', () => {
+  it('invalid ISO string falls through to "current" (NaN comparisons)', () => {
     // new Date("not-a-date").getTime() => NaN; Date.now() - NaN => NaN
-    // NaN > 24h => false; NaN > 4h => false => "current"
-    // This documents the current behavior — NaN comparisons fall through.
+    // NaN > 24h => false; NaN > 4h => false => falls through to "current"
     expect(classifyStaleness("not-a-date")).toBe("current");
   });
 });
