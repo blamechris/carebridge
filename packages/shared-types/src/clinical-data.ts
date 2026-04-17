@@ -225,7 +225,7 @@ export const COMMON_LAB_TESTS: Record<string, CommonLabTest> = {
   // administered as 200 mmol/L insulin dosing guidance is fatal.
   Glucose: { unit: "mg/dL", typical_low: 70, typical_high: 100, allowed_units: ["mg/dL"] },
   BUN: { unit: "mg/dL", typical_low: 7, typical_high: 20, allowed_units: ["mg/dL"] },
-  Creatinine: { unit: "mg/dL", typical_low: 0.6, typical_high: 1.2, allowed_units: ["mg/dL", "umol/L"] },
+  Creatinine: { unit: "mg/dL", typical_low: 0.6, typical_high: 1.2, allowed_units: ["mg/dL"] },
   GFR: { unit: "mL/min", typical_low: 90, typical_high: 120 },
   Sodium: { unit: "mEq/L", typical_low: 136, typical_high: 145, allowed_units: ["mEq/L", "mmol/L"] },
   Potassium: { unit: "mEq/L", typical_low: 3.5, typical_high: 5.0, allowed_units: ["mEq/L", "mmol/L"] },
