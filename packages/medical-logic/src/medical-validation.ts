@@ -264,20 +264,28 @@ function normalizeUnit(u: string): string {
 }
 
 /**
+ * IFCC master equation constants for HbA1c mmol/mol → NGSP % conversion.
+ * Source: IFCC Working Group on HbA1c Standardization.
+ * NGSP% = IFCC_SLOPE × IFCC(mmol/mol) + IFCC_INTERCEPT
+ */
+const IFCC_SLOPE = 0.09148;
+const IFCC_INTERCEPT = 2.152;
+
+/**
  * Unit conversion definitions for tests where the canonical unit differs
  * from an accepted alternate unit. Each entry maps a normalized
  * `fromUnit` to a function that converts a value to the canonical unit.
  *
  * Currently supported:
  *  - HbA1c: IFCC mmol/mol → NGSP % via the IFCC master equation
- *    NGSP% = (IFCC / 10.929) + 2.15
+ *    NGSP% = 0.09148 × IFCC + 2.152
  */
 const UNIT_CONVERSIONS: Record<
   string,
   Record<string, (value: number) => number>
 > = {
   HbA1c: {
-    "mmol/mol": (v: number) => v / 10.929 + 2.15,
+    "mmol/mol": (v: number) => IFCC_SLOPE * v + IFCC_INTERCEPT,
   },
 };
 

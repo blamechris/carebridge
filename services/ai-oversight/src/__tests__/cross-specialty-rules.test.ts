@@ -917,6 +917,8 @@ describe("HEPATIC-HEPATOTOXIN-001 — Hepatic disease + hepatotoxic medication",
     const flag = flags.find((f) => f.rule_id === "HEPATIC-HEPATOTOXIN-001");
     expect(flag).toBeDefined();
     expect(flag!.severity).toBe("warning");
+    expect(flag!.notify_specialties).toContain("hepatology");
+    expect(flag!.notify_specialties).toContain("gastroenterology");
   });
 
   it("fires WARNING for fluvastatin at 80mg (Lescol XL)", () => {
@@ -924,6 +926,8 @@ describe("HEPATIC-HEPATOTOXIN-001 — Hepatic disease + hepatotoxic medication",
     const flag = flags.find((f) => f.rule_id === "HEPATIC-HEPATOTOXIN-001");
     expect(flag).toBeDefined();
     expect(flag!.severity).toBe("warning");
+    expect(flag!.notify_specialties).toContain("hepatology");
+    expect(flag!.notify_specialties).toContain("gastroenterology");
   });
 
   it("does NOT fire for low-dose fluvastatin (< 40mg)", () => {
@@ -937,6 +941,8 @@ describe("HEPATIC-HEPATOTOXIN-001 — Hepatic disease + hepatotoxic medication",
     const flag = flags.find((f) => f.rule_id === "HEPATIC-HEPATOTOXIN-001");
     expect(flag).toBeDefined();
     expect(flag!.severity).toBe("warning");
+    expect(flag!.notify_specialties).toContain("hepatology");
+    expect(flag!.notify_specialties).toContain("gastroenterology");
   });
 
   it("fires WARNING for pitavastatin via brand name (Livalo 4mg)", () => {
@@ -944,6 +950,8 @@ describe("HEPATIC-HEPATOTOXIN-001 — Hepatic disease + hepatotoxic medication",
     const flag = flags.find((f) => f.rule_id === "HEPATIC-HEPATOTOXIN-001");
     expect(flag).toBeDefined();
     expect(flag!.severity).toBe("warning");
+    expect(flag!.notify_specialties).toContain("hepatology");
+    expect(flag!.notify_specialties).toContain("gastroenterology");
   });
 
   it("does NOT fire for low-dose pitavastatin (< 4mg)", () => {
