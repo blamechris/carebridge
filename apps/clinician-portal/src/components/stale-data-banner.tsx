@@ -1,5 +1,3 @@
-import React from "react";
-
 /**
  * StaleDataBanner — alerts clinicians that displayed clinical data
  * (vitals, labs, etc.) is outdated.
