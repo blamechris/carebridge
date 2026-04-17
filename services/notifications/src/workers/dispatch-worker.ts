@@ -22,6 +22,7 @@ import type { NotificationEvent } from "../queue.js";
 import { notificationsQueue } from "../queue.js";
 import { publishNotification } from "../publish.js";
 import { redactPatientId } from "@carebridge/phi-sanitizer";
+import type { FlagCategory } from "@carebridge/shared-types";
 import { filterRecipientsBySpecialty } from "./specialty-filter.js";
 import type { CandidateRecipient } from "./specialty-filter.js";
 import { getUserPreferences, evaluateDelivery } from "./preferences.js";
@@ -49,7 +50,7 @@ const CATEGORY_LABELS = {
   "trend-concern": "Trend concern",
   "documentation-discrepancy": "Documentation discrepancy",
   "patient-reported": "Patient-reported concern",
-} as const satisfies Record<string, string>;
+} as const satisfies Record<FlagCategory, string>;
 
 type SafeCategory = keyof typeof CATEGORY_LABELS;
 
@@ -165,9 +166,8 @@ async function findNotificationRecipients(
  * enforces a whitelist and falls back to "Clinical alert" for any
  * unexpected value (see `CATEGORY_LABELS`).
  */
-function buildNotificationTitle(event: NotificationEvent): string {
+function buildNotificationTitle(event: NotificationEvent, categoryLabel: string): string {
   const severityLabel = event.severity === "critical" ? "CRITICAL" : event.severity === "warning" ? "Warning" : "Info";
-  const categoryLabel = resolveCategoryLabel(event.category);
   return `${severityLabel}: Clinical flag — ${categoryLabel}`;
 }
 
@@ -186,10 +186,9 @@ function buildNotificationTitle(event: NotificationEvent): string {
  * `notifications.summary_safe` so later fetches can surface the safe
  * variant without re-deriving it.
  */
-function buildSafeSummary(event: NotificationEvent): string {
+function buildSafeSummary(categoryLabel: string): string {
   // Trust nothing from the event.summary — always fall back to the
   // whitelisted category label (which itself guards against unknown values).
-  const categoryLabel = resolveCategoryLabel(event.category);
   return `Clinical flag — ${categoryLabel}. Open the portal to view details.`;
 }
 
@@ -236,11 +235,12 @@ async function processNotificationJob(event: NotificationEvent): Promise<number>
     return 0;
   }
 
-  const title = buildNotificationTitle(event);
+  const categoryLabel = resolveCategoryLabel(event.category);
+  const title = buildNotificationTitle(event, categoryLabel);
   const link = buildFlagLink(event);
   const now = new Date().toISOString();
   const urgent = isUrgentFlag(event.severity);
-  const safeSummary = buildSafeSummary(event);
+  const safeSummary = buildSafeSummary(categoryLabel);
 
   let immediateCount = 0;
   let delayedCount = 0;
@@ -358,11 +358,12 @@ async function processNotificationJob(event: NotificationEvent): Promise<number>
 async function processDelayedNotification(event: NotificationEvent & { _targeted_user_id: string }): Promise<number> {
   const db = getDb();
   const userId = event._targeted_user_id;
-  const title = buildNotificationTitle(event);
+  const categoryLabel = resolveCategoryLabel(event.category);
+  const title = buildNotificationTitle(event, categoryLabel);
   const link = buildFlagLink(event);
   const now = new Date().toISOString();
 
-  const safeSummary = buildSafeSummary(event);
+  const safeSummary = buildSafeSummary(categoryLabel);
   const record = {
     id: crypto.randomUUID(),
     user_id: userId,
