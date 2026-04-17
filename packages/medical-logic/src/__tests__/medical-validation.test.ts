@@ -92,7 +92,7 @@ describe("validateVital", () => {
 
   // ─── Pulse-pressure boundary tests (issue #519) ────────────────
 
-  it("warns on narrow pulse pressure at boundary PP=25 (no warning)", () => {
+  it("does not warn on pulse pressure at boundary PP=25", () => {
     // 100/75 — PP=25, just above the narrow threshold
     const result = validateVital("blood_pressure", 100, 75);
     expect(result.warnings.some((w) => w.toLowerCase().includes("narrow pulse pressure"))).toBe(false);
