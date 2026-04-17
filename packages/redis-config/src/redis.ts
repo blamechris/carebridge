@@ -38,6 +38,6 @@ export function getRedisConnection(): RedisConnectionOptions {
 export const CLINICAL_EVENTS_JOB_OPTIONS = {
   attempts: 8,
   backoff: { type: "exponential" as const, delay: 2000 },
-  removeOnComplete: { count: 1000 },
+  removeOnComplete: { age: 600, count: 1000 },
   removeOnFail: { count: 10000 },
 };
