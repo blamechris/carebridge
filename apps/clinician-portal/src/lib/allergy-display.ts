@@ -39,6 +39,9 @@ export function parseAllergyStatus(
   if (typeof value === "string" && VALID_ALLERGY_STATUSES.has(value)) {
     return value as AllergyStatus;
   }
+  if (value !== null && value !== undefined) {
+    console.warn(`[allergy-display] unexpected allergy_status: ${JSON.stringify(value)}`);
+  }
   return null;
 }
 
