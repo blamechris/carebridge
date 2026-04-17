@@ -8,7 +8,7 @@ import { describe, it, expect, vi } from "vitest";
  * to validate the word-overlap heuristic independently.
  */
 
-import type { RuleFlag } from "../rules/critical-values.js";
+import type { RuleFlag } from "@carebridge/shared-types";
 
 // Replicate the isDuplicate logic from review-service.ts for unit testing.
 // This mirrors the exact algorithm: >40% overlap of significant words (length > 3)

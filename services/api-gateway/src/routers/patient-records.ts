@@ -80,6 +80,27 @@ async function enforcePatientAccess(
   }
 }
 
+/**
+ * HIPAA §164.502(b) minimum-necessary column set for patient list endpoints.
+ *
+ * Excludes insurance_id, emergency_contact_*, and free-text notes — callers
+ * that need those fields must use a dedicated endpoint scoped to the use case.
+ */
+const patientListColumns = {
+  id: patients.id,
+  name: patients.name,
+  date_of_birth: patients.date_of_birth,
+  biological_sex: patients.biological_sex,
+  diagnosis: patients.diagnosis,
+  primary_provider_id: patients.primary_provider_id,
+  allergy_status: patients.allergy_status,
+  weight_kg: patients.weight_kg,
+  mrn: patients.mrn,
+  mrn_hmac: patients.mrn_hmac,
+  created_at: patients.created_at,
+  updated_at: patients.updated_at,
+} as const;
+
 export const patientRecordsRbacRouter = t.router({
   // Administrative: creating a patient record is restricted to non-patient roles.
   create: protectedProcedure
@@ -191,14 +212,14 @@ export const patientRecordsRbacRouter = t.router({
         return [];
       }
       return db
-        .select()
+        .select(patientListColumns)
         .from(patients)
         .where(eq(patients.id, ctx.user.patient_id));
     }
 
     // Admins see all patients.
     if (ctx.user.role === "admin") {
-      return db.select().from(patients);
+      return db.select(patientListColumns).from(patients);
     }
 
     // Family caregivers: only patients linked via an active family_relationships row.
@@ -231,22 +252,13 @@ export const patientRecordsRbacRouter = t.router({
       if (patientRecordIds.length === 0) {
         return [];
       }
-      return db.select().from(patients).where(inArray(patients.id, patientRecordIds));
+      return db.select(patientListColumns).from(patients).where(inArray(patients.id, patientRecordIds));
     }
 
     // Clinicians (physician, specialist, nurse): only patients with an
     // active care_team_assignments entry for this user.
     return db
-      .select({
-        id: patients.id,
-        name: patients.name,
-        date_of_birth: patients.date_of_birth,
-        biological_sex: patients.biological_sex,
-        mrn: patients.mrn,
-        mrn_hmac: patients.mrn_hmac,
-        created_at: patients.created_at,
-        updated_at: patients.updated_at,
-      })
+      .select(patientListColumns)
       .from(patients)
       .innerJoin(
         careTeamAssignments,
