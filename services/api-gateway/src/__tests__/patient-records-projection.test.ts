@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { User } from "@carebridge/shared-types";
 
 // ---------------------------------------------------------------------------
@@ -194,6 +194,32 @@ const SENSITIVE_FIELDS = [
   "notes",
 ] as const;
 
+/**
+ * Shared guard: after every test, verify that `db.select()` was called with an
+ * explicit, non-empty column map. If a future refactor accidentally drops the
+ * projection (e.g. reverts to bare `db.select()`) this will fail the entire
+ * suite, not just the one dedicated assertion test.
+ */
+function assertProjectionWasApplied() {
+  const selectCols = mocks.getSelectColumns();
+  expect(
+    selectCols,
+    "db.select() must receive an explicit column map — bare select() leaks sensitive columns",
+  ).toBeDefined();
+  expect(
+    Object.keys(selectCols!).length,
+    "column map passed to db.select() must not be empty",
+  ).toBeGreaterThan(0);
+
+  // Sensitive columns must never appear in ANY projection
+  for (const field of SENSITIVE_FIELDS) {
+    expect(
+      selectCols,
+      `sensitive field "${field}" must not appear in db.select() column map`,
+    ).not.toHaveProperty(field);
+  }
+}
+
 function makeUser(
   role: User["role"],
   id: string,
@@ -233,6 +259,8 @@ describe("patients.getById — HIPAA minimum-necessary projection", () => {
     vi.clearAllMocks();
     mocks.setResolvedData([FULL_PATIENT_ROW]);
   });
+
+  afterEach(assertProjectionWasApplied);
 
   it("returns projected clinical fields", async () => {
     const physician = makeUser("physician", PHYSICIAN_ID);
@@ -275,20 +303,17 @@ describe("patients.getById — HIPAA minimum-necessary projection", () => {
     }
   });
 
-  it("passes an explicit column map to db.select()", async () => {
+  it("passes an explicit column map with expected clinical fields to db.select()", async () => {
     const physician = makeUser("physician", PHYSICIAN_ID);
     const caller = callerFor(physician);
 
     await caller.getById({ id: PATIENT_ID });
 
     const selectCols = mocks.getSelectColumns();
-    expect(selectCols).toBeDefined();
+    // The afterEach guard covers defined/non-empty/no-sensitive checks;
+    // this test adds getById-specific field assertions.
     expect(selectCols).toHaveProperty("id");
     expect(selectCols).toHaveProperty("name");
-    // Sensitive columns must be absent from the projection
-    for (const field of SENSITIVE_FIELDS) {
-      expect(selectCols).not.toHaveProperty(field);
-    }
   });
 });
 
@@ -301,6 +326,8 @@ describe("patients.getSummary — minimum-necessary summary projection", () => {
     vi.clearAllMocks();
     mocks.setResolvedData([FULL_PATIENT_ROW]);
   });
+
+  afterEach(assertProjectionWasApplied);
 
   it("returns exactly { id, name, mrn }", async () => {
     const physician = makeUser("physician", PHYSICIAN_ID);
@@ -346,7 +373,8 @@ describe("patients.getSummary — minimum-necessary summary projection", () => {
     await caller.getSummary({ id: PATIENT_ID });
 
     const selectCols = mocks.getSelectColumns();
-    expect(selectCols).toBeDefined();
+    // The afterEach guard covers defined/non-empty/no-sensitive checks;
+    // this test adds getSummary-specific exact-shape assertion.
     expect(Object.keys(selectCols!).sort()).toEqual(["id", "mrn", "name"]);
   });
 });
