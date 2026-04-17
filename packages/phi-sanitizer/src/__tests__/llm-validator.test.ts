@@ -242,15 +242,21 @@ describe("validateLLMResponse — truncation observability", () => {
     const result = validateLLMResponse(input);
 
     expect(result.ok).toBe(true);
-    // Find the structured truncation log (object arg, not a raw string).
+    // Find the structured truncation log (JSON string, not a raw object).
     const structuredCall = warnSpy.mock.calls.find(
-      (call) =>
-        typeof call[0] === "object" &&
-        call[0] !== null &&
-        (call[0] as { event?: string }).event === "llm_findings_truncated",
+      (call) => {
+        if (typeof call[0] !== "string") return false;
+        try {
+          const parsed = JSON.parse(call[0]);
+          return parsed.event === "llm_findings_truncated";
+        } catch {
+          return false;
+        }
+      },
     );
     expect(structuredCall).toBeDefined();
-    expect(structuredCall![0]).toMatchObject({
+    const parsed = JSON.parse(structuredCall![0] as string);
+    expect(parsed).toMatchObject({
       event: "llm_findings_truncated",
       received: 65,
       kept: 50,
@@ -270,10 +276,15 @@ describe("validateLLMResponse — truncation observability", () => {
 
     expect(result.ok).toBe(true);
     const structuredCall = warnSpy.mock.calls.find(
-      (call) =>
-        typeof call[0] === "object" &&
-        call[0] !== null &&
-        (call[0] as { event?: string }).event === "llm_findings_truncated",
+      (call) => {
+        if (typeof call[0] !== "string") return false;
+        try {
+          const parsed = JSON.parse(call[0]);
+          return parsed.event === "llm_findings_truncated";
+        } catch {
+          return false;
+        }
+      },
     );
     expect(structuredCall).toBeUndefined();
   });
