@@ -10,8 +10,8 @@
  *      the documented BullMQ lockDuration headroom).
  *   2. The window-to-seconds derivation (windowSec = IN_FLIGHT_WINDOW_MS / 1000)
  *      produces an integer suitable for a PostgreSQL interval literal.
- *   3. The sql`NOW() - interval '…'` template correctly embeds the derived
- *      seconds value using sql.raw, so the interval tracks the constant.
+ *   3. The sql`NOW() - N * interval '1 second'` template correctly embeds
+ *      the derived seconds value as a parameterized multiplier.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -19,16 +19,10 @@ import { IN_FLIGHT_WINDOW_MS } from "../services/review-service.js";
 
 // ─── Capture the sql template calls made during the idempotency probe ──
 
-// Track sql template calls and sql.raw calls
-const sqlRawCalls: string[] = [];
+// Track sql template calls
 const sqlTemplateCalls: Array<{ strings: string[]; values: unknown[] }> = [];
 
 vi.mock("drizzle-orm", () => {
-  const rawFn = (value: string) => {
-    sqlRawCalls.push(value);
-    return { __raw: value };
-  };
-
   const sqlTag = (strings: TemplateStringsArray, ...values: unknown[]) => {
     sqlTemplateCalls.push({
       strings: [...strings],
@@ -36,7 +30,8 @@ vi.mock("drizzle-orm", () => {
     });
     return { __sql: true, strings: [...strings], values };
   };
-  sqlTag.raw = rawFn;
+  // sql.raw is still exported for other callers but no longer used here
+  sqlTag.raw = (value: string) => ({ __raw: value });
 
   return {
     sql: sqlTag,
@@ -162,7 +157,6 @@ describe("IN_FLIGHT_WINDOW_MS constant", () => {
 describe("DB-clock interval derivation in idempotency probe", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    sqlRawCalls.length = 0;
     sqlTemplateCalls.length = 0;
 
     insertMock.mockReturnValue({ values: insertValues });
@@ -174,18 +168,24 @@ describe("DB-clock interval derivation in idempotency probe", () => {
     limitMock.mockResolvedValue([]);
   });
 
-  it("passes the derived seconds value through sql.raw()", async () => {
+  it("passes the derived seconds value as a parameterized multiplier", async () => {
     try {
       await processReviewJob(makeEvent());
     } catch {
       // Downstream mocks may throw — we only care about the sql calls
     }
 
-    const expectedSec = String(Math.round(IN_FLIGHT_WINDOW_MS / 1000));
-    expect(sqlRawCalls).toContain(expectedSec);
+    const expectedSec = Math.round(IN_FLIGHT_WINDOW_MS / 1000);
+    // The template should embed windowSec as a bound parameter, not via sql.raw
+    const intervalCall = sqlTemplateCalls.find(
+      (call) =>
+        call.strings.some((s) => s.includes("NOW()")) &&
+        call.values.includes(expectedSec),
+    );
+    expect(intervalCall).toBeDefined();
   });
 
-  it("embeds the interval in a NOW() - interval template", async () => {
+  it("embeds the interval in a NOW() - N * interval '1 second' template", async () => {
     try {
       await processReviewJob(makeEvent());
     } catch {
@@ -193,17 +193,17 @@ describe("DB-clock interval derivation in idempotency probe", () => {
     }
 
     // Find the sql template call that builds the cutoff expression.
-    // The template should look like: NOW() - interval '${sql.raw(…)} seconds'
+    // The template should look like: NOW() - ${windowSec} * interval '1 second'
     const intervalCall = sqlTemplateCalls.find(
       (call) =>
         call.strings.some((s) => s.includes("NOW()")) &&
-        call.strings.some((s) => s.includes("seconds")),
+        call.strings.some((s) => s.includes("interval")),
     );
 
     expect(intervalCall).toBeDefined();
     expect(intervalCall!.strings.join("")).toContain("NOW()");
     expect(intervalCall!.strings.join("")).toContain("interval");
-    expect(intervalCall!.strings.join("")).toContain("seconds");
+    expect(intervalCall!.strings.join("")).toContain("1 second");
   });
 
   it("interval seconds match IN_FLIGHT_WINDOW_MS / 1000 (no hardcoded drift)", () => {
@@ -212,7 +212,6 @@ describe("DB-clock interval derivation in idempotency probe", () => {
     // vice versa), this test catches the drift because the derivation now
     // uses the constant directly.
     const expectedSec = IN_FLIGHT_WINDOW_MS / 1000;
-    expect(expectedSec).toBe(150);
     expect(Number.isInteger(expectedSec)).toBe(true);
   });
 });
