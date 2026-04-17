@@ -39,7 +39,7 @@ const WORKER_MAX_STALLED_COUNT = 1;
 const dlq = new Queue(DLQ_NAME, {
   connection,
   defaultJobOptions: {
-    removeOnComplete: { count: 1000 },
+    removeOnComplete: { age: 600, count: 1000 },
     removeOnFail: { count: 10000 },
   },
 });
