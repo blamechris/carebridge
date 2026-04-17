@@ -465,6 +465,9 @@ importers:
       '@carebridge/db-schema':
         specifier: workspace:*
         version: link:../../packages/db-schema
+      '@carebridge/medical-logic':
+        specifier: workspace:*
+        version: link:../../packages/medical-logic
       '@carebridge/redis-config':
         specifier: workspace:*
         version: link:../../packages/redis-config
@@ -542,6 +545,9 @@ importers:
       '@carebridge/db-schema':
         specifier: workspace:*
         version: link:../../packages/db-schema
+      '@carebridge/medical-logic':
+        specifier: workspace:*
+        version: link:../../packages/medical-logic
       '@carebridge/phi-sanitizer':
         specifier: workspace:*
         version: link:../../packages/phi-sanitizer
