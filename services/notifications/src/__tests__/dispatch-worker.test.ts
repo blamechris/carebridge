@@ -60,6 +60,7 @@ vi.mock("@carebridge/db-schema", () => ({
 
 vi.mock("@carebridge/redis-config", () => ({
   getRedisConnection: () => ({}),
+  DEFAULT_RETENTION_AGE_SECONDS: 600,
 }));
 
 vi.mock("bullmq", () => ({
