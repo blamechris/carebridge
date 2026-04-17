@@ -256,7 +256,11 @@ export function validateMedicationDose(
  * they typed.
  */
 function normalizeUnit(u: string): string {
-  return u.trim().toLowerCase().replace(/\s+/g, "");
+  return u
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[\u00b5\u03bc]/g, "u"); // µ (MICRO SIGN) and μ (GREEK MU) → u
 }
 
 /**
