@@ -257,11 +257,20 @@ export function validateMedicationDose(
  */
 function normalizeUnit(u: string): string {
   return u
+    .normalize("NFKC") // collapse Unicode lookalikes (e.g. µ → μ)
     .trim()
     .toLowerCase()
     .replace(/\s+/g, "")
-    .replace(/[\u00b5\u03bc]/g, "u"); // µ (MICRO SIGN) and μ (GREEK MU) → u
+    .replace(/\u03bc/g, "u"); // μ (GREEK MU, incl. former MICRO SIGN) → u
 }
+
+/**
+ * IFCC master equation constants for HbA1c mmol/mol → NGSP % conversion.
+ * Source: IFCC Working Group on HbA1c Standardization.
+ * NGSP% = IFCC_SLOPE × IFCC(mmol/mol) + IFCC_INTERCEPT
+ */
+const IFCC_SLOPE = 0.09148;
+const IFCC_INTERCEPT = 2.152;
 
 /**
  * Unit conversion definitions for tests where the canonical unit differs
@@ -270,14 +279,14 @@ function normalizeUnit(u: string): string {
  *
  * Currently supported:
  *  - HbA1c: IFCC mmol/mol → NGSP % via the IFCC master equation
- *    NGSP% = (IFCC / 10.929) + 2.15
+ *    NGSP% = 0.09148 × IFCC + 2.152
  */
 const UNIT_CONVERSIONS: Record<
   string,
   Record<string, (value: number) => number>
 > = {
   HbA1c: {
-    "mmol/mol": (v: number) => v / 10.929 + 2.15,
+    "mmol/mol": (v: number) => IFCC_SLOPE * v + IFCC_INTERCEPT,
   },
 };
 

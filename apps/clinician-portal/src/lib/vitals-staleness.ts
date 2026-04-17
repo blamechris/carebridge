@@ -12,6 +12,7 @@
  */
 export function formatAge(recordedAtIso: string): string {
   const ageMs = Date.now() - new Date(recordedAtIso).getTime();
+  if (Number.isNaN(ageMs)) return "unknown";
   if (ageMs < 60_000) return "just now";
   const mins = Math.round(ageMs / 60_000);
   if (mins < 60) return `${mins}m ago`;
