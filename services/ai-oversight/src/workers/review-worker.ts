@@ -9,7 +9,7 @@
 import { Worker, Queue } from "bullmq";
 import type { Job } from "bullmq";
 import type { ClinicalEvent } from "@carebridge/shared-types";
-import { getRedisConnection } from "@carebridge/redis-config";
+import { getRedisConnection, DEFAULT_RETENTION_AGE_SECONDS } from "@carebridge/redis-config";
 import { redactPatientId } from "@carebridge/phi-sanitizer";
 import { processReviewJob } from "../services/review-service.js";
 
@@ -39,7 +39,7 @@ const WORKER_MAX_STALLED_COUNT = 1;
 const dlq = new Queue(DLQ_NAME, {
   connection,
   defaultJobOptions: {
-    removeOnComplete: { age: 600, count: 1000 },
+    removeOnComplete: { age: DEFAULT_RETENTION_AGE_SECONDS, count: 1000 },
     removeOnFail: { count: 10000 },
   },
 });
