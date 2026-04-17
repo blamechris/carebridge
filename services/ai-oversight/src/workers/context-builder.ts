@@ -30,6 +30,7 @@ import {
   isoLTE,
   isDiagnosisRetracted,
   isAllergyRetracted,
+  isMedicationRetracted,
 } from "../utils/event-time-snapshot.js";
 import { validateEventTimestamp } from "../utils/validate-event-timestamp.js";
 
@@ -162,6 +163,7 @@ export async function buildPatientContext(
   // still open (no ended_at) or ended strictly after event time. Falls
   // back to created_at if started_at is null (defensive; see #516).
   const activeMeds = allMeds.filter((m) => {
+    if (isMedicationRetracted(m)) return false;
     const start = m.started_at ?? m.created_at;
     if (isoBefore(eventAt, start)) return false;
     if (m.ended_at && isoLTE(m.ended_at, eventAt)) return false;

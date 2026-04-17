@@ -18,8 +18,7 @@
  * as two antipsychotics, or antipsychotic + fluoroquinolone — trigger the flag.
  */
 
-import type { FlagSeverity, FlagCategory } from "@carebridge/shared-types";
-import type { RuleFlag } from "./critical-values.js";
+import type { FlagSeverity, FlagCategory, RuleFlag } from "@carebridge/shared-types";
 
 interface DrugInteractionPair {
   id: string;

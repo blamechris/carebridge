@@ -14,8 +14,9 @@ import {
 import { VitalsTrendChart } from "@/components/vitals-trend-chart";
 import {
   deriveAllergyDisplayState,
-  type AllergyStatus,
+  parseAllergyStatus,
 } from "@/lib/allergy-display";
+import type { LabResult } from "@carebridge/shared-types";
 
 const tabs = [
   { key: "overview", label: "Overview" },
@@ -170,7 +171,7 @@ function OverviewTab({ patientId }: { patientId: string }) {
   // formatAllergies() in @carebridge/ai-prompts.
   const allergyState = deriveAllergyDisplayState(
     allergiesQuery,
-    (patient.allergy_status as AllergyStatus | null | undefined) ?? null,
+    parseAllergyStatus(patient.allergy_status),
   );
 
   return (
@@ -210,7 +211,7 @@ function OverviewTab({ patientId }: { patientId: string }) {
         )}
       </div>
 
-      <div className="detail-card">
+      <div className="detail-card" aria-live="polite">
         <div className="detail-card-title">Allergies</div>
         {allergyState.kind === "loading" ? (
           <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
@@ -508,11 +509,11 @@ function LabsTab({ patientId }: { patientId: string }) {
                 </tr>
               </thead>
               <tbody>
-                {panel.results.map((r: Record<string, unknown>, ri: number) => {
-                  const flag = (r.flag as string) ?? "";
-                  const value = r.value as number | null | undefined;
-                  const refLow = r.reference_low as number | null | undefined;
-                  const refHigh = r.reference_high as number | null | undefined;
+                {panel.results.map((r: LabResult, ri: number) => {
+                  const flag = r.flag ?? "";
+                  const value = r.value;
+                  const refLow = r.reference_low;
+                  const refHigh = r.reference_high;
 
                   // A value is out-of-range when it falls below reference_low or
                   // above reference_high. This catches "borderline abnormal"
@@ -528,7 +529,7 @@ function LabsTab({ patientId }: { patientId: string }) {
                   const valueColor =
                     flag === "critical"
                       ? "var(--critical)"
-                      : flag === "high" || flag === "low"
+                      : flag === "H" || flag === "L"
                       ? "var(--warning)"
                       : isOutOfRange
                       ? "var(--warning)"
@@ -555,17 +556,17 @@ function LabsTab({ patientId }: { patientId: string }) {
 
                   return (
                     <tr key={ri}>
-                      <td>{r.test_name as string}</td>
+                      <td>{r.test_name}</td>
                       <td
                         style={{
                           fontWeight: 600,
                           color: valueColor,
                         }}
                       >
-                        {String(r.value)}
+                        {r.value}
                       </td>
                       <td style={{ color: "var(--text-secondary)" }}>
-                        {r.unit as string}
+                        {r.unit}
                       </td>
                       <td style={{ color: "var(--text-secondary)" }}>
                         {referenceRange}
