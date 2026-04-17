@@ -56,6 +56,12 @@ describe("formatAge", () => {
   it("boundary: exactly 48 hours transitions to days", () => {
     expect(formatAge(ago(48 * HOUR))).toBe("2d ago");
   });
+
+  it('returns "unknown" for invalid ISO strings', () => {
+    expect(formatAge("not-a-date")).toBe("unknown");
+    expect(formatAge("")).toBe("unknown");
+    expect(formatAge("abc123")).toBe("unknown");
+  });
 });
 
 // ---------------------------------------------------------------------------
