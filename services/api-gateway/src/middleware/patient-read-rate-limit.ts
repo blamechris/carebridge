@@ -75,8 +75,11 @@ async function defaultAuditEmitter(event: RateLimitAuditEvent): Promise<void> {
 }
 
 /**
- * Build a Fastify `onRequest` hook that enforces per-user rate limits
+ * Build a Fastify `preHandler` hook that enforces per-user rate limits
  * on patients.getSummary and patients.getById.
+ *
+ * Runs in the preHandler phase so that authMiddleware has already
+ * populated `req.user` before the rate-limit check executes.
  */
 export function makePatientReadRateLimitHook(
   opts: PatientReadRateLimitOptions,
@@ -105,8 +108,8 @@ export function makePatientReadRateLimitHook(
     }
     if (!procedure) return;
 
-    // Must have an authenticated user — unauthenticated requests are rejected
-    // by the auth middleware before this hook fires, but guard defensively.
+    // Must have an authenticated user — this hook runs as preHandler after
+    // authMiddleware, so req.user should be populated. Guard defensively.
     const user = (req as unknown as Record<string, unknown>).user as
       | User
       | undefined;

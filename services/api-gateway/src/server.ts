@@ -146,8 +146,9 @@ async function main() {
 
   // Per-user rate limit for patient record reads (issue #552):
   // 60 req/min for getSummary, 120 req/min for getById.
+  // Must run as preHandler (after auth) so req.user is populated.
   server.addHook(
-    "onRequest",
+    "preHandler",
     makePatientReadRateLimitHook({
       redis: redisClient,
     }),
