@@ -21,7 +21,7 @@ import {
 } from "@carebridge/db-schema";
 import { users } from "@carebridge/db-schema";
 import type { ReviewContext } from "@carebridge/ai-prompts";
-import type { ClinicalEvent } from "@carebridge/shared-types";
+import type { AllergyStatus, ClinicalEvent } from "@carebridge/shared-types";
 import { calculateDelta } from "@carebridge/medical-logic";
 import { sanitizeFreeText } from "@carebridge/phi-sanitizer";
 
@@ -273,7 +273,7 @@ export async function buildPatientContext(
     patient: {
       age,
       sex: patientRow?.biological_sex ?? "unknown",
-      allergy_status: (patientRow?.allergy_status as "nkda" | "unknown" | "has_allergies") ?? "unknown",
+      allergy_status: (patientRow?.allergy_status as AllergyStatus) ?? "unknown",
       active_diagnoses: activeDiagnoses.map((d) => d.description),
       allergies: patientAllergies.map((a) => ({
         allergen: a.allergen,

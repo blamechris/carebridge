@@ -33,7 +33,8 @@ export async function createLabPanel(
   // Validate every result before persisting — reject the whole panel if
   // any result has an invalid unit (partial writes are a correctness hazard).
   // Callers that have already validated can pass { skipValidation: true }
-  // to avoid redundant work (e.g. MedLens bridge).
+  // to skip the error/reject path. Warnings are always collected regardless
+  // of this flag.
   const allWarnings: string[] = [];
   const allErrors: string[] = [];
 
