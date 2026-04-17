@@ -59,6 +59,17 @@ type SafeCategory = keyof typeof CATEGORY_LABELS;
 
 const UNKNOWN_CATEGORY_LABEL = "Clinical alert";
 
+/**
+ * Payload shape for delayed single-user notifications re-queued after quiet
+ * hours. Extends the base `NotificationEvent` with an optional targeted user
+ * and a cached category label to avoid redundant resolution (and duplicate
+ * warning logs for unknown categories).
+ */
+type DelayedNotificationPayload = NotificationEvent & {
+  _targeted_user_id?: string;
+  _resolved_category_label?: string;
+};
+
 function isSafeCategory(category: string): category is SafeCategory {
   return Object.prototype.hasOwnProperty.call(CATEGORY_LABELS, category);
 }
@@ -362,7 +373,7 @@ async function processNotificationJob(event: NotificationEvent): Promise<number>
 /**
  * Process a delayed single-user notification that was re-queued after quiet hours.
  */
-async function processDelayedNotification(event: NotificationEvent & { _targeted_user_id: string; _resolved_category_label?: string }): Promise<number> {
+async function processDelayedNotification(event: DelayedNotificationPayload & { _targeted_user_id: string }): Promise<number> {
   const db = getDb();
   const userId = event._targeted_user_id;
   // Prefer the label cached in the delayed-job payload (set by
@@ -427,7 +438,7 @@ export function startDispatchWorker(): Worker {
   const worker = new Worker(
     QUEUE_NAME,
     async (job: Job) => {
-      const event = job.data as NotificationEvent & { _targeted_user_id?: string; _resolved_category_label?: string };
+      const event = job.data as DelayedNotificationPayload;
 
       log.info("Processing job", {
         jobId: job.id,
@@ -448,7 +459,7 @@ export function startDispatchWorker(): Worker {
             userId: event._targeted_user_id,
           });
           count = await processDelayedNotification(
-            event as NotificationEvent & { _targeted_user_id: string },
+            event as DelayedNotificationPayload & { _targeted_user_id: string },
           );
         } else {
           count = await processNotificationJob(event);

@@ -109,9 +109,11 @@ describe("classifyStaleness", () => {
     expect(classifyStaleness(future)).toBe("current");
   });
 
-  it('invalid ISO string falls through to "current" (NaN comparisons)', () => {
+  it('returns "stale" for invalid ISO strings (NaN guard)', () => {
     // new Date("not-a-date").getTime() => NaN; Date.now() - NaN => NaN
-    // NaN > 24h => false; NaN > 4h => false => falls through to "current"
-    expect(classifyStaleness("not-a-date")).toBe("current");
+    // NaN is caught by the Number.isNaN guard and treated as stale
+    expect(classifyStaleness("not-a-date")).toBe("stale");
+    expect(classifyStaleness("")).toBe("stale");
+    expect(classifyStaleness("abc123")).toBe("stale");
   });
 });
