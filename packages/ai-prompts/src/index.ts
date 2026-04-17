@@ -15,3 +15,9 @@ export type { TruncationResult } from "./token-budget.js";
 
 export { PROMPT_SECTIONS } from "./prompt-sections.js";
 export type { PromptSectionKey, PromptSectionLabel } from "./prompt-sections.js";
+
+export {
+  DRUG_CLASS_CROSS_REACTIONS,
+  renderDrugClassAnchors,
+} from "./drug-class-anchors.js";
+export type { DrugClassCrossReaction } from "./drug-class-anchors.js";
