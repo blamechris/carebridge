@@ -22,6 +22,7 @@ import {
   classifyStaleness,
   type StalenessTier,
 } from "@/lib/vitals-staleness";
+import { formatReferenceRange } from "@/lib/formatting";
 
 const tabs = [
   { key: "overview", label: "Overview" },
@@ -504,14 +505,7 @@ function LabsTab({ patientId }: { patientId: string }) {
                       ? "var(--warning)"
                       : "var(--text-primary)";
 
-                  const referenceRange =
-                    typeof refLow === "number" && typeof refHigh === "number"
-                      ? `${refLow}\u2013${refHigh}`
-                      : typeof refLow === "number"
-                      ? `> ${refLow}`
-                      : typeof refHigh === "number"
-                      ? `< ${refHigh}`
-                      : "\u2014";
+                  const referenceRange = formatReferenceRange(refLow, refHigh);
 
                   // Out-of-range without a server flag — surface an inferred
                   // H/L badge so the clinician has the same visual cue they
