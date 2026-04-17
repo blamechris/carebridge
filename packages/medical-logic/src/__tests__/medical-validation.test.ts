@@ -375,6 +375,14 @@ describe("validateLabResult", () => {
     expect(microSign.valid).toBe(asciiU.valid);
   });
 
+  it("accepts µmol/L (U+00B5 MICRO SIGN) when allowed_units includes umol/L", () => {
+    // Creatinine allowed_units includes "umol/L" (SI unit). The µ (U+00B5)
+    // in the input should normalise to ASCII 'u', matching the allow-list.
+    const result = validateLabResult("Creatinine", 88.4, "\u00b5mol/L");
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
   it("error message quotes the caller's original (non-normalized) unit", () => {
     // Normalisation is only used for comparison; the operator's typed
     // string should surface verbatim so they can see what they entered.
