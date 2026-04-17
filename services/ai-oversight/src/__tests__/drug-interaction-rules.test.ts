@@ -28,7 +28,7 @@ describe("QTC_PATTERN ↔ BRAND_TO_GENERIC sync", () => {
 
     for (const alt of alternates) {
       const isBrand = brandKeys.has(alt);
-      const isGeneric = !brandKeys.has(alt);
+      const isGeneric = genericValues.has(alt);
       // If it's a brand, it must map to a generic that's also in the pattern
       if (isBrand) {
         expect(genericValues).toContain(BRAND_TO_GENERIC[alt]);
