@@ -288,6 +288,9 @@ const UNIT_CONVERSIONS: Record<
   HbA1c: {
     "mmol/mol": (v: number) => IFCC_SLOPE * v + IFCC_INTERCEPT,
   },
+  Creatinine: {
+    "umol/l": (v: number) => v / 88.4,
+  },
 };
 
 export function validateLabResult(
