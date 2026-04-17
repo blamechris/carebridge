@@ -58,7 +58,11 @@ export const fhirRbacRouter = t.router({
     .input(z.object({ patientId: z.string() }))
     .query(async ({ ctx, input }) => {
       await enforcePatientAccess(ctx.user, input.patientId);
-      const caller = fhirGatewayRouter.createCaller({ user: ctx.user, rbacVerified: true });
+      const caller = fhirGatewayRouter.createCaller({
+        user: ctx.user,
+        rbacVerified: true,
+        setHeader: ctx.setHeader,
+      });
       return caller.exportPatient(input);
     }),
 
