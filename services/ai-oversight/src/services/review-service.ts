@@ -9,7 +9,7 @@
  * The review_jobs table records every run for auditability.
  */
 
-import { eq, desc, gte, and, inArray, or } from "drizzle-orm";
+import { eq, desc, gte, and, inArray, or, sql } from "drizzle-orm";
 import { getDb } from "@carebridge/db-schema";
 import {
   reviewJobs,
@@ -119,7 +119,7 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
   //      `processing` rows (orphans from crashed workers) fall outside
   //      the window and do NOT short-circuit — matching the prior
   //      behavior for crash recovery. See #522.
-  const inFlightCutoff = new Date(Date.now() - IN_FLIGHT_WINDOW_MS).toISOString();
+  const inFlightCutoff = sql`NOW() - interval '150 seconds'`;
 
   const existingJob = await db
     .select({
