@@ -35,9 +35,12 @@ export function getRedisConnection(): RedisConnectionOptions {
  * (api-gateway, clinical-data, clinical-notes, patient-records, and
  * messaging) in lockstep so future bumps can't drift.
  */
+/** Default retention age (in seconds) for completed BullMQ jobs. */
+export const DEFAULT_RETENTION_AGE_SECONDS = 600;
+
 export const CLINICAL_EVENTS_JOB_OPTIONS = {
   attempts: 8,
   backoff: { type: "exponential" as const, delay: 2000 },
-  removeOnComplete: { age: 600, count: 1000 },
+  removeOnComplete: { age: DEFAULT_RETENTION_AGE_SECONDS, count: 1000 },
   removeOnFail: { count: 10000 },
 };
