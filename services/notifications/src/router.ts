@@ -4,7 +4,10 @@ import { getDb } from "@carebridge/db-schema";
 import { notifications, notificationPreferences } from "@carebridge/db-schema";
 import { eq, and, desc } from "drizzle-orm";
 import crypto from "node:crypto";
+import { createLogger } from "@carebridge/logger";
 import { publishNotification } from "./publish.js";
+
+const log = createLogger("notifications");
 
 const t = initTRPC.create();
 
@@ -67,10 +70,10 @@ export const notificationsRouter = t.router({
           created_at: notification.created_at,
         });
       } catch (error) {
-        console.error("[notifications] Failed to publish notification to Redis", {
+        log.error("Failed to publish notification to Redis", {
           notificationId: notification.id,
           userId: notification.user_id,
-          error,
+          error: error instanceof Error ? error.message : String(error),
         });
       }
 
