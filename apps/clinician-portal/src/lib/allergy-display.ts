@@ -37,7 +37,7 @@ const statusSet: ReadonlySet<AllergyStatus> = new Set(VALID_ALLERGY_STATUSES);
 export function parseAllergyStatus(
   value: unknown,
 ): AllergyStatus | null {
-  if (typeof value === "string" && statusSet.has(value)) {
+  if (typeof value === "string" && statusSet.has(value as AllergyStatus)) {
     return value as AllergyStatus;
   }
   if (value !== null && value !== undefined) {
