@@ -549,12 +549,12 @@ function LabsTab({ patientId }: { patientId: string }) {
                           </span>
                         ) : inferredFlag ? (
                           <span
-                            className="badge badge-warning"
+                            className="badge badge-inferred"
                             role="status"
-                            aria-label={`Inferred lab flag (out of reference range): ${inferredFlag}`}
-                            title="Outside reference range (client-derived)"
+                            aria-label={`Estimated lab flag (outside reference range): ${inferredFlag}`}
                           >
                             {inferredFlag.toUpperCase()}
+                            {" (est.)"}
                           </span>
                         ) : null}
                       </td>
