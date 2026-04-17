@@ -2,6 +2,12 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // Mock clinical-data so tests don't try to connect to a real DB or Redis
 // (the underlying repos emit BullMQ events on every write).
+// emitClinicalEvent is included so tests can assert on the downstream event
+// payload (e.g. validationWarnings propagated after #704).
+const { emitClinicalEvent } = vi.hoisted(() => ({
+  emitClinicalEvent: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("@carebridge/clinical-data", () => ({
   vitalRepo: {
     createVital: vi.fn().mockResolvedValue({ id: "vital-stub" }),
@@ -9,6 +15,7 @@ vi.mock("@carebridge/clinical-data", () => ({
   labRepo: {
     createLabPanel: vi.fn().mockResolvedValue({ id: "panel-stub" }),
   },
+  emitClinicalEvent,
 }));
 
 import {
@@ -190,6 +197,32 @@ describe("importLabs", () => {
     const { labRepo } = await import("@carebridge/clinical-data");
     const createLabPanelSpy = vi.mocked(labRepo.createLabPanel);
     createLabPanelSpy.mockClear();
+    emitClinicalEvent.mockClear();
+
+    // Make createLabPanel behave like the real implementation after #704:
+    // it re-validates the results, collects warnings, and emits a clinical
+    // event that includes validationWarnings even when skipValidation is set.
+    createLabPanelSpy.mockImplementation(async (input, _opts) => {
+      const { validateLabResult } = await import("@carebridge/medical-logic");
+      const warnings: string[] = [];
+      for (const r of input.results) {
+        const v = validateLabResult(r.test_name, r.value, r.unit);
+        warnings.push(...v.warnings);
+      }
+      await emitClinicalEvent({
+        id: "event-stub",
+        type: "lab.resulted",
+        patient_id: input.patient_id,
+        timestamp: new Date().toISOString(),
+        data: {
+          resourceId: "panel-stub",
+          panelName: input.panel_name,
+          resultCount: input.results.length,
+          ...(warnings.length > 0 ? { validationWarnings: warnings } : {}),
+        },
+      });
+      return { id: "panel-stub" } as any;
+    });
 
     const token = createMedLensToken("patient-1", ["write:labs"]);
 
@@ -230,6 +263,13 @@ describe("importLabs", () => {
         ],
       }),
       { skipValidation: true },
+    );
+
+    // Verify the downstream clinical event includes validationWarnings (#704)
+    expect(emitClinicalEvent).toHaveBeenCalledOnce();
+    const emittedEvent = emitClinicalEvent.mock.calls[0][0];
+    expect(emittedEvent.data.validationWarnings).toEqual(
+      expect.arrayContaining([expect.stringContaining("above typical range")]),
     );
   });
 });
