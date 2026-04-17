@@ -152,7 +152,7 @@ export function setupEscalationQueue(): Queue {
   const queue = new Queue(QUEUE_NAME, {
     connection,
     defaultJobOptions: {
-      removeOnComplete: { count: 100 },
+      removeOnComplete: { age: 600, count: 100 },
       removeOnFail: { count: 100 },
     },
   });
