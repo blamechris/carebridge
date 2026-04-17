@@ -287,6 +287,7 @@ async function processNotificationJob(event: NotificationEvent): Promise<number>
         {
           ...event,
           _targeted_user_id: userId,
+          _resolved_category_label: categoryLabel,
         },
         { delay: decision.delay_ms },
       );
@@ -361,10 +362,13 @@ async function processNotificationJob(event: NotificationEvent): Promise<number>
 /**
  * Process a delayed single-user notification that was re-queued after quiet hours.
  */
-async function processDelayedNotification(event: NotificationEvent & { _targeted_user_id: string }): Promise<number> {
+async function processDelayedNotification(event: NotificationEvent & { _targeted_user_id: string; _resolved_category_label?: string }): Promise<number> {
   const db = getDb();
   const userId = event._targeted_user_id;
-  const categoryLabel = resolveCategoryLabel(event.category);
+  // Prefer the label cached in the delayed-job payload (set by
+  // processNotificationJob) to avoid redundant resolution — and
+  // duplicate warning logs for unknown categories.
+  const categoryLabel = event._resolved_category_label ?? resolveCategoryLabel(event.category);
   const title = buildNotificationTitle(event, categoryLabel);
   const link = buildFlagLink(event);
   const now = new Date().toISOString();
@@ -423,7 +427,7 @@ export function startDispatchWorker(): Worker {
   const worker = new Worker(
     QUEUE_NAME,
     async (job: Job) => {
-      const event = job.data as NotificationEvent & { _targeted_user_id?: string };
+      const event = job.data as NotificationEvent & { _targeted_user_id?: string; _resolved_category_label?: string };
 
       log.info("Processing job", {
         jobId: job.id,
