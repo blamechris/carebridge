@@ -384,6 +384,64 @@ describe("buildPatientContextForRules — recent_labs wiring", () => {
     expect(allergens).toEqual(["sulfa"]);
   });
 
+  // ─── #674 — exclude entered_in_error lab results ───────────────────
+  it("excludes lab results with flag=entered_in_error from recentLabs", async () => {
+    const eventAt = "2026-04-16T12:00:00.000Z";
+    const event: ClinicalEvent = { ...stubEvent, timestamp: eventAt };
+
+    diagnosesSelect.mockResolvedValue([]);
+    medicationsSelect.mockResolvedValue([]);
+    labsSelect.mockResolvedValue([
+      // Retracted lab — charting mistake, must not appear in recent_labs.
+      {
+        test_name: "ANC",
+        value: 200,
+        created_at: "2026-04-16T08:00:00.000Z",
+        flag: "entered_in_error",
+      },
+      // Valid lab — should appear.
+      {
+        test_name: "WBC",
+        value: 4.5,
+        created_at: "2026-04-16T09:00:00.000Z",
+      },
+    ]);
+
+    const ctx = await buildPatientContextForRules("p-1", event);
+
+    expect(ctx.recent_labs).toBeDefined();
+    expect(ctx.recent_labs).toEqual([{ name: "WBC", value: 4.5 }]);
+    // Verify the retracted lab is explicitly absent.
+    const labNames = (ctx.recent_labs ?? []).map((l) => l.name);
+    expect(labNames).not.toContain("ANC");
+  });
+
+  it("returns no recentLabs when ALL lab rows are entered_in_error", async () => {
+    const eventAt = "2026-04-16T12:00:00.000Z";
+    const event: ClinicalEvent = { ...stubEvent, timestamp: eventAt };
+
+    diagnosesSelect.mockResolvedValue([]);
+    medicationsSelect.mockResolvedValue([]);
+    labsSelect.mockResolvedValue([
+      {
+        test_name: "ANC",
+        value: 200,
+        created_at: "2026-04-16T08:00:00.000Z",
+        flag: "entered_in_error",
+      },
+      {
+        test_name: "Hemoglobin",
+        value: 7.2,
+        created_at: "2026-04-16T07:00:00.000Z",
+        flag: "entered_in_error",
+      },
+    ]);
+
+    const ctx = await buildPatientContextForRules("p-1", event);
+
+    expect(ctx.recent_labs).toBeUndefined();
+  });
+
   it("keeps allergies with verification_status=null (schema default `unconfirmed`)", async () => {
     // Pre-existing rows may have null verification_status prior to the
     // #515 migration default. They must NOT be treated as retracted.
