@@ -8,6 +8,12 @@ export interface Context {
   user: User | null;
   sessionId: string | null;
   requestId: string;
+  /**
+   * Set an HTTP response header on the underlying Fastify reply. Available
+   * for tRPC procedures that need transport-layer control (e.g.,
+   * Cache-Control on FHIR exports). Absent in non-HTTP contexts.
+   */
+  setHeader?: (name: string, value: string) => void;
 }
 
 export async function createContext(
@@ -22,5 +28,8 @@ export async function createContext(
     user,
     sessionId,
     requestId: crypto.randomUUID(),
+    setHeader: (name: string, value: string) => {
+      opts.res.header(name, value);
+    },
   };
 }
