@@ -392,14 +392,12 @@ describe("buildPatientContextForRules — recent_labs wiring", () => {
     diagnosesSelect.mockResolvedValue([]);
     medicationsSelect.mockResolvedValue([]);
     labsSelect.mockResolvedValue([
-      // Retracted lab — charting mistake, must not appear in recent_labs.
       {
         test_name: "ANC",
         value: 200,
         created_at: "2026-04-16T08:00:00.000Z",
         flag: "entered_in_error",
       },
-      // Valid lab — should appear.
       {
         test_name: "WBC",
         value: 4.5,
@@ -411,7 +409,6 @@ describe("buildPatientContextForRules — recent_labs wiring", () => {
 
     expect(ctx.recent_labs).toBeDefined();
     expect(ctx.recent_labs).toEqual([{ name: "WBC", value: 4.5 }]);
-    // Verify the retracted lab is explicitly absent.
     const labNames = (ctx.recent_labs ?? []).map((l) => l.name);
     expect(labNames).not.toContain("ANC");
   });
@@ -440,6 +437,63 @@ describe("buildPatientContextForRules — recent_labs wiring", () => {
     const ctx = await buildPatientContextForRules("p-1", event);
 
     expect(ctx.recent_labs).toBeUndefined();
+  });
+
+  // ─── #632 — exclude entered_in_error medications ───────────────────
+  it("excludes a medication with status=entered_in_error even when timestamps say active", async () => {
+    const event: ClinicalEvent = {
+      ...stubEvent,
+      timestamp: "2026-04-16T12:00:00.000Z",
+    };
+
+    diagnosesSelect.mockResolvedValue([]);
+    medicationsSelect.mockResolvedValue([
+      {
+        name: "Methotrexate (charting mistake)",
+        status: "entered_in_error",
+        started_at: "2026-04-01T00:00:00.000Z",
+        ended_at: null,
+        created_at: "2026-04-01T00:00:00.000Z",
+      },
+      {
+        name: "Cisplatin",
+        status: "active",
+        started_at: "2026-04-01T00:00:00.000Z",
+        ended_at: null,
+        created_at: "2026-04-01T00:00:00.000Z",
+      },
+    ]);
+    labsSelect.mockResolvedValue([]);
+
+    const ctx = await buildPatientContextForRules("p-1", event);
+
+    expect(ctx.active_medications).not.toContain(
+      "Methotrexate (charting mistake)",
+    );
+    expect(ctx.active_medications).toContain("Cisplatin");
+  });
+
+  it("excludes entered_in_error medication even when it has no ended_at (open-ended retraction)", async () => {
+    const event: ClinicalEvent = {
+      ...stubEvent,
+      timestamp: "2026-04-16T12:00:00.000Z",
+    };
+
+    diagnosesSelect.mockResolvedValue([]);
+    medicationsSelect.mockResolvedValue([
+      {
+        name: "Warfarin (never actually ordered)",
+        status: "entered_in_error",
+        started_at: "2026-04-10T00:00:00.000Z",
+        ended_at: null,
+        created_at: "2026-04-10T00:00:00.000Z",
+      },
+    ]);
+    labsSelect.mockResolvedValue([]);
+
+    const ctx = await buildPatientContextForRules("p-1", event);
+
+    expect(ctx.active_medications).toHaveLength(0);
   });
 
   it("keeps allergies with verification_status=null (schema default `unconfirmed`)", async () => {
