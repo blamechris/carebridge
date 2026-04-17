@@ -35,11 +35,11 @@ export interface Logger {
 export function createLogger(service: string): Logger {
   function emit(level: LogLevel, msg: string, meta?: Record<string, unknown>): void {
     const entry: LogEntry = {
+      ...meta,
       timestamp: new Date().toISOString(),
       level,
       service,
       msg,
-      ...meta,
     };
 
     const line = JSON.stringify(entry);
