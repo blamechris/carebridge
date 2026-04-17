@@ -13,6 +13,7 @@ const ADMIN_ID = "66666666-6666-4666-8666-666666666666";
 const PATIENT_RECORD_1 = {
   id: "aaaa1111-1111-4111-8111-111111111111",
   name: "Alice Patient",
+  name_hmac: "hmac:Alice Patient",
   date_of_birth: "1980-01-01",
   biological_sex: "female",
   mrn: "MRN001",
@@ -24,6 +25,7 @@ const PATIENT_RECORD_1 = {
 const PATIENT_RECORD_2 = {
   id: "bbbb2222-2222-4222-8222-222222222222",
   name: "Bob Patient",
+  name_hmac: "hmac:Bob Patient",
   date_of_birth: "1990-06-15",
   biological_sex: "male",
   mrn: "MRN002",
@@ -115,6 +117,7 @@ vi.mock("@carebridge/db-schema", () => ({
   patients: {
     id: "patients.id",
     name: "patients.name",
+    name_hmac: "patients.name_hmac",
     date_of_birth: "patients.date_of_birth",
     biological_sex: "patients.biological_sex",
     diagnosis: "patients.diagnosis",
