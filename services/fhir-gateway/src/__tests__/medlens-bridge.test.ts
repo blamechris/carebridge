@@ -199,9 +199,9 @@ describe("importLabs", () => {
     createLabPanelSpy.mockClear();
     emitClinicalEvent.mockClear();
 
-    // Make createLabPanel behave like the real implementation after #704:
-    // it re-validates the results, collects warnings, and emits a clinical
-    // event that includes validationWarnings even when skipValidation is set.
+    // Contract mock: simulates createLabPanel's post-#704 behavior to verify
+    // the bridge passes correct input and the downstream event shape is correct.
+    // The real createLabPanel warning emission is tested in lab-repo.test.ts.
     createLabPanelSpy.mockImplementation(async (input, _opts) => {
       const { validateLabResult } = await import("@carebridge/medical-logic");
       const warnings: string[] = [];
