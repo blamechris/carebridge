@@ -94,6 +94,11 @@ export const BRAND_TO_GENERIC: Record<string, string> = {
   caprelsa: "vandetanib",
   sutent: "sunitinib",
   tasigna: "nilotinib",
+  quinidine: "quinidine",
+  procainamide: "procainamide",
+  droperidol: "droperidol",
+  erythromycin: "erythromycin",
+  quinine: "quinine",
 };
 
 /** Normalize a matched drug name through the brand-to-generic map. */
