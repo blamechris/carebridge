@@ -109,11 +109,13 @@ describe("deriveAllergyDisplayState", () => {
     // Issue #583: if the DB returns a value outside the known enum,
     // parseAllergyStatus returns null and deriveAllergyDisplayState
     // defaults to "unknown" — the safer clinical assumption.
+    const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const state = deriveAllergyDisplayState(
       makeQuery({ data: [] }),
       parseAllergyStatus("garbage_value"),
     );
     expect(state.kind).toBe("unknown");
+    spy.mockRestore();
   });
 
   it("error with no message surfaces a fallback string", () => {
@@ -137,11 +139,15 @@ describe("parseAllergyStatus", () => {
   );
 
   it("returns null for an unexpected string", () => {
+    const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
     expect(parseAllergyStatus("bogus")).toBeNull();
+    spy.mockRestore();
   });
 
   it("returns null for a number", () => {
+    const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
     expect(parseAllergyStatus(42)).toBeNull();
+    spy.mockRestore();
   });
 
   it("returns null for null", () => {
