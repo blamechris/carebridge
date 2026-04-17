@@ -257,7 +257,12 @@ export function validateMedicationDose(
  */
 function normalizeUnit(u: string): string {
   return u
-    .normalize("NFKC") // collapse Unicode lookalikes (e.g. µ → μ)
+    // NFKC collapses Unicode compatibility equivalents. This intentionally
+    // flattens superscript digits (e.g. ² → 2, ³ → 3) so that units like
+    // "m²" become "m2". This is the desired behaviour: we compare units by
+    // their ASCII-canonical form, and superscript variants from FHIR/HL7
+    // feeds should match their plain-digit counterparts.
+    .normalize("NFKC")
     .trim()
     .toLowerCase()
     .replace(/\s+/g, "")

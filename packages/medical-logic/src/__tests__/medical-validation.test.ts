@@ -412,6 +412,21 @@ describe("validateLabResult", () => {
     expect(result.warnings.some((w) => w.includes("above typical range"))).toBe(true);
   });
 
+  // NFKC normalisation flattens superscript digits (² → 2, ³ → 3) so that
+  // units like "kg/m²" and "kg/m2" compare identically. This is intentional:
+  // some FHIR/HL7 feeds emit Unicode superscripts in composite units, and we
+  // want them to match the plain-ASCII canonical form. See issue #669.
+  it("treats superscript digits as equivalent to ASCII digits (NFKC flattening)", () => {
+    // Hemoglobin has unit "g/dL" and no allowed_units, so a non-matching
+    // unit triggers a warning. Both "cells/mm\u00b2" and "cells/mm2" should
+    // normalise identically and produce the same validation outcome.
+    const superscript = validateLabResult("Hemoglobin", 14, "g/dL\u00b2");
+    const ascii = validateLabResult("Hemoglobin", 14, "g/dL2");
+    expect(superscript.valid).toBe(ascii.valid);
+    expect(superscript.warnings).toHaveLength(ascii.warnings.length);
+    expect(superscript.errors).toHaveLength(ascii.errors.length);
+  });
+
   it("error message quotes the caller's original (non-normalized) unit", () => {
     // Normalisation is only used for comparison; the operator's typed
     // string should surface verbatim so they can see what they entered.
