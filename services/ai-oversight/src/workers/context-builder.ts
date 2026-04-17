@@ -31,6 +31,7 @@ import {
   isDiagnosisRetracted,
   isAllergyRetracted,
 } from "../utils/event-time-snapshot.js";
+import { validateEventTimestamp } from "../utils/validate-event-timestamp.js";
 
 /**
  * Recursively sanitize all string values in an arbitrary event-data object
@@ -94,7 +95,13 @@ export async function buildPatientContext(
   triggerEvent: ClinicalEvent,
 ): Promise<ReviewContext> {
   const db = getDb();
-  const eventAt = triggerEvent.timestamp;
+  // Validate before use (#517) — see note in review-service.ts. A missing or
+  // malformed event.timestamp would silently corrupt every snapshot filter
+  // below; fall back to `now` with a structured warning instead.
+  const eventAt = validateEventTimestamp(triggerEvent.timestamp, {
+    eventId: triggerEvent.id,
+    caller: "context-builder:buildPatientContext",
+  });
 
   // Run all queries in parallel for speed. We fetch the full history for
   // diagnoses / medications / allergies and then filter in-memory to the

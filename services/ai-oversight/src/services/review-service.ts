@@ -52,6 +52,7 @@ import {
   isAllergyRetracted,
 } from "../utils/event-time-snapshot.js";
 import { buildPatientContext } from "../workers/context-builder.js";
+import { validateEventTimestamp } from "../utils/validate-event-timestamp.js";
 import { reviewPatientRecord } from "./claude-client.js";
 import { createFlag } from "./flag-service.js";
 
@@ -600,8 +601,12 @@ export async function buildPatientContextForRules(
   // All comparisons go through isoBefore/isoLTE (normalized via Date.parse)
   // rather than lexicographic string compares so offset-form (-05:00) and
   // bare-date (2025-12-01) timestamps sort correctly against Z-form event
-  // timestamps. See #513.
-  const eventAt = event.timestamp;
+  // timestamps. See #513. Validated before use (#517) — malformed timestamps
+  // fall back to `now` with a structured warning.
+  const eventAt = validateEventTimestamp(event.timestamp, {
+    eventId: event.id,
+    caller: "review-service:buildPatientContextForRules",
+  });
 
   function wasActiveAt(
     row: {
