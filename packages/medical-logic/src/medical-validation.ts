@@ -257,10 +257,11 @@ export function validateMedicationDose(
  */
 function normalizeUnit(u: string): string {
   return u
+    .normalize("NFKC") // collapse Unicode lookalikes (e.g. µ → μ)
     .trim()
     .toLowerCase()
     .replace(/\s+/g, "")
-    .replace(/[\u00b5\u03bc]/g, "u"); // µ (MICRO SIGN) and μ (GREEK MU) → u
+    .replace(/\u03bc/g, "u"); // μ (GREEK MU, incl. former MICRO SIGN) → u
 }
 
 /**
