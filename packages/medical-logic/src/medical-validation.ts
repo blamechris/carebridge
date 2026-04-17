@@ -181,22 +181,33 @@ export function validateVital(
       errors.push(`Diastolic ${secondary} is outside plausible range (20–200)`);
     }
 
-    // Pulse-pressure plausibility check. Normal adult pulse pressure is
-    // ~30-50 mmHg; a narrow (<20) PP usually indicates shock, tamponade,
-    // or an artifact, and a wide (>100) PP suggests aortic regurgitation
-    // or measurement error. Either extreme is physically implausible
-    // without clinical context that should be confirmed on the record.
+    // Pulse-pressure tiered check (issue #519). Normal adult PP ~30-50 mmHg.
+    // Narrow PP: <25 warning (low stroke volume, tamponade, hypovolemia),
+    //            <15 critical (impending circulatory collapse).
+    // Wide PP:   >60 warning (aortic stiffening, AR, thyrotoxicosis),
+    //            >100 critical (severe AR or measurement error).
+    // Refs: Dart & Gregoire 2012, ESC 2018 arterial stiffness guidelines.
     if (secondary < primary) {
       const pulsePressure = primary - secondary;
-      if (pulsePressure < 20) {
+      if (pulsePressure < 15) {
+        warnings.push(
+          `Critically narrow pulse pressure ${pulsePressure} mmHg (${primary}/${secondary}) — ` +
+            `consider impending circulatory collapse, cardiac tamponade, or measurement artifact`,
+        );
+      } else if (pulsePressure < 25) {
         warnings.push(
           `Narrow pulse pressure ${pulsePressure} mmHg (${primary}/${secondary}) — ` +
-            `consider shock, cardiac tamponade, or measurement artifact`,
+            `consider shock, cardiac tamponade, or hypovolemia`,
         );
       } else if (pulsePressure > 100) {
         warnings.push(
+          `Critically wide pulse pressure ${pulsePressure} mmHg (${primary}/${secondary}) — ` +
+            `consider severe aortic regurgitation or measurement error`,
+        );
+      } else if (pulsePressure > 60) {
+        warnings.push(
           `Wide pulse pressure ${pulsePressure} mmHg (${primary}/${secondary}) — ` +
-            `consider aortic regurgitation or measurement error`,
+            `consider aortic stiffening, aortic regurgitation, or thyrotoxicosis`,
         );
       }
     }

@@ -90,6 +90,60 @@ describe("validateVital", () => {
     expect(result.warnings.some((w) => w.toLowerCase().includes("pulse pressure"))).toBe(false);
   });
 
+  // ─── Pulse-pressure boundary tests (issue #519) ────────────────
+
+  it("warns on narrow pulse pressure at boundary PP=25 (no warning)", () => {
+    // 100/75 — PP=25, just above the narrow threshold
+    const result = validateVital("blood_pressure", 100, 75);
+    expect(result.warnings.some((w) => w.toLowerCase().includes("narrow pulse pressure"))).toBe(false);
+  });
+
+  it("warns on narrow pulse pressure at boundary PP=24 (warning)", () => {
+    // 100/76 — PP=24, just inside the narrow warning band
+    const result = validateVital("blood_pressure", 100, 76);
+    expect(result.warnings.some((w) => w.toLowerCase().includes("narrow pulse pressure"))).toBe(true);
+    expect(result.warnings.some((w) => w.toLowerCase().includes("critically narrow"))).toBe(false);
+  });
+
+  it("critically warns on very narrow pulse pressure PP=15 (boundary, no critical)", () => {
+    // 90/75 — PP=15, at the critical threshold boundary (not critical)
+    const result = validateVital("blood_pressure", 90, 75);
+    expect(result.warnings.some((w) => w.toLowerCase().includes("narrow pulse pressure"))).toBe(true);
+    expect(result.warnings.some((w) => w.toLowerCase().includes("critically narrow"))).toBe(false);
+  });
+
+  it("critically warns on very narrow pulse pressure PP=14", () => {
+    // 89/75 — PP=14, inside the critical narrow band
+    const result = validateVital("blood_pressure", 89, 75);
+    expect(result.warnings.some((w) => w.toLowerCase().includes("critically narrow"))).toBe(true);
+  });
+
+  it("warns on moderately wide pulse pressure PP=61", () => {
+    // 141/80 — PP=61, just above the wide warning threshold
+    const result = validateVital("blood_pressure", 141, 80);
+    expect(result.warnings.some((w) => w.toLowerCase().includes("wide pulse pressure"))).toBe(true);
+    expect(result.warnings.some((w) => w.toLowerCase().includes("critically wide"))).toBe(false);
+  });
+
+  it("does not warn on pulse pressure at boundary PP=60 (no warning)", () => {
+    // 140/80 — PP=60, at the wide threshold boundary (not wide)
+    const result = validateVital("blood_pressure", 140, 80);
+    expect(result.warnings.some((w) => w.toLowerCase().includes("wide pulse pressure"))).toBe(false);
+  });
+
+  it("warns on critically wide pulse pressure PP=101", () => {
+    // 181/80 — PP=101, inside the critical wide band
+    const result = validateVital("blood_pressure", 181, 80);
+    expect(result.warnings.some((w) => w.toLowerCase().includes("critically wide"))).toBe(true);
+  });
+
+  it("does not critically warn on wide pulse pressure PP=100 (boundary)", () => {
+    // 180/80 — PP=100, at the critical boundary (not critical)
+    const result = validateVital("blood_pressure", 180, 80);
+    expect(result.warnings.some((w) => w.toLowerCase().includes("critically wide"))).toBe(false);
+    expect(result.warnings.some((w) => w.toLowerCase().includes("wide pulse pressure"))).toBe(true);
+  });
+
   it("returns valid for temperature in normal range", () => {
     const result = validateVital("temperature", 98.6);
     expect(result.valid).toBe(true);
