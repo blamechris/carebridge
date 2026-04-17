@@ -395,6 +395,78 @@ describe("buildPatientContext — event-time snapshot (LLM path)", () => {
     expect(ctx.active_medications).toHaveLength(0);
   });
 
+  // ─── #706 — exclude retracted labs (flag=entered_in_error) ─────────
+  it("excludes lab results with flag=entered_in_error and keeps valid ones (mixed)", async () => {
+    labPanelsSelect.mockResolvedValue([
+      { id: "panel-1", collected_at: "2026-04-16T09:00:00.000Z" },
+    ]);
+    labResultsSelect.mockResolvedValue([
+      {
+        test_name: "ANC",
+        value: 900,
+        unit: "cells/uL",
+        flag: "entered_in_error",
+        panel_id: "panel-1",
+        created_at: "2026-04-16T10:00:00.000Z",
+      },
+      {
+        test_name: "WBC",
+        value: 2.1,
+        unit: "K/uL",
+        flag: "low",
+        panel_id: "panel-1",
+        created_at: "2026-04-16T10:00:00.000Z",
+      },
+      {
+        test_name: "Hemoglobin",
+        value: 14.2,
+        unit: "g/dL",
+        flag: null,
+        panel_id: "panel-1",
+        created_at: "2026-04-16T10:00:00.000Z",
+      },
+    ]);
+
+    const ctx = await buildPatientContext("p-1", baseEvent);
+
+    expect(ctx.recent_labs).toBeDefined();
+    const testNames = ctx.recent_labs?.map((l) => l.test_name);
+    expect(testNames).not.toContain("ANC");
+    expect(testNames).toContain("WBC");
+    expect(testNames).toContain("Hemoglobin");
+  });
+
+  it("returns empty recent_labs when all lab results are retracted (flag=entered_in_error)", async () => {
+    labPanelsSelect.mockResolvedValue([
+      { id: "panel-1", collected_at: "2026-04-16T09:00:00.000Z" },
+    ]);
+    labResultsSelect.mockResolvedValue([
+      {
+        test_name: "ANC",
+        value: 900,
+        unit: "cells/uL",
+        flag: "entered_in_error",
+        panel_id: "panel-1",
+        created_at: "2026-04-16T10:00:00.000Z",
+      },
+      {
+        test_name: "WBC",
+        value: 2.1,
+        unit: "K/uL",
+        flag: "entered_in_error",
+        panel_id: "panel-1",
+        created_at: "2026-04-16T10:00:00.000Z",
+      },
+    ]);
+
+    const ctx = await buildPatientContext("p-1", baseEvent);
+
+    // When every result is retracted the builder returns undefined (no
+    // labs to show) rather than an empty array — the LLM prompt omits
+    // the section entirely.
+    expect(ctx.recent_labs).toBeUndefined();
+  });
+
   // ─── #515 — exclude logical retractions ────────────────────────────
   it("excludes a diagnosis with status=entered_in_error even when timestamps say active", async () => {
     diagnosesSelect.mockResolvedValue([

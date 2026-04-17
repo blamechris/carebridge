@@ -101,15 +101,33 @@ export function calculateDelta(values: number[]): Delta | null {
  * When `baseline` is omitted, the first value in `values` is used as the
  * baseline so callers that only know the series still get the correct
  * "change-from-baseline" semantics.
+ *
+ * ### Edge-case semantics
+ *
+ * - **Empty array**: returns `null` regardless of `baseline`.
+ * - **Single value, no explicit baseline**: returns `null` — a lone reading
+ *   has no implicit baseline to compare against (the value *is* the baseline).
+ * - **Single value with explicit `baseline`**: returns a valid `Delta`. This
+ *   is intentional: a prior-admission creatinine of 0.7 with a single new
+ *   reading of 1.4 is a meaningful 100% rise and should surface in the UI.
+ * - **Zero baseline** (`base === 0`): `pctChange` falls back to `0` instead
+ *   of `null` or `Infinity` so downstream formatters and comparisons never
+ *   encounter non-finite numbers. The absolute `change` is still accurate.
+ *
+ * @see {@link classifyTrend} for directional classification (rising/falling/stable)
+ *      independent of good-direction coloring.
+ * @see {@link calculateDelta} for the simpler last-two-point variant.
  */
 export function calculateDeltaFromBaseline(
   values: number[],
   baseline?: number,
 ): Delta | null {
   if (values.length === 0) return null;
+  // A single value with no explicit baseline is meaningless — the value *is*
+  // its own baseline, so there is no delta to report.
+  if (values.length < 2 && baseline === undefined) return null;
   const current = values[values.length - 1]!;
   const base = baseline ?? values[0]!;
-  if (values.length < 2 && baseline === undefined) return null;
   const change = current - base;
   const pctChange = base !== 0 ? (change / base) * 100 : 0;
   return { current, previous: base, change, pctChange };
