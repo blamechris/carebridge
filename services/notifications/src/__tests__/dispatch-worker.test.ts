@@ -420,7 +420,12 @@ describe("dispatch-worker", () => {
       // Observability: unknown categories are logged with structured context
       // so the operator can triage and either admit them to the whitelist
       // or fix the upstream rule/LLM output.
-      expect(warnSpy).toHaveBeenCalled();
+      // Issue #591: resolveCategoryLabel is called once per event, so the
+      // unknown-category warning must fire exactly once (not once per helper).
+      const unknownWarnCalls = warnSpy.mock.calls.filter((call) =>
+        String(call[0]).includes("Unknown notification category"),
+      );
+      expect(unknownWarnCalls).toHaveLength(1);
       const warnCall = warnSpy.mock.calls.find((call) =>
         String(call[0]).includes("Unknown notification category"),
       );
