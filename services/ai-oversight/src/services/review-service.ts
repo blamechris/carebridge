@@ -23,7 +23,7 @@ import {
   labResults,
   encounters,
 } from "@carebridge/db-schema";
-import type { ClinicalEvent, FlagSource } from "@carebridge/shared-types";
+import type { ClinicalEvent, FlagSource, RuleFlag } from "@carebridge/shared-types";
 import {
   CLINICAL_REVIEW_SYSTEM_PROMPT,
   PROMPT_VERSION,
@@ -44,7 +44,6 @@ import { checkDrugInteractions } from "../rules/drug-interactions.js";
 import { screenPatientMessage } from "../rules/message-screening.js";
 import { screenPatientObservation } from "../rules/observation-screening.js";
 import { checkAllergyMedication } from "../rules/allergy-medication.js";
-import type { RuleFlag } from "../rules/critical-values.js";
 import {
   isoBefore,
   isoLTE,
@@ -498,7 +497,7 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
         // Full rule output (severity, category, rationale, notify_specialties,
         // rule_id per match) — required for forensic/regulatory audit.
         // See #241 and migration 0032.
-        rules_output: allRuleFlags as unknown as Array<Record<string, unknown>>,
+        rules_output: allRuleFlags,
         flags_generated: flagIds,
         processing_time_ms: processingTime,
         ...(llmFailed ? { error: llmErrorMessage } : {}),
