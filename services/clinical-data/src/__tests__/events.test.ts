@@ -9,6 +9,7 @@ vi.mock("bullmq", () => ({
 
 vi.mock("@carebridge/redis-config", () => ({
   getRedisConnection: () => ({}),
+  DEFAULT_RETENTION_AGE_SECONDS: 600,
   CLINICAL_EVENTS_JOB_OPTIONS: {
     attempts: 8,
     backoff: { type: "exponential" as const, delay: 2000 },

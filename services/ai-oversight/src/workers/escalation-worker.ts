@@ -29,7 +29,7 @@
 
 import { Queue, Worker } from "bullmq";
 import type { Job } from "bullmq";
-import { getRedisConnection } from "@carebridge/redis-config";
+import { getRedisConnection, DEFAULT_RETENTION_AGE_SECONDS } from "@carebridge/redis-config";
 import { redactPatientId } from "@carebridge/phi-sanitizer";
 import { getDb } from "@carebridge/db-schema";
 import { clinicalFlags } from "@carebridge/db-schema";
@@ -152,7 +152,7 @@ export function setupEscalationQueue(): Queue {
   const queue = new Queue(QUEUE_NAME, {
     connection,
     defaultJobOptions: {
-      removeOnComplete: { age: 600, count: 100 },
+      removeOnComplete: { age: DEFAULT_RETENTION_AGE_SECONDS, count: 100 },
       removeOnFail: { count: 100 },
     },
   });
