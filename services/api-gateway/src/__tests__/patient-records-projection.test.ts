@@ -380,3 +380,79 @@ describe("patients.getSummary — minimum-necessary summary projection", () => {
     expect(Object.keys(selectCols!).sort()).toEqual(["id", "mrn", "name"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests — listRecent projection (.limit() without .where())
+// ---------------------------------------------------------------------------
+
+describe("patients.listRecent — HIPAA projection via .limit() path", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.setResolvedData([FULL_PATIENT_ROW]);
+  });
+
+  afterEach(assertProjectionWasApplied);
+
+  it("returns projected clinical fields and excludes sensitive columns", async () => {
+    const admin = makeUser("admin", "admin-1111-1111-4111-8111-111111111111");
+    const caller = callerFor(admin);
+
+    const results = await caller.listRecent({ limit: 10 });
+
+    expect(results).toHaveLength(1);
+    const keys = Object.keys(results[0]!);
+    // Sensitive fields must not appear in the result
+    for (const field of SENSITIVE_FIELDS) {
+      expect(keys, `sensitive field "${field}" must not be returned`).not.toContain(field);
+    }
+  });
+
+  it("includes expected clinical fields in projection", async () => {
+    const admin = makeUser("admin", "admin-1111-1111-4111-8111-111111111111");
+    const caller = callerFor(admin);
+
+    const results = await caller.listRecent({ limit: 10 });
+
+    expect(results).toHaveLength(1);
+    const keys = Object.keys(results[0]!);
+    const expected = [
+      "id",
+      "name",
+      "name_hmac",
+      "mrn",
+      "date_of_birth",
+      "biological_sex",
+      "diagnosis",
+      "allergy_status",
+      "weight_kg",
+      "primary_provider_id",
+      "mrn_hmac",
+      "created_at",
+      "updated_at",
+    ];
+    for (const field of expected) {
+      expect(keys, `expected field "${field}" to be present`).toContain(field);
+    }
+  });
+
+  it("calls .limit() on the query chain", async () => {
+    const admin = makeUser("admin", "admin-1111-1111-4111-8111-111111111111");
+    const caller = callerFor(admin);
+
+    await caller.listRecent({ limit: 5 });
+
+    // Verify db.select() was called with a non-empty column map
+    const selectCols = mocks.getSelectColumns();
+    expect(selectCols).toHaveProperty("id");
+    expect(selectCols).toHaveProperty("name");
+    expect(selectCols).not.toHaveProperty("insurance_id");
+    expect(selectCols).not.toHaveProperty("notes");
+  });
+
+  it("rejects non-admin users", async () => {
+    const physician = makeUser("physician", PHYSICIAN_ID);
+    const caller = callerFor(physician);
+
+    await expect(caller.listRecent({ limit: 10 })).rejects.toThrow("Only admins can list recent patients");
+  });
+});

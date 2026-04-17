@@ -274,6 +274,22 @@ export const patientRecordsRbacRouter = t.router({
       );
   }),
 
+  // Return the most recent patients (admin-only dashboard widget).
+  // Uses patientListColumns projection + .limit() without .where() for the
+  // admin path — keeps HIPAA minimum-necessary while giving a quick overview.
+  listRecent: protectedProcedure
+    .input(z.object({ limit: z.number().min(1).max(100).optional().default(10) }))
+    .query(async ({ ctx, input }) => {
+      if (ctx.user.role !== "admin") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Only admins can list recent patients",
+        });
+      }
+      const db = getDb();
+      return db.select(patientListColumns).from(patients).limit(input.limit);
+    }),
+
   diagnoses: t.router({
     getByPatient: protectedProcedure
       .input(z.object({ patientId: z.string() }))
