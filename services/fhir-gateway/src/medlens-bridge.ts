@@ -264,7 +264,7 @@ export async function importLabs(
           },
         ],
       };
-      await labRepo.createLabPanel(panelInput);
+      await labRepo.createLabPanel(panelInput, { skipValidation: true });
       result.accepted++;
     } catch (err) {
       result.rejected++;
