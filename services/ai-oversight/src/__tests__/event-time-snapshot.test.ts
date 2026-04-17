@@ -5,6 +5,7 @@ import {
   isoLTE,
   isDiagnosisRetracted,
   isAllergyRetracted,
+  isMedicationRetracted,
 } from "../utils/event-time-snapshot.js";
 
 describe("event-time-snapshot helpers", () => {
@@ -84,6 +85,20 @@ describe("event-time-snapshot helpers", () => {
       expect(isAllergyRetracted({ verification_status: "unconfirmed" })).toBe(false);
       expect(isAllergyRetracted({ verification_status: null })).toBe(false);
       expect(isAllergyRetracted({})).toBe(false);
+    });
+  });
+
+  describe("isMedicationRetracted", () => {
+    it("returns true only for status=entered_in_error", () => {
+      expect(isMedicationRetracted({ status: "entered_in_error" })).toBe(true);
+    });
+
+    it("returns false for active / completed / stopped / null", () => {
+      expect(isMedicationRetracted({ status: "active" })).toBe(false);
+      expect(isMedicationRetracted({ status: "completed" })).toBe(false);
+      expect(isMedicationRetracted({ status: "stopped" })).toBe(false);
+      expect(isMedicationRetracted({ status: null })).toBe(false);
+      expect(isMedicationRetracted({})).toBe(false);
     });
   });
 });

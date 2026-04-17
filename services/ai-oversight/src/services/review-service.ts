@@ -50,6 +50,7 @@ import {
   isoLTE,
   isDiagnosisRetracted,
   isAllergyRetracted,
+  isMedicationRetracted,
 } from "../utils/event-time-snapshot.js";
 import { buildPatientContext } from "../workers/context-builder.js";
 import { validateEventTimestamp } from "../utils/validate-event-timestamp.js";
@@ -648,6 +649,7 @@ export async function buildPatientContextForRules(
   // is missing — defensive, should not be needed under the non-null
   // schema constraint but guards against partial records.
   const activeMedsList = allMeds.filter((m) => {
+    if (isMedicationRetracted(m)) return false;
     const start = m.started_at ?? m.created_at;
     if (isoBefore(eventAt, start)) return false;
     if (m.ended_at && isoLTE(m.ended_at, eventAt)) return false;
