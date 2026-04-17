@@ -341,6 +341,60 @@ describe("buildPatientContext — event-time snapshot (LLM path)", () => {
     );
   });
 
+  // ─── #632 — exclude entered_in_error medications ───────────────────
+  it("excludes a medication with status=entered_in_error even when timestamps say active", async () => {
+    medicationsSelect.mockResolvedValue([
+      {
+        name: "Methotrexate (charting mistake)",
+        status: "entered_in_error",
+        started_at: "2026-04-01T00:00:00.000Z",
+        ended_at: null,
+        created_at: "2026-04-01T00:00:00.000Z",
+        dose_amount: "15",
+        dose_unit: "mg",
+        route: "PO",
+        frequency: "Weekly",
+      },
+      {
+        name: "Cisplatin",
+        status: "active",
+        started_at: "2026-04-01T00:00:00.000Z",
+        ended_at: null,
+        created_at: "2026-04-01T00:00:00.000Z",
+        dose_amount: "75",
+        dose_unit: "mg/m2",
+        route: "IV",
+        frequency: "Q3W",
+      },
+    ]);
+
+    const ctx = await buildPatientContext("p-1", baseEvent);
+
+    const medNames = ctx.active_medications.map((m) => m.name);
+    expect(medNames).not.toContain("Methotrexate (charting mistake)");
+    expect(medNames).toContain("Cisplatin");
+  });
+
+  it("excludes entered_in_error medication even when it has no ended_at (open-ended retraction)", async () => {
+    medicationsSelect.mockResolvedValue([
+      {
+        name: "Warfarin (never actually ordered)",
+        status: "entered_in_error",
+        started_at: "2026-04-10T00:00:00.000Z",
+        ended_at: null,
+        created_at: "2026-04-10T00:00:00.000Z",
+        dose_amount: "5",
+        dose_unit: "mg",
+        route: "PO",
+        frequency: "Daily",
+      },
+    ]);
+
+    const ctx = await buildPatientContext("p-1", baseEvent);
+
+    expect(ctx.active_medications).toHaveLength(0);
+  });
+
   // ─── #515 — exclude logical retractions ────────────────────────────
   it("excludes a diagnosis with status=entered_in_error even when timestamps say active", async () => {
     diagnosesSelect.mockResolvedValue([
