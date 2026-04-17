@@ -34,7 +34,7 @@ import {
   createAllergySchema,
   updateAllergySchema,
 } from "@carebridge/validators";
-import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import crypto from "node:crypto";
 import type { Context } from "../context.js";
 import { assertCareTeamAccess } from "../middleware/rbac.js";
@@ -278,7 +278,7 @@ export const patientRecordsRbacRouter = t.router({
   // Uses patientListColumns projection + .limit() without .where() for the
   // admin path — keeps HIPAA minimum-necessary while giving a quick overview.
   listRecent: protectedProcedure
-    .input(z.object({ limit: z.number().min(1).max(100).optional().default(10) }))
+    .input(z.object({ limit: z.number().int().min(1).max(100).optional().default(10) }))
     .query(async ({ ctx, input }) => {
       if (ctx.user.role !== "admin") {
         throw new TRPCError({
@@ -287,7 +287,7 @@ export const patientRecordsRbacRouter = t.router({
         });
       }
       const db = getDb();
-      return db.select(patientListColumns).from(patients).limit(input.limit);
+      return db.select(patientListColumns).from(patients).orderBy(desc(patients.created_at)).limit(input.limit);
     }),
 
   diagnoses: t.router({
