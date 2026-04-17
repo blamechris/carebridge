@@ -1,0 +1,104 @@
+{
+  "id": "dvt-scenario-onco-vte-neuro-001",
+  "description": "Cancer patient with DVT and new-onset headache — should flag cross-specialty stroke risk (ONCO-VTE-NEURO-001)",
+  "context": {
+    "patient": {
+      "age": 62,
+      "sex": "male",
+      "allergy_status": "nkda",
+      "active_diagnoses": [
+        "Pancreatic adenocarcinoma (stage III)",
+        "Deep vein thrombosis, left lower extremity",
+        "New-onset headache, severe"
+      ],
+      "allergies": []
+    },
+    "active_medications": [
+      {
+        "name": "Enoxaparin",
+        "dose": "80 mg",
+        "route": "subcutaneous",
+        "frequency": "BID",
+        "started_at": "2026-04-10"
+      },
+      {
+        "name": "Gemcitabine",
+        "dose": "1000 mg/m²",
+        "route": "IV",
+        "frequency": "weekly",
+        "started_at": "2026-03-01"
+      },
+      {
+        "name": "Ondansetron",
+        "dose": "8 mg",
+        "route": "oral",
+        "frequency": "PRN",
+        "started_at": "2026-03-01"
+      }
+    ],
+    "latest_vitals": {
+      "blood_pressure": {
+        "value": 158,
+        "unit": "mmHg systolic",
+        "recorded_at": "2026-04-16T14:00:00Z",
+        "trend": "rising"
+      },
+      "heart_rate": {
+        "value": 92,
+        "unit": "bpm",
+        "recorded_at": "2026-04-16T14:00:00Z"
+      },
+      "temperature": {
+        "value": 37.1,
+        "unit": "°C",
+        "recorded_at": "2026-04-16T14:00:00Z"
+      }
+    },
+    "recent_labs": [
+      {
+        "test_name": "D-dimer",
+        "value": 4.2,
+        "unit": "mg/L FEU",
+        "flag": "HIGH",
+        "trend": "rising",
+        "collected_at": "2026-04-15"
+      },
+      {
+        "test_name": "Platelet count",
+        "value": 310,
+        "unit": "x10^9/L",
+        "flag": null,
+        "collected_at": "2026-04-15"
+      }
+    ],
+    "triggering_event": {
+      "type": "symptom_report",
+      "summary": "Patient reports severe new-onset headache",
+      "detail": "62-year-old male with pancreatic cancer and recent DVT presents with sudden-onset severe headache (8/10), photophobia, and mild confusion. Symptoms began 2 hours ago. Patient is on therapeutic enoxaparin."
+    },
+    "recent_flags": [],
+    "care_team": [
+      {
+        "name": "Dr. Smith",
+        "specialty": "Hematology/Oncology",
+        "recent_note_date": "2026-04-14"
+      },
+      {
+        "name": "Dr. Jones",
+        "specialty": "Interventional Radiology",
+        "recent_note_date": "2026-04-12"
+      }
+    ]
+  },
+  "expected": {
+    "shouldFlag": true,
+    "expectedCategories": ["cross-specialty"],
+    "minimumSeverity": "critical",
+    "mustMentionInPrompt": [
+      "Pancreatic adenocarcinoma",
+      "Deep vein thrombosis",
+      "headache",
+      "Enoxaparin"
+    ]
+  }
+}
