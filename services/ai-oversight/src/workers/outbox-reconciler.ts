@@ -24,7 +24,7 @@
 
 import { Queue, Worker } from "bullmq";
 import type { Job } from "bullmq";
-import { and, eq, sql } from "drizzle-orm";
+import { type InferSelectModel, and, eq, sql } from "drizzle-orm";
 import {
   getRedisConnection,
   CLINICAL_EVENTS_JOB_OPTIONS,
@@ -71,16 +71,7 @@ export interface ReconcileResult {
   failed: number;
 }
 
-type ClaimedRow = {
-  id: string;
-  event_type: string;
-  patient_id: string;
-  event_payload: unknown;
-  status: string;
-  retry_count: number | null;
-  created_at: string;
-  updated_at: string | null;
-};
+type ClaimedRow = InferSelectModel<typeof failedClinicalEvents>;
 
 /**
  * Drain one batch of pending outbox rows. Exported for tests.
