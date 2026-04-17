@@ -21,10 +21,11 @@
  */
 
 import type { AllergyStatus } from "@carebridge/shared-types";
+import { patientAllergyStatusSchema } from "@carebridge/validators";
 
 export type { AllergyStatus };
 
-const VALID_ALLERGY_STATUSES: readonly AllergyStatus[] = ["nkda", "unknown", "has_allergies"];
+const VALID_ALLERGY_STATUSES = patientAllergyStatusSchema.options;
 const statusSet: ReadonlySet<string> = new Set(VALID_ALLERGY_STATUSES);
 
 /**
