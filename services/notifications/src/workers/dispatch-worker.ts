@@ -13,7 +13,7 @@
 
 import { Worker, Queue } from "bullmq";
 import type { Job } from "bullmq";
-import { getRedisConnection } from "@carebridge/redis-config";
+import { getRedisConnection, DEFAULT_RETENTION_AGE_SECONDS } from "@carebridge/redis-config";
 import { getDb } from "@carebridge/db-schema";
 import { notifications, users, careTeamAssignments } from "@carebridge/db-schema";
 import { eq, and, isNull, inArray } from "drizzle-orm";
@@ -88,7 +88,7 @@ const connection = getRedisConnection();
 const dlq = new Queue(DLQ_NAME, {
   connection,
   defaultJobOptions: {
-    removeOnComplete: { count: 1000 },
+    removeOnComplete: { age: DEFAULT_RETENTION_AGE_SECONDS, count: 1000 },
     removeOnFail: { count: 10000 },
   },
 });

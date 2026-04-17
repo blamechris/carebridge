@@ -1,5 +1,5 @@
 import { Queue, Worker } from "bullmq";
-import { getRedisConnection } from "@carebridge/redis-config";
+import { getRedisConnection, DEFAULT_RETENTION_AGE_SECONDS } from "@carebridge/redis-config";
 import { cleanupExpiredSessions } from "./session-cleanup.js";
 
 const QUEUE_NAME = "session-cleanup";
@@ -18,7 +18,7 @@ export async function startCleanupWorker(): Promise<{
   const queue = new Queue(QUEUE_NAME, {
     connection,
     defaultJobOptions: {
-      removeOnComplete: { count: 1000 },
+      removeOnComplete: { age: DEFAULT_RETENTION_AGE_SECONDS, count: 1000 },
       removeOnFail: { count: 10000 },
     },
   });
