@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+import type { LogEntry } from "@carebridge/logger";
+
 import { validateEventTimestamp } from "../utils/validate-event-timestamp.js";
 
 // Fixed reference time so tests are deterministic across timezones and CI
@@ -8,45 +10,55 @@ import { validateEventTimestamp } from "../utils/validate-event-timestamp.js";
 const NOW_MS = Date.UTC(2026, 3, 16, 12, 0, 0);
 const now = () => NOW_MS;
 
+/** Parse the structured JSON line emitted by the logger on stderr. */
+function parseLogEntry(spy: ReturnType<typeof vi.spyOn>, callIndex = 0): LogEntry {
+  return JSON.parse(spy.mock.calls[callIndex][0] as string) as LogEntry;
+}
+
 describe("validateEventTimestamp", () => {
-  let warnSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
   afterEach(() => {
-    warnSpy.mockRestore();
+    errorSpy.mockRestore();
   });
 
   it("returns a valid ISO-8601 timestamp unchanged and logs nothing", () => {
     const ts = "2026-04-16T11:59:00.000Z";
     const result = validateEventTimestamp(ts, { now });
     expect(result).toBe(ts);
-    expect(warnSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 
   it("falls back to now when timestamp is undefined, and warns", () => {
     const result = validateEventTimestamp(undefined, { now, eventId: "evt-1" });
     expect(result).toBe(new Date(NOW_MS).toISOString());
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy.mock.calls[0][0]).toContain("missing");
-    expect(warnSpy.mock.calls[0][0]).toContain("evt-1");
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const entry = parseLogEntry(errorSpy);
+    expect(entry.level).toBe("warn");
+    expect(entry.reason).toBe("missing");
+    expect(entry.eventId).toBe("evt-1");
   });
 
   it("falls back to now when timestamp is an empty string, and warns", () => {
     const result = validateEventTimestamp("", { now, eventId: "evt-2" });
     expect(result).toBe(new Date(NOW_MS).toISOString());
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy.mock.calls[0][0]).toContain("empty");
-    expect(warnSpy.mock.calls[0][0]).toContain("evt-2");
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const entry = parseLogEntry(errorSpy);
+    expect(entry.level).toBe("warn");
+    expect(entry.reason).toBe("empty");
+    expect(entry.eventId).toBe("evt-2");
   });
 
   it("falls back to now when timestamp is whitespace-only", () => {
     const result = validateEventTimestamp("   ", { now });
     expect(result).toBe(new Date(NOW_MS).toISOString());
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy.mock.calls[0][0]).toContain("empty");
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const entry = parseLogEntry(errorSpy);
+    expect(entry.reason).toBe("empty");
   });
 
   it("falls back to now when timestamp is unparseable, and warns", () => {
@@ -55,9 +67,11 @@ describe("validateEventTimestamp", () => {
       eventId: "evt-3",
     });
     expect(result).toBe(new Date(NOW_MS).toISOString());
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy.mock.calls[0][0]).toContain("unparseable");
-    expect(warnSpy.mock.calls[0][0]).toContain("evt-3");
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const entry = parseLogEntry(errorSpy);
+    expect(entry.level).toBe("warn");
+    expect(entry.reason).toBe("unparseable");
+    expect(entry.eventId).toBe("evt-3");
   });
 
   it("falls back to now when timestamp is more than 1 minute in the future", () => {
@@ -65,8 +79,9 @@ describe("validateEventTimestamp", () => {
     const future = new Date(NOW_MS + 5 * 60 * 1000).toISOString();
     const result = validateEventTimestamp(future, { now, eventId: "evt-4" });
     expect(result).toBe(new Date(NOW_MS).toISOString());
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy.mock.calls[0][0]).toContain("future");
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const entry = parseLogEntry(errorSpy);
+    expect(entry.reason).toBe("future");
   });
 
   it("accepts a timestamp within the 1-minute clock-skew grace window", () => {
@@ -74,15 +89,16 @@ describe("validateEventTimestamp", () => {
     const slightlyFuture = new Date(NOW_MS + 30 * 1000).toISOString();
     const result = validateEventTimestamp(slightlyFuture, { now });
     expect(result).toBe(slightlyFuture);
-    expect(warnSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 
   it("falls back to now when timestamp is before year 2000 (epoch-leak guard)", () => {
     const epoch = "1970-01-01T00:00:00.000Z";
     const result = validateEventTimestamp(epoch, { now, eventId: "evt-5" });
     expect(result).toBe(new Date(NOW_MS).toISOString());
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy.mock.calls[0][0]).toContain("too-old");
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const entry = parseLogEntry(errorSpy);
+    expect(entry.reason).toBe("too-old");
   });
 
   it("falls back when a non-string value leaks through the type boundary", () => {
@@ -94,17 +110,19 @@ describe("validateEventTimestamp", () => {
       { now, eventId: "evt-6" },
     );
     expect(result).toBe(new Date(NOW_MS).toISOString());
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy.mock.calls[0][0]).toContain("not-a-string");
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const entry = parseLogEntry(errorSpy);
+    expect(entry.reason).toBe("not-a-string");
   });
 
-  it("uses the caller label in the log prefix", () => {
+  it("uses the caller label in the structured log output", () => {
     validateEventTimestamp("", {
       now,
       eventId: "evt-7",
       caller: "context-builder",
     });
-    expect(warnSpy.mock.calls[0][0]).toContain("[context-builder]");
+    const entry = parseLogEntry(errorSpy);
+    expect(entry.caller).toBe("context-builder");
   });
 
   it("calls now() exactly once even when the fallback path is taken (#585)", () => {

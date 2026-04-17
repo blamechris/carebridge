@@ -1,9 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import {
-  validateLLMResponse,
-  MAX_FLAGS,
-  SUSPICIOUS_FLAG_THRESHOLD,
-} from "../llm-validator.js";
+import { validateLLMResponse } from "../llm-validator.js";
+import { MAX_FLAGS, SUSPICIOUS_FLAG_THRESHOLD } from "../constants.js";
 
 function makeFlag(overrides: Record<string, unknown> = {}) {
   return {
