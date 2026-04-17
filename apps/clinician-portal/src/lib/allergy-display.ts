@@ -20,8 +20,11 @@
  * LLM reviewer agree on what an empty list means.
  */
 
-const VALID_ALLERGY_STATUSES = ["nkda", "unknown", "has_allergies"] as const;
-export type AllergyStatus = (typeof VALID_ALLERGY_STATUSES)[number];
+import type { AllergyStatus } from "@carebridge/shared-types";
+
+export type { AllergyStatus };
+
+const VALID_ALLERGY_STATUSES: readonly AllergyStatus[] = ["nkda", "unknown", "has_allergies"];
 const statusSet: ReadonlySet<string> = new Set(VALID_ALLERGY_STATUSES);
 
 /**
