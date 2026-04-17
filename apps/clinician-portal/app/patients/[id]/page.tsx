@@ -617,10 +617,10 @@ interface MedicationStatusSectionProps {
   medications: Array<{
     id: string;
     name: string;
-    dose_amount: string | number | null;
-    dose_unit: string | null;
-    route: string | null;
-    frequency: string | null;
+    dose_amount?: string | number | null;
+    dose_unit?: string | null;
+    route?: string | null;
+    frequency?: string | null;
   }>;
   title: string;
   titleColor?: string;
