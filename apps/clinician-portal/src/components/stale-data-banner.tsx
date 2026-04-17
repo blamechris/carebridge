@@ -10,6 +10,8 @@
  * default. (Issue #525.)
  */
 
+import React from "react";
+
 export interface StaleDataBannerProps {
   /** ISO 8601 timestamp of the most-recent data point. */
   lastRecordedAt: string;
