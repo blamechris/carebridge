@@ -16,6 +16,18 @@ The `audit_log` table is append-only. PostgreSQL triggers
 DELETE against the table. This provides database-level tamper protection
 independent of application code.
 
+### Scope of immutability guarantees
+
+| Table | Role | Immutability triggers | Notes |
+|---|---|---|---|
+| `audit_log` | Authoritative tamper-evident audit trail | Yes (migration 0012) | Append-only; UPDATE/DELETE blocked at DB level |
+| `review_jobs` | Supplementary operational state | No | Stores `rules_output` for decision reconstruction (migration 0032); mutable by normal application operations |
+
+Only `audit_log` satisfies the HIPAA tamper-evidence requirement
+(§164.312(b)). `review_jobs.rules_output` is retained for operational
+decision reconstruction but is **not** covered by immutability triggers
+and should not be cited as part of the tamper-evident audit trail.
+
 ## Archival Plan (future work)
 
 To keep the hot `audit_log` table fast while preserving long-term
