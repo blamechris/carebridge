@@ -55,6 +55,12 @@ export interface PatientContext {
   trigger_event?: ClinicalEvent;
   /** Recent lab values, used by ANC-aware rules. */
   recent_labs?: Array<{ name: string; value: number }>;
+  /**
+   * ISO 8601 event timestamp. Time-sensitive rules (e.g. VTE recency gate)
+   * use this instead of wall-clock time so the evaluation is anchored to the
+   * triggering event, not to when the worker happens to process it.
+   */
+  event_timestamp?: string;
 }
 
 /** ICD-10 pattern for pregnancy-related diagnoses (Z33, Z34, O00-O9A). */
@@ -123,8 +129,9 @@ const VTE_RECENCY_WINDOW_MONTHS = 6;
 function isActiveVTEDiagnosis(
   dx: PatientDiagnosis,
   onAnticoag: boolean,
-  now: Date = new Date(),
+  referenceDate?: Date,
 ): boolean {
+  const now = referenceDate ?? new Date();
   const matchesVTE =
     (dx.icd10_code !== null && VTE_ICD10_PATTERN.test(dx.icd10_code)) ||
     VTE_DESCRIPTION_PATTERN.test(dx.description);
@@ -194,7 +201,7 @@ const ACETAMINOPHEN_PATTERN = /acetaminophen|tylenol|paracetamol|apap/i;
 
 /** Matches explicit high daily dose cues for acetaminophen (≥ 3g/day). */
 const ACETAMINOPHEN_HIGH_DOSE_PATTERN =
-  /\b(3|3\.\d+|4|4\.\d+|5)\s*g(?:\/day|\s*\/\s*d|\s*daily|\b)|\b(3000|4000|5000)\s*mg(?:\/day)?|\b1\s*g(?:ram)?\b.*\b(?:qid|q6h|q\s*6|four times|4x\/day|4 times|tid|q8h|q\s*8|three times|3x\/day|3 times)|\b1000\s*mg\b.*\b(?:qid|q6h|q\s*6|four times|4x\/day|4 times|tid|q8h|q\s*8|three times|3x\/day|3 times)/i;
+  /\b(3|3\.\d+|4|4\.\d+|5)\s*g(?:\/day|\s*\/\s*d|\s*daily|\b)|\b(3000|4000|5000)\s*mg(?:\/day)?|\b1\s*g(?:ram)?\b.*\b(?:qid|q6h|q\s*6|four times|4x(?:\/day|\s*daily)|4 times|tid|q8h|q\s*8|three times|3x(?:\/day|\s*daily)|3 times)|\b1000\s*mg\b.*\b(?:qid|q6h|q\s*6|four times|4x(?:\/day|\s*daily)|4 times|tid|q8h|q\s*8|three times|3x(?:\/day|\s*daily)|3 times)/i;
 
 /** Statin medication match. High-dose cutoffs vary per statin (see helper). */
 const STATIN_PATTERN =
@@ -335,8 +342,11 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       );
 
       if (ctx.active_diagnoses_detail && ctx.active_diagnoses_detail.length > 0) {
+        const refDate = ctx.event_timestamp
+          ? new Date(ctx.event_timestamp)
+          : undefined;
         return ctx.active_diagnoses_detail.some((dx) =>
-          isActiveVTEDiagnosis(dx, onAnticoag),
+          isActiveVTEDiagnosis(dx, onAnticoag, refDate),
         );
       }
 

@@ -690,6 +690,7 @@ export async function buildPatientContextForRules(
     })),
     trigger_event: event,
     recent_labs: recentLabs.length > 0 ? recentLabs : undefined,
+    event_timestamp: eventAt,
   };
 }
 
