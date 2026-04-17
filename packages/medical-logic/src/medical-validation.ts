@@ -273,6 +273,13 @@ const IFCC_SLOPE = 0.09148;
 const IFCC_INTERCEPT = 2.152;
 
 /**
+ * Creatinine unit conversion factor: µmol/L → mg/dL.
+ * Divide a µmol/L value by this constant to obtain mg/dL.
+ * Source: conventional clinical chemistry (molecular weight of creatinine ≈ 113.12 g/mol).
+ */
+export const CREATININE_UMOL_TO_MGDL = 88.4;
+
+/**
  * Unit conversion definitions for tests where the canonical unit differs
  * from an accepted alternate unit. Each entry maps a normalized
  * `fromUnit` to a function that converts a value to the canonical unit.
@@ -290,7 +297,7 @@ const UNIT_CONVERSIONS: Record<
     "mmol/mol": (v: number) => IFCC_SLOPE * v + IFCC_INTERCEPT,
   },
   Creatinine: {
-    "umol/l": (v: number) => v / 88.4,
+    "umol/l": (v: number) => v / CREATININE_UMOL_TO_MGDL,
   },
 };
 
@@ -311,7 +318,7 @@ export function validateLabResult(
   if (!ref) return { valid: true, warnings, errors };
 
   // Unit validation — prevents mg/dL vs mmol/L class confusion, a known
-  // sentinel-event source (glucose ×18, creatinine ×88.4). Tests with an
+  // sentinel-event source (glucose ×18, creatinine ×CREATININE_UMOL_TO_MGDL). Tests with an
   // explicit `allowed_units` list reject mismatches as errors; tests
   // without fall back to a warning when the caller's unit doesn't match
   // the canonical reference unit. The compare normalises case and
