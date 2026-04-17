@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   deriveAllergyDisplayState,
   parseAllergyStatus,
@@ -150,5 +150,31 @@ describe("parseAllergyStatus", () => {
 
   it("returns null for undefined", () => {
     expect(parseAllergyStatus(undefined)).toBeNull();
+  });
+
+  it("emits console.warn for an unexpected string value", () => {
+    const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    parseAllergyStatus("bogus");
+    expect(spy).toHaveBeenCalledWith(
+      '[allergy-display] unexpected allergy_status: "bogus"',
+    );
+    spy.mockRestore();
+  });
+
+  it("emits console.warn for a non-string unexpected value", () => {
+    const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    parseAllergyStatus(42);
+    expect(spy).toHaveBeenCalledWith(
+      "[allergy-display] unexpected allergy_status: 42",
+    );
+    spy.mockRestore();
+  });
+
+  it("does not warn for null or undefined", () => {
+    const spy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    parseAllergyStatus(null);
+    parseAllergyStatus(undefined);
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 });

@@ -369,8 +369,8 @@ describe("dispatch-worker", () => {
       it(`renders whitelisted category "${category}" as "${label}"`, async () => {
         primeRecipients();
 
-        const warnSpy = vi
-          .spyOn(console, "warn")
+        const errorSpy = vi
+          .spyOn(console, "error")
           .mockImplementation(() => undefined);
 
         const event = makeEvent({ severity: "warning", category });
@@ -384,17 +384,26 @@ describe("dispatch-worker", () => {
           `Clinical flag — ${label}. Open the portal to view details.`,
         );
         // Known categories must not trigger the unknown-category warning.
-        expect(warnSpy).not.toHaveBeenCalled();
+        const unknownCatCalls = errorSpy.mock.calls.filter((call) => {
+          if (typeof call[0] !== "string") return false;
+          try {
+            const parsed = JSON.parse(call[0]);
+            return parsed.msg?.includes("Unknown notification category");
+          } catch {
+            return false;
+          }
+        });
+        expect(unknownCatCalls).toHaveLength(0);
 
-        warnSpy.mockRestore();
+        errorSpy.mockRestore();
       });
     }
 
     it("falls back to 'Clinical alert' for unknown categories", async () => {
       primeRecipients();
 
-      const warnSpy = vi
-        .spyOn(console, "warn")
+      const errorSpy = vi
+        .spyOn(console, "error")
         .mockImplementation(() => undefined);
 
       const event = makeEvent({
@@ -422,26 +431,28 @@ describe("dispatch-worker", () => {
       // or fix the upstream rule/LLM output.
       // Issue #591: resolveCategoryLabel is called once per event, so the
       // unknown-category warning must fire exactly once (not once per helper).
-      const unknownWarnCalls = warnSpy.mock.calls.filter((call) =>
-        String(call[0]).includes("Unknown notification category"),
-      );
+      const unknownWarnCalls = errorSpy.mock.calls.filter((call) => {
+        if (typeof call[0] !== "string") return false;
+        try {
+          const parsed = JSON.parse(call[0]);
+          return parsed.msg?.includes("Unknown notification category");
+        } catch {
+          return false;
+        }
+      });
       expect(unknownWarnCalls).toHaveLength(1);
-      const warnCall = warnSpy.mock.calls.find((call) =>
-        String(call[0]).includes("Unknown notification category"),
-      );
-      expect(warnCall).toBeDefined();
-      const context = warnCall![1] as { category: string; fallback: string };
-      expect(context.category).toBe("hiv-status-change");
-      expect(context.fallback).toBe("Clinical alert");
+      const parsed = JSON.parse(unknownWarnCalls[0]![0] as string);
+      expect(parsed.category).toBe("hiv-status-change");
+      expect(parsed.fallback).toBe("Clinical alert");
 
-      warnSpy.mockRestore();
+      errorSpy.mockRestore();
     });
 
     it("published lock-screen payload uses fallback label and carries no PHI for unknown categories", async () => {
       primeRecipients();
 
-      const warnSpy = vi
-        .spyOn(console, "warn")
+      const errorSpy = vi
+        .spyOn(console, "error")
         .mockImplementation(() => undefined);
 
       const event = makeEvent({
@@ -463,7 +474,7 @@ describe("dispatch-worker", () => {
       expect(payload.body).not.toContain("MRN");
       expect(payload.body).not.toMatch(/\d/);
 
-      warnSpy.mockRestore();
+      errorSpy.mockRestore();
     });
   });
 });

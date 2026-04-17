@@ -89,6 +89,7 @@ async function enforcePatientAccess(
 const patientListColumns = {
   id: patients.id,
   name: patients.name,
+  name_hmac: patients.name_hmac,
   date_of_birth: patients.date_of_birth,
   biological_sex: patients.biological_sex,
   diagnosis: patients.diagnosis,
@@ -160,6 +161,7 @@ export const patientRecordsRbacRouter = t.router({
         .select({
           id: patients.id,
           name: patients.name,
+          name_hmac: patients.name_hmac,
           date_of_birth: patients.date_of_birth,
           biological_sex: patients.biological_sex,
           diagnosis: patients.diagnosis,
