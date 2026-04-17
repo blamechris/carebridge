@@ -11,6 +11,7 @@ import { emitClinicalEvent } from "../events.js";
  */
 export async function createLabPanel(
   input: CreateLabPanelInput,
+  options?: { skipValidation?: boolean },
 ): Promise<{ panel: LabPanel; results: LabResult[] }> {
   const db = getDb();
   const now = new Date().toISOString();
@@ -31,13 +32,17 @@ export async function createLabPanel(
 
   // Validate every result before persisting — reject the whole panel if
   // any result has an invalid unit (partial writes are a correctness hazard).
+  // Callers that have already validated can pass { skipValidation: true }
+  // to avoid redundant work (e.g. MedLens bridge).
   const allWarnings: string[] = [];
   const allErrors: string[] = [];
 
-  for (const r of input.results) {
-    const v = validateLabResult(r.test_name, r.value, r.unit);
-    allErrors.push(...v.errors);
-    allWarnings.push(...v.warnings);
+  if (!options?.skipValidation) {
+    for (const r of input.results) {
+      const v = validateLabResult(r.test_name, r.value, r.unit);
+      allErrors.push(...v.errors);
+      allWarnings.push(...v.warnings);
+    }
   }
 
   if (allErrors.length > 0) {
