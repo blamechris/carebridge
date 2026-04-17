@@ -36,7 +36,7 @@ interface DrugInteractionPair {
  * DI-QTC-COMBO rule so the pattern is defined in exactly one place. Curated
  * from CredibleMeds QTDrugs (Known Risk + Possible Risk) and FDA labeling.
  */
-const QTC_PATTERN =
+export const QTC_PATTERN =
   /amiodarone|pacerone|cordarone|sotalol|betapace|dofetilide|tikosyn|dronedarone|multaq|ibutilide|corvert|quinidine|procainamide|disopyramide|norpace|flecainide|tambocor|haloperidol|haldol|thioridazine|mellaril|chlorpromazine|thorazine|pimozide|orap|droperidol|quetiapine|seroquel|risperidone|risperdal|olanzapine|zyprexa|ziprasidone|geodon|aripiprazole|abilify|paliperidone|invega|iloperidone|fanapt|azithromycin|zithromax|erythromycin|clarithromycin|biaxin|levofloxacin|levaquin|moxifloxacin|avelox|ciprofloxacin|cipro|gemifloxacin|factive|ofloxacin|floxin|ondansetron|zofran|granisetron|kytril|dolasetron|anzemet|domperidone|motilium|hydroxychloroquine|plaquenil|chloroquine|aralen|quinine|methadone|dolophine|citalopram|celexa|escitalopram|lexapro|donepezil|aricept|amitriptyline|elavil|imipramine|tofranil|nortriptyline|pamelor|clomipramine|anafranil|sevoflurane|ultane|oxaliplatin|eloxatin|vandetanib|caprelsa|sunitinib|sutent|nilotinib|tasigna/i;
 
 /**
@@ -48,7 +48,7 @@ const QTC_PATTERN =
  * This map normalizes brand names to their generic equivalents before the
  * distinctness comparison.
  */
-const BRAND_TO_GENERIC: Record<string, string> = {
+export const BRAND_TO_GENERIC: Record<string, string> = {
   pacerone: "amiodarone",
   cordarone: "amiodarone",
   betapace: "sotalol",

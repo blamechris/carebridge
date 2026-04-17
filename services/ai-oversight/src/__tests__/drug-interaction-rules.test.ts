@@ -1,6 +1,44 @@
 import { describe, it, expect } from "vitest";
 
-import { checkDrugInteractions } from "../rules/drug-interactions.js";
+import {
+  checkDrugInteractions,
+  QTC_PATTERN,
+  BRAND_TO_GENERIC,
+} from "../rules/drug-interactions.js";
+
+describe("QTC_PATTERN ↔ BRAND_TO_GENERIC sync", () => {
+  const alternates = QTC_PATTERN.source.split("|");
+
+  it("every BRAND_TO_GENERIC key appears in QTC_PATTERN alternates", () => {
+    for (const brand of Object.keys(BRAND_TO_GENERIC)) {
+      expect(alternates).toContain(brand);
+    }
+  });
+
+  it("every BRAND_TO_GENERIC value (generic) appears in QTC_PATTERN alternates", () => {
+    const genericValues = [...new Set(Object.values(BRAND_TO_GENERIC))];
+    for (const generic of genericValues) {
+      expect(alternates).toContain(generic);
+    }
+  });
+
+  it("every alternate is either a generic (not in BRAND_TO_GENERIC keys) or a known brand", () => {
+    const brandKeys = new Set(Object.keys(BRAND_TO_GENERIC));
+    const genericValues = new Set(Object.values(BRAND_TO_GENERIC));
+
+    for (const alt of alternates) {
+      const isBrand = brandKeys.has(alt);
+      const isGeneric = !brandKeys.has(alt);
+      // If it's a brand, it must map to a generic that's also in the pattern
+      if (isBrand) {
+        expect(genericValues).toContain(BRAND_TO_GENERIC[alt]);
+        expect(alternates).toContain(BRAND_TO_GENERIC[alt]!);
+      }
+      // Every alternate must be accounted for: either a brand key or a standalone generic
+      expect(isBrand || isGeneric).toBe(true);
+    }
+  });
+});
 
 describe("DI-QTC-COMBO brand/generic dedup", () => {
   describe("brand + generic of the SAME drug should NOT fire", () => {
