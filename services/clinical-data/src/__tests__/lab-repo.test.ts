@@ -117,6 +117,47 @@ describe("createLabPanel", () => {
       },
     });
   });
+
+  it("rejects a panel when a result has an invalid unit", async () => {
+    await expect(
+      createLabPanel({
+        patient_id: PATIENT_ID,
+        panel_name: "BMP",
+        results: [
+          {
+            test_name: "Glucose",
+            test_code: "2345-7",
+            value: 200,
+            unit: "mmol/L",
+          },
+        ],
+      }),
+    ).rejects.toThrow(/Lab panel validation failed.*Glucose unit "mmol\/L" is not accepted/);
+
+    // No transaction should have been started
+    expect(transactionMock).not.toHaveBeenCalled();
+  });
+
+  it("attaches validation warnings to the emitted clinical event", async () => {
+    await createLabPanel({
+      patient_id: PATIENT_ID,
+      panel_name: "BMP",
+      results: [
+        {
+          test_name: "Glucose",
+          test_code: "2345-7",
+          value: 350,
+          unit: "mg/dL",
+        },
+      ],
+    });
+
+    const emittedEvent = emitClinicalEvent.mock.calls[0][0];
+    expect(emittedEvent.data.validationWarnings).toBeDefined();
+    expect(emittedEvent.data.validationWarnings).toEqual(
+      expect.arrayContaining([expect.stringContaining("above typical range")]),
+    );
+  });
 });
 
 describe("getLabPanelsByPatient", () => {
