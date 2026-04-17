@@ -18,6 +18,7 @@ import { getDb } from "@carebridge/db-schema";
 import { notifications, users, careTeamAssignments } from "@carebridge/db-schema";
 import { eq, and, isNull, inArray } from "drizzle-orm";
 import crypto from "node:crypto";
+import { createLogger } from "@carebridge/logger";
 import type { NotificationEvent } from "../queue.js";
 import { notificationsQueue } from "../queue.js";
 import { publishNotification } from "../publish.js";
@@ -26,6 +27,8 @@ import type { FlagCategory } from "@carebridge/shared-types";
 import { filterRecipientsBySpecialty } from "./specialty-filter.js";
 import type { CandidateRecipient } from "./specialty-filter.js";
 import { getUserPreferences, evaluateDelivery } from "./preferences.js";
+
+const log = createLogger("dispatch-worker");
 
 /**
  * Whitelist of clinical flag categories that are safe to surface on a
@@ -70,10 +73,10 @@ function resolveCategoryLabel(category: string): string {
   if (isSafeCategory(category)) {
     return CATEGORY_LABELS[category];
   }
-  console.warn(
-    "[dispatch-worker] Unknown notification category — falling back to generic label",
-    { category, fallback: UNKNOWN_CATEGORY_LABEL },
-  );
+  log.warn("Unknown notification category — falling back to generic label", {
+    category,
+    fallback: UNKNOWN_CATEGORY_LABEL,
+  });
   return UNKNOWN_CATEGORY_LABEL;
 }
 
@@ -228,10 +231,11 @@ async function processNotificationJob(event: NotificationEvent): Promise<number>
   );
 
   if (recipientIds.length === 0) {
-    console.log(
-      `[dispatch-worker] No recipients found for flag ${event.flag_id} ` +
-        `(patient: ${redactPatientId(event.patient_id)}, specialties: ${event.notify_specialties.join(", ")})`,
-    );
+    log.info("No recipients found for flag", {
+      flagId: event.flag_id,
+      patient: redactPatientId(event.patient_id),
+      specialties: event.notify_specialties,
+    });
     return 0;
   }
 
@@ -266,9 +270,7 @@ async function processNotificationJob(event: NotificationEvent): Promise<number>
 
     if (!decision.deliver_in_app) {
       skippedCount++;
-      console.log(
-        `[dispatch-worker] Skipping notification for user ${userId} — channel disabled`,
-      );
+      log.info("Skipping notification — channel disabled", { userId });
       continue;
     }
 
@@ -276,9 +278,10 @@ async function processNotificationJob(event: NotificationEvent): Promise<number>
       // Re-queue the notification with a delay for this specific user.
       // We create a targeted delayed job rather than holding the current job.
       delayedCount++;
-      console.log(
-        `[dispatch-worker] Delaying notification for user ${userId} by ${Math.round(decision.delay_ms / 60000)}min (quiet hours)`,
-      );
+      log.info("Delaying notification (quiet hours)", {
+        userId,
+        delayMinutes: Math.round(decision.delay_ms / 60000),
+      });
       await notificationsQueue.add(
         "delayed-single",
         {
@@ -336,18 +339,21 @@ async function processNotificationJob(event: NotificationEvent): Promise<number>
         created_at: record.created_at,
       });
     } catch (error) {
-      console.error("[dispatch-worker] Failed to publish notification to Redis", {
+      log.error("Failed to publish notification to Redis", {
         notificationId: record.id,
         userId: record.user_id,
-        error,
+        error: error instanceof Error ? error.message : String(error),
       });
     }
   }
 
-  console.log(
-    `[dispatch-worker] Flag ${event.flag_id} (severity: ${event.severity}): ` +
-      `${immediateCount} immediate, ${delayedCount} delayed, ${skippedCount} skipped`,
-  );
+  log.info("Flag dispatch complete", {
+    flagId: event.flag_id,
+    severity: event.severity,
+    immediateCount,
+    delayedCount,
+    skippedCount,
+  });
 
   return immediateCount;
 }
@@ -394,16 +400,18 @@ async function processDelayedNotification(event: NotificationEvent & { _targeted
       created_at: record.created_at,
     });
   } catch (error) {
-    console.error("[dispatch-worker] Failed to publish delayed notification to Redis", {
+    log.error("Failed to publish delayed notification to Redis", {
       notificationId: record.id,
       userId: record.user_id,
-      error,
+      error: error instanceof Error ? error.message : String(error),
     });
   }
 
-  console.log(
-    `[dispatch-worker] Delivered delayed notification ${record.id} to user ${userId} for flag ${event.flag_id}`,
-  );
+  log.info("Delivered delayed notification", {
+    notificationId: record.id,
+    userId,
+    flagId: event.flag_id,
+  });
 
   return 1;
 }
@@ -417,10 +425,12 @@ export function startDispatchWorker(): Worker {
     async (job: Job) => {
       const event = job.data as NotificationEvent & { _targeted_user_id?: string };
 
-      console.log(
-        `[dispatch-worker] Processing job ${job.id} — flag: ${event.flag_id} ` +
-          `(severity: ${event.severity}, patient: ${redactPatientId(event.patient_id)})`,
-      );
+      log.info("Processing job", {
+        jobId: job.id,
+        flagId: event.flag_id,
+        severity: event.severity,
+        patient: redactPatientId(event.patient_id),
+      });
 
       const startTime = Date.now();
 
@@ -428,10 +438,11 @@ export function startDispatchWorker(): Worker {
         let count: number;
 
         if (job.name === "delayed-single" && event._targeted_user_id) {
-          console.log(
-            `[dispatch-worker] Processing delayed job ${job.id} — flag: ${event.flag_id} ` +
-              `(user: ${event._targeted_user_id})`,
-          );
+          log.info("Processing delayed job", {
+            jobId: job.id,
+            flagId: event.flag_id,
+            userId: event._targeted_user_id,
+          });
           count = await processDelayedNotification(
             event as NotificationEvent & { _targeted_user_id: string },
           );
@@ -440,15 +451,19 @@ export function startDispatchWorker(): Worker {
         }
 
         const elapsed = Date.now() - startTime;
-        console.log(
-          `[dispatch-worker] Job ${job.id} completed in ${elapsed}ms — ${count} notifications created`,
-        );
+        log.info("Job completed", {
+          jobId: job.id,
+          elapsedMs: elapsed,
+          notificationsCreated: count,
+        });
       } catch (error) {
         const elapsed = Date.now() - startTime;
         const message = error instanceof Error ? error.message : String(error);
-        console.error(
-          `[dispatch-worker] Job ${job.id} failed after ${elapsed}ms: ${message}`,
-        );
+        log.error("Job failed", {
+          jobId: job.id,
+          elapsedMs: elapsed,
+          error: message,
+        });
         throw error;
       }
     },
@@ -459,7 +474,7 @@ export function startDispatchWorker(): Worker {
   );
 
   worker.on("ready", () => {
-    console.log(`[dispatch-worker] Worker ready, listening on queue "${QUEUE_NAME}"`);
+    log.info("Worker ready", { queue: QUEUE_NAME });
   });
 
   worker.on("failed", (job: Job | undefined, error: Error) => {
@@ -467,9 +482,12 @@ export function startDispatchWorker(): Worker {
     const maxAttempts = job?.opts?.attempts ?? 1;
     const isExhausted = attemptsMade >= maxAttempts;
 
-    console.error(
-      `[dispatch-worker] Job ${job?.id} failed (attempt ${attemptsMade}/${maxAttempts}): ${error.message}`,
-    );
+    log.error("Job failed", {
+      jobId: job?.id,
+      attemptsMade,
+      maxAttempts,
+      error: error.message,
+    });
 
     if (isExhausted && job != null) {
       const dlqPayload = {
@@ -483,15 +501,16 @@ export function startDispatchWorker(): Worker {
 
       dlq.add("dead-letter", dlqPayload).catch((dlqError: unknown) => {
         const msg = dlqError instanceof Error ? dlqError.message : String(dlqError);
-        console.error(
-          `[dispatch-worker] Failed to move job ${job.id} to DLQ: ${msg}`,
-        );
+        log.error("Failed to move job to DLQ", {
+          jobId: job.id,
+          error: msg,
+        });
       });
     }
   });
 
   worker.on("error", (error: Error) => {
-    console.error(`[dispatch-worker] Worker error: ${error.message}`);
+    log.error("Worker error", { error: error.message });
   });
 
   return worker;

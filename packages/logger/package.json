@@ -1,5 +1,5 @@
 {
-  "name": "@carebridge/phi-sanitizer",
+  "name": "@carebridge/logger",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -14,15 +14,9 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
     "clean": "rm -rf dist"
   },
-  "dependencies": {
-    "@carebridge/logger": "workspace:*"
-  },
   "devDependencies": {
-    "typescript": "^5.7.0",
-    "@types/node": "^22.0.0",
-    "vitest": "^3.0.0"
+    "typescript": "^5.7.0"
   }
 }

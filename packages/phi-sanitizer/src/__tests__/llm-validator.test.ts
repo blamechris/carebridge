@@ -217,17 +217,18 @@ describe("validateLLMResponse — configuration constants", () => {
 });
 
 describe("validateLLMResponse — truncation observability", () => {
-  let warnSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // The structured logger emits warn-level messages to stderr via console.error
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
   afterEach(() => {
-    warnSpy.mockRestore();
+    errorSpy.mockRestore();
   });
 
-  it("emits a structured console.warn when flags exceed MAX_FLAGS", () => {
+  it("emits a structured log when flags exceed MAX_FLAGS", () => {
     const criticals = Array.from({ length: 2 }, () =>
       makeFlag({ severity: "critical" }),
     );
@@ -242,8 +243,8 @@ describe("validateLLMResponse — truncation observability", () => {
     const result = validateLLMResponse(input);
 
     expect(result.ok).toBe(true);
-    // Find the structured truncation log (JSON string, not a raw object).
-    const structuredCall = warnSpy.mock.calls.find(
+    // Find the structured truncation log (JSON string via structured logger).
+    const structuredCall = errorSpy.mock.calls.find(
       (call) => {
         if (typeof call[0] !== "string") return false;
         try {
@@ -257,6 +258,8 @@ describe("validateLLMResponse — truncation observability", () => {
     expect(structuredCall).toBeDefined();
     const parsed = JSON.parse(structuredCall![0] as string);
     expect(parsed).toMatchObject({
+      level: "warn",
+      service: "llm-validator",
       event: "llm_findings_truncated",
       received: 65,
       kept: 50,
@@ -275,7 +278,7 @@ describe("validateLLMResponse — truncation observability", () => {
     const result = validateLLMResponse(JSON.stringify(flags));
 
     expect(result.ok).toBe(true);
-    const structuredCall = warnSpy.mock.calls.find(
+    const structuredCall = errorSpy.mock.calls.find(
       (call) => {
         if (typeof call[0] !== "string") return false;
         try {
