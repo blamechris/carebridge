@@ -55,6 +55,20 @@ export interface ClinicalFlag extends BaseRecord {
   last_escalated_at?: string;
 }
 
+// ─── Rule Engine Output ─────────────────────────────────────────
+// Canonical shape emitted by every deterministic rule function in
+// services/ai-oversight. Persisted verbatim as review_jobs.rules_output.
+
+export interface RuleFlag {
+  severity: FlagSeverity;
+  category: FlagCategory;
+  summary: string;
+  rationale: string;
+  suggested_action: string;
+  notify_specialties: string[];
+  rule_id: string;
+}
+
 // ─── Clinical Rules ──────────────────────────────────────────────
 
 export interface ClinicalRuleCondition {

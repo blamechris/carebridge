@@ -7,8 +7,7 @@
  * specialists might miss because they only see their piece.
  */
 
-import type { FlagSeverity, FlagCategory, ClinicalEvent } from "@carebridge/shared-types";
-import type { RuleFlag } from "./critical-values.js";
+import type { FlagSeverity, FlagCategory, ClinicalEvent, RuleFlag } from "@carebridge/shared-types";
 
 export interface PatientAllergy {
   allergen: string;
