@@ -444,6 +444,12 @@ tr:hover td {
   border: 1px solid var(--success-border);
 }
 
+.badge-inferred {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border: 1px dashed var(--warning-border);
+}
+
 /* ───── Buttons ───── */
 
 .btn {

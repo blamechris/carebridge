@@ -10,6 +10,7 @@ import { createContext } from "./context.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { auditMiddleware } from "./middleware/audit.js";
 import { makeAcceptInviteRateLimitHook } from "./middleware/accept-invite-rate-limit.js";
+import { makePatientReadRateLimitHook } from "./middleware/patient-read-rate-limit.js";
 import { registerNotificationSSE } from "./routes/notifications-sse.js";
 import { redactUrlIds } from "@carebridge/phi-sanitizer";
 import { startBackgroundWorkers } from "./workers.js";
@@ -140,6 +141,16 @@ async function main() {
     makeAcceptInviteRateLimitHook({
       redis: redisClient,
       max: isDev ? 100 : 10,
+    }),
+  );
+
+  // Per-user rate limit for patient record reads (issue #552):
+  // 60 req/min for getSummary, 120 req/min for getById.
+  // Must run as preHandler (after auth) so req.user is populated.
+  server.addHook(
+    "preHandler",
+    makePatientReadRateLimitHook({
+      redis: redisClient,
     }),
   );
 
