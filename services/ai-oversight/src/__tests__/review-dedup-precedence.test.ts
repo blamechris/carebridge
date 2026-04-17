@@ -5,7 +5,7 @@ import {
   severityRank,
   categoryRank,
 } from "../services/review-service.js";
-import type { RuleFlag } from "../rules/critical-values.js";
+import type { RuleFlag } from "@carebridge/shared-types";
 
 function ruleFlag(overrides: Partial<RuleFlag> = {}): RuleFlag {
   return {
