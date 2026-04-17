@@ -105,7 +105,7 @@ describe("validateVital", () => {
     expect(result.warnings.some((w) => w.toLowerCase().includes("critically narrow"))).toBe(false);
   });
 
-  it("critically warns on very narrow pulse pressure PP=15 (boundary, no critical)", () => {
+  it("does not critically warn on narrow pulse pressure at boundary PP=15", () => {
     // 90/75 — PP=15, at the critical threshold boundary (not critical)
     const result = validateVital("blood_pressure", 90, 75);
     expect(result.warnings.some((w) => w.toLowerCase().includes("narrow pulse pressure"))).toBe(true);
@@ -290,6 +290,22 @@ describe("validateLabResult", () => {
     const result = validateLabResult("HbA1c", 5.5);
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.includes("without a unit"))).toBe(true);
+  });
+
+  it("flags HbA1c 42 mmol/mol as above typical range (prediabetes boundary ~6.0 % NGSP)", () => {
+    // 42 mmol/mol → NGSP via IFCC master equation: 42 / 10.929 + 2.15 ≈ 5.993
+    // This exceeds typical_high of 5.6 %, so it should trigger a high warning.
+    const result = validateLabResult("HbA1c", 42, "mmol/mol");
+    expect(result.valid).toBe(true);
+    expect(result.warnings.some((w) => w.includes("above typical range"))).toBe(true);
+  });
+
+  it("accepts HbA1c with uppercase unit MMOL/MOL (case-insensitive normalisation)", () => {
+    // Same value as above but with all-caps unit — normalizeUnit should
+    // handle it identically to lowercase "mmol/mol".
+    const result = validateLabResult("HbA1c", 42, "MMOL/MOL");
+    expect(result.valid).toBe(true);
+    expect(result.warnings.some((w) => w.includes("above typical range"))).toBe(true);
   });
 
   // Unit comparison tolerates case/whitespace variants. Real-world FHIR/HL7
