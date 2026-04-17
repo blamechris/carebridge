@@ -33,6 +33,40 @@ vi.mock("@carebridge/db-schema", () => ({
 import { buildPatientContextForRules } from "../services/review-service.js";
 import type { ClinicalEvent } from "@carebridge/shared-types";
 
+/** Shared helper — resets all select mocks and re-primes the sequenced chain. */
+function primeSelectMocks(): void {
+  // mockReset (not mockClear) — clears the mockImplementationOnce queue too,
+  // so each test starts from an empty implementation sequence and tests
+  // can't bleed unconsumed implementations into each other.
+  selectMock.mockReset();
+  diagnosesSelect.mockReset();
+  medicationsSelect.mockReset();
+  allergiesSelect.mockReset();
+  labsSelect.mockReset();
+
+  // Default: empty allergies. Tests that care about allergies override.
+  allergiesSelect.mockResolvedValue([]);
+
+  // Re-prime the sequenced mock implementations (they are consumed per call).
+  selectMock
+    .mockImplementationOnce(() => ({
+      from: () => ({ where: () => diagnosesSelect() }),
+    }))
+    .mockImplementationOnce(() => ({
+      from: () => ({ where: () => medicationsSelect() }),
+    }))
+    .mockImplementationOnce(() => ({
+      from: () => ({ where: () => allergiesSelect() }),
+    }))
+    .mockImplementationOnce(() => ({
+      from: () => ({
+        innerJoin: () => ({
+          where: () => ({ orderBy: () => labsSelect() }),
+        }),
+      }),
+    }));
+}
+
 const nowIso = "2025-06-15T12:00:00.000Z";
 const stubEvent: ClinicalEvent = {
   id: "evt-1",
@@ -44,36 +78,7 @@ const stubEvent: ClinicalEvent = {
 
 describe("buildPatientContextForRules — recent_labs wiring", () => {
   beforeEach(() => {
-    // mockReset (not mockClear) — clears the mockImplementationOnce queue too,
-    // so each test starts from an empty implementation sequence and tests
-    // can't bleed unconsumed implementations into each other.
-    selectMock.mockReset();
-    diagnosesSelect.mockReset();
-    medicationsSelect.mockReset();
-    allergiesSelect.mockReset();
-    labsSelect.mockReset();
-
-    // Default: empty allergies. Tests that care about allergies override.
-    allergiesSelect.mockResolvedValue([]);
-
-    // Re-prime the sequenced mock implementations (they are consumed per call).
-    selectMock
-      .mockImplementationOnce(() => ({
-        from: () => ({ where: () => diagnosesSelect() }),
-      }))
-      .mockImplementationOnce(() => ({
-        from: () => ({ where: () => medicationsSelect() }),
-      }))
-      .mockImplementationOnce(() => ({
-        from: () => ({ where: () => allergiesSelect() }),
-      }))
-      .mockImplementationOnce(() => ({
-        from: () => ({
-          innerJoin: () => ({
-            where: () => ({ orderBy: () => labsSelect() }),
-          }),
-        }),
-      }));
+    primeSelectMocks();
   });
 
   it("populates recent_labs from the joined lab_results query", async () => {
@@ -529,31 +534,7 @@ import { checkCrossSpecialtyPatterns } from "../rules/cross-specialty.js";
 
 describe("buildPatientContextForRules → checkCrossSpecialtyPatterns (resolved-VTE e2e)", () => {
   beforeEach(() => {
-    selectMock.mockReset();
-    diagnosesSelect.mockReset();
-    medicationsSelect.mockReset();
-    allergiesSelect.mockReset();
-    labsSelect.mockReset();
-
-    allergiesSelect.mockResolvedValue([]);
-
-    selectMock
-      .mockImplementationOnce(() => ({
-        from: () => ({ where: () => diagnosesSelect() }),
-      }))
-      .mockImplementationOnce(() => ({
-        from: () => ({ where: () => medicationsSelect() }),
-      }))
-      .mockImplementationOnce(() => ({
-        from: () => ({ where: () => allergiesSelect() }),
-      }))
-      .mockImplementationOnce(() => ({
-        from: () => ({
-          innerJoin: () => ({
-            where: () => ({ orderBy: () => labsSelect() }),
-          }),
-        }),
-      }));
+    primeSelectMocks();
   });
 
   it("does NOT fire ONCO-VTE-NEURO-001 for cancer + resolved VTE (onset 2y ago, resolved 18mo ago) + headache", async () => {
