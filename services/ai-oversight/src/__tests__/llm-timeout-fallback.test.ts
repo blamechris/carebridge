@@ -71,15 +71,21 @@ vi.mock("@carebridge/db-schema", () => ({
   careTeamAssignments: { patient_id: "patient_id", user_id: "user_id" },
 }));
 
-vi.mock("drizzle-orm", () => ({
-  eq: vi.fn((...args: unknown[]) => args),
-  desc: vi.fn((col: unknown) => col),
-  gte: vi.fn((...args: unknown[]) => args),
-  and: vi.fn((...args: unknown[]) => args),
-  or: vi.fn((...args: unknown[]) => args),
-  inArray: vi.fn((...args: unknown[]) => args),
-  sql: vi.fn(),
-}));
+vi.mock("drizzle-orm", () => {
+  const sqlTag = vi.fn((_strings: TemplateStringsArray, ..._values: unknown[]) => ({
+    __sql: true,
+  }));
+  (sqlTag as unknown as Record<string, unknown>).raw = vi.fn((v: string) => ({ __raw: v }));
+  return {
+    eq: vi.fn((...args: unknown[]) => args),
+    desc: vi.fn((col: unknown) => col),
+    gte: vi.fn((...args: unknown[]) => args),
+    and: vi.fn((...args: unknown[]) => args),
+    or: vi.fn((...args: unknown[]) => args),
+    inArray: vi.fn((...args: unknown[]) => args),
+    sql: sqlTag,
+  };
+});
 
 vi.mock("@carebridge/ai-prompts", () => ({
   CLINICAL_REVIEW_SYSTEM_PROMPT: "system prompt",
