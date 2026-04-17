@@ -391,6 +391,19 @@ describe("validateLabResult", () => {
     expect(microSign.valid).toBe(asciiU.valid);
   });
 
+  it("normalises µmol/L (U+00B5) to umol/L in allowed_units rejection", () => {
+    // Creatinine only allows mg/dL — both µmol/L and umol/L must be
+    // rejected identically, proving normalisation runs before the
+    // allowed_units comparison (positive-path acceptance requires a
+    // corresponding UNIT_CONVERSIONS entry, so we test equivalence here).
+    const microSign = validateLabResult("Creatinine", 88.4, "\u00b5mol/L");
+    const asciiU = validateLabResult("Creatinine", 88.4, "umol/L");
+    expect(microSign.valid).toBe(false);
+    expect(asciiU.valid).toBe(false);
+    expect(microSign.errors).toHaveLength(1);
+    expect(asciiU.errors).toHaveLength(1);
+  });
+
   it("error message quotes the caller's original (non-normalized) unit", () => {
     // Normalisation is only used for comparison; the operator's typed
     // string should surface verbatim so they can see what they entered.
