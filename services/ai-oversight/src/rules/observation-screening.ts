@@ -11,8 +11,7 @@
  * `patient.observation` events.
  */
 
-import type { FlagCategory, ClinicalEvent } from "@carebridge/shared-types";
-import type { RuleFlag } from "./critical-values.js";
+import type { FlagCategory, ClinicalEvent, RuleFlag } from "@carebridge/shared-types";
 import {
   SHARED_CRITICAL_PATTERNS,
   materializePattern,

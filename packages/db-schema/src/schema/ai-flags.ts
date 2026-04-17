@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { pgTable, text, integer, boolean, jsonb, index, uniqueIndex } from "drizzle-orm/pg-core";
+import type { RuleFlag } from "@carebridge/shared-types";
 import { patients } from "./patients.js";
 
 export const clinicalFlags = pgTable("clinical_flags", {
@@ -75,7 +76,7 @@ export const reviewJobs = pgTable("review_jobs", {
   // notify_specialties, rule_id) so regulatory and forensic audits can
   // reconstruct the decision without replaying the rule engine against
   // (possibly-mutated) patient state. See migration 0032.
-  rules_output: jsonb("rules_output").$type<Array<Record<string, unknown>>>().default([]),
+  rules_output: jsonb("rules_output").$type<RuleFlag[]>().default([]),
   llm_request_tokens: integer("llm_request_tokens"),
   llm_response_tokens: integer("llm_response_tokens"),
   redacted_prompt: text("redacted_prompt"),
