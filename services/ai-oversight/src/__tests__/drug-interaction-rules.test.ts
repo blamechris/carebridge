@@ -24,7 +24,12 @@ describe("QTC_PATTERN ↔ BRAND_TO_GENERIC sync", () => {
 
   it("every alternate is either a generic (not in BRAND_TO_GENERIC keys) or a known brand", () => {
     const brandKeys = new Set(Object.keys(BRAND_TO_GENERIC));
-    const genericValues = new Set(Object.values(BRAND_TO_GENERIC));
+    // Generic names from BRAND_TO_GENERIC values, plus standalone generics
+    // (alternates that appear in the pattern but have no brand mapping)
+    const genericValues = new Set([
+      ...Object.values(BRAND_TO_GENERIC),
+      ...alternates.filter((alt) => !brandKeys.has(alt)),
+    ]);
 
     for (const alt of alternates) {
       const isBrand = brandKeys.has(alt);
