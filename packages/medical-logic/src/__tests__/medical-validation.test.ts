@@ -392,8 +392,8 @@ describe("validateLabResult", () => {
     expect(microSign.valid).toBe(asciiU.valid);
   });
 
-  it("accepts Creatinine in umol/L — CREATININE_UMOL_TO_MGDL umol/L converts to 1.0 mg/dL (normal, no warnings)", () => {
-    // CREATININE_UMOL_TO_MGDL µmol/L ÷ CREATININE_UMOL_TO_MGDL = 1.0 mg/dL → within 0.6–1.2 typical range
+  it("accepts Creatinine in umol/L — 88.4 umol/L converts to 1.0 mg/dL (normal, no warnings)", () => {
+    // 88.4 µmol/L ÷ 88.4 = 1.0 mg/dL → within 0.6–1.2 typical range
     const result = validateLabResult("Creatinine", CREATININE_UMOL_TO_MGDL, "umol/L");
     expect(result.valid).toBe(true);
     expect(result.warnings).toHaveLength(0);
@@ -407,7 +407,7 @@ describe("validateLabResult", () => {
   });
 
   it("warns on Creatinine 200 umol/L (above typical range — ~2.26 mg/dL)", () => {
-    // 200 µmol/L ÷ CREATININE_UMOL_TO_MGDL ≈ 2.26 mg/dL → above 1.2 mg/dL typical high
+    // 200 µmol/L ÷ 88.4 ≈ 2.26 mg/dL → above 1.2 mg/dL typical high
     const result = validateLabResult("Creatinine", 200, "umol/L");
     expect(result.valid).toBe(true);
     expect(result.warnings.some((w) => w.includes("above typical range"))).toBe(true);
