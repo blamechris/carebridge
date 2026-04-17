@@ -223,19 +223,25 @@ describe("patientRecordsRbacRouter.list — HIPAA minimum-necessary filtering", 
     });
   });
 
-  it("returns all patients for admin role", async () => {
+  it("returns all patients for admin role with projection", async () => {
     const admin = makeUser("admin", ADMIN_ID);
     const caller = callerFor(admin);
 
     const result = await caller.list();
 
     expect(result).toEqual(ALL_PATIENTS);
-    // Admin select should NOT pass column subset — full select()
-    const selectCall = mocks.mockDb.select.mock.calls[0];
-    expect(selectCall).toBeDefined();
+    // Admin select should now pass a column subset (HIPAA projection)
+    const selectArg = mocks.mockDb.select.mock.calls[0]?.[0];
+    expect(selectArg).toBeDefined();
+    expect(selectArg).toHaveProperty("id");
+    expect(selectArg).toHaveProperty("name");
+    expect(selectArg).not.toHaveProperty("insurance_id");
+    expect(selectArg).not.toHaveProperty("emergency_contact_name");
+    expect(selectArg).not.toHaveProperty("emergency_contact_phone");
+    expect(selectArg).not.toHaveProperty("notes");
   });
 
-  it("returns only the patient's own record for patient role", async () => {
+  it("returns only the patient's own record for patient role with projection", async () => {
     mocks.setResolvedData([PATIENT_RECORD_1]);
     const patient = makeUser("patient", "user-patient-id", {
       patient_id: PATIENT_RECORD_1.id,
@@ -245,6 +251,12 @@ describe("patientRecordsRbacRouter.list — HIPAA minimum-necessary filtering", 
     const result = await caller.list();
 
     expect(result).toEqual([PATIENT_RECORD_1]);
+    // Patient self-lookup should also use column projection
+    const selectArg = mocks.mockDb.select.mock.calls[0]?.[0];
+    expect(selectArg).toBeDefined();
+    expect(selectArg).toHaveProperty("id");
+    expect(selectArg).not.toHaveProperty("insurance_id");
+    expect(selectArg).not.toHaveProperty("notes");
   });
 
   it("returns empty list for patient with no patient_id link", async () => {
@@ -296,4 +308,43 @@ describe("patientRecordsRbacRouter.list — HIPAA minimum-necessary filtering", 
 
     expect(result).toEqual([PATIENT_RECORD_1]);
   });
+
+  // ---------------------------------------------------------------------------
+  // HIPAA minimum-necessary projection regression (issue #550)
+  // ---------------------------------------------------------------------------
+
+  const EXCLUDED_FIELDS = [
+    "insurance_id",
+    "emergency_contact_name",
+    "emergency_contact_phone",
+    "notes",
+  ] as const;
+
+  for (const role of ["admin", "patient", "physician", "nurse", "specialist"] as const) {
+    it(`excludes sensitive columns from list response for ${role} role`, async () => {
+      mocks.setResolvedData(role === "patient" ? [PATIENT_RECORD_1] : ALL_PATIENTS);
+      const overrides: Partial<User> =
+        role === "patient" ? { patient_id: PATIENT_RECORD_1.id } : {};
+      const userId =
+        role === "admin"
+          ? ADMIN_ID
+          : role === "physician"
+            ? PHYSICIAN_ID
+            : role === "nurse"
+              ? NURSE_ID
+              : role === "patient"
+                ? "user-patient-id"
+                : "55555555-5555-4555-8555-555555555555";
+      const user = makeUser(role, userId, overrides);
+      const caller = callerFor(user);
+
+      await caller.list();
+
+      const selectArg = mocks.mockDb.select.mock.calls[0]?.[0];
+      expect(selectArg).toBeDefined();
+      for (const field of EXCLUDED_FIELDS) {
+        expect(selectArg).not.toHaveProperty(field);
+      }
+    });
+  }
 });
