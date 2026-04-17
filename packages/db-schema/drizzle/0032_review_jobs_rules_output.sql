@@ -9,6 +9,13 @@
 -- rules_output is a jsonb array of RuleFlag entries (see packages/shared-
 -- types for the canonical shape). Nullable default '[]' keeps pre-existing
 -- rows valid; new writes always populate.
+--
+-- NOTE: review_jobs is supplementary operational state used for decision
+-- reconstruction; it is NOT part of the tamper-evident audit trail.
+-- The authoritative append-only audit log is the `audit_log` table,
+-- which is protected by immutability triggers (see migration
+-- 0012_audit_log_immutability.sql). review_jobs rows may be updated
+-- or deleted by normal application operations.
 
 ALTER TABLE review_jobs
   ADD COLUMN IF NOT EXISTS rules_output jsonb NOT NULL DEFAULT '[]';
