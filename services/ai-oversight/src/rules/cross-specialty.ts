@@ -55,6 +55,12 @@ export interface PatientContext {
   trigger_event?: ClinicalEvent;
   /** Recent lab values, used by ANC-aware rules. */
   recent_labs?: Array<{ name: string; value: number }>;
+  /**
+   * ISO 8601 event timestamp. Time-sensitive rules (e.g. VTE recency gate)
+   * use this instead of wall-clock time so the evaluation is anchored to the
+   * triggering event, not to when the worker happens to process it.
+   */
+  event_timestamp?: string;
 }
 
 /** ICD-10 pattern for pregnancy-related diagnoses (Z33, Z34, O00-O9A). */
@@ -123,8 +129,9 @@ const VTE_RECENCY_WINDOW_MONTHS = 6;
 function isActiveVTEDiagnosis(
   dx: PatientDiagnosis,
   onAnticoag: boolean,
-  now: Date = new Date(),
+  referenceDate?: Date,
 ): boolean {
+  const now = referenceDate ?? new Date();
   const matchesVTE =
     (dx.icd10_code !== null && VTE_ICD10_PATTERN.test(dx.icd10_code)) ||
     VTE_DESCRIPTION_PATTERN.test(dx.description);
@@ -335,8 +342,11 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       );
 
       if (ctx.active_diagnoses_detail && ctx.active_diagnoses_detail.length > 0) {
+        const refDate = ctx.event_timestamp
+          ? new Date(ctx.event_timestamp)
+          : undefined;
         return ctx.active_diagnoses_detail.some((dx) =>
-          isActiveVTEDiagnosis(dx, onAnticoag),
+          isActiveVTEDiagnosis(dx, onAnticoag, refDate),
         );
       }
 

@@ -199,11 +199,13 @@ describe("ONCO-VTE-NEURO-001 — Cancer + VTE + neurological symptom", () => {
   // common neurological complaint (e.g. tension headache).
 
   it("does NOT fire when the VTE is resolved years ago (status=resolved)", () => {
-    const today = new Date();
-    const sixYearsAgo = new Date(today);
-    sixYearsAgo.setFullYear(today.getFullYear() - 6);
-    const fiveYearsAgo = new Date(today);
-    fiveYearsAgo.setFullYear(today.getFullYear() - 5);
+    // Fixed reference date to avoid wall-clock dependency
+    const referenceDate = "2025-06-15T12:00:00.000Z";
+    const refDate = new Date(referenceDate);
+    const sixYearsAgo = new Date(refDate);
+    sixYearsAgo.setFullYear(refDate.getFullYear() - 6);
+    const fiveYearsAgo = new Date(refDate);
+    fiveYearsAgo.setFullYear(refDate.getFullYear() - 5);
 
     const ctx: PatientContext = {
       active_diagnoses: ["Pancreatic cancer", "Deep vein thrombosis"],
@@ -211,6 +213,7 @@ describe("ONCO-VTE-NEURO-001 — Cancer + VTE + neurological symptom", () => {
       active_medications: [],
       new_symptoms: ["tension headache"],
       care_team_specialties: ["oncology"],
+      event_timestamp: referenceDate,
       active_diagnoses_detail: [
         {
           description: "Pancreatic cancer",
@@ -235,9 +238,10 @@ describe("ONCO-VTE-NEURO-001 — Cancer + VTE + neurological symptom", () => {
   });
 
   it("does NOT fire when VTE onset is >6 months ago and patient is off anticoagulation", () => {
-    const today = new Date();
-    const twoYearsAgo = new Date(today);
-    twoYearsAgo.setFullYear(today.getFullYear() - 2);
+    const referenceDate = "2025-06-15T12:00:00.000Z";
+    const refDate = new Date(referenceDate);
+    const twoYearsAgo = new Date(refDate);
+    twoYearsAgo.setFullYear(refDate.getFullYear() - 2);
 
     const ctx: PatientContext = {
       active_diagnoses: ["Pancreatic cancer", "History of DVT"],
@@ -245,6 +249,7 @@ describe("ONCO-VTE-NEURO-001 — Cancer + VTE + neurological symptom", () => {
       active_medications: [], // off anticoagulation
       new_symptoms: ["headache"],
       care_team_specialties: ["oncology"],
+      event_timestamp: referenceDate,
       active_diagnoses_detail: [
         {
           description: "Pancreatic cancer",
@@ -269,9 +274,10 @@ describe("ONCO-VTE-NEURO-001 — Cancer + VTE + neurological symptom", () => {
   });
 
   it("fires when VTE onset is recent (<6 months) even without anticoagulation", () => {
-    const today = new Date();
-    const threeMonthsAgo = new Date(today);
-    threeMonthsAgo.setMonth(today.getMonth() - 3);
+    const referenceDate = "2025-06-15T12:00:00.000Z";
+    const refDate = new Date(referenceDate);
+    const threeMonthsAgo = new Date(refDate);
+    threeMonthsAgo.setMonth(refDate.getMonth() - 3);
 
     const ctx: PatientContext = {
       active_diagnoses: ["Pancreatic cancer", "Deep vein thrombosis"],
@@ -279,6 +285,7 @@ describe("ONCO-VTE-NEURO-001 — Cancer + VTE + neurological symptom", () => {
       active_medications: [],
       new_symptoms: ["new onset severe headache"],
       care_team_specialties: ["oncology"],
+      event_timestamp: referenceDate,
       active_diagnoses_detail: [
         {
           description: "Pancreatic cancer",
@@ -304,9 +311,10 @@ describe("ONCO-VTE-NEURO-001 — Cancer + VTE + neurological symptom", () => {
   });
 
   it("fires when VTE onset is old but patient is on active anticoagulation (proxy for active disease)", () => {
-    const today = new Date();
-    const twoYearsAgo = new Date(today);
-    twoYearsAgo.setFullYear(today.getFullYear() - 2);
+    const referenceDate = "2025-06-15T12:00:00.000Z";
+    const refDate = new Date(referenceDate);
+    const twoYearsAgo = new Date(refDate);
+    twoYearsAgo.setFullYear(refDate.getFullYear() - 2);
 
     const ctx: PatientContext = {
       active_diagnoses: ["Pancreatic cancer", "Chronic DVT"],
@@ -314,6 +322,7 @@ describe("ONCO-VTE-NEURO-001 — Cancer + VTE + neurological symptom", () => {
       active_medications: ["Apixaban 5mg BID"], // still anticoagulated
       new_symptoms: ["new headache"],
       care_team_specialties: ["oncology", "hematology"],
+      event_timestamp: referenceDate,
       active_diagnoses_detail: [
         {
           description: "Pancreatic cancer",
@@ -340,11 +349,12 @@ describe("ONCO-VTE-NEURO-001 — Cancer + VTE + neurological symptom", () => {
   it("does NOT fire when VTE has a resolved_date in the past even if status string is 'active'", () => {
     // EHR data is messy: some problem lists leave status='active' even after
     // the diagnosis is resolved. A non-null resolved_date wins.
-    const today = new Date();
-    const oneYearAgo = new Date(today);
-    oneYearAgo.setFullYear(today.getFullYear() - 1);
-    const eighteenMonthsAgo = new Date(today);
-    eighteenMonthsAgo.setMonth(today.getMonth() - 18);
+    const referenceDate = "2025-06-15T12:00:00.000Z";
+    const refDate = new Date(referenceDate);
+    const oneYearAgo = new Date(refDate);
+    oneYearAgo.setFullYear(refDate.getFullYear() - 1);
+    const eighteenMonthsAgo = new Date(refDate);
+    eighteenMonthsAgo.setMonth(refDate.getMonth() - 18);
 
     const ctx: PatientContext = {
       active_diagnoses: ["Pancreatic cancer", "Deep vein thrombosis"],
@@ -352,6 +362,7 @@ describe("ONCO-VTE-NEURO-001 — Cancer + VTE + neurological symptom", () => {
       active_medications: [],
       new_symptoms: ["headache"],
       care_team_specialties: ["oncology"],
+      event_timestamp: referenceDate,
       active_diagnoses_detail: [
         {
           description: "Pancreatic cancer",
