@@ -181,22 +181,33 @@ export function validateVital(
       errors.push(`Diastolic ${secondary} is outside plausible range (20–200)`);
     }
 
-    // Pulse-pressure plausibility check. Normal adult pulse pressure is
-    // ~30-50 mmHg; a narrow (<20) PP usually indicates shock, tamponade,
-    // or an artifact, and a wide (>100) PP suggests aortic regurgitation
-    // or measurement error. Either extreme is physically implausible
-    // without clinical context that should be confirmed on the record.
+    // Pulse-pressure tiered check (issue #519). Normal adult PP ~30-50 mmHg.
+    // Narrow PP: <25 warning (low stroke volume, tamponade, hypovolemia),
+    //            <15 critical (impending circulatory collapse).
+    // Wide PP:   >60 warning (aortic stiffening, AR, thyrotoxicosis),
+    //            >100 critical (severe AR or measurement error).
+    // Refs: Dart & Gregoire 2012, ESC 2018 arterial stiffness guidelines.
     if (secondary < primary) {
       const pulsePressure = primary - secondary;
-      if (pulsePressure < 20) {
+      if (pulsePressure < 15) {
+        warnings.push(
+          `Critically narrow pulse pressure ${pulsePressure} mmHg (${primary}/${secondary}) — ` +
+            `consider impending circulatory collapse, cardiac tamponade, or measurement artifact`,
+        );
+      } else if (pulsePressure < 25) {
         warnings.push(
           `Narrow pulse pressure ${pulsePressure} mmHg (${primary}/${secondary}) — ` +
-            `consider shock, cardiac tamponade, or measurement artifact`,
+            `consider shock, cardiac tamponade, or hypovolemia`,
         );
       } else if (pulsePressure > 100) {
         warnings.push(
+          `Critically wide pulse pressure ${pulsePressure} mmHg (${primary}/${secondary}) — ` +
+            `consider severe aortic regurgitation or measurement error`,
+        );
+      } else if (pulsePressure > 60) {
+        warnings.push(
           `Wide pulse pressure ${pulsePressure} mmHg (${primary}/${secondary}) — ` +
-            `consider aortic regurgitation or measurement error`,
+            `consider aortic stiffening, aortic regurgitation, or thyrotoxicosis`,
         );
       }
     }
@@ -245,8 +256,30 @@ export function validateMedicationDose(
  * they typed.
  */
 function normalizeUnit(u: string): string {
-  return u.trim().toLowerCase().replace(/\s+/g, "");
+  return u
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[\u00b5\u03bc]/g, "u"); // µ (MICRO SIGN) and μ (GREEK MU) → u
 }
+
+/**
+ * Unit conversion definitions for tests where the canonical unit differs
+ * from an accepted alternate unit. Each entry maps a normalized
+ * `fromUnit` to a function that converts a value to the canonical unit.
+ *
+ * Currently supported:
+ *  - HbA1c: IFCC mmol/mol → NGSP % via the IFCC master equation
+ *    NGSP% = (IFCC / 10.929) + 2.15
+ */
+const UNIT_CONVERSIONS: Record<
+  string,
+  Record<string, (value: number) => number>
+> = {
+  HbA1c: {
+    "mmol/mol": (v: number) => v / 10.929 + 2.15,
+  },
+};
 
 export function validateLabResult(
   testName: string,
@@ -296,12 +329,25 @@ export function validateLabResult(
     );
   }
 
-  if (value < ref.typical_low) {
+  // Convert submitted value to canonical unit for range comparison when the
+  // caller used an accepted alternate unit (e.g. IFCC mmol/mol → NGSP %).
+  // Without this, a valid 37 mmol/mol HbA1c (≈ 5.5 %) would be flagged as
+  // below the 4.0–5.6 % typical range.
+  let compareValue = value;
+  if (unit && normalizeUnit(unit) !== normalizeUnit(ref.unit)) {
+    const conversions = UNIT_CONVERSIONS[testName];
+    const converter = conversions?.[normalizeUnit(unit)];
+    if (converter) {
+      compareValue = converter(value);
+    }
+  }
+
+  if (compareValue < ref.typical_low) {
     warnings.push(
       `${testName} value ${value} ${unit ?? ref.unit} is below typical range (${ref.typical_low}–${ref.typical_high} ${ref.unit})`
     );
   }
-  if (value > ref.typical_high) {
+  if (compareValue > ref.typical_high) {
     warnings.push(
       `${testName} value ${value} ${unit ?? ref.unit} is above typical range (${ref.typical_low}–${ref.typical_high} ${ref.unit})`
     );
