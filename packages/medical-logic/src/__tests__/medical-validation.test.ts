@@ -292,6 +292,22 @@ describe("validateLabResult", () => {
     expect(result.errors.some((e) => e.includes("without a unit"))).toBe(true);
   });
 
+  it("flags HbA1c 42 mmol/mol as above typical range (prediabetes boundary ~6.0 % NGSP)", () => {
+    // 42 mmol/mol → NGSP via IFCC master equation: 42 / 10.929 + 2.15 ≈ 5.993
+    // This exceeds typical_high of 5.6 %, so it should trigger a high warning.
+    const result = validateLabResult("HbA1c", 42, "mmol/mol");
+    expect(result.valid).toBe(true);
+    expect(result.warnings.some((w) => w.includes("above typical range"))).toBe(true);
+  });
+
+  it("accepts HbA1c with uppercase unit MMOL/MOL (case-insensitive normalisation)", () => {
+    // Same value as above but with all-caps unit — normalizeUnit should
+    // handle it identically to lowercase "mmol/mol".
+    const result = validateLabResult("HbA1c", 42, "MMOL/MOL");
+    expect(result.valid).toBe(true);
+    expect(result.warnings.some((w) => w.includes("above typical range"))).toBe(true);
+  });
+
   // Unit comparison tolerates case/whitespace variants. Real-world FHIR/HL7
   // feeds frequently send "mg/dl" (UCUM canonical) or "MG/DL" (lab vendor
   // shorthand); normalising both sides prevents false-reject errors on
