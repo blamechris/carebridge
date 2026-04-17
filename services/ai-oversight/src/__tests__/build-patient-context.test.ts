@@ -33,7 +33,7 @@ vi.mock("@carebridge/db-schema", () => ({
 import { buildPatientContextForRules } from "../services/review-service.js";
 import type { ClinicalEvent } from "@carebridge/shared-types";
 
-const nowIso = new Date().toISOString();
+const nowIso = "2025-06-15T12:00:00.000Z";
 const stubEvent: ClinicalEvent = {
   id: "evt-1",
   type: "vital.created",
@@ -95,6 +95,7 @@ describe("buildPatientContextForRules — recent_labs wiring", () => {
       { name: "ANC", value: 800 },
       { name: "WBC", value: 2.1 },
     ]);
+    expect(ctx.event_timestamp).toBe(stubEvent.timestamp);
     expect(ctx.active_diagnoses).toContain("Breast cancer");
     expect(ctx.active_medications).toContain("Cisplatin");
   });

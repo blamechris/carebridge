@@ -385,8 +385,29 @@ describe("patientRecordsRbacRouter.list — HIPAA minimum-necessary filtering", 
     "notes",
   ] as const;
 
-  for (const role of ["admin", "patient", "physician", "nurse", "specialist"] as const) {
+  for (const role of ["admin", "patient", "physician", "nurse", "specialist", "family_caregiver"] as const) {
     it(`excludes sensitive columns from list response for ${role} role`, async () => {
+      if (role === "family_caregiver") {
+        const CAREGIVER_ID = "77777777-7777-4777-8777-777777777777";
+        const CAREGIVER_USER_ID = "88888888-8888-4888-8888-888888888888";
+        mocks.setResolvedDataQueue([
+          [{ patient_user_id: CAREGIVER_USER_ID }],
+          [{ patient_id: PATIENT_RECORD_1.id }],
+          [PATIENT_RECORD_1],
+        ]);
+        const user = makeUser("family_caregiver" as User["role"], CAREGIVER_ID);
+        const caller = callerFor(user);
+
+        await caller.list();
+
+        const selectArg = mocks.mockDb.select.mock.calls[2]?.[0];
+        expect(selectArg).toBeDefined();
+        for (const field of EXCLUDED_FIELDS) {
+          expect(selectArg).not.toHaveProperty(field);
+        }
+        return;
+      }
+
       mocks.setResolvedData(role === "patient" ? [PATIENT_RECORD_1] : ALL_PATIENTS);
       const overrides: Partial<User> =
         role === "patient" ? { patient_id: PATIENT_RECORD_1.id } : {};

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   getRedisConnection,
   CLINICAL_EVENTS_JOB_OPTIONS,
+  DEFAULT_RETENTION_AGE_SECONDS,
 } from "./redis.js";
 
 describe("getRedisConnection", () => {
@@ -103,7 +104,7 @@ describe("CLINICAL_EVENTS_JOB_OPTIONS", () => {
   });
 
   it("keeps history bounded", () => {
-    expect(CLINICAL_EVENTS_JOB_OPTIONS.removeOnComplete).toEqual({ age: 600, count: 1000 });
+    expect(CLINICAL_EVENTS_JOB_OPTIONS.removeOnComplete).toEqual({ age: DEFAULT_RETENTION_AGE_SECONDS, count: 1000 });
     expect(CLINICAL_EVENTS_JOB_OPTIONS.removeOnFail).toEqual({ count: 10000 });
   });
 });

@@ -346,6 +346,49 @@ describe("ONCO-VTE-NEURO-001 — Cancer + VTE + neurological symptom", () => {
     expect(flag).toBeDefined();
   });
 
+  it("does NOT fire when VTE onset is 2 years ago, resolved 18 months ago (wasActiveAt + isActiveVTEDiagnosis combined)", () => {
+    // Integration test: verifies that the wasActiveAt pre-filter (which
+    // excludes resolved diagnoses) and the isActiveVTEDiagnosis recency gate
+    // (which requires onset < 6 months or active anticoagulation) work
+    // together. A patient with cancer, a long-resolved VTE, and a headache
+    // must NOT trigger ONCO-VTE-NEURO-001. See issue #588.
+    const referenceDate = "2025-06-15T12:00:00.000Z";
+    const refDate = new Date(referenceDate);
+    const twoYearsAgo = new Date(refDate);
+    twoYearsAgo.setFullYear(refDate.getFullYear() - 2);
+    const eighteenMonthsAgo = new Date(refDate);
+    eighteenMonthsAgo.setMonth(refDate.getMonth() - 18);
+
+    const ctx: PatientContext = {
+      active_diagnoses: ["Breast cancer", "Deep vein thrombosis"],
+      active_diagnosis_codes: ["C50.9", "I82.401"],
+      active_medications: [],
+      new_symptoms: ["headache"],
+      care_team_specialties: ["oncology"],
+      event_timestamp: referenceDate,
+      active_diagnoses_detail: [
+        {
+          description: "Breast cancer",
+          icd10_code: "C50.9",
+          status: "active",
+          onset_date: null,
+          resolved_date: null,
+        },
+        {
+          description: "Deep vein thrombosis",
+          icd10_code: "I82.401",
+          status: "resolved",
+          onset_date: twoYearsAgo.toISOString(),
+          resolved_date: eighteenMonthsAgo.toISOString(),
+        },
+      ],
+    };
+
+    const flags = checkCrossSpecialtyPatterns(ctx);
+    const flag = flags.find((f) => f.rule_id === "ONCO-VTE-NEURO-001");
+    expect(flag).toBeUndefined();
+  });
+
   it("does NOT fire when VTE has a resolved_date in the past even if status string is 'active'", () => {
     // EHR data is messy: some problem lists leave status='active' even after
     // the diagnosis is resolved. A non-null resolved_date wins.
