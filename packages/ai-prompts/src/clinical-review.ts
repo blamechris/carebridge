@@ -3,6 +3,7 @@
  * These are versioned and testable — changes to prompts are tracked.
  */
 
+import type { AllergyStatus } from "@carebridge/shared-types";
 import { PROMPT_SECTIONS } from "./prompt-sections.js";
 
 export const PROMPT_VERSION = "1.1.0";
@@ -57,7 +58,7 @@ export interface ReviewContext {
   patient: {
     age: number;
     sex: string;
-    allergy_status?: "nkda" | "unknown" | "has_allergies";
+    allergy_status?: AllergyStatus;
     active_diagnoses: string[];
     allergies: (string | { allergen: string; verification_status: string })[];
   };
