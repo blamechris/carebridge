@@ -14,7 +14,7 @@ import {
 import { VitalsTrendChart } from "@/components/vitals-trend-chart";
 import {
   deriveAllergyDisplayState,
-  type AllergyStatus,
+  parseAllergyStatus,
 } from "@/lib/allergy-display";
 import type { LabResult } from "@carebridge/shared-types";
 
@@ -171,7 +171,7 @@ function OverviewTab({ patientId }: { patientId: string }) {
   // formatAllergies() in @carebridge/ai-prompts.
   const allergyState = deriveAllergyDisplayState(
     allergiesQuery,
-    (patient.allergy_status as AllergyStatus | null | undefined) ?? null,
+    parseAllergyStatus(patient.allergy_status),
   );
 
   return (
@@ -211,7 +211,7 @@ function OverviewTab({ patientId }: { patientId: string }) {
         )}
       </div>
 
-      <div className="detail-card">
+      <div className="detail-card" aria-live="polite">
         <div className="detail-card-title">Allergies</div>
         {allergyState.kind === "loading" ? (
           <div style={{ color: "var(--text-muted)", fontSize: 13 }}>

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   deriveAllergyDisplayState,
+  parseAllergyStatus,
   type AllergyQueryLike,
 } from "../lib/allergy-display";
 
@@ -104,6 +105,17 @@ describe("deriveAllergyDisplayState", () => {
     expect(state.kind).toBe("unknown");
   });
 
+  it("falls back to 'unknown' when allergy_status is an unexpected string", () => {
+    // Issue #583: if the DB returns a value outside the known enum,
+    // parseAllergyStatus returns null and deriveAllergyDisplayState
+    // defaults to "unknown" — the safer clinical assumption.
+    const state = deriveAllergyDisplayState(
+      makeQuery({ data: [] }),
+      parseAllergyStatus("garbage_value"),
+    );
+    expect(state.kind).toBe("unknown");
+  });
+
   it("error with no message surfaces a fallback string", () => {
     const state = deriveAllergyDisplayState(
       makeQuery({ isError: true, error: null }),
@@ -113,5 +125,30 @@ describe("deriveAllergyDisplayState", () => {
     if (state.kind === "error") {
       expect(state.message).toBe("Unknown error");
     }
+  });
+});
+
+describe("parseAllergyStatus", () => {
+  it.each(["nkda", "unknown", "has_allergies"] as const)(
+    "returns '%s' for the valid value '%s'",
+    (value) => {
+      expect(parseAllergyStatus(value)).toBe(value);
+    },
+  );
+
+  it("returns null for an unexpected string", () => {
+    expect(parseAllergyStatus("bogus")).toBeNull();
+  });
+
+  it("returns null for a number", () => {
+    expect(parseAllergyStatus(42)).toBeNull();
+  });
+
+  it("returns null for null", () => {
+    expect(parseAllergyStatus(null)).toBeNull();
+  });
+
+  it("returns null for undefined", () => {
+    expect(parseAllergyStatus(undefined)).toBeNull();
   });
 });
