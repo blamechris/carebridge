@@ -2,6 +2,7 @@ import { eq, and, desc } from "drizzle-orm";
 import { getDb, labPanels, labResults } from "@carebridge/db-schema";
 import type { CreateLabPanelInput } from "@carebridge/validators";
 import type { LabPanel, LabResult } from "@carebridge/shared-types";
+import { validateLabResult } from "@carebridge/medical-logic";
 import { emitClinicalEvent } from "../events.js";
 
 /**
@@ -27,6 +28,23 @@ export async function createLabPanel(
     encounter_id: input.encounter_id ?? null,
     created_at: now,
   };
+
+  // Validate every result before persisting — reject the whole panel if
+  // any result has an invalid unit (partial writes are a correctness hazard).
+  const allWarnings: string[] = [];
+  const allErrors: string[] = [];
+
+  for (const r of input.results) {
+    const v = validateLabResult(r.test_name, r.value, r.unit);
+    allErrors.push(...v.errors);
+    allWarnings.push(...v.warnings);
+  }
+
+  if (allErrors.length > 0) {
+    throw new Error(
+      `Lab panel validation failed: ${allErrors.join("; ")}`,
+    );
+  }
 
   const resultRecords = input.results.map((r) => ({
     id: crypto.randomUUID(),
@@ -55,7 +73,12 @@ export async function createLabPanel(
     type: "lab.resulted",
     patient_id: input.patient_id,
     timestamp: now,
-    data: { resourceId: panelId, panelName: input.panel_name, resultCount: input.results.length },
+    data: {
+      resourceId: panelId,
+      panelName: input.panel_name,
+      resultCount: input.results.length,
+      ...(allWarnings.length > 0 ? { validationWarnings: allWarnings } : {}),
+    },
   });
 
   const panel: LabPanel = {

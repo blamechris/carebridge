@@ -22,6 +22,7 @@
     "@carebridge/shared-types": "workspace:*",
     "@carebridge/validators": "workspace:*",
     "@carebridge/db-schema": "workspace:*",
+    "@carebridge/medical-logic": "workspace:*",
     "drizzle-orm": "^0.38.0",
     "bullmq": "^5.30.0",
     "@trpc/server": "^11.0.0",

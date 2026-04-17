@@ -144,6 +144,29 @@ describe("importLabs", () => {
     }
   });
 
+  it("rejects labs with an invalid unit and reports the reason", async () => {
+    const token = createMedLensToken("patient-1", ["write:labs"]);
+    const result = await importLabs(token.token, [
+      {
+        testName: "Glucose",
+        value: 200,
+        unit: "mmol/L",
+        confidence: 0.9,
+        collectedAt: new Date().toISOString(),
+        deviceId: "meter-1",
+      },
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.result.rejected).toBe(1);
+      expect(result.result.accepted).toBe(0);
+      expect(result.result.rejectionReasons[0]).toMatch(
+        /Glucose.*unit "mmol\/L" is not accepted/,
+      );
+    }
+  });
+
   it("accepts labs with confidence >= 0.5", async () => {
     const token = createMedLensToken("patient-1", ["write:labs"]);
     const result = await importLabs(token.token, [

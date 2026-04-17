@@ -10,6 +10,7 @@
 
 import crypto from "node:crypto";
 import { vitalRepo, labRepo } from "@carebridge/clinical-data";
+import { validateLabResult } from "@carebridge/medical-logic";
 import type { CreateVitalInput, CreateLabPanelInput } from "@carebridge/validators";
 
 type VitalType = CreateVitalInput["type"];
@@ -232,6 +233,17 @@ export async function importLabs(
       result.rejected++;
       result.rejectionReasons.push(
         `${lab.testName}: confidence ${lab.confidence} below threshold ${LAB_CONFIDENCE_THRESHOLD}`,
+      );
+      continue;
+    }
+
+    // Validate unit before persisting — reject early so the error shows up
+    // in the MedLens ImportResult rather than as a DB-level exception.
+    const validation = validateLabResult(lab.testName, lab.value, lab.unit);
+    if (!validation.valid) {
+      result.rejected++;
+      result.rejectionReasons.push(
+        `${lab.testName}: ${validation.errors.join("; ")}`,
       );
       continue;
     }
