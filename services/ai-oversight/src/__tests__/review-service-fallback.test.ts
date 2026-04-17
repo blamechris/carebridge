@@ -58,15 +58,21 @@ vi.mock("@carebridge/db-schema", () => {
   };
 });
 
-vi.mock("drizzle-orm", () => ({
-  eq: vi.fn(),
-  desc: vi.fn(),
-  gte: vi.fn(),
-  and: vi.fn(),
-  or: vi.fn(),
-  inArray: vi.fn(),
-  sql: vi.fn(),
-}));
+vi.mock("drizzle-orm", () => {
+  const sqlTag = vi.fn((_strings: TemplateStringsArray, ..._values: unknown[]) => ({
+    __sql: true,
+  }));
+  (sqlTag as unknown as Record<string, unknown>).raw = vi.fn((v: string) => ({ __raw: v }));
+  return {
+    eq: vi.fn(),
+    desc: vi.fn(),
+    gte: vi.fn(),
+    and: vi.fn(),
+    or: vi.fn(),
+    inArray: vi.fn(),
+    sql: sqlTag,
+  };
+});
 
 vi.mock("../rules/critical-values.js", () => ({
   checkCriticalValues: vi.fn().mockReturnValue([]),

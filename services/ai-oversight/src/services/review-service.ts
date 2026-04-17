@@ -86,7 +86,7 @@ const TERMINAL_REVIEW_STATUSES: readonly string[] = [
  * worker still holding its Redis lock cannot have its row fall outside
  * the window. See #522.
  */
-const IN_FLIGHT_WINDOW_MS = 150_000;
+export const IN_FLIGHT_WINDOW_MS = 150_000;
 
 /**
  * Process a clinical event through the full review pipeline.
@@ -120,7 +120,8 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
   //      `processing` rows (orphans from crashed workers) fall outside
   //      the window and do NOT short-circuit — matching the prior
   //      behavior for crash recovery. See #522.
-  const inFlightCutoff = sql`NOW() - interval '150 seconds'`;
+  const windowSec = Math.round(IN_FLIGHT_WINDOW_MS / 1000);
+  const inFlightCutoff = sql`NOW() - interval '${sql.raw(String(windowSec))} seconds'`;
 
   const existingJob = await db
     .select({
