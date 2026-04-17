@@ -1,3 +1,7 @@
+import { createLogger } from "@carebridge/logger";
+
+const logger = createLogger("ai-oversight");
+
 /**
  * Validate and normalize a ClinicalEvent.timestamp before it is used as the
  * right-hand side of a snapshot comparison inside a context builder.
@@ -62,10 +66,14 @@ export function validateEventTimestamp(
 
   const fallback = (reason: string, value: unknown): string => {
     const iso = new Date(nowMs).toISOString();
-    console.warn(
-      `[${caller}] invalid event.timestamp (event=${eventId}, reason=${reason}, ` +
-        `value=${JSON.stringify(value)}) — falling back to now=${iso}`,
-    );
+    logger.warn("timestamp_fallback_total", {
+      metric: "timestamp_fallback_total",
+      caller,
+      eventId,
+      reason,
+      value: JSON.stringify(value),
+      fallbackTimestamp: iso,
+    });
     return iso;
   };
 

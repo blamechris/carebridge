@@ -138,6 +138,41 @@ describe("createLabPanel", () => {
     expect(transactionMock).not.toHaveBeenCalled();
   });
 
+  it("rejects the entire panel when some results are valid and others invalid (all-or-nothing)", async () => {
+    await expect(
+      createLabPanel({
+        patient_id: PATIENT_ID,
+        panel_name: "Mixed Panel",
+        results: [
+          {
+            test_name: "WBC",
+            test_code: "6690-2",
+            value: 7.5,
+            unit: "K/uL",
+          },
+          {
+            test_name: "Hemoglobin",
+            test_code: "718-7",
+            value: 14.0,
+            unit: "g/dL",
+          },
+          {
+            test_name: "Glucose",
+            test_code: "2345-7",
+            value: 95,
+            unit: "mmol/L",
+          },
+        ],
+      }),
+    ).rejects.toThrow(/Lab panel validation failed.*Glucose unit "mmol\/L" is not accepted/);
+
+    // The transaction must never have been started — no partial inserts
+    expect(transactionMock).not.toHaveBeenCalled();
+
+    // No clinical event should have been emitted for the failed panel
+    expect(emitClinicalEvent).not.toHaveBeenCalled();
+  });
+
   it("attaches validation warnings to the emitted clinical event", async () => {
     await createLabPanel({
       patient_id: PATIENT_ID,

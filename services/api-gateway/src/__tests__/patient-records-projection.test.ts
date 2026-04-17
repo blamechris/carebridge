@@ -43,29 +43,31 @@ const mocks = vi.hoisted(() => {
   let selectColumns: Record<string, unknown> | undefined = undefined;
   let resolvedData: unknown[] = [];
 
+  /**
+   * Shared projection helper — if `selectColumns` is set, strip each row
+   * down to only those keys so the mock faithfully simulates Drizzle
+   * column selection. Used by `.where()`, `.limit()`, and `.then()`.
+   */
+  function applyProjection(rows: unknown[]): unknown[] {
+    if (!selectColumns) return rows;
+    const keys = Object.keys(selectColumns);
+    return rows.map((row) => {
+      const out: Record<string, unknown> = {};
+      for (const k of keys) {
+        out[k] = (row as Record<string, unknown>)[k];
+      }
+      return out;
+    });
+  }
+
   function makeSelectChain() {
     const chain: Record<string, unknown> = {};
     chain.from = fn((..._args: unknown[]) => chain);
     chain.innerJoin = fn((..._args: unknown[]) => chain);
     chain.where = fn((..._args: unknown[]) => {
-      // Return projected rows: if selectColumns is set, filter each row
-      // down to only those keys so the mock faithfully simulates Drizzle
-      // column selection.
-      if (selectColumns) {
-        const keys = Object.keys(selectColumns);
-        return Promise.resolve(
-          resolvedData.map((row) => {
-            const out: Record<string, unknown> = {};
-            for (const k of keys) {
-              out[k] = (row as Record<string, unknown>)[k];
-            }
-            return out;
-          }),
-        );
-      }
-      return Promise.resolve(resolvedData);
+      return Promise.resolve(applyProjection(resolvedData));
     });
-    chain.limit = fn(async () => resolvedData);
+    chain.limit = fn(async () => applyProjection(resolvedData));
     // Make the chain thenable for bare `await db.select().from()`
     (chain as Record<string | symbol, unknown>)[Symbol.toStringTag] = "Promise";
     const originalFrom = chain.from;
@@ -74,20 +76,7 @@ const mocks = vi.hoisted(() => {
       (result as Record<string, unknown>).then = (
         resolve: (v: unknown) => void,
       ) => {
-        if (selectColumns) {
-          const keys = Object.keys(selectColumns);
-          resolve(
-            resolvedData.map((row) => {
-              const out: Record<string, unknown> = {};
-              for (const k of keys) {
-                out[k] = (row as Record<string, unknown>)[k];
-              }
-              return out;
-            }),
-          );
-        } else {
-          resolve(resolvedData);
-        }
+        resolve(applyProjection(resolvedData));
         return result;
       };
       return result;
