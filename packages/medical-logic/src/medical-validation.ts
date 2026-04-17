@@ -287,6 +287,7 @@ export const CREATININE_UMOL_TO_MGDL = 88.4;
  * Currently supported:
  *  - HbA1c: IFCC mmol/mol → NGSP % via the IFCC master equation
  *    NGSP% = 0.09148 × IFCC + 2.152
+ *  - Creatinine: µmol/L → mg/dL (divide by 88.4)
  */
 const UNIT_CONVERSIONS: Record<
   string,
