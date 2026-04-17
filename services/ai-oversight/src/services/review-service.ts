@@ -122,7 +122,7 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
   //      the window and do NOT short-circuit — matching the prior
   //      behavior for crash recovery. See #522.
   const windowSec = Math.round(IN_FLIGHT_WINDOW_MS / 1000);
-  const inFlightCutoff = sql`NOW() - interval '${sql.raw(String(windowSec))} seconds'`;
+  const inFlightCutoff = sql`NOW() - ${windowSec} * interval '1 second'`;
 
   const existingJob = await db
     .select({
