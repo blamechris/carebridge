@@ -847,6 +847,8 @@ describe("HEPATIC-HEPATOTOXIN-001 — Hepatic disease + hepatotoxic medication",
     ["Tylenol 1g three times daily"],
     ["paracetamol 1000mg q8h"],
     ["acetaminophen 1g 3x/day"],
+    ["acetaminophen 1g 3x daily"],
+    ["Tylenol 1000mg 4x daily"],
     ["APAP 1000mg 3 times daily"],
     ["methotrexate 15mg weekly"],
     ["isoniazid 300mg daily"],
@@ -889,6 +891,14 @@ describe("HEPATIC-HEPATOTOXIN-001 — Hepatic disease + hepatotoxic medication",
   it("does NOT fire for low-dose acetaminophen (< 3g/day)", () => {
     const flags = checkCrossSpecialtyPatterns(
       hepaticCtx(["acetaminophen 500mg PRN"]),
+    );
+    const flag = flags.find((f) => f.rule_id === "HEPATIC-HEPATOTOXIN-001");
+    expect(flag).toBeUndefined();
+  });
+
+  it("does NOT fire for sub-threshold TID acetaminophen (500mg × 3 = 1.5g/day < 3g)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      hepaticCtx(["acetaminophen 500mg TID"]),
     );
     const flag = flags.find((f) => f.rule_id === "HEPATIC-HEPATOTOXIN-001");
     expect(flag).toBeUndefined();

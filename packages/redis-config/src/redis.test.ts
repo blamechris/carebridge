@@ -103,7 +103,7 @@ describe("CLINICAL_EVENTS_JOB_OPTIONS", () => {
   });
 
   it("keeps history bounded", () => {
-    expect(CLINICAL_EVENTS_JOB_OPTIONS.removeOnComplete).toEqual({ count: 1000 });
+    expect(CLINICAL_EVENTS_JOB_OPTIONS.removeOnComplete).toEqual({ age: 600, count: 1000 });
     expect(CLINICAL_EVENTS_JOB_OPTIONS.removeOnFail).toEqual({ count: 10000 });
   });
 });
