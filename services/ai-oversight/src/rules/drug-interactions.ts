@@ -94,6 +94,14 @@ export const BRAND_TO_GENERIC: Record<string, string> = {
   caprelsa: "vandetanib",
   sutent: "sunitinib",
   tasigna: "nilotinib",
+  // Identity mappings: standalone generics that appear in QTC_PATTERN but
+  // have no brand-name alias. Listed explicitly so the exhaustive sync test
+  // confirms every QTC alternate is accounted for in this map.
+  quinidine: "quinidine",
+  procainamide: "procainamide",
+  droperidol: "droperidol",
+  erythromycin: "erythromycin",
+  quinine: "quinine",
 };
 
 /** Normalize a matched drug name through the brand-to-generic map. */

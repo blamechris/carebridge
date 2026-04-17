@@ -5,8 +5,9 @@
 
 import type { AllergyStatus } from "@carebridge/shared-types";
 import { PROMPT_SECTIONS } from "./prompt-sections.js";
+import { renderDrugClassAnchors } from "./drug-class-anchors.js";
 
-export const PROMPT_VERSION = "1.1.0";
+export const PROMPT_VERSION = "1.2.0";
 
 export const CLINICAL_REVIEW_SYSTEM_PROMPT = `You are a clinical decision support system reviewing a patient's medical record.
 Your role is to identify potential clinical concerns that might be missed when
@@ -26,9 +27,7 @@ Focus especially on:
 - Cross-specialty interactions (e.g., cancer + hematology + neurology)
 - Medication interactions in the context of the full problem list
 - Active medications that match or cross-react with the patient's documented
-  allergies (class effects count — penicillin allergy cross-reacts with
-  amoxicillin, ampicillin, piperacillin; sulfa allergy cross-reacts with
-  sulfonamide antibiotics; aspirin allergy cross-reacts with other NSAIDs).
+  allergies (class effects count — ${renderDrugClassAnchors()}).
   Use "medication-safety" as the category. Always check active_medications
   against the allergies list on every review, not only when the triggering
   event is medication-related.

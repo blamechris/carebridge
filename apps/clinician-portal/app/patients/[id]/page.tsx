@@ -495,6 +495,27 @@ function LabsTab({ patientId }: { patientId: string }) {
                   const referenceRange = formatReferenceRange(refLow, refHigh);
                   const inferredFlag = deriveInferredFlag(value, flag, refLow, refHigh);
 
+                  // Dev-only: warn when the server flag and client-inferred
+                  // direction disagree. This catches mapping bugs and stale
+                  // reference ranges early without polluting production logs.
+                  if (process.env.NODE_ENV !== "production" && flag && outOfRange && typeof value === "number") {
+                    const clientDirection =
+                      typeof refLow === "number" && value < refLow
+                        ? "low"
+                        : "high";
+                    const serverNorm = flag.toLowerCase();
+                    const disagrees =
+                      (serverNorm === "h" && clientDirection === "low") ||
+                      (serverNorm === "l" && clientDirection === "high") ||
+                      (serverNorm === "high" && clientDirection === "low") ||
+                      (serverNorm === "low" && clientDirection === "high");
+                    if (disagrees) {
+                      console.warn(
+                        `[LabsTab] Server flag "${flag}" disagrees with client-inferred "${clientDirection}" for "${r.test_name}" (value=${value}, refLow=${refLow}, refHigh=${refHigh}). Review reference range or flag mapping.`,
+                      );
+                    }
+                  }
+
                   return (
                     <tr key={ri}>
                       <td>{r.test_name}</td>
@@ -527,12 +548,12 @@ function LabsTab({ patientId }: { patientId: string }) {
                           </span>
                         ) : inferredFlag ? (
                           <span
-                            className="badge badge-warning"
+                            className="badge badge-inferred"
                             role="status"
-                            aria-label={`Inferred lab flag (out of reference range): ${inferredFlag}`}
-                            title="Outside reference range (client-derived)"
+                            aria-label={`Estimated lab flag (outside reference range): ${inferredFlag}`}
                           >
                             {inferredFlag.toUpperCase()}
+                            {" (est.)"}
                           </span>
                         ) : null}
                       </td>
