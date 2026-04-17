@@ -185,6 +185,53 @@ describe("importLabs", () => {
       expect(result.result.accepted).toBe(1);
     }
   });
+
+  it("accepts valid-but-warned labs and passes skipValidation to createLabPanel", async () => {
+    const { labRepo } = await import("@carebridge/clinical-data");
+    const createLabPanelSpy = vi.mocked(labRepo.createLabPanel);
+    createLabPanelSpy.mockClear();
+
+    const token = createMedLensToken("patient-1", ["write:labs"]);
+
+    // Glucose at 350 mg/dL is a valid unit but triggers an "above typical
+    // range" warning from validateLabResult. The MedLens bridge pre-validates
+    // with validateLabResult (which returns valid:true + warnings) and then
+    // delegates to createLabPanel with { skipValidation: true } so the panel
+    // is persisted despite the warning.
+    const result = await importLabs(token.token, [
+      {
+        testName: "Glucose",
+        value: 350,
+        unit: "mg/dL",
+        confidence: 0.9,
+        collectedAt: "2026-04-01T10:00:00.000Z",
+        deviceId: "meter-2",
+      },
+    ]);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.result.accepted).toBe(1);
+      expect(result.result.rejected).toBe(0);
+    }
+
+    // Verify createLabPanel was called with skipValidation: true
+    expect(createLabPanelSpy).toHaveBeenCalledOnce();
+    expect(createLabPanelSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        patient_id: "patient-1",
+        panel_name: "MedLens: Glucose",
+        results: [
+          expect.objectContaining({
+            test_name: "Glucose",
+            value: 350,
+            unit: "mg/dL",
+          }),
+        ],
+      }),
+      { skipValidation: true },
+    );
+  });
 });
 
 describe("revokeToken", () => {

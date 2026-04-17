@@ -523,3 +523,87 @@ describe("buildPatientContextForRules — recent_labs wiring", () => {
     expect((ctx.allergies ?? []).map((a) => a.allergen)).toEqual(["peanut"]);
   });
 });
+
+// ─── #702 — end-to-end integration: resolved VTE filtering ──────────
+import { checkCrossSpecialtyPatterns } from "../rules/cross-specialty.js";
+
+describe("buildPatientContextForRules → checkCrossSpecialtyPatterns (resolved-VTE e2e)", () => {
+  beforeEach(() => {
+    selectMock.mockReset();
+    diagnosesSelect.mockReset();
+    medicationsSelect.mockReset();
+    allergiesSelect.mockReset();
+    labsSelect.mockReset();
+
+    allergiesSelect.mockResolvedValue([]);
+
+    selectMock
+      .mockImplementationOnce(() => ({
+        from: () => ({ where: () => diagnosesSelect() }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({ where: () => medicationsSelect() }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({ where: () => allergiesSelect() }),
+      }))
+      .mockImplementationOnce(() => ({
+        from: () => ({
+          innerJoin: () => ({
+            where: () => ({ orderBy: () => labsSelect() }),
+          }),
+        }),
+      }));
+  });
+
+  it("does NOT fire ONCO-VTE-NEURO-001 for cancer + resolved VTE (onset 2y ago, resolved 18mo ago) + headache", async () => {
+    const eventAt = "2026-04-16T12:00:00.000Z";
+    const event: ClinicalEvent = {
+      ...stubEvent,
+      timestamp: eventAt,
+      data: { chief_complaint: "headache" },
+    };
+
+    // Cancer diagnosis — active
+    // VTE diagnosis — onset 2 years ago, resolved 18 months ago
+    diagnosesSelect.mockResolvedValue([
+      {
+        description: "Breast cancer",
+        icd10_code: "C50.9",
+        status: "active",
+        onset_date: "2024-01-01T00:00:00.000Z",
+        resolved_date: null,
+        created_at: "2024-01-01T00:00:00.000Z",
+      },
+      {
+        description: "Deep vein thrombosis, right lower extremity",
+        icd10_code: "I80.11",
+        status: "resolved",
+        onset_date: "2024-04-16T00:00:00.000Z", // ~2 years before event
+        resolved_date: "2024-10-16T00:00:00.000Z", // ~18 months before event
+        created_at: "2024-04-16T00:00:00.000Z",
+      },
+    ]);
+
+    // No anticoagulants — VTE treatment completed
+    medicationsSelect.mockResolvedValue([
+      {
+        name: "Tamoxifen",
+        status: "active",
+        started_at: "2024-02-01T00:00:00.000Z",
+        ended_at: null,
+        created_at: "2024-02-01T00:00:00.000Z",
+      },
+    ]);
+    labsSelect.mockResolvedValue([]);
+
+    const ctx = await buildPatientContextForRules("p-1", event);
+    const flags = checkCrossSpecialtyPatterns(ctx);
+
+    // The resolved VTE should be filtered out by buildPatientContextForRules
+    // (resolved_date <= eventAt), so checkCrossSpecialtyPatterns should NOT
+    // find an active VTE and ONCO-VTE-NEURO-001 must not fire.
+    const oncoVteFlag = flags.find((f) => f.rule_id === "ONCO-VTE-NEURO-001");
+    expect(oncoVteFlag).toBeUndefined();
+  });
+});

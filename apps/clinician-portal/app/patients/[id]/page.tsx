@@ -22,6 +22,7 @@ import {
   classifyStaleness,
   type StalenessTier,
 } from "@/lib/vitals-staleness";
+import { formatReferenceRange } from "@/lib/formatting";
 
 const tabs = [
   { key: "overview", label: "Overview" },
@@ -504,14 +505,7 @@ function LabsTab({ patientId }: { patientId: string }) {
                       ? "var(--warning)"
                       : "var(--text-primary)";
 
-                  const referenceRange =
-                    typeof refLow === "number" && typeof refHigh === "number"
-                      ? `${refLow}\u2013${refHigh}`
-                      : typeof refLow === "number"
-                      ? `> ${refLow}`
-                      : typeof refHigh === "number"
-                      ? `< ${refHigh}`
-                      : "\u2014";
+                  const referenceRange = formatReferenceRange(refLow, refHigh);
 
                   // Out-of-range without a server flag — surface an inferred
                   // H/L badge so the clinician has the same visual cue they
@@ -592,6 +586,7 @@ function MedicationsTab({ patientId }: { patientId: string }) {
   const active = medications.filter((m) => m.status === "active");
   const held = medications.filter((m) => m.status === "held");
   const discontinued = medications.filter((m) => m.status === "discontinued");
+  const completed = medications.filter((m) => m.status === "completed");
 
   if (medications.length === 0) {
     return (
@@ -712,6 +707,51 @@ function MedicationsTab({ patientId }: { patientId: string }) {
                       }}
                     >
                       Discontinued
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {completed.length > 0 && (
+        <div className="table-container">
+          <div className="table-header">
+            <span className="table-title" style={{ color: "var(--text-muted)" }}>
+              Completed
+            </span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Medication</th>
+                <th>Dose</th>
+                <th>Route</th>
+                <th>Frequency</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {completed.map((med) => (
+                <tr key={med.id}>
+                  <td style={{ color: "var(--text-muted)" }}>{med.name}</td>
+                  <td style={{ color: "var(--text-muted)" }}>
+                    {med.dose_amount} {med.dose_unit}
+                  </td>
+                  <td style={{ color: "var(--text-muted)" }}>{med.route}</td>
+                  <td style={{ color: "var(--text-muted)" }}>{med.frequency}</td>
+                  <td>
+                    <span
+                      className="badge"
+                      style={{
+                        background: "rgba(99,179,237,0.1)",
+                        color: "#63b3ed",
+                        border: "1px solid rgba(99,179,237,0.3)",
+                      }}
+                    >
+                      Completed
                     </span>
                   </td>
                 </tr>

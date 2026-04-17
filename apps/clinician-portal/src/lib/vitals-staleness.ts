@@ -37,6 +37,7 @@ export type StalenessTier = "current" | "overdue" | "stale";
 
 export function classifyStaleness(recordedAtIso: string): StalenessTier {
   const ageMs = Date.now() - new Date(recordedAtIso).getTime();
+  if (Number.isNaN(ageMs)) return "stale";
   if (ageMs > 24 * 60 * 60 * 1000) return "stale";
   if (ageMs > 4 * 60 * 60 * 1000) return "overdue";
   return "current";

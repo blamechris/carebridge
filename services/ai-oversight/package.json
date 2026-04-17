@@ -20,6 +20,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@carebridge/logger": "workspace:*",
     "@carebridge/redis-config": "workspace:*",
     "@carebridge/shared-types": "workspace:*",
     "@carebridge/notifications": "workspace:*",
