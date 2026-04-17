@@ -6,7 +6,7 @@
  */
 
 import { Queue } from "bullmq";
-import { getRedisConnection } from "@carebridge/redis-config";
+import { getRedisConnection, DEFAULT_RETENTION_AGE_SECONDS } from "@carebridge/redis-config";
 
 const QUEUE_NAME = "notifications";
 
@@ -29,7 +29,7 @@ export const notificationsQueue = new Queue(QUEUE_NAME, {
   defaultJobOptions: {
     attempts: 3,
     backoff: { type: "exponential", delay: 2000 },
-    removeOnComplete: { count: 1000 },
+    removeOnComplete: { age: DEFAULT_RETENTION_AGE_SECONDS, count: 1000 },
     removeOnFail: { count: 5000 },
   },
 });
