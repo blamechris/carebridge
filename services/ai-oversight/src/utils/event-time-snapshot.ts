@@ -16,10 +16,10 @@
  * variant the platform ingests.
  *
  * ─── Logical retraction (#515) ────────────────────────────────────────
- * A row marked `entered_in_error` (diagnoses, medications) or
- * `entered_in_error` / `refuted` (allergies) is a charting correction.
- * It was never clinically true and must never drive rule or LLM output,
- * regardless of its timestamps.
+ * A row marked `entered_in_error` (diagnoses, medications, labs,
+ * procedures) or `entered_in_error` / `refuted` (allergies) is a
+ * charting correction. It was never clinically true and must never
+ * drive rule or LLM output, regardless of its timestamps.
  */
 
 /**
@@ -86,5 +86,27 @@ export function isAllergyRetracted(row: { verification_status?: string | null })
  * cross-refs, and LLM context. See #581.
  */
 export function isMedicationRetracted(row: { status?: string | null }): boolean {
+  return row.status === "entered_in_error";
+}
+
+/**
+ * Logical retraction for a lab result row. The `lab_results` table does
+ * not yet carry a dedicated `status` column, but the `flag` field can
+ * hold `"entered_in_error"` when a FHIR import or manual correction
+ * marks the result as erroneous. We also check `status` so that when
+ * the schema adds that column the guard works without further changes.
+ * See #638.
+ */
+export function isLabRetracted(row: { status?: string | null; flag?: string | null }): boolean {
+  return row.status === "entered_in_error" || row.flag === "entered_in_error";
+}
+
+/**
+ * Logical retraction for a procedure row. `status === 'entered_in_error'`
+ * means the procedure was charted by mistake — it never actually occurred
+ * and must be excluded from cross-specialty rules and LLM context.
+ * See #638.
+ */
+export function isProcedureRetracted(row: { status?: string | null }): boolean {
   return row.status === "entered_in_error";
 }
