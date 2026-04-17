@@ -56,12 +56,12 @@ export function validateEventTimestamp(
   ts: string | undefined,
   options: ValidateEventTimestampOptions = {},
 ): string {
-  const now = options.now ?? (() => Date.now());
+  const nowMs = (options.now ?? (() => Date.now()))();
   const caller = options.caller ?? "event-timestamp";
   const eventId = options.eventId ?? "unknown";
 
   const fallback = (reason: string, value: unknown): string => {
-    const iso = new Date(now()).toISOString();
+    const iso = new Date(nowMs).toISOString();
     console.warn(
       `[${caller}] invalid event.timestamp (event=${eventId}, reason=${reason}, ` +
         `value=${JSON.stringify(value)}) — falling back to now=${iso}`,
@@ -90,7 +90,7 @@ export function validateEventTimestamp(
     return fallback("too-old", ts);
   }
 
-  if (parsed > now() + CLOCK_SKEW_GRACE_MS) {
+  if (parsed > nowMs + CLOCK_SKEW_GRACE_MS) {
     return fallback("future", ts);
   }
 
