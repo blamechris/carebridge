@@ -517,17 +517,27 @@ export function checkDrugInteractions(medications: string[]): RuleFlag[] {
       }
     }
 
-    // Ensure both sides matched, they refer to different medication entries
-    // (by index), AND the underlying medication strings differ.  The index
-    // check prevents the same list entry from satisfying both sides; the
-    // string check prevents duplicate entries for the same drug (e.g.
-    // "sotalol 80mg" listed twice) from triggering a false flag.
-    if (
-      drugAIdx >= 0 &&
-      drugBIdx >= 0 &&
-      drugAIdx !== drugBIdx &&
-      normalizedMeds[drugAIdx] !== normalizedMeds[drugBIdx]
-    ) {
+    // Ensure both sides matched and they refer to different medication
+    // entries (by index).  For same-list rules (e.g. DI-QTC-COMBO) we also
+    // need to verify the *matched drug name* differs — not just the full
+    // medication string — so that "amiodarone 200mg" + "amiodarone 400mg"
+    // (same drug, different dose) does not fire a false flag.
+    let distinctDrugs = false;
+    if (drugAIdx >= 0 && drugBIdx >= 0 && drugAIdx !== drugBIdx) {
+      if (sameList) {
+        const matchA = normalizedMeds[drugAIdx].match(pair.drugA);
+        const matchB = normalizedMeds[drugBIdx].match(pair.drugB);
+        distinctDrugs =
+          matchA != null &&
+          matchB != null &&
+          matchA[0] !== matchB[0];
+      } else {
+        distinctDrugs =
+          normalizedMeds[drugAIdx] !== normalizedMeds[drugBIdx];
+      }
+    }
+
+    if (distinctDrugs) {
       flags.push({
         severity: pair.severity,
         category: "drug-interaction" as FlagCategory,
