@@ -128,16 +128,15 @@ export function makePatientReadRateLimitHook(
       const retryAfter = ttl > 0 ? ttl : PATIENT_READ_WINDOW_SECONDS;
 
       // Emit an audit event for the exceedance so security can alert on it.
-      try {
-        await emitAudit({
-          userId: user.id,
-          procedureName: `patients.${procedure}`,
-          ip: req.ip,
-        });
-      } catch {
-        // Never let audit failure suppress the 429 response.
-        req.log?.warn?.("Failed to write rate-limit audit event");
-      }
+      // Fire-and-forget: don't block the 429 response on audit I/O, which
+      // could otherwise let an attacker amplify DB latency via rate limiting.
+      void emitAudit({
+        userId: user.id,
+        procedureName: `patients.${procedure}`,
+        ip: req.ip,
+      }).catch((err: unknown) => {
+        req.log?.warn?.({ err }, "Failed to write rate-limit audit event");
+      });
 
       reply.header("retry-after", String(retryAfter));
       return reply.code(429).send({

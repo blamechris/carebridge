@@ -19,6 +19,9 @@ const {
   PATIENT_READ_DEFAULTS,
 } = await import("../middleware/patient-read-rate-limit.js");
 
+/** Flush pending microtasks so fire-and-forget audit promises settle. */
+const flushMicrotasks = () => new Promise<void>((r) => setTimeout(r, 0));
+
 /* ------------------------------------------------------------------ */
 /*  Mock Redis                                                        */
 /* ------------------------------------------------------------------ */
@@ -198,6 +201,7 @@ describe("patient read per-user rate limit", () => {
 
     // Second request: exceeds
     await hook(makeReq("/trpc/patients.getSummary"), makeReply());
+    await flushMicrotasks();
     expect(auditEvents).toHaveLength(1);
 
     const event = auditEvents[0]!;
