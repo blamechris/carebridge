@@ -74,7 +74,20 @@ const mocks = vi.hoisted(() => {
       (result as Record<string, unknown>).then = (
         resolve: (v: unknown) => void,
       ) => {
-        resolve(resolvedData);
+        if (selectColumns) {
+          const keys = Object.keys(selectColumns);
+          resolve(
+            resolvedData.map((row) => {
+              const out: Record<string, unknown> = {};
+              for (const k of keys) {
+                out[k] = (row as Record<string, unknown>)[k];
+              }
+              return out;
+            }),
+          );
+        } else {
+          resolve(resolvedData);
+        }
         return result;
       };
       return result;
