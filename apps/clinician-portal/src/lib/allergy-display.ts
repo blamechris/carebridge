@@ -25,8 +25,9 @@ import { patientAllergyStatusSchema } from "@carebridge/validators";
 
 export type { AllergyStatus };
 
-const VALID_ALLERGY_STATUSES = patientAllergyStatusSchema.options;
-const statusSet: ReadonlySet<string> = new Set(VALID_ALLERGY_STATUSES);
+const VALID_ALLERGY_STATUSES =
+  patientAllergyStatusSchema.options satisfies readonly AllergyStatus[];
+const statusSet: ReadonlySet<AllergyStatus> = new Set(VALID_ALLERGY_STATUSES);
 
 /**
  * Runtime guard for allergy_status values coming from the DB or API.
