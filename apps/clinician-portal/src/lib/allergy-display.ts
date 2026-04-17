@@ -20,13 +20,9 @@
  * LLM reviewer agree on what an empty list means.
  */
 
-export type AllergyStatus = "nkda" | "unknown" | "has_allergies";
-
-const VALID_ALLERGY_STATUSES: ReadonlySet<string> = new Set<string>([
-  "nkda",
-  "unknown",
-  "has_allergies",
-]);
+const VALID_ALLERGY_STATUSES = ["nkda", "unknown", "has_allergies"] as const;
+export type AllergyStatus = (typeof VALID_ALLERGY_STATUSES)[number];
+const statusSet: ReadonlySet<string> = new Set(VALID_ALLERGY_STATUSES);
 
 /**
  * Runtime guard for allergy_status values coming from the DB or API.
@@ -36,8 +32,11 @@ const VALID_ALLERGY_STATUSES: ReadonlySet<string> = new Set<string>([
 export function parseAllergyStatus(
   value: unknown,
 ): AllergyStatus | null {
-  if (typeof value === "string" && VALID_ALLERGY_STATUSES.has(value)) {
+  if (typeof value === "string" && statusSet.has(value)) {
     return value as AllergyStatus;
+  }
+  if (value !== null && value !== undefined) {
+    console.warn(`[allergy-display] unexpected allergy_status: ${JSON.stringify(value)}`);
   }
   return null;
 }

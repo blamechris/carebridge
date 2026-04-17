@@ -15,6 +15,7 @@ const PHYSICIAN_ID = "44444444-4444-4444-8444-444444444444";
 const FULL_PATIENT_ROW = {
   id: PATIENT_ID,
   name: "Alice Patient",
+  name_hmac: "hmac:Alice Patient",
   date_of_birth: "1980-01-01",
   biological_sex: "female",
   diagnosis: "DVT",
@@ -103,6 +104,7 @@ vi.mock("@carebridge/db-schema", () => ({
   patients: {
     id: "patients.id",
     name: "patients.name",
+    name_hmac: "patients.name_hmac",
     date_of_birth: "patients.date_of_birth",
     biological_sex: "patients.biological_sex",
     diagnosis: "patients.diagnosis",
@@ -243,6 +245,7 @@ describe("patients.getById — HIPAA minimum-necessary projection", () => {
     const expected = [
       "id",
       "name",
+      "name_hmac",
       "mrn",
       "date_of_birth",
       "biological_sex",

@@ -6,6 +6,10 @@
  * enforces output limits.
  */
 
+import { createLogger } from "@carebridge/logger";
+
+const log = createLogger("llm-validator");
+
 const VALID_SEVERITIES = ["critical", "warning", "info"] as const;
 const VALID_CATEGORIES = [
   "cross-specialty",
@@ -247,19 +251,15 @@ export function validateLLMResponse(raw: string): ValidationResult {
         `warning=${droppedBySeverity.warning}, info=${droppedBySeverity.info})`,
     );
     // Structured emission so log aggregators (Datadog, Loki, CloudWatch
-    // Insights) can alert on truncation counts over time. Issue #510:
-    // string-formatted alerts from the ai-oversight worker aren't reliably
-    // parseable as a counter source. Consumers that wrap a metrics emitter
-    // can still read `truncation` from the return value; this log is the
-    // low-lift stopgap until a service-wide structured logger lands.
-    console.warn(JSON.stringify({
+    // Insights) can alert on truncation counts over time.
+    log.warn("LLM findings truncated", {
       event: "llm_findings_truncated",
       received: all.length,
       kept: capped.length,
       dropped: dropped.length,
       droppedBySeverity,
       maxFlags: MAX_FLAGS,
-    }));
+    });
   }
 
   return { ok: true, flags: capped, warnings, ...(truncation ? { truncation } : {}) };
