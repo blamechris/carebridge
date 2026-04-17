@@ -37,11 +37,11 @@ export async function createLabPanel(
   const allWarnings: string[] = [];
   const allErrors: string[] = [];
 
-  if (!options?.skipValidation) {
-    for (const r of input.results) {
-      const v = validateLabResult(r.test_name, r.value, r.unit);
+  for (const r of input.results) {
+    const v = validateLabResult(r.test_name, r.value, r.unit);
+    allWarnings.push(...v.warnings);
+    if (!options?.skipValidation) {
       allErrors.push(...v.errors);
-      allWarnings.push(...v.warnings);
     }
   }
 
