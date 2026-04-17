@@ -105,7 +105,7 @@ describe("validateVital", () => {
     expect(result.warnings.some((w) => w.toLowerCase().includes("critically narrow"))).toBe(false);
   });
 
-  it("critically warns on very narrow pulse pressure PP=15 (boundary, no critical)", () => {
+  it("does not critically warn on narrow pulse pressure at boundary PP=15", () => {
     // 90/75 — PP=15, at the critical threshold boundary (not critical)
     const result = validateVital("blood_pressure", 90, 75);
     expect(result.warnings.some((w) => w.toLowerCase().includes("narrow pulse pressure"))).toBe(true);
