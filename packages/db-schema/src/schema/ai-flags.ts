@@ -39,6 +39,7 @@ export const clinicalFlags = pgTable("clinical_flags", {
     table.acknowledged_at,
     table.escalation_count,
   ),
+  index("idx_flags_trigger_event_ids").using("gin", sql`trigger_event_ids jsonb_path_ops`),
   uniqueIndex("idx_flags_open_rule_dedup")
     .on(table.patient_id, table.rule_id)
     .where(sql`status = 'open' AND rule_id IS NOT NULL`),
