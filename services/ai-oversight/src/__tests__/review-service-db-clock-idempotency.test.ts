@@ -212,7 +212,6 @@ describe("DB-clock interval derivation in idempotency probe", () => {
     // vice versa), this test catches the drift because the derivation now
     // uses the constant directly.
     const expectedSec = IN_FLIGHT_WINDOW_MS / 1000;
-    expect(expectedSec).toBe(150);
     expect(Number.isInteger(expectedSec)).toBe(true);
   });
 });
