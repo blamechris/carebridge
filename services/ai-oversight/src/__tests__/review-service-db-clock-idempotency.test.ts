@@ -8,14 +8,14 @@
  *
  *   1. The exported IN_FLIGHT_WINDOW_MS constant is sane (positive, matches
  *      the documented BullMQ lockDuration headroom).
- *   2. The window-to-seconds derivation (windowSec = IN_FLIGHT_WINDOW_MS / 1000)
+ *   2. The module-level IN_FLIGHT_WINDOW_SEC derivation (IN_FLIGHT_WINDOW_MS / 1000)
  *      produces an integer suitable for a PostgreSQL interval literal.
  *   3. The sql`NOW() - N * interval '1 second'` template correctly embeds
  *      the derived seconds value as a parameterized multiplier.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { IN_FLIGHT_WINDOW_MS } from "../services/review-service.js";
+import { IN_FLIGHT_WINDOW_MS, IN_FLIGHT_WINDOW_SEC } from "../services/review-service.js";
 
 // ─── Capture the sql template calls made during the idempotency probe ──
 
@@ -148,9 +148,8 @@ describe("IN_FLIGHT_WINDOW_MS constant", () => {
   });
 
   it("converts to a whole number of seconds for the PostgreSQL interval literal", () => {
-    const windowSec = Math.round(IN_FLIGHT_WINDOW_MS / 1000);
-    expect(windowSec).toBe(IN_FLIGHT_WINDOW_MS / 1000);
-    expect(Number.isInteger(windowSec)).toBe(true);
+    expect(IN_FLIGHT_WINDOW_SEC).toBe(IN_FLIGHT_WINDOW_MS / 1000);
+    expect(Number.isInteger(IN_FLIGHT_WINDOW_SEC)).toBe(true);
   });
 });
 
@@ -175,12 +174,11 @@ describe("DB-clock interval derivation in idempotency probe", () => {
       // Downstream mocks may throw — we only care about the sql calls
     }
 
-    const expectedSec = Math.round(IN_FLIGHT_WINDOW_MS / 1000);
-    // The template should embed windowSec as a bound parameter, not via sql.raw
+    // The template should embed IN_FLIGHT_WINDOW_SEC as a bound parameter
     const intervalCall = sqlTemplateCalls.find(
       (call) =>
         call.strings.some((s) => s.includes("NOW()")) &&
-        call.values.includes(expectedSec),
+        call.values.includes(IN_FLIGHT_WINDOW_SEC),
     );
     expect(intervalCall).toBeDefined();
   });
@@ -211,7 +209,6 @@ describe("DB-clock interval derivation in idempotency probe", () => {
     // If someone changes IN_FLIGHT_WINDOW_MS without updating the SQL (or
     // vice versa), this test catches the drift because the derivation now
     // uses the constant directly.
-    const expectedSec = IN_FLIGHT_WINDOW_MS / 1000;
-    expect(Number.isInteger(expectedSec)).toBe(true);
+    expect(Number.isInteger(IN_FLIGHT_WINDOW_SEC)).toBe(true);
   });
 });

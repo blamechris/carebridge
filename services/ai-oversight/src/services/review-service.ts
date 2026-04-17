@@ -89,6 +89,9 @@ const TERMINAL_REVIEW_STATUSES: readonly string[] = [
  */
 export const IN_FLIGHT_WINDOW_MS = 150_000;
 
+/** IN_FLIGHT_WINDOW_MS expressed in whole seconds for PostgreSQL interval literals. */
+export const IN_FLIGHT_WINDOW_SEC = Math.round(IN_FLIGHT_WINDOW_MS / 1000);
+
 /**
  * Process a clinical event through the full review pipeline.
  */
@@ -121,8 +124,7 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
   //      `processing` rows (orphans from crashed workers) fall outside
   //      the window and do NOT short-circuit — matching the prior
   //      behavior for crash recovery. See #522.
-  const windowSec = Math.round(IN_FLIGHT_WINDOW_MS / 1000);
-  const inFlightCutoff = sql`NOW() - ${windowSec} * interval '1 second'`;
+  const inFlightCutoff = sql`NOW() - ${IN_FLIGHT_WINDOW_SEC} * interval ‘1 second’`;
 
   const existingJob = await db
     .select({
