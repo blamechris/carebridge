@@ -6,8 +6,11 @@
  */
 
 import { createServer } from "node:http";
+import { createLogger } from "@carebridge/logger";
 import { startDispatchWorker } from "./workers/dispatch-worker.js";
 import { shutdownPublisher } from "./publish.js";
+
+const log = createLogger("notifications");
 
 const HEALTH_PORT = Number(process.env.NOTIFICATION_HEALTH_PORT ?? 4002);
 
@@ -48,15 +51,15 @@ const healthServer = createServer(async (req, res) => {
 });
 
 healthServer.listen(HEALTH_PORT, () => {
-  console.log(`[notifications] Health check listening on port ${HEALTH_PORT}`);
+  log.info(`Health check listening on port ${HEALTH_PORT}`);
 });
 
 async function shutdown(signal: string) {
-  console.log(`[notifications] Received ${signal}, shutting down…`);
+  log.info(`Received ${signal}, shutting down…`);
   healthServer.close();
   await worker.close();
   await shutdownPublisher();
-  console.log("[notifications] Shutdown complete");
+  log.info("Shutdown complete");
   process.exit(0);
 }
 
