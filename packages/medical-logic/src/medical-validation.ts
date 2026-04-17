@@ -323,7 +323,7 @@ export function validateLabResult(
   if (!ref) return { valid: true, warnings, errors };
 
   // Unit validation — prevents mg/dL vs mmol/L class confusion, a known
-  // sentinel-event source (glucose ×18, creatinine ×CREATININE_UMOL_TO_MGDL). Tests with an
+  // sentinel-event source (glucose ×18, creatinine ×88.4). Tests with an
   // explicit `allowed_units` list reject mismatches as errors; tests
   // without fall back to a warning when the caller's unit doesn't match
   // the canonical reference unit. The compare normalises case and
