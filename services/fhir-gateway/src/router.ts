@@ -45,6 +45,14 @@ export interface Context {
    * assertRawPatientAccess will skip its own restrictive check.
    */
   rbacVerified?: boolean;
+  /**
+   * Optional callback for setting HTTP response headers. Provided by the
+   * api-gateway Fastify adapter; absent when the router is consumed via
+   * createCaller (tests, internal callers). Procedures that need to
+   * influence transport-layer headers (Cache-Control, Content-Disposition)
+   * call this when present and silently skip when absent.
+   */
+  setHeader?: (name: string, value: string) => void;
 }
 
 const t = initTRPC.context<Context>().create();
@@ -353,6 +361,20 @@ export const fhirGatewayRouter = t.router({
         // bundle is fully assembled, so success=true only if the data
         // was actually produced. Per PR #503 review.
         await writeAudit({ success: true, httpStatusCode: 200 });
+
+        // Enforce recommended_purge_at at the transport layer: instruct
+        // caches and intermediaries to never store this PHI bundle, and
+        // prompt the client to save it as a file (not render inline).
+        if (ctx.setHeader) {
+          ctx.setHeader(
+            "Cache-Control",
+            "no-store, no-cache, must-revalidate",
+          );
+          ctx.setHeader(
+            "Content-Disposition",
+            `attachment; filename="bundle-${exportId}.json"`,
+          );
+        }
 
         // The bundle is returned inline rather than via a signed short-TTL
         // URL (which is the long-term target; see #290). Until that delivery

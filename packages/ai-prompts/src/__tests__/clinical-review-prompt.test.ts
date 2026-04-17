@@ -3,6 +3,10 @@ import {
   CLINICAL_REVIEW_SYSTEM_PROMPT,
   PROMPT_VERSION,
 } from "../clinical-review.js";
+import {
+  DRUG_CLASS_CROSS_REACTIONS,
+  renderDrugClassAnchors,
+} from "../drug-class-anchors.js";
 
 describe("CLINICAL_REVIEW_SYSTEM_PROMPT", () => {
   it("explicitly instructs the LLM to check drug-allergy contraindications", () => {
@@ -22,6 +26,15 @@ describe("CLINICAL_REVIEW_SYSTEM_PROMPT", () => {
     expect(CLINICAL_REVIEW_SYSTEM_PROMPT).toContain("penicillin");
     expect(CLINICAL_REVIEW_SYSTEM_PROMPT).toContain("sulfa");
     expect(CLINICAL_REVIEW_SYSTEM_PROMPT).toContain("aspirin");
+  });
+
+  it("renders every drug class example from DRUG_CLASS_CROSS_REACTIONS into the prompt", () => {
+    for (const reaction of DRUG_CLASS_CROSS_REACTIONS) {
+      expect(CLINICAL_REVIEW_SYSTEM_PROMPT).toContain(reaction.class);
+      for (const example of reaction.examples) {
+        expect(CLINICAL_REVIEW_SYSTEM_PROMPT).toContain(example);
+      }
+    }
   });
 
   it("includes hallucination guardrails for uncertain interactions", () => {
@@ -53,5 +66,16 @@ describe("CLINICAL_REVIEW_SYSTEM_PROMPT", () => {
     // version string — audit trail of which prompt produced a given flag
     // depends on PROMPT_VERSION uniquely identifying the prompt text.
     expect(PROMPT_VERSION).not.toBe("1.0.0");
+  });
+});
+
+describe("renderDrugClassAnchors", () => {
+  it("produces a semicolon-separated list of class cross-reactions", () => {
+    const rendered = renderDrugClassAnchors();
+    expect(rendered).toContain("penicillin allergy cross-reacts with amoxicillin, ampicillin, piperacillin");
+    expect(rendered).toContain("sulfa allergy cross-reacts with sulfonamide antibiotics");
+    expect(rendered).toContain("aspirin allergy cross-reacts with other NSAIDs");
+    // Entries are joined with semicolons
+    expect(rendered.split(";").length).toBe(DRUG_CLASS_CROSS_REACTIONS.length);
   });
 });
