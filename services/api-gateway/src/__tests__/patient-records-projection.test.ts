@@ -64,6 +64,7 @@ const mocks = vi.hoisted(() => {
     const chain: Record<string, unknown> = {};
     chain.from = fn((..._args: unknown[]) => chain);
     chain.innerJoin = fn((..._args: unknown[]) => chain);
+    chain.orderBy = fn((..._args: unknown[]) => chain);
     chain.where = fn((..._args: unknown[]) => {
       return Promise.resolve(applyProjection(resolvedData));
     });
@@ -139,6 +140,7 @@ vi.mock("drizzle-orm", () => ({
   isNull: (col: unknown) => ({ op: "isNull", col }),
   isNotNull: (col: unknown) => ({ op: "isNotNull", col }),
   inArray: (col: unknown, vals: unknown[]) => ({ op: "inArray", col, vals }),
+  desc: (col: unknown) => ({ op: "desc", col }),
 }));
 
 vi.mock("../middleware/rbac.js", () => ({
