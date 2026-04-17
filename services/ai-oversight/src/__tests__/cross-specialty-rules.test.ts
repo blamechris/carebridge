@@ -894,6 +894,14 @@ describe("HEPATIC-HEPATOTOXIN-001 — Hepatic disease + hepatotoxic medication",
     expect(flag).toBeUndefined();
   });
 
+  it("does NOT fire for sub-threshold TID acetaminophen (500mg × 3 = 1.5g/day < 3g)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      hepaticCtx(["acetaminophen 500mg TID"]),
+    );
+    const flag = flags.find((f) => f.rule_id === "HEPATIC-HEPATOTOXIN-001");
+    expect(flag).toBeUndefined();
+  });
+
   it("does NOT fire for low-dose statin (atorvastatin 10mg)", () => {
     const flags = checkCrossSpecialtyPatterns(
       hepaticCtx(["atorvastatin 10mg daily"]),
