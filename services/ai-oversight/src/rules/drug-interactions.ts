@@ -39,6 +39,69 @@ interface DrugInteractionPair {
 const QTC_PATTERN =
   /amiodarone|pacerone|cordarone|sotalol|betapace|dofetilide|tikosyn|dronedarone|multaq|ibutilide|corvert|quinidine|procainamide|disopyramide|norpace|flecainide|tambocor|haloperidol|haldol|thioridazine|mellaril|chlorpromazine|thorazine|pimozide|orap|droperidol|quetiapine|seroquel|risperidone|risperdal|olanzapine|zyprexa|ziprasidone|geodon|aripiprazole|abilify|paliperidone|invega|iloperidone|fanapt|azithromycin|zithromax|erythromycin|clarithromycin|biaxin|levofloxacin|levaquin|moxifloxacin|avelox|ciprofloxacin|cipro|gemifloxacin|factive|ofloxacin|floxin|ondansetron|zofran|granisetron|kytril|dolasetron|anzemet|domperidone|motilium|hydroxychloroquine|plaquenil|chloroquine|aralen|quinine|methadone|dolophine|citalopram|celexa|escitalopram|lexapro|donepezil|aricept|amitriptyline|elavil|imipramine|tofranil|nortriptyline|pamelor|clomipramine|anafranil|sevoflurane|ultane|oxaliplatin|eloxatin|vandetanib|caprelsa|sunitinib|sutent|nilotinib|tasigna/i;
 
+/**
+ * Brand-to-generic normalization map for QTc-prolonging drugs.
+ *
+ * When deduplicating same-list regex matches (e.g. DI-QTC-COMBO), the matched
+ * substring for a brand name ("pacerone") differs from the generic
+ * ("amiodarone"), causing false-positive flags for the same underlying drug.
+ * This map normalizes brand names to their generic equivalents before the
+ * distinctness comparison.
+ */
+const BRAND_TO_GENERIC: Record<string, string> = {
+  pacerone: "amiodarone",
+  cordarone: "amiodarone",
+  betapace: "sotalol",
+  tikosyn: "dofetilide",
+  multaq: "dronedarone",
+  corvert: "ibutilide",
+  norpace: "disopyramide",
+  tambocor: "flecainide",
+  haldol: "haloperidol",
+  mellaril: "thioridazine",
+  thorazine: "chlorpromazine",
+  orap: "pimozide",
+  seroquel: "quetiapine",
+  risperdal: "risperidone",
+  zyprexa: "olanzapine",
+  geodon: "ziprasidone",
+  abilify: "aripiprazole",
+  invega: "paliperidone",
+  fanapt: "iloperidone",
+  zithromax: "azithromycin",
+  biaxin: "clarithromycin",
+  levaquin: "levofloxacin",
+  avelox: "moxifloxacin",
+  cipro: "ciprofloxacin",
+  factive: "gemifloxacin",
+  floxin: "ofloxacin",
+  zofran: "ondansetron",
+  kytril: "granisetron",
+  anzemet: "dolasetron",
+  motilium: "domperidone",
+  plaquenil: "hydroxychloroquine",
+  aralen: "chloroquine",
+  dolophine: "methadone",
+  celexa: "citalopram",
+  lexapro: "escitalopram",
+  aricept: "donepezil",
+  elavil: "amitriptyline",
+  tofranil: "imipramine",
+  pamelor: "nortriptyline",
+  anafranil: "clomipramine",
+  ultane: "sevoflurane",
+  eloxatin: "oxaliplatin",
+  caprelsa: "vandetanib",
+  sutent: "sunitinib",
+  tasigna: "nilotinib",
+};
+
+/** Normalize a matched drug name through the brand-to-generic map. */
+function normalizeToGeneric(matched: string): string {
+  const lower = matched.toLowerCase();
+  return BRAND_TO_GENERIC[lower] ?? lower;
+}
+
 const INTERACTION_PAIRS: DrugInteractionPair[] = [
   {
     id: "DI-WARFARIN-ASPIRIN",
@@ -530,7 +593,7 @@ export function checkDrugInteractions(medications: string[]): RuleFlag[] {
         distinctDrugs =
           matchA != null &&
           matchB != null &&
-          matchA[0] !== matchB[0];
+          normalizeToGeneric(matchA[0]) !== normalizeToGeneric(matchB[0]);
       } else {
         distinctDrugs =
           normalizedMeds[drugAIdx] !== normalizedMeds[drugBIdx];
