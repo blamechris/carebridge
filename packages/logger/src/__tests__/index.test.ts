@@ -139,4 +139,42 @@ describe("createLogger", () => {
       expect(entry.detail).toBe("timeout");
     });
   });
+
+  describe("base field collision protection", () => {
+    it("metadata cannot override 'level'", () => {
+      const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const logger = createLogger("test-service");
+      logger.info("test", { level: "error" });
+
+      const entry = JSON.parse(spy.mock.calls[0]![0] as string);
+      expect(entry.level).toBe("info");
+    });
+
+    it("metadata cannot override 'service'", () => {
+      const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const logger = createLogger("test-service");
+      logger.info("test", { service: "evil-service" });
+
+      const entry = JSON.parse(spy.mock.calls[0]![0] as string);
+      expect(entry.service).toBe("test-service");
+    });
+
+    it("metadata cannot override 'msg'", () => {
+      const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const logger = createLogger("test-service");
+      logger.info("real message", { msg: "fake message" });
+
+      const entry = JSON.parse(spy.mock.calls[0]![0] as string);
+      expect(entry.msg).toBe("real message");
+    });
+
+    it("metadata cannot override 'timestamp'", () => {
+      const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const logger = createLogger("test-service");
+      logger.info("test", { timestamp: "1999-01-01T00:00:00.000Z" });
+
+      const entry = JSON.parse(spy.mock.calls[0]![0] as string);
+      expect(entry.timestamp).not.toBe("1999-01-01T00:00:00.000Z");
+    });
+  });
 });
