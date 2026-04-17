@@ -23,6 +23,11 @@ import {
   type StalenessTier,
 } from "@/lib/vitals-staleness";
 import { formatReferenceRange } from "@/lib/formatting";
+import {
+  isOutOfRange as labIsOutOfRange,
+  labValueColor,
+  deriveInferredFlag,
+} from "@/lib/lab-display";
 
 const tabs = [
   { key: "overview", label: "Overview" },
@@ -485,37 +490,10 @@ function LabsTab({ patientId }: { patientId: string }) {
                   const refLow = r.reference_low;
                   const refHigh = r.reference_high;
 
-                  // A value is out-of-range when it falls below reference_low or
-                  // above reference_high. This catches "borderline abnormal"
-                  // cases (e.g. K+ 3.2 with ref 3.5–5.0) that the server-side
-                  // `flag` field often leaves unset — the lab instrument may
-                  // only assign "critical" for extreme values, leaving
-                  // clinically meaningful drift unmarked.
-                  const isOutOfRange =
-                    typeof value === "number" &&
-                    ((typeof refLow === "number" && value < refLow) ||
-                      (typeof refHigh === "number" && value > refHigh));
-
-                  const valueColor =
-                    flag === "critical"
-                      ? "var(--critical)"
-                      : flag === "H" || flag === "L"
-                      ? "var(--warning)"
-                      : isOutOfRange
-                      ? "var(--warning)"
-                      : "var(--text-primary)";
-
+                  const outOfRange = labIsOutOfRange(value, refLow, refHigh);
+                  const valueColor = labValueColor(flag, outOfRange);
                   const referenceRange = formatReferenceRange(refLow, refHigh);
-
-                  // Out-of-range without a server flag — surface an inferred
-                  // H/L badge so the clinician has the same visual cue they
-                  // would for an instrument-flagged value.
-                  const inferredFlag =
-                    !flag && isOutOfRange && typeof value === "number"
-                      ? typeof refLow === "number" && value < refLow
-                        ? "low"
-                        : "high"
-                      : "";
+                  const inferredFlag = deriveInferredFlag(value, flag, refLow, refHigh);
 
                   return (
                     <tr key={ri}>
