@@ -12,7 +12,8 @@ import {
   diagnoses,
   allergies,
 } from "@carebridge/db-schema";
-import { eq } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
+import { createLogger } from "@carebridge/logger";
 import crypto from "node:crypto";
 import type { Vital, LabResult, User } from "@carebridge/shared-types";
 import {
@@ -25,6 +26,8 @@ import {
 } from "./generators/index.js";
 import { fhirBundleSchema } from "./schemas/bundle.js";
 import { sanitizeFreeText } from "@carebridge/phi-sanitizer";
+
+const logger = createLogger("fhir-gateway");
 
 /**
  * Context for the raw FHIR gateway router.
@@ -231,6 +234,44 @@ export const fhirGatewayRouter = t.router({
       assertRawPatientAccess(ctx.user, input.patientId, ctx.rbacVerified);
       const db = getDb();
       const { patientId } = input;
+
+      // Check for a previous export by the same user for this patient whose
+      // recommended_purge_at has passed. This indicates the client may be
+      // holding onto PHI beyond the recommended retention window and is
+      // re-requesting it — worth a structured audit warning.
+      const now = new Date();
+      const priorExpiredExports = await db
+        .select({
+          id: auditLog.id,
+          details: auditLog.details,
+          timestamp: auditLog.timestamp,
+        })
+        .from(auditLog)
+        .where(
+          and(
+            eq(auditLog.user_id, ctx.user.id),
+            eq(auditLog.action, "fhir_export"),
+            eq(auditLog.patient_id, patientId),
+            eq(auditLog.success, true),
+            sql`${auditLog.details}::jsonb->>'recommended_purge_at' < ${now.toISOString()}`,
+          ),
+        );
+
+      if (priorExpiredExports.length > 0) {
+        const mostRecent = priorExpiredExports[priorExpiredExports.length - 1]!;
+        const priorDetails = mostRecent.details
+          ? (JSON.parse(mostRecent.details) as Record<string, unknown>)
+          : {};
+        logger.warn("re-export requested after recommended_purge_at", {
+          user_id: ctx.user.id,
+          patient_id: patientId,
+          prior_export_id: priorDetails.export_id ?? mostRecent.id,
+          prior_export_at: mostRecent.timestamp,
+          prior_recommended_purge_at: priorDetails.recommended_purge_at ?? null,
+          expired_export_count: priorExpiredExports.length,
+        });
+      }
+
       const exportId = crypto.randomUUID();
       const exportedAt = new Date().toISOString();
       const recommendedPurgeAt = new Date(
