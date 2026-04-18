@@ -1,38 +1,9 @@
-import { Queue } from "bullmq";
-import {
-  getRedisConnection,
-  CLINICAL_EVENTS_JOB_OPTIONS,
-} from "@carebridge/redis-config";
-import { writeOutboxEntry } from "@carebridge/outbox";
-import type { ClinicalEvent } from "@carebridge/shared-types";
-
-export type { ClinicalEvent };
-
-const connection = getRedisConnection();
-
-const clinicalEventsQueue = new Queue("clinical-events", {
-  connection,
-  defaultJobOptions: CLINICAL_EVENTS_JOB_OPTIONS,
-});
-
-export async function emitClinicalEvent(event: ClinicalEvent): Promise<void> {
-  try {
-    await clinicalEventsQueue.add(event.type, event);
-  } catch (queueError) {
-    // Redis/BullMQ unavailable — persist to DB outbox for later retry
-    try {
-      await writeOutboxEntry(
-        event,
-        queueError instanceof Error ? queueError : String(queueError),
-      );
-    } catch (dbError) {
-      // Both Redis and DB fallback failed — log critical error as last resort
-      console.error(
-        `[CRITICAL] Failed to emit clinical event and DB fallback also failed. ` +
-        `Event type: ${event.type}, patient: ${event.patient_id}. ` +
-        `Queue error: ${queueError instanceof Error ? queueError.message : String(queueError)}. ` +
-        `DB error: ${dbError instanceof Error ? dbError.message : String(dbError)}`,
-      );
-    }
-  }
-}
+/**
+ * Re-export of the shared clinical event emitter.
+ *
+ * The single source of truth lives in `@carebridge/outbox` so that
+ * both `clinical-data` and `clinical-notes` share one implementation.
+ * See: https://github.com/blamechris/carebridge/issues/817
+ */
+export { emitClinicalEvent } from "@carebridge/outbox";
+export type { ClinicalEvent } from "@carebridge/shared-types";

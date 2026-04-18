@@ -18,15 +18,17 @@ vi.mock("@carebridge/redis-config", () => ({
   },
 }));
 
-// ── Mock @carebridge/outbox ─────────────────────────────────────
+// ── Mock the outbox write surface ───────────────────────────────
+// emit.ts imports writeOutboxEntry from "./index.js" so we intercept
+// that module to avoid pulling in the real DB-backed implementation.
 const writeOutboxEntryMock = vi.fn().mockResolvedValue(undefined);
 
-vi.mock("@carebridge/outbox", () => ({
+vi.mock("../index.js", () => ({
   writeOutboxEntry: writeOutboxEntryMock,
 }));
 
 // ── Import after mocks ──────────────────────────────────────────
-const { emitClinicalEvent } = await import("../events.js");
+const { emitClinicalEvent } = await import("../emit.js");
 
 const sampleEvent: ClinicalEvent = {
   id: "evt-1",

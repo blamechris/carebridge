@@ -10,54 +10,22 @@
  *     off-screen until keyboard focus brings it on-screen.
  *   - 2.4.7 Focus Visible: a global `:focus-visible` outline so keyboard
  *     users can always see where focus is.
+ *
+ * The shared tokens, focus-visible rule, `.skip-to-main`, and `.sr-only`
+ * utility all come from `@carebridge/ui-tokens`, imported in the root
+ * layout. The overrides below only customize the patient-portal-specific
+ * accent colour so the shared focus/skip-link styles resolve correctly.
+ * (Closes #831, #832.)
  */
 
 :root {
-  /* Match the patient-portal's existing inline color scheme so tokens
-     resolve to sensible values even without a dedicated theme file. */
+  /* Patient-portal accent differs from the clinician portal so cascade
+     order matters: this rule must come after the ui-tokens import in the
+     root layout (which it does — the layout imports tokens.css first,
+     then globals.css). */
   --bg: #0a0a0a;
   --accent: #0ea5e9;
   --accent-contrast: #ffffff;
-}
-
-/* ───── Accessibility: focus indicators (WCAG 2.1 AA §2.4.7) ───── */
-
-:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  border-radius: 2px;
-}
-
-button:focus-visible,
-a:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible,
-[tabindex]:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-/* ───── Skip-to-main link (WCAG 2.1 AA §2.4.1) ───── */
-
-.skip-to-main {
-  position: absolute;
-  left: -9999px;
-  top: 0;
-  z-index: 10100;
-  background: var(--accent);
-  color: var(--accent-contrast);
-  padding: 10px 16px;
-  border-radius: 0 0 6px 0;
-  font-weight: 600;
-  font-size: 13px;
-  text-decoration: none;
-}
-
-.skip-to-main:focus {
-  left: 0;
-  outline: 2px solid #fff;
-  outline-offset: 2px;
 }
 
 /* Hide the <main id="main-content"> tabindex=-1 focus ring when the
