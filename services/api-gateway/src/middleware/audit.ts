@@ -276,7 +276,7 @@ export async function auditMiddleware(
     return;
   }
 
-  const user = (request as unknown as Record<string, unknown>).user as User | undefined;
+  const user = request.user;
   const userId = user?.id ?? "anonymous";
 
   const action = methodToAction(request.method);
