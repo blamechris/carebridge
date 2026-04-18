@@ -6,7 +6,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
-  "scripts": { "build": "tsc", "typecheck": "tsc --noEmit", "clean": "rm -rf dist" },
+  "scripts": { "build": "tsc", "typecheck": "tsc --noEmit", "clean": "rm -rf dist", "test": "vitest run" },
   "dependencies": {
     "@carebridge/shared-types": "workspace:*",
     "@carebridge/validators": "workspace:*",
@@ -17,5 +17,5 @@
     "drizzle-orm": "^0.38.0",
     "zod": "^3.24.0"
   },
-  "devDependencies": { "typescript": "^5.7.0", "@types/node": "^22.0.0" }
+  "devDependencies": { "typescript": "^5.7.0", "@types/node": "^22.0.0", "vitest": "^3.0.0" }
 }
