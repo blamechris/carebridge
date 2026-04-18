@@ -366,6 +366,43 @@ function buildLabRuleId(severity: FlagSeverity, ruleKey: string): string {
 }
 
 /**
+ * Coarse "any-analyte-implausible" numeric sanity window for the issue
+ * #835 unevaluated-lab fallback.
+ *
+ * Issue #867 (reviewer follow-up on PR #860): when the unevaluable
+ * fallback fires, the info-severity default is plausibly under-alerting
+ * for values whose magnitude alone suggests data corruption or a
+ * decimal / sign / unit error. Without a reference range or canonical
+ * mapping we cannot claim a clinical threshold, but we CAN observe that
+ * common human-scale analyte results almost never fall outside
+ * (0.01, 10000) in their own units. Values outside that window are much
+ * more likely to be clinician-review-worthy than values inside it.
+ *
+ * Chosen thresholds (signal-over-noise hints, NOT clinical thresholds):
+ *   - value > 10000  → extreme magnitude (misordered units / order-of-
+ *     magnitude error). Most physiological analytes rarely exceed a few
+ *     thousand in their reported units.
+ *   - value < 0.01   → near-zero or sub-thresholdable (decimal misplacement
+ *     or lost precision). For positive analytes this usually means the
+ *     reading is either missing or encoded with the wrong multiplier.
+ *   - value < 0      → negative concentrations / counts are almost always
+ *     data errors; captured by `value < 0.01` above (negatives satisfy
+ *     the same predicate).
+ *
+ * Escalation stays at `warning` (not `critical`) because the signal is
+ * magnitude-based, not analyte-specific: `critical` requires a clinical
+ * claim we cannot make without a reference. The escalation is additive —
+ * the base case (value in the window) continues to emit info.
+ */
+const EXTREME_VALUE_HIGH = 10000;
+const EXTREME_VALUE_LOW = 0.01;
+
+function isExtremeNumericValue(value: number): boolean {
+  if (!Number.isFinite(value)) return false;
+  return value > EXTREME_VALUE_HIGH || value < EXTREME_VALUE_LOW;
+}
+
+/**
  * Infer the direction ("low" | "high") of a laboratory-flagged critical
  * result when the lab itself did not encode direction in the flag string.
  *
@@ -775,24 +812,41 @@ export function checkCriticalValues(event: ClinicalEvent): RuleFlag[] {
                 unit: result.unit,
               });
 
+              // Issue #867: escalate info → warning when the raw magnitude
+              // of the value is outside the coarse any-analyte-plausible
+              // window. See `isExtremeNumericValue` for rationale and
+              // threshold choice. This is additive — values in the window
+              // continue to emit info as introduced by PR #860.
+              const escalate = isExtremeNumericValue(result.value);
+              const severity: FlagSeverity = escalate ? "warning" : "info";
+              const rationale = escalate
+                ? `Lab result for "${result.test_name}" arrived with no lab-provided ` +
+                  `flag, no reference range, and no entry in COMMON_LAB_TESTS. The ` +
+                  `deterministic rule layer cannot map the value to an analyte-specific ` +
+                  `threshold, but the raw magnitude (${result.value} ${result.unit}) ` +
+                  `falls outside the coarse any-analyte-plausible window ` +
+                  `(${EXTREME_VALUE_LOW}–${EXTREME_VALUE_HIGH}). Escalating to warning ` +
+                  `as a signal-over-noise hint: values of this magnitude usually ` +
+                  `indicate a data-entry or unit/decimal error worth clinician review.`
+                : `Lab result for "${result.test_name}" arrived with no lab-provided ` +
+                  `flag, no reference range, and no entry in COMMON_LAB_TESTS. The ` +
+                  `deterministic rule layer cannot assess the value against a threshold; ` +
+                  `surfacing as an info signal so LLM review and clinicians have visibility.`;
+
               flags.push({
-                severity: "info",
+                severity,
                 category: "critical-value",
                 summary:
                   `Lab result not evaluable by deterministic rules: ` +
                   `${result.test_name} = ${result.value} ${result.unit}`,
-                rationale:
-                  `Lab result for "${result.test_name}" arrived with no lab-provided ` +
-                  `flag, no reference range, and no entry in COMMON_LAB_TESTS. The ` +
-                  `deterministic rule layer cannot assess the value against a threshold; ` +
-                  `surfacing as an info signal so LLM review and clinicians have visibility.`,
+                rationale,
                 suggested_action:
                   `Clinician review recommended. Verify test name mapping and reference ` +
                   `range metadata with the sending laboratory. Consider adding this test ` +
                   `to COMMON_LAB_TESTS or CRITICAL_LAB_THRESHOLDS if clinically relevant.`,
                 notify_specialties: [],
                 rule_id: buildLabRuleId(
-                  "info",
+                  severity,
                   `UNEVALUATED-${result.test_name.replace(/\s+/g, "_").toUpperCase()}`,
                 ),
               });
