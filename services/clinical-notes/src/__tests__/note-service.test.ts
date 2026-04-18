@@ -1,33 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createMockDb, type MockDb } from "@carebridge/test-utils";
 
 // ── Mock DB ──────────────────────────────────────────────────────
-const insertValuesMock = vi.fn().mockResolvedValue(undefined);
-const insertMock = vi.fn(() => ({ values: insertValuesMock }));
-
-const updateReturningMock = vi.fn();
-const updateSetWhereMock = vi.fn(() => ({ returning: updateReturningMock }));
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const updateSetMock = vi.fn<(arg: any) => any>(() => ({ where: updateSetWhereMock }));
-const updateMock = vi.fn(() => ({ set: updateSetMock }));
-
-const selectOrderByMock = vi.fn();
-const selectFromWhereLimitMock = vi.fn();
-const selectFromWhereMock = vi.fn(() => ({
-  limit: selectFromWhereLimitMock,
-  orderBy: selectOrderByMock,
-}));
-const selectFromMock = vi.fn(() => ({
-  where: selectFromWhereMock,
-  orderBy: selectOrderByMock,
-}));
-const selectMock = vi.fn(() => ({ from: selectFromMock }));
+// A single MockDb instance is recreated per test so queued results and call
+// history reset cleanly. The helper chains any order of .from/.where/.limit/
+// .orderBy/.values/.set/.returning and resolves to the next queued result
+// when the chain is awaited.
+let db: MockDb;
 
 vi.mock("@carebridge/db-schema", () => ({
-  getDb: () => ({
-    insert: insertMock,
-    select: selectMock,
-    update: updateMock,
-  }),
+  getDb: () => db,
   clinicalNotes: {
     id: "id",
     patient_id: "patient_id",
@@ -89,8 +71,7 @@ const updatedSections = [
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // Reset chaining defaults
-  selectOrderByMock.mockReturnValue({ where: selectFromWhereMock });
+  db = createMockDb();
 });
 
 // ─────────────────────────────────────────────────────────────────
@@ -123,9 +104,14 @@ describe("createNote", () => {
       sections: soapSections,
     });
 
-    expect(insertMock).toHaveBeenCalledTimes(1);
-    expect(insertValuesMock).toHaveBeenCalledTimes(1);
-    const insertedValues = insertValuesMock.mock.calls[0][0];
+    expect(db.insert).toHaveBeenCalledTimes(1);
+    const insertCall = db.insert.calls[0];
+    expect(insertCall?.chain).toContain("values");
+    const insertedValues = insertCall?.chainArgs[0]?.[0] as {
+      patient_id: string;
+      version: number;
+      status: string;
+    };
     expect(insertedValues.patient_id).toBe(PATIENT_ID);
     expect(insertedValues.version).toBe(1);
     expect(insertedValues.status).toBe("draft");
@@ -160,7 +146,6 @@ describe("createNote", () => {
   });
 
   it("sets encounter_id to null when omitted", async () => {
-    const inserted = insertValuesMock;
     await createNote({
       patient_id: PATIENT_ID,
       provider_id: PROVIDER_ID,
@@ -168,7 +153,9 @@ describe("createNote", () => {
       sections: soapSections,
     });
 
-    const insertedValues = inserted.mock.calls[0][0];
+    const insertedValues = db.insert.calls[0]?.chainArgs[0]?.[0] as {
+      encounter_id: unknown;
+    };
     expect(insertedValues.encounter_id).toBeNull();
   });
 });
@@ -178,8 +165,7 @@ describe("createNote", () => {
 // ─────────────────────────────────────────────────────────────────
 describe("updateNote", () => {
   it("increments version and returns updated sections", async () => {
-    selectFromWhereLimitMock.mockResolvedValueOnce([existingRow]);
-    updateReturningMock.mockResolvedValueOnce([{ id: NOTE_ID }]);
+    db.willSelect([existingRow]).willInsert().willUpdate([{ id: NOTE_ID }]);
 
     const result = await updateNote(NOTE_ID, { sections: updatedSections });
 
@@ -188,23 +174,23 @@ describe("updateNote", () => {
   });
 
   it("archives the old version in note_versions", async () => {
-    selectFromWhereLimitMock.mockResolvedValueOnce([existingRow]);
-    updateReturningMock.mockResolvedValueOnce([{ id: NOTE_ID }]);
+    db.willSelect([existingRow]).willInsert().willUpdate([{ id: NOTE_ID }]);
 
     await updateNote(NOTE_ID, { sections: updatedSections });
 
-    // First insert call is the archive, second is from the note-service insert
-    // Actually: insert is called once for archive, then update is used for the note
-    expect(insertMock).toHaveBeenCalledTimes(1);
-    const archivedValues = insertValuesMock.mock.calls[0][0];
+    expect(db.insert).toHaveBeenCalledTimes(1);
+    const archivedValues = db.insert.calls[0]?.chainArgs[0]?.[0] as {
+      note_id: string;
+      version: number;
+      sections: unknown;
+    };
     expect(archivedValues.note_id).toBe(NOTE_ID);
     expect(archivedValues.version).toBe(3);
     expect(archivedValues.sections).toEqual(existingRow.sections);
   });
 
   it("emits a note.saved event with the new version", async () => {
-    selectFromWhereLimitMock.mockResolvedValueOnce([existingRow]);
-    updateReturningMock.mockResolvedValueOnce([{ id: NOTE_ID }]);
+    db.willSelect([existingRow]).willInsert().willUpdate([{ id: NOTE_ID }]);
 
     await updateNote(NOTE_ID, { sections: updatedSections });
 
@@ -216,8 +202,7 @@ describe("updateNote", () => {
   });
 
   it("succeeds when expectedVersion matches the current version", async () => {
-    selectFromWhereLimitMock.mockResolvedValueOnce([existingRow]);
-    updateReturningMock.mockResolvedValueOnce([{ id: NOTE_ID }]);
+    db.willSelect([existingRow]).willInsert().willUpdate([{ id: NOTE_ID }]);
 
     const result = await updateNote(NOTE_ID, {
       sections: updatedSections,
@@ -228,8 +213,7 @@ describe("updateNote", () => {
   });
 
   it("throws NoteConflictError when expectedVersion does not match", async () => {
-    selectFromWhereLimitMock.mockResolvedValueOnce([existingRow]);
-    updateReturningMock.mockResolvedValueOnce([]);
+    db.willSelect([existingRow]).willInsert().willUpdate([]);
 
     const error = await updateNote(NOTE_ID, {
       sections: updatedSections,
@@ -244,7 +228,7 @@ describe("updateNote", () => {
   });
 
   it("throws when note is not found", async () => {
-    selectFromWhereLimitMock.mockResolvedValueOnce([]);
+    db.willSelect([]);
 
     await expect(
       updateNote("nonexistent", { sections: updatedSections }),
@@ -257,7 +241,7 @@ describe("updateNote", () => {
 // ─────────────────────────────────────────────────────────────────
 describe("signNote", () => {
   it("sets status to signed with signer and timestamp", async () => {
-    selectFromWhereLimitMock.mockResolvedValueOnce([existingRow]);
+    db.willSelect([existingRow]);
 
     const result = await signNote(NOTE_ID, PROVIDER_ID);
 
@@ -268,19 +252,26 @@ describe("signNote", () => {
   });
 
   it("calls db.update to persist the signed status", async () => {
-    selectFromWhereLimitMock.mockResolvedValueOnce([existingRow]);
+    db.willSelect([existingRow]);
 
     await signNote(NOTE_ID, PROVIDER_ID);
 
-    expect(updateMock).toHaveBeenCalled();
-    const setArg = updateSetMock.mock.calls[0][0];
+    expect(db.update).toHaveBeenCalled();
+    const updateCall = db.update.calls[0];
+    const setIndex = updateCall?.chain.indexOf("set") ?? -1;
+    expect(setIndex).toBeGreaterThanOrEqual(0);
+    const setArg = updateCall?.chainArgs[setIndex]?.[0] as {
+      status: string;
+      signed_by: string;
+      signed_at: string;
+    };
     expect(setArg.status).toBe("signed");
     expect(setArg.signed_by).toBe(PROVIDER_ID);
     expect(setArg.signed_at).toBeDefined();
   });
 
   it("emits a note.signed clinical event", async () => {
-    selectFromWhereLimitMock.mockResolvedValueOnce([existingRow]);
+    db.willSelect([existingRow]);
 
     await signNote(NOTE_ID, PROVIDER_ID);
 
@@ -293,7 +284,7 @@ describe("signNote", () => {
   });
 
   it("throws when note is not found", async () => {
-    selectFromWhereLimitMock.mockResolvedValueOnce([]);
+    db.willSelect([]);
 
     await expect(signNote("nonexistent", PROVIDER_ID)).rejects.toThrow(
       "Note nonexistent not found",
@@ -301,7 +292,7 @@ describe("signNote", () => {
   });
 
   it("preserves the existing version number", async () => {
-    selectFromWhereLimitMock.mockResolvedValueOnce([existingRow]);
+    db.willSelect([existingRow]);
 
     const result = await signNote(NOTE_ID, PROVIDER_ID);
 
@@ -318,7 +309,7 @@ describe("getNotesByPatient", () => {
       { ...existingRow, id: "aaa", created_at: "2026-03-16T10:00:00.000Z" },
       { ...existingRow, id: "bbb", created_at: "2026-03-15T10:00:00.000Z" },
     ];
-    selectOrderByMock.mockResolvedValueOnce(rows);
+    db.willSelect(rows);
 
     const result = await getNotesByPatient(PATIENT_ID);
 
@@ -328,7 +319,7 @@ describe("getNotesByPatient", () => {
   });
 
   it("returns empty array when patient has no notes", async () => {
-    selectOrderByMock.mockResolvedValueOnce([]);
+    db.willSelect([]);
 
     const result = await getNotesByPatient(PATIENT_ID);
 
@@ -346,7 +337,7 @@ describe("getNotesByPatient", () => {
       copy_forward_score: null,
       source_system: null,
     };
-    selectOrderByMock.mockResolvedValueOnce([row]);
+    db.willSelect([row]);
 
     const result = await getNotesByPatient(PATIENT_ID);
 
@@ -365,10 +356,8 @@ describe("getNotesByPatient", () => {
 // ─────────────────────────────────────────────────────────────────
 describe("getNoteById", () => {
   it("returns the note and its version history", async () => {
-    // First select().from().where().limit() returns the note
-    selectFromWhereLimitMock.mockResolvedValueOnce([existingRow]);
-    // Second select().from().where().orderBy() returns versions
-    selectOrderByMock.mockResolvedValueOnce([
+    // First select resolves the note, second select resolves versions.
+    db.willSelect([existingRow]).willSelect([
       {
         note_id: NOTE_ID,
         version: 2,
@@ -396,7 +385,7 @@ describe("getNoteById", () => {
   });
 
   it("returns null when note is not found", async () => {
-    selectFromWhereLimitMock.mockResolvedValueOnce([]);
+    db.willSelect([]);
 
     const result = await getNoteById("nonexistent");
 
@@ -404,8 +393,7 @@ describe("getNoteById", () => {
   });
 
   it("returns empty versions array for a note with no history", async () => {
-    selectFromWhereLimitMock.mockResolvedValueOnce([existingRow]);
-    selectOrderByMock.mockResolvedValueOnce([]);
+    db.willSelect([existingRow]).willSelect([]);
 
     const result = await getNoteById(NOTE_ID);
 
@@ -414,8 +402,7 @@ describe("getNoteById", () => {
   });
 
   it("maps nullable fields to undefined on the note", async () => {
-    selectFromWhereLimitMock.mockResolvedValueOnce([existingRow]);
-    selectOrderByMock.mockResolvedValueOnce([]);
+    db.willSelect([existingRow]).willSelect([]);
 
     const result = await getNoteById(NOTE_ID);
 
