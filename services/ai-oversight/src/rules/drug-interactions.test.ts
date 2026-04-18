@@ -227,6 +227,35 @@ describe("checkDrugInteractions", () => {
       expect(match!.severity).toBe("warning");
     });
 
+    // Issue #865 — DI-METFORMIN-CONTRAST previously used a narrow regex
+    // (/metformin|glucophage/i) that missed branded fixed-dose combination
+    // products (Janumet = sitagliptin + metformin, Jentadueto = linagliptin +
+    // metformin, etc.). The shared METFORMIN_PATTERN now covers those.
+    it("flags janumet (sitagliptin + metformin combo) + contrast dye", () => {
+      const flags = checkDrugInteractions(["janumet 50-1000mg", "iodinated contrast"]);
+      const match = flags.find((f) => f.rule_id === "DI-METFORMIN-CONTRAST");
+      expect(match).toBeDefined();
+      expect(match!.severity).toBe("warning");
+    });
+
+    it("flags jentadueto (linagliptin + metformin combo) + contrast dye", () => {
+      const flags = checkDrugInteractions([
+        "jentadueto 2.5-1000mg",
+        "iodinated contrast",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-METFORMIN-CONTRAST");
+      expect(match).toBeDefined();
+    });
+
+    it("flags synjardy (empagliflozin + metformin combo) + iodinated contrast", () => {
+      const flags = checkDrugInteractions([
+        "synjardy 12.5-1000mg",
+        "iodinated contrast dye",
+      ]);
+      const match = flags.find((f) => f.rule_id === "DI-METFORMIN-CONTRAST");
+      expect(match).toBeDefined();
+    });
+
     it("flags lithium + naproxen (NSAID)", () => {
       const flags = checkDrugInteractions(["lithium 300mg", "naproxen 500mg"]);
       const match = flags.find((f) => f.rule_id === "DI-LITHIUM-NSAID");

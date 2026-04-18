@@ -46,6 +46,14 @@ export interface ClinicalNote extends BaseRecord {
   source_system?: string;
 }
 
+/** Which state transition produced a note_versions archive row. */
+export type NoteLifecycleEvent =
+  | "draft"
+  | "signed"
+  | "cosigned"
+  | "amended"
+  | "unknown";
+
 /** Lightweight note version for history tracking */
 export interface NoteVersion {
   note_id: string;
@@ -53,6 +61,12 @@ export interface NoteVersion {
   sections: NoteSection[];
   saved_at: string;
   saved_by: string;
+  /**
+   * Which state transition caused this archive row. Required to disambiguate
+   * rows that share the same `version` number (sign and cosign both archive
+   * at `existing.version` without bumping it).
+   */
+  lifecycle_event: NoteLifecycleEvent;
 }
 
 // ─── Review of Systems ───────────────────────────────────────────

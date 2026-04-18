@@ -263,6 +263,19 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
       }
     }
 
+    // Step 2z: Consolidate rule flags (#854)
+    //
+    // Narrow dedup: when CRITICAL-LAB-POTASSIUM and CROSS-QT-HYPOK-001 both
+    // fire for the same patient+review, suppress the critical-value flag in
+    // favor of the cross-specialty flag. Both describe the same underlying
+    // signal (severe hypokalemia → arrhythmia risk); the cross-specialty flag
+    // is strictly more actionable because it names the QT-prolonging drug.
+    // `allRuleFlags` is replaced with the consolidated list so downstream
+    // persistence, audit, and LLM-dedup all operate on the deduped set.
+    const consolidatedRuleFlags = consolidateRuleFlags(allRuleFlags);
+    allRuleFlags.length = 0;
+    allRuleFlags.push(...consolidatedRuleFlags);
+
     // Step 3: Create flags for rule matches
     for (const ruleFlag of allRuleFlags) {
       const flag = await createFlag({
@@ -893,6 +906,42 @@ function summaryOverlap(a: string, b: string): number {
   for (const w of setA) if (setB.has(w)) shared++;
   const union = new Set([...setA, ...setB]).size;
   return shared / union;
+}
+
+/**
+ * Consolidate the rule-flag array produced by the deterministic-rules step
+ * before it is persisted and fed to the LLM-dedup check. Applies narrow,
+ * clinically-motivated suppressions for flag pairs that describe the same
+ * underlying signal.
+ *
+ * Current policy (issue #854):
+ *   - If both `CRITICAL-LAB-POTASSIUM` and `CROSS-QT-HYPOK-001` fire in the
+ *     same pass, drop `CRITICAL-LAB-POTASSIUM`. The cross-specialty flag is
+ *     strictly more actionable because it names the QT-prolonging drug, and
+ *     both flags point clinicians at the same physiologic concern (severe
+ *     hypokalemia → torsades / arrhythmia risk). Severity on the surviving
+ *     flag is preserved as-is — CROSS-QT-HYPOK-001 already escalates to
+ *     `critical` when K+ < 3.0 (see cross-specialty.ts), so no info is lost.
+ *
+ * Safety posture:
+ *   - The dedup is keyed on rule_id pairs — no generic severity/category
+ *     suppression. This is deliberate: under-alerting on a critical lab is
+ *     far worse than minor UI duplication.
+ *   - When QT-HYPOK does NOT fire, CRITICAL-LAB-POTASSIUM passes through
+ *     unchanged (including hyperkalemia which never co-fires with QT-HYPOK).
+ *   - Unrelated flags in the same batch are untouched.
+ *   - Input is not mutated.
+ *
+ * Exported for unit testing.
+ */
+export function consolidateRuleFlags(flags: readonly RuleFlag[]): RuleFlag[] {
+  const hasQtHypoK = flags.some((f) => f.rule_id === "CROSS-QT-HYPOK-001");
+  if (!hasQtHypoK) {
+    // No dedup needed — shallow-copy so the caller cannot assume identity
+    // with the input reference.
+    return [...flags];
+  }
+  return flags.filter((f) => f.rule_id !== "CRITICAL-LAB-POTASSIUM");
 }
 
 /**

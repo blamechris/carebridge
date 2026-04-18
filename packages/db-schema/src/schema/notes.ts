@@ -36,6 +36,15 @@ export const noteVersions = pgTable("note_versions", {
   sections: encryptedSections("sections").notNull(),
   saved_at: text("saved_at").notNull(),
   saved_by: text("saved_by").notNull(),
+  // Labels which state transition produced this archive row. Distinguishes
+  // otherwise-identical snapshots taken at the same `version` number —
+  // specifically sign/cosign both archive at `existing.version` without
+  // bumping it, so without this column a create→sign→cosign trail cannot
+  // be told apart in `getVersionHistory`.
+  // Values: "draft" | "signed" | "cosigned" | "amended" | "unknown"
+  // "unknown" is only used as the backfill default for rows inserted before
+  // this column existed; all new rows receive an explicit event.
+  lifecycle_event: text("lifecycle_event").notNull().default("unknown"),
 }, (table) => [
   index("idx_note_versions").on(table.note_id, table.version),
 ]);

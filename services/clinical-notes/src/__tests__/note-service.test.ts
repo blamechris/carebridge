@@ -20,6 +20,11 @@ vi.mock("@carebridge/db-schema", () => ({
   noteVersions: {
     note_id: "note_id",
     version: "version",
+    saved_at: "saved_at",
+    lifecycle_event: "lifecycle_event",
+  },
+  auditLog: {
+    id: "id",
   },
 }));
 
@@ -32,9 +37,13 @@ const {
   createNote,
   updateNote,
   signNote,
+  cosignNote,
+  amendNote,
   getNotesByPatient,
   getNoteById,
+  getVersionHistory,
   NoteConflictError,
+  NoteStateError,
 } = await import("../services/note-service.js");
 
 // ── Fixtures ────────────────────────────────────────────────────
@@ -173,7 +182,7 @@ describe("updateNote", () => {
     expect(result.sections).toEqual(updatedSections);
   });
 
-  it("archives the old version in note_versions", async () => {
+  it("archives the old version in note_versions with lifecycle_event=draft", async () => {
     db.willSelect([existingRow]).willInsert().willUpdate([{ id: NOTE_ID }]);
 
     await updateNote(NOTE_ID, { sections: updatedSections });
@@ -183,10 +192,12 @@ describe("updateNote", () => {
       note_id: string;
       version: number;
       sections: unknown;
+      lifecycle_event: string;
     };
     expect(archivedValues.note_id).toBe(NOTE_ID);
     expect(archivedValues.version).toBe(3);
     expect(archivedValues.sections).toEqual(existingRow.sections);
+    expect(archivedValues.lifecycle_event).toBe("draft");
   });
 
   it("emits a note.saved event with the new version", async () => {
@@ -298,6 +309,24 @@ describe("signNote", () => {
 
     expect(result.version).toBe(existingRow.version);
   });
+
+  it("archives a version row with lifecycle_event=signed", async () => {
+    db.willSelect([existingRow]);
+
+    await signNote(NOTE_ID, PROVIDER_ID);
+
+    expect(db.insert).toHaveBeenCalledTimes(1);
+    const archived = db.insert.calls[0]?.chainArgs[0]?.[0] as {
+      note_id: string;
+      version: number;
+      saved_by: string;
+      lifecycle_event: string;
+    };
+    expect(archived.note_id).toBe(NOTE_ID);
+    expect(archived.version).toBe(existingRow.version);
+    expect(archived.saved_by).toBe(PROVIDER_ID);
+    expect(archived.lifecycle_event).toBe("signed");
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────
@@ -364,6 +393,7 @@ describe("getNoteById", () => {
         sections: [{ key: "s", label: "Subjective", fields: [], free_text: "v2" }],
         saved_at: "2026-03-14T10:00:00.000Z",
         saved_by: PROVIDER_ID,
+        lifecycle_event: "amended",
       },
       {
         note_id: NOTE_ID,
@@ -371,6 +401,7 @@ describe("getNoteById", () => {
         sections: [{ key: "s", label: "Subjective", fields: [], free_text: "v1" }],
         saved_at: "2026-03-13T10:00:00.000Z",
         saved_by: PROVIDER_ID,
+        lifecycle_event: "signed",
       },
     ]);
 
@@ -381,7 +412,9 @@ describe("getNoteById", () => {
     expect(result!.note.version).toBe(3);
     expect(result!.versions).toHaveLength(2);
     expect(result!.versions[0].version).toBe(2);
+    expect(result!.versions[0].lifecycle_event).toBe("amended");
     expect(result!.versions[1].version).toBe(1);
+    expect(result!.versions[1].lifecycle_event).toBe("signed");
   });
 
   it("returns null when note is not found", async () => {
@@ -411,3 +444,404 @@ describe("getNoteById", () => {
     expect(result!.note.signed_by).toBeUndefined();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────
+// cosignNote
+// ─────────────────────────────────────────────────────────────────
+const COSIGNER_ID = "55555555-5555-5555-5555-555555555555";
+
+const signedRow = {
+  ...existingRow,
+  status: "signed",
+  signed_at: "2026-03-15T11:00:00.000Z",
+  signed_by: PROVIDER_ID,
+};
+
+describe("cosignNote", () => {
+  it("transitions a signed note to cosigned and records cosigner", async () => {
+    db.willSelect([signedRow]);
+
+    const result = await cosignNote(NOTE_ID, COSIGNER_ID);
+
+    expect(result.status).toBe("cosigned");
+    expect(result.cosigned_by).toBe(COSIGNER_ID);
+    expect(result.cosigned_at).toBeDefined();
+    expect(typeof result.cosigned_at).toBe("string");
+  });
+
+  it("persists cosign via db.update with cosigned status", async () => {
+    db.willSelect([signedRow]);
+
+    await cosignNote(NOTE_ID, COSIGNER_ID);
+
+    expect(db.update).toHaveBeenCalled();
+    const updateCall = db.update.calls[0];
+    const setIndex = updateCall?.chain.indexOf("set") ?? -1;
+    expect(setIndex).toBeGreaterThanOrEqual(0);
+    const setArg = updateCall?.chainArgs[setIndex]?.[0] as {
+      status: string;
+      cosigned_by: string;
+      cosigned_at: string;
+    };
+    expect(setArg.status).toBe("cosigned");
+    expect(setArg.cosigned_by).toBe(COSIGNER_ID);
+    expect(setArg.cosigned_at).toBeDefined();
+  });
+
+  it("archives a version row snapshotting the signed state with lifecycle_event=cosigned", async () => {
+    db.willSelect([signedRow]);
+
+    await cosignNote(NOTE_ID, COSIGNER_ID);
+
+    expect(db.insert).toHaveBeenCalledTimes(1);
+    const insertedValues = db.insert.calls[0]?.chainArgs[0]?.[0] as {
+      note_id: string;
+      version: number;
+      sections: unknown;
+      saved_by: string;
+      lifecycle_event: string;
+    };
+    expect(insertedValues.note_id).toBe(NOTE_ID);
+    expect(insertedValues.version).toBe(signedRow.version);
+    expect(insertedValues.sections).toEqual(signedRow.sections);
+    expect(insertedValues.saved_by).toBe(COSIGNER_ID);
+    expect(insertedValues.lifecycle_event).toBe("cosigned");
+  });
+
+  it("emits a note.cosigned clinical event", async () => {
+    db.willSelect([signedRow]);
+
+    await cosignNote(NOTE_ID, COSIGNER_ID);
+
+    expect(emitClinicalEvent).toHaveBeenCalledTimes(1);
+    const event = emitClinicalEvent.mock.calls[0][0];
+    expect(event.type).toBe("note.cosigned");
+    expect(event.patient_id).toBe(PATIENT_ID);
+    expect(event.data.cosignedBy).toBe(COSIGNER_ID);
+    expect(event.data.resourceId).toBe(NOTE_ID);
+  });
+
+  it("throws NoteStateError when note is in draft status", async () => {
+    db.willSelect([{ ...existingRow, status: "draft" }]);
+
+    const error = await cosignNote(NOTE_ID, COSIGNER_ID).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(NoteStateError);
+    expect((error as Error).message).toMatch(/cosign/i);
+    expect(emitClinicalEvent).not.toHaveBeenCalled();
+    expect(db.update).not.toHaveBeenCalled();
+  });
+
+  it("throws NoteStateError when note is already cosigned", async () => {
+    db.willSelect([
+      { ...signedRow, status: "cosigned", cosigned_by: "someone", cosigned_at: "x" },
+    ]);
+
+    const error = await cosignNote(NOTE_ID, COSIGNER_ID).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(NoteStateError);
+    expect(emitClinicalEvent).not.toHaveBeenCalled();
+    expect(db.update).not.toHaveBeenCalled();
+  });
+
+  it("throws NoteStateError when note is amended", async () => {
+    db.willSelect([{ ...signedRow, status: "amended" }]);
+
+    const error = await cosignNote(NOTE_ID, COSIGNER_ID).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(NoteStateError);
+  });
+
+  it("throws when note is not found", async () => {
+    db.willSelect([]);
+
+    await expect(cosignNote("nonexistent", COSIGNER_ID)).rejects.toThrow(
+      "Note nonexistent not found",
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
+// amendNote
+// ─────────────────────────────────────────────────────────────────
+const AMENDER_ID = "66666666-6666-6666-6666-666666666666";
+const AMEND_REASON = "Correcting dose recorded in error.";
+
+const cosignedRow = {
+  ...signedRow,
+  status: "cosigned",
+  cosigned_at: "2026-03-16T09:00:00.000Z",
+  cosigned_by: COSIGNER_ID,
+};
+
+describe("amendNote", () => {
+  it("amends a signed note, creating a new version and archiving the prior", async () => {
+    db.willSelect([signedRow]);
+
+    const result = await amendNote(NOTE_ID, AMENDER_ID, updatedSections, AMEND_REASON);
+
+    expect(result.status).toBe("amended");
+    expect(result.version).toBe(signedRow.version + 1);
+    expect(result.sections).toEqual(updatedSections);
+  });
+
+  it("archives the pre-amendment version in note_versions with lifecycle_event=amended", async () => {
+    db.willSelect([signedRow]);
+
+    await amendNote(NOTE_ID, AMENDER_ID, updatedSections, AMEND_REASON);
+
+    expect(db.insert).toHaveBeenCalledTimes(1);
+    const archived = db.insert.calls[0]?.chainArgs[0]?.[0] as {
+      note_id: string;
+      version: number;
+      sections: unknown;
+      saved_by: string;
+      lifecycle_event: string;
+    };
+    expect(archived.note_id).toBe(NOTE_ID);
+    expect(archived.version).toBe(signedRow.version);
+    expect(archived.sections).toEqual(signedRow.sections);
+    expect(archived.saved_by).toBe(AMENDER_ID);
+    expect(archived.lifecycle_event).toBe("amended");
+  });
+
+  it("updates the note row with new sections, bumped version, amended status", async () => {
+    db.willSelect([signedRow]);
+
+    await amendNote(NOTE_ID, AMENDER_ID, updatedSections, AMEND_REASON);
+
+    expect(db.update).toHaveBeenCalled();
+    const updateCall = db.update.calls[0];
+    const setIndex = updateCall?.chain.indexOf("set") ?? -1;
+    expect(setIndex).toBeGreaterThanOrEqual(0);
+    const setArg = updateCall?.chainArgs[setIndex]?.[0] as {
+      status: string;
+      version: number;
+      sections: unknown;
+    };
+    expect(setArg.status).toBe("amended");
+    expect(setArg.version).toBe(signedRow.version + 1);
+    expect(setArg.sections).toEqual(updatedSections);
+  });
+
+  it("emits a note.amended event including the reason", async () => {
+    db.willSelect([signedRow]);
+
+    await amendNote(NOTE_ID, AMENDER_ID, updatedSections, AMEND_REASON);
+
+    expect(emitClinicalEvent).toHaveBeenCalledTimes(1);
+    const event = emitClinicalEvent.mock.calls[0][0];
+    expect(event.type).toBe("note.amended");
+    expect(event.patient_id).toBe(PATIENT_ID);
+    expect(event.data.resourceId).toBe(NOTE_ID);
+    expect(event.data.amendedBy).toBe(AMENDER_ID);
+    expect(event.data.reason).toBe(AMEND_REASON);
+  });
+
+  it("allows amending a cosigned note", async () => {
+    db.willSelect([cosignedRow]);
+
+    const result = await amendNote(NOTE_ID, AMENDER_ID, updatedSections, AMEND_REASON);
+
+    expect(result.status).toBe("amended");
+  });
+
+  it("allows amending an already-amended note (chain)", async () => {
+    db.willSelect([{ ...signedRow, status: "amended" }]);
+
+    const result = await amendNote(NOTE_ID, AMENDER_ID, updatedSections, AMEND_REASON);
+
+    expect(result.status).toBe("amended");
+  });
+
+  it("throws NoteStateError when amending a draft note", async () => {
+    db.willSelect([{ ...existingRow, status: "draft" }]);
+
+    const error = await amendNote(NOTE_ID, AMENDER_ID, updatedSections, AMEND_REASON).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(NoteStateError);
+    expect(emitClinicalEvent).not.toHaveBeenCalled();
+    expect(db.update).not.toHaveBeenCalled();
+  });
+
+  it("throws when note is not found", async () => {
+    db.willSelect([]);
+
+    await expect(
+      amendNote("nonexistent", AMENDER_ID, updatedSections, AMEND_REASON),
+    ).rejects.toThrow("Note nonexistent not found");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
+// getVersionHistory
+// ─────────────────────────────────────────────────────────────────
+describe("getVersionHistory", () => {
+  it("returns versions in the chronological order the DB yields (saved_at asc)", async () => {
+    // The DB query uses orderBy(asc(saved_at)); the mock returns rows in the
+    // order queued, so the test fixture is already in chronological order.
+    db.willSelect([
+      {
+        note_id: NOTE_ID,
+        version: 1,
+        sections: [],
+        saved_at: "2026-03-15T10:00:00.000Z",
+        saved_by: PROVIDER_ID,
+        lifecycle_event: "signed",
+      },
+      {
+        note_id: NOTE_ID,
+        version: 1,
+        sections: [],
+        saved_at: "2026-03-15T11:00:00.000Z",
+        saved_by: COSIGNER_ID,
+        lifecycle_event: "cosigned",
+      },
+      {
+        note_id: NOTE_ID,
+        version: 1,
+        sections: [],
+        saved_at: "2026-03-15T12:00:00.000Z",
+        saved_by: AMENDER_ID,
+        lifecycle_event: "amended",
+      },
+    ]);
+
+    const versions = await getVersionHistory(NOTE_ID);
+
+    expect(versions).toHaveLength(3);
+    expect(versions[0].lifecycle_event).toBe("signed");
+    expect(versions[1].lifecycle_event).toBe("cosigned");
+    expect(versions[2].lifecycle_event).toBe("amended");
+  });
+
+  it("orders the query by saved_at ascending", async () => {
+    db.willSelect([]);
+
+    await getVersionHistory(NOTE_ID);
+
+    const selectCall = db.select.calls[0];
+    const orderByIndex = selectCall?.chain.indexOf("orderBy") ?? -1;
+    expect(orderByIndex).toBeGreaterThanOrEqual(0);
+    // The asc(saved_at) helper yields an object referencing the column.
+    // Asserting the column reference is stable — the exact structure
+    // returned by drizzle's asc() is not.
+    const orderByArgs = selectCall?.chainArgs[orderByIndex] ?? [];
+    expect(orderByArgs.length).toBeGreaterThan(0);
+  });
+
+  it("exposes lifecycle_event on each version", async () => {
+    db.willSelect([
+      {
+        note_id: NOTE_ID,
+        version: 2,
+        sections: [],
+        saved_at: "2026-03-15T12:00:00.000Z",
+        saved_by: AMENDER_ID,
+        lifecycle_event: "amended",
+      },
+    ]);
+
+    const versions = await getVersionHistory(NOTE_ID);
+
+    expect(versions[0].lifecycle_event).toBe("amended");
+    expect(versions[0].saved_by).toBe(AMENDER_ID);
+  });
+
+  it("returns empty array when no history exists", async () => {
+    db.willSelect([]);
+
+    const versions = await getVersionHistory(NOTE_ID);
+
+    expect(versions).toEqual([]);
+  });
+
+  // ─── Regression scenarios from #879 review ────────────────────
+  //
+  // These fixture the exact clinical workflows that produced the unstable
+  // ordering: create→sign→cosign and create→sign→amend. The mock returns
+  // the rows in saved_at-ascending order (matching what the production
+  // query does), so the assertions pin both the event labels and the
+  // chronological order that getVersionHistory must produce.
+
+  it("create → sign → cosign yields [signed, cosigned] in chronological order", async () => {
+    // Create does NOT archive (no pre-existing state to snapshot), so the
+    // history contains only the sign and cosign archive rows. Both share
+    // version=1 because neither sign nor cosign bumps clinical_notes.version.
+    db.willSelect([
+      {
+        note_id: NOTE_ID,
+        version: 1,
+        sections: [{ key: "s", label: "Subjective", fields: [], free_text: "initial" }],
+        saved_at: "2026-03-15T10:00:00.000Z",
+        saved_by: PROVIDER_ID,
+        lifecycle_event: "signed",
+      },
+      {
+        note_id: NOTE_ID,
+        version: 1,
+        sections: [{ key: "s", label: "Subjective", fields: [], free_text: "initial" }],
+        saved_at: "2026-03-15T11:00:00.000Z",
+        saved_by: COSIGNER_ID,
+        lifecycle_event: "cosigned",
+      },
+    ]);
+
+    const versions = await getVersionHistory(NOTE_ID);
+
+    expect(versions).toHaveLength(2);
+    expect(versions[0].lifecycle_event).toBe("signed");
+    expect(versions[0].saved_by).toBe(PROVIDER_ID);
+    expect(versions[1].lifecycle_event).toBe("cosigned");
+    expect(versions[1].saved_by).toBe(COSIGNER_ID);
+    // Both rows sit at version=1 — the lifecycle_event label is what
+    // disambiguates them.
+    expect(versions[0].version).toBe(1);
+    expect(versions[1].version).toBe(1);
+  });
+
+  it("create → sign → amend → amend yields [signed, amended, amended] in chronological order", async () => {
+    // First amend archives the signed snapshot at version=1, then the live
+    // row bumps to version=2. Second amend archives version=2, live row
+    // bumps to version=3.
+    db.willSelect([
+      {
+        note_id: NOTE_ID,
+        version: 1,
+        sections: [{ key: "s", label: "Subjective", fields: [], free_text: "initial" }],
+        saved_at: "2026-03-15T10:00:00.000Z",
+        saved_by: PROVIDER_ID,
+        lifecycle_event: "signed",
+      },
+      {
+        note_id: NOTE_ID,
+        version: 1,
+        sections: [{ key: "s", label: "Subjective", fields: [], free_text: "initial" }],
+        saved_at: "2026-03-15T11:00:00.000Z",
+        saved_by: AMENDER_ID,
+        lifecycle_event: "amended",
+      },
+      {
+        note_id: NOTE_ID,
+        version: 2,
+        sections: [{ key: "s", label: "Subjective", fields: [], free_text: "first amend" }],
+        saved_at: "2026-03-15T12:00:00.000Z",
+        saved_by: AMENDER_ID,
+        lifecycle_event: "amended",
+      },
+    ]);
+
+    const versions = await getVersionHistory(NOTE_ID);
+
+    expect(versions).toHaveLength(3);
+    expect(versions.map((v) => v.lifecycle_event)).toEqual([
+      "signed",
+      "amended",
+      "amended",
+    ]);
+    expect(versions.map((v) => v.version)).toEqual([1, 1, 2]);
+  });
+});
+

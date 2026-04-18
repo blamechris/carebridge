@@ -175,6 +175,10 @@ export function getRecentChloride(ctx: PatientContext): RecentLab | undefined {
  * EGFR_ACCEPTED_UNITS for rationale.
  */
 export function getRecentEGFR(ctx: PatientContext): RecentLab | undefined {
-  const NAME = /^(egfr|estimated gfr|gfr)$/i;
+  // Issue #873: anchored alias set tolerant to whitespace and optional "e"
+  // prefix. Matches "GFR", "eGFR", "egfr", "Estimated GFR", "Estimated  GFR".
+  // Rejects distinct labs that merely embed GFR as a substring
+  // (e.g. "Pre-GFR Calc", "GFR Calculator").
+  const NAME = /^(e?gfr|estimated\s+gfr)$/i;
   return findRecentLab(ctx, NAME, EGFR_ACCEPTED_UNITS, "eGFR");
 }

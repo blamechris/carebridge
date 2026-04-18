@@ -37,5 +37,31 @@ export const signNoteSchema = z.object({
   signed_by: z.string().uuid(),
 });
 
+/**
+ * Cosign a signed clinical note. The cosigner identity is always taken
+ * from the authenticated caller at the gateway — never trusted from the
+ * client payload — so this schema carries only the target note id.
+ */
+export const cosignNoteSchema = z.object({
+  noteId: z.string().uuid(),
+});
+
+/**
+ * Amend a signed or cosigned clinical note. Requires a non-empty reason
+ * (trimmed) to satisfy HIPAA amendment audit semantics. The reason is
+ * stored alongside the new version in the audit trail.
+ */
+export const amendNoteSchema = z.object({
+  noteId: z.string().uuid(),
+  sections: z.array(noteSectionSchema).min(1),
+  reason: z
+    .string()
+    .trim()
+    .min(1, "Amendment reason is required")
+    .max(2000, "Amendment reason must be 2000 characters or fewer"),
+});
+
 export type CreateNoteInput = z.infer<typeof createNoteSchema>;
 export type UpdateNoteInput = z.infer<typeof updateNoteSchema>;
+export type CosignNoteInput = z.infer<typeof cosignNoteSchema>;
+export type AmendNoteInput = z.infer<typeof amendNoteSchema>;
