@@ -888,6 +888,7 @@ function PatientChartContent() {
               <button
                 key={tab.key}
                 className={`tab ${activeTab === tab.key ? "active" : ""}`}
+                aria-current={activeTab === tab.key ? "true" : undefined}
                 onClick={() => setTab(tab.key)}
               >
                 {tab.label}

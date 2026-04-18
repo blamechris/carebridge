@@ -141,6 +141,8 @@ export default function LoginPage() {
 
               {error && (
                 <div
+                  role="alert"
+                  aria-live="assertive"
                   style={{
                     color: "var(--critical)",
                     fontSize: 13,
@@ -228,6 +230,8 @@ export default function LoginPage() {
 
               {error && (
                 <div
+                  role="alert"
+                  aria-live="assertive"
                   style={{
                     color: "var(--critical)",
                     fontSize: 13,
