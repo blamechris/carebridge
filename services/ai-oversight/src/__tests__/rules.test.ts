@@ -413,7 +413,8 @@ describe("checkCriticalValues — Troponin I thresholds", () => {
     });
     expect(flags).toHaveLength(1);
     expect(flags[0]!.severity).toBe("warning");
-    expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-TROPONIN_I");
+    // Issue #836: rule_id prefix must reflect severity — warning → WARNING-LAB-*.
+    expect(flags[0]!.rule_id).toBe("WARNING-LAB-TROPONIN_I");
   });
 
   it("does not flag normal troponin (<=0.04)", () => {
@@ -466,7 +467,8 @@ describe("checkCriticalValues — Potassium thresholds", () => {
     });
     expect(flags).toHaveLength(1);
     expect(flags[0]!.severity).toBe("warning");
-    expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-POTASSIUM");
+    // Issue #836: rule_id prefix must reflect severity — warning → WARNING-LAB-*.
+    expect(flags[0]!.rule_id).toBe("WARNING-LAB-POTASSIUM");
   });
 
   it("flags potassium <3.0 as critical (hypokalemia)", () => {
@@ -492,7 +494,8 @@ describe("checkCriticalValues — Potassium thresholds", () => {
     });
     expect(flags).toHaveLength(1);
     expect(flags[0]!.severity).toBe("warning");
-    expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-POTASSIUM");
+    // Issue #836: rule_id prefix must reflect severity — warning → WARNING-LAB-*.
+    expect(flags[0]!.rule_id).toBe("WARNING-LAB-POTASSIUM");
   });
 
   it("does not flag normal potassium (3.5-5.0)", () => {
@@ -532,7 +535,8 @@ describe("checkCriticalValues — Lactate thresholds", () => {
     });
     expect(flags).toHaveLength(1);
     expect(flags[0]!.severity).toBe("warning");
-    expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-LACTATE");
+    // Issue #836: rule_id prefix must reflect severity — warning → WARNING-LAB-*.
+    expect(flags[0]!.rule_id).toBe("WARNING-LAB-LACTATE");
   });
 
   it("does not flag normal lactate (<=2.0)", () => {
@@ -572,7 +576,8 @@ describe("checkCriticalValues — pH (arterial) thresholds", () => {
     });
     expect(flags).toHaveLength(1);
     expect(flags[0]!.severity).toBe("warning");
-    expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-PH_ARTERIAL");
+    // Issue #836: rule_id prefix must reflect severity — warning → WARNING-LAB-*.
+    expect(flags[0]!.rule_id).toBe("WARNING-LAB-PH_ARTERIAL");
   });
 
   it("flags pH >7.55 as critical (severe alkalosis)", () => {
@@ -637,7 +642,8 @@ describe("checkCriticalValues — INR thresholds", () => {
     });
     expect(flags).toHaveLength(1);
     expect(flags[0]!.severity).toBe("warning");
-    expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-INR");
+    // Issue #836: rule_id prefix must reflect severity — warning → WARNING-LAB-*.
+    expect(flags[0]!.rule_id).toBe("WARNING-LAB-INR");
   });
 
   it("flags INR <1.5 as warning when on warfarin (subtherapeutic)", () => {

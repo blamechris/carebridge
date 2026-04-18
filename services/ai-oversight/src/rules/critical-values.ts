@@ -335,6 +335,27 @@ export const CRITICAL_LAB_THRESHOLDS: Record<string, LabCriticalDef> = {
 };
 
 /**
+ * Build a lab rule_id whose prefix reflects the flag severity.
+ *
+ * Issue #836: prior to this harmonization the explicit-threshold path
+ * hard-coded a `CRITICAL-LAB-*` prefix regardless of the threshold's
+ * actual severity (e.g. Troponin I 0.04–0.4 ng/mL was a "warning"
+ * severity but emitted `CRITICAL-LAB-TROPONIN_I`). The heuristic
+ * fallback path already varied the prefix by severity, producing
+ * inconsistent semantics for downstream consumers that filter on
+ * rule_id prefix. Centralizing the prefix construction here keeps the
+ * mapping in one place and guarantees `severity` and `rule_id` agree.
+ *
+ * Mapping:
+ *   - severity="critical" → `CRITICAL-LAB-${ruleKey}`
+ *   - severity="warning"  → `WARNING-LAB-${ruleKey}`
+ *   - severity="info"     → `INFO-LAB-${ruleKey}`
+ */
+function buildLabRuleId(severity: FlagSeverity, ruleKey: string): string {
+  return `${severity.toUpperCase()}-LAB-${ruleKey}`;
+}
+
+/**
  * Infer the direction ("low" | "high") of a laboratory-flagged critical
  * result when the lab itself did not encode direction in the flag string.
  *
@@ -544,7 +565,7 @@ export function checkCriticalValues(event: ClinicalEvent): RuleFlag[] {
                 rationale: threshold.rationale,
                 suggested_action: threshold.suggested_action,
                 notify_specialties: threshold.notify_specialties,
-                rule_id: `CRITICAL-LAB-${ruleKey}`,
+                rule_id: buildLabRuleId(threshold.severity, ruleKey),
               });
             }
             break; // Only match the first matching definition
@@ -599,7 +620,13 @@ export function checkCriticalValues(event: ClinicalEvent): RuleFlag[] {
             // Non-enum flag value — warn unconditionally and optionally
             // map known HL7v2 abnormal-flag values to warnings. Others
             // fall through to the range checks below.
-            logger.warn("unrecognized_lab_flag", {
+            // Issue #851: event name must match the metric field string
+            // (convention elsewhere in the service, e.g.
+            // `utils/validate-event-timestamp.ts`, uses the `_total` suffix
+            // for both so log-based aggregations and Prometheus counters
+            // stay in sync). Historically the event name was the
+            // non-suffixed "unrecognized_lab_flag".
+            logger.warn("unrecognized_lab_flag_total", {
               metric: "unrecognized_lab_flag_total",
               flag: result.flag,
               test_name: result.test_name,
@@ -684,7 +711,10 @@ export function checkCriticalValues(event: ClinicalEvent): RuleFlag[] {
                   ? `Review critical ${result.test_name} result immediately. Correlate with clinical status and consider repeat testing or intervention.`
                   : `Review ${resolvedDirection} ${result.test_name} result. Correlate with clinical status and trend; repeat testing as indicated.`,
               notify_specialties: [],
-              rule_id: `${severity === "critical" ? "CRITICAL" : "WARNING"}-LAB-${result.test_name.replace(/\s+/g, "_").toUpperCase()}`,
+              rule_id: buildLabRuleId(
+                severity,
+                result.test_name.replace(/\s+/g, "_").toUpperCase(),
+              ),
             });
           }
         }

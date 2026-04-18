@@ -530,6 +530,71 @@ describe("CRITICAL_LAB_THRESHOLDS — structure validation", () => {
   });
 });
 
+// ─── Rule ID / severity prefix harmonization (issue #836) ───────
+// Prior to this harmonization, the explicit-threshold path hard-coded a
+// `CRITICAL-LAB-*` prefix regardless of the threshold's actual severity
+// (e.g. Troponin I 0.04–0.4 ng/mL was a "warning" severity but emitted
+// `CRITICAL-LAB-TROPONIN_I`). The heuristic fallback path already varied
+// the prefix by severity. Downstream consumers that filter on rule_id
+// prefix saw inconsistent semantics. These tests lock in the harmonized
+// mapping: severity="critical" → CRITICAL-LAB-*, "warning" → WARNING-LAB-*.
+describe("checkCriticalValues — severity-matched rule_id prefix (issue #836)", () => {
+  it("uses CRITICAL-LAB-* prefix when explicit threshold resolves to critical", () => {
+    // Troponin I > 0.4 ng/mL → severity="critical".
+    const flags = checkCriticalValues(
+      makeLabEvent([{ test_name: "Troponin I", value: 1.2, unit: "ng/mL" }]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("critical");
+    expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-TROPONIN_I");
+  });
+
+  it("uses WARNING-LAB-* prefix when explicit threshold resolves to warning", () => {
+    // Troponin I in (0.04, 0.4] ng/mL → severity="warning". Before #836 this
+    // path emitted `CRITICAL-LAB-TROPONIN_I` despite warning severity.
+    const flags = checkCriticalValues(
+      makeLabEvent([{ test_name: "Troponin I", value: 0.1, unit: "ng/mL" }]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("warning");
+    expect(flags[0]!.rule_id).toBe("WARNING-LAB-TROPONIN_I");
+  });
+
+  it("uses WARNING-LAB-* prefix for heuristic-fallback warnings (H/L flags)", () => {
+    // Heuristic fallback path for an unknown analyte with `flag: "H"` →
+    // severity="warning". Rule-id prefix must match.
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Novel Biomarker",
+          value: 42,
+          unit: "pg/mL",
+          flag: "H",
+        },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("warning");
+    expect(flags[0]!.rule_id).toBe("WARNING-LAB-NOVEL_BIOMARKER");
+  });
+
+  it("uses CRITICAL-LAB-* prefix for heuristic-fallback critical flags", () => {
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Obscure Marker X",
+          value: 999,
+          unit: "U/L",
+          flag: "critical",
+        },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("critical");
+    expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-OBSCURE_MARKER_X");
+  });
+});
+
 // ─── Direction inference for critical flag (issue #833) ──────────
 // Regression guard for the half-bounded reference-range case. Prior to the
 // fix, `direction` defaulted to "high" whenever `reference_low` was missing,
@@ -651,7 +716,8 @@ describe("checkCriticalValues — unrecognized flag handling (issues #834, #837)
     );
     expect(mockWarn).toHaveBeenCalled();
     const call = mockWarn.mock.calls.find(
-      ([msg]) => typeof msg === "string" && msg.includes("unrecognized_lab_flag"),
+      // Issue #851: event name must match the metric field (`_total` suffix).
+      ([msg]) => msg === "unrecognized_lab_flag_total",
     );
     expect(call).toBeDefined();
   });
@@ -669,7 +735,8 @@ describe("checkCriticalValues — unrecognized flag handling (issues #834, #837)
     );
     expect(mockWarn).toHaveBeenCalled();
     const call = mockWarn.mock.calls.find(
-      ([msg]) => typeof msg === "string" && msg.includes("unrecognized_lab_flag"),
+      // Issue #851: event name must match the metric field (`_total` suffix).
+      ([msg]) => msg === "unrecognized_lab_flag_total",
     );
     expect(call).toBeDefined();
     // Meta payload should capture the offending flag value (no PHI).
@@ -706,11 +773,36 @@ describe("checkCriticalValues — unrecognized flag handling (issues #834, #837)
         },
       ]),
     );
-    // None of these should trigger unrecognized_lab_flag warnings.
+    // None of these should trigger unrecognized_lab_flag_total warnings.
     const unrecognizedCalls = mockWarn.mock.calls.filter(
-      ([msg]) => typeof msg === "string" && msg.includes("unrecognized_lab_flag"),
+      // Issue #851: event name must match the metric field (`_total` suffix).
+      ([msg]) => msg === "unrecognized_lab_flag_total",
     );
     expect(unrecognizedCalls).toHaveLength(0);
+  });
+
+  it("uses event name matching the metric field with _total suffix (issue #851)", () => {
+    // Pin the harmonized convention: logger.warn's event name string must
+    // equal the `metric` field. Before #851 the event name was
+    // "unrecognized_lab_flag" (no `_total`), producing log-vs-metric
+    // aggregation drift against the convention in
+    // `utils/validate-event-timestamp.ts`.
+    checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Obscure Marker X",
+          value: 5,
+          unit: "U/L",
+          flag: "abnormal",
+        },
+      ]),
+    );
+    const call = mockWarn.mock.calls.find(
+      ([msg]) => msg === "unrecognized_lab_flag_total",
+    );
+    expect(call).toBeDefined();
+    const meta = call![1] as Record<string, unknown>;
+    expect(meta.metric).toBe("unrecognized_lab_flag_total");
   });
 
   it("maps HL7v2 'HH' (panic high) to a warning flag with direction='high'", () => {
