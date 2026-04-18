@@ -10,6 +10,7 @@ import { emergencyAccessRbacRouter } from "./routers/emergency-access.js";
 import { fhirRbacRouter } from "./routers/fhir.js";
 import { notificationsRbacRouter } from "./routers/notifications.js";
 import { familyAccessRbacRouter } from "./routers/family-access.js";
+import { careTeamRbacRouter } from "./routers/care-team.js";
 
 export const appRouter = router({
   healthCheck: publicProcedure.query(() => {
@@ -30,6 +31,7 @@ export const appRouter = router({
   scheduling: schedulingRbacRouter,
   fhir: fhirRbacRouter,
   familyAccess: familyAccessRbacRouter,
+  careTeam: careTeamRbacRouter,
 });
 
 export type AppRouter = typeof appRouter;
