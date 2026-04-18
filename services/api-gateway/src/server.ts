@@ -11,6 +11,7 @@ import { authMiddleware } from "./middleware/auth.js";
 import { auditMiddleware } from "./middleware/audit.js";
 import { makeAcceptInviteRateLimitHook } from "./middleware/accept-invite-rate-limit.js";
 import { makePatientReadRateLimitHook } from "./middleware/patient-read-rate-limit.js";
+import { makeFhirExportRateLimitHook } from "./middleware/fhir-export-rate-limit.js";
 import { registerNotificationSSE } from "./routes/notifications-sse.js";
 import { redactUrlIds } from "@carebridge/phi-sanitizer";
 import { startBackgroundWorkers } from "./workers.js";
@@ -148,6 +149,16 @@ async function main() {
     makeAcceptInviteRateLimitHook({
       redis: redisClient,
       max: isDev ? 100 : 10,
+    }),
+  );
+
+  // Per-user rate limit for FHIR exports (issue #234):
+  // 5 exports/hour/user to prevent bulk data exfiltration.
+  // Must run as preHandler (after auth) so req.user is populated.
+  server.addHook(
+    "preHandler",
+    makeFhirExportRateLimitHook({
+      redis: redisClient,
     }),
   );
 
