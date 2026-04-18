@@ -15,6 +15,31 @@ import {
   getVitalRangeForAge,
   ageInYearsFromDOB,
 } from "@carebridge/medical-logic";
+import { createLogger } from "@carebridge/logger";
+
+const logger = createLogger("ai-oversight");
+
+/**
+ * Common HL7v2 abnormal-flag values we promote to at-least-warning severity
+ * pending a principled mapping (see issue #834). We keep these conservative
+ * (warning rather than critical) to avoid over-alerting from ingress paths
+ * that bypass the Zod validator. Callers who want critical severity should
+ * normalize to `"critical"` upstream.
+ *
+ *   - HH → panic/critical-high; mapped to warning direction=high
+ *   - LL → panic/critical-low;  mapped to warning direction=low
+ *
+ * Other common HL7v2 values (A, AA, N, U, '' etc.) remain unmapped and fall
+ * through to the range checks; a structured warn is emitted so operators can
+ * observe silent drops.
+ */
+const HL7_FLAG_MAPPINGS: Record<
+  string,
+  { severity: FlagSeverity; direction: "low" | "high" }
+> = {
+  HH: { severity: "warning", direction: "high" },
+  LL: { severity: "warning", direction: "low" },
+};
 
 // ─── Explicit Critical Lab Thresholds ────────────────────────────
 // These thresholds fire deterministically on lab.resulted events,
@@ -310,6 +335,47 @@ export const CRITICAL_LAB_THRESHOLDS: Record<string, LabCriticalDef> = {
 };
 
 /**
+ * Infer the direction ("low" | "high") of a laboratory-flagged critical
+ * result when the lab itself did not encode direction in the flag string.
+ *
+ * Issue #833: the previous implementation only consulted `reference_low`
+ * and defaulted to `"high"` whenever `reference_low` was missing, even when
+ * the value was clearly below `reference_high`. That misdirected clinician
+ * notifications ("Critical high" when the value was panic-low) and eroded
+ * trust in the deterministic layer.
+ *
+ * Inference strategy, in order:
+ *   1. If both bounds are present, direction is determined by the midpoint:
+ *      values below the midpoint are "low", values above are "high".
+ *      The midpoint is a principled neutral answer for edge cases where
+ *      a value sits inside the reference range but the lab has flagged it
+ *      as critical (e.g. CKD-adjusted baselines).
+ *   2. If only `reference_high` is present, values below it are "low",
+ *      otherwise "high".
+ *   3. If only `reference_low` is present, values below it are "low",
+ *      otherwise "high".
+ *   4. If no bounds are present, default to "high" (documented fallback;
+ *      most laboratory-flagged critical results are elevations).
+ */
+function inferCriticalDirection(
+  value: number,
+  referenceLow: number | undefined,
+  referenceHigh: number | undefined,
+): "low" | "high" {
+  if (referenceLow !== undefined && referenceHigh !== undefined) {
+    const midpoint = (referenceLow + referenceHigh) / 2;
+    return value < midpoint ? "low" : "high";
+  }
+  if (referenceHigh !== undefined) {
+    return value < referenceHigh ? "low" : "high";
+  }
+  if (referenceLow !== undefined) {
+    return value < referenceLow ? "low" : "high";
+  }
+  return "high";
+}
+
+/**
  * Normalize a test name for matching against critical threshold definitions.
  */
 function matchesCriticalLab(
@@ -494,20 +560,32 @@ export function checkCriticalValues(event: ClinicalEvent): RuleFlag[] {
           // Previously, unknown labs with no reference range could slip
           // through silently when the lab had already marked them high /
           // low / critical (see issue #244).
+          //
+          // Issue #834: non-null `flag` values outside the validator enum
+          // (e.g. HL7v2 "HH", "LL", "abnormal", "A", empty string) can
+          // reach this function through ingress paths that skip the Zod
+          // validator (FHIR, HL7v2, direct DB seeding). We now (a) emit a
+          // structured warning so silent drops of explicit lab-marked
+          // abnormalities are observable, and (b) map common HL7v2
+          // panic flags conservatively to warnings so a panic-low lab
+          // does not silently fall through to range checks alone.
           let severity: FlagSeverity | null = null;
           let direction: "low" | "high" | null = null;
           let reason = "";
 
           if (result.flag === "critical") {
             severity = "critical";
-            // Use per-result reference range when present to infer direction;
-            // otherwise default to "high" (most lab-panel critical flags are
-            // elevations; direction is refined below if we can compute it).
-            direction =
-              result.reference_low !== undefined &&
-              result.value < result.reference_low
-                ? "low"
-                : "high";
+            // Infer direction from whatever reference bound is present.
+            // Issue #833: previously, an undefined `reference_low` forced
+            // `direction = "high"` even when the value was clearly below
+            // `reference_high`. Now we also check `reference_high`, and
+            // use the midpoint when both bounds are present. Default
+            // fallback remains `"high"` when no bounds are provided.
+            direction = inferCriticalDirection(
+              result.value,
+              result.reference_low,
+              result.reference_high,
+            );
             reason = `Lab result flagged as critical by the analyzing laboratory.`;
           } else if (result.flag === "H") {
             severity = "warning";
@@ -517,6 +595,24 @@ export function checkCriticalValues(event: ClinicalEvent): RuleFlag[] {
             severity = "warning";
             direction = "low";
             reason = `Lab result flagged as low (L) by the analyzing laboratory.`;
+          } else if (result.flag !== undefined && result.flag !== null) {
+            // Non-enum flag value — warn unconditionally and optionally
+            // map known HL7v2 abnormal-flag values to warnings. Others
+            // fall through to the range checks below.
+            logger.warn("unrecognized_lab_flag", {
+              metric: "unrecognized_lab_flag_total",
+              flag: result.flag,
+              test_name: result.test_name,
+              test_code: result.test_code,
+            });
+            const mapped = HL7_FLAG_MAPPINGS[result.flag];
+            if (mapped) {
+              severity = mapped.severity;
+              direction = mapped.direction;
+              reason =
+                `Lab result flagged as ${result.flag} by the analyzing laboratory ` +
+                `(HL7v2 abnormal-flag mapped to ${mapped.severity} / ${mapped.direction}).`;
+            }
           }
 
           // Per-result reference range is authoritative over COMMON_LAB_TESTS.
@@ -564,9 +660,16 @@ export function checkCriticalValues(event: ClinicalEvent): RuleFlag[] {
 
           if (severity !== null) {
             const resolvedDirection = direction ?? "high";
+            // Include direction in the summary for all severities so that
+            // downstream consumers (and the clinicians reading the flag)
+            // can tell panic-low from panic-high at a glance. Previously
+            // the critical-severity prefix omitted direction, which hid
+            // the #833 direction-inference bug.
             const summaryPrefix =
               severity === "critical"
-                ? "Critical lab result"
+                ? resolvedDirection === "high"
+                  ? "Critical high lab result"
+                  : "Critical low lab result"
                 : resolvedDirection === "high"
                   ? "High lab result"
                   : "Low lab result";
