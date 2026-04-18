@@ -18,16 +18,37 @@ describe("CHEMO-FEVER-001 / CHEMO-NEUTRO-FEVER-001 — ANC-aware rules", () => {
     ...overrides,
   });
 
-  it("fires CHEMO-NEUTRO-FEVER-001 (critical) when ANC < 1500 — and suppresses the warning rule", () => {
-    const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 800 }] });
+  it("fires CHEMO-NEUTRO-FEVER-001 (critical) when ANC <= 500 — true febrile neutropenia", () => {
+    const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 200 }] });
     const flags = checkCrossSpecialtyPatterns(ctx);
 
-    const critical = flags.find((f) => f.rule_id === "CHEMO-NEUTRO-FEVER-001");
-    expect(critical).toBeDefined();
-    expect(critical!.severity).toBe("critical");
+    const flag = flags.find((f) => f.rule_id === "CHEMO-NEUTRO-FEVER-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("critical");
 
     // CHEMO-FEVER-001 must NOT fire once febrile neutropenia is confirmed —
     // the critical rule owns that case; the warning rule only prompts a CBC.
+    expect(flags.find((f) => f.rule_id === "CHEMO-FEVER-001")).toBeUndefined();
+  });
+
+  it("fires CHEMO-NEUTRO-FEVER-001 (critical) at ANC = 500 boundary", () => {
+    const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 500 }] });
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "CHEMO-NEUTRO-FEVER-001",
+    );
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("critical");
+  });
+
+  it("fires CHEMO-NEUTRO-FEVER-001 (info) when ANC > 500 — likely non-neutropenic fever (issue #214)", () => {
+    const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 800 }] });
+    const flags = checkCrossSpecialtyPatterns(ctx);
+
+    const flag = flags.find((f) => f.rule_id === "CHEMO-NEUTRO-FEVER-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("info");
+
+    // CHEMO-FEVER-001 must NOT fire — ANC is known.
     expect(flags.find((f) => f.rule_id === "CHEMO-FEVER-001")).toBeUndefined();
   });
 
@@ -41,12 +62,13 @@ describe("CHEMO-FEVER-001 / CHEMO-NEUTRO-FEVER-001 — ANC-aware rules", () => {
     expect(flag!.suggested_action).toMatch(/reverse isolation/);
   });
 
-  it("omits the severe-neutropenia addendum when 500 <= ANC < 1500", () => {
+  it("provides non-neutropenic fever guidance when ANC > 500 (issue #214)", () => {
     const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 1200 }] });
     const flag = checkCrossSpecialtyPatterns(ctx).find(
       (f) => f.rule_id === "CHEMO-NEUTRO-FEVER-001",
     );
     expect(flag).toBeDefined();
+    expect(flag!.suggested_action).toMatch(/non-neutropenic source/);
     expect(flag!.suggested_action).not.toMatch(/Severe neutropenia/);
   });
 

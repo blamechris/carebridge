@@ -164,6 +164,31 @@ export const encryptedText = customType<{ data: string; driverData: string }>({
  * @>) will not work against encrypted columns — callers must read the full
  * value and filter in application code.
  */
+/**
+ * Encrypted numeric custom type. Converts a JS number to a string,
+ * encrypts with AES-256-GCM, and stores it as text. On read, decrypts
+ * and parses back into a number.
+ *
+ * Because the ciphertext is non-deterministic (random IV), range queries
+ * and ORDER BY on encrypted numeric columns are not possible at the SQL
+ * level — callers must sort/filter in application code after decryption.
+ */
+export const encryptedNumeric = customType<{ data: number; driverData: string }>({
+  dataType() {
+    return "text";
+  },
+  toDriver(value: number): string {
+    return encrypt(String(value), getKey());
+  },
+  fromDriver(value: string): number {
+    const previousKey = getPreviousKey();
+    const plaintext = previousKey
+      ? decryptWithFallback(value, getKey(), previousKey)
+      : decrypt(value, getKey());
+    return Number(plaintext);
+  },
+});
+
 export const encryptedJsonb = <T = unknown>() =>
   customType<{ data: T; driverData: string }>({
     dataType() {

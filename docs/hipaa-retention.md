@@ -66,6 +66,51 @@ direct queries against the table.
 All three columns share the same retention, access-control, and
 archival treatment described in this document.
 
+### Encryption evaluation for rules_output (issue #792)
+
+**Decision: Accept current state — column-level encryption is not required.**
+
+`rules_output` stores serialized `RuleFlag` records whose schema contains
+`severity`, `category`, `summary`, `rationale`, `suggested_action`,
+`notify_specialties`, and `rule_id`. These fields carry PHI-adjacent
+clinical context (matched drug names, allergy substrates, severity
+reasoning) but do **not** contain direct patient identifiers:
+
+- No MRN, date of birth, patient name, SSN, address, or phone number
+  appears in `RuleFlag` output by construction.
+- Patient identity linkage exists only via the `review_jobs.patient_id`
+  foreign key, not within the `rules_output` JSON payload itself.
+- The review pipeline uses `redactPatientId` for log output and
+  `redactClinicalText` (via `@carebridge/phi-sanitizer`) before any
+  context is sent to the LLM layer, ensuring the serialized rule flags
+  are produced from already-sanitized inputs.
+
+This distinguishes `rules_output` from `patients.diagnosis` and
+`patients.notes`, which contain free-text clinical narratives with
+embedded direct identifiers and therefore require column-level encryption
+(migration 0028).
+
+**Why not encrypt or redact-on-write:**
+
+| Approach | Trade-off |
+|---|---|
+| Column-level encryption (like migration 0028) | Adds key-rotation complexity and prevents PostgreSQL jsonb operators from querying rule output for operational analytics. Disproportionate to the re-identification risk given the absence of direct identifiers. |
+| Redact-on-write via `phi-sanitizer` | Would destroy the forensic value of `rules_output` — the entire purpose of persisting it is decision reconstruction with full clinical context (issue #241, migration 0032). |
+
+**Mitigations already in place:**
+
+1. Application-level authorization restricts `review_jobs` access to
+   clinical staff with active care-team membership for the patient.
+2. Database role restrictions limit direct table access to the
+   application service account and DBA roles.
+3. All queries against `review_jobs` are audit-logged.
+4. PostgreSQL TDE (transparent data encryption) protects data at rest
+   at the storage layer.
+
+This decision should be revisited if the `RuleFlag` schema is extended
+to include direct identifiers, or if regulatory guidance changes to
+require encryption of PHI-adjacent clinical context.
+
 ## Archival Plan (future work)
 
 To keep the hot `audit_log` table fast while preserving long-term

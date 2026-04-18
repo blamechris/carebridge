@@ -36,6 +36,9 @@ import {
   redactPatientId,
   validateLLMResponse,
 } from "@carebridge/phi-sanitizer";
+import { createLogger } from "@carebridge/logger";
+
+const logger = createLogger("ai-oversight");
 
 import { checkCriticalValues } from "../rules/critical-values.js";
 import { checkCrossSpecialtyPatterns } from "../rules/cross-specialty.js";
@@ -651,11 +654,19 @@ export async function buildPatientContextForRules(
   // A medication was "active at event time" if it had started (started_at
   // present and <= event time) and had not yet ended (ended_at null or
   // strictly after event time). Falls back to created_at when started_at
-  // is missing — defensive, should not be needed under the non-null
-  // schema constraint but guards against partial records.
+  // is missing (warn-and-include; #516).
   const activeMedsList = allMeds.filter((m) => {
     if (isMedicationRetracted(m)) return false;
     const start = m.started_at ?? m.created_at;
+    if (!m.started_at) {
+      logger.warn("medication_started_at_null_fallback", {
+        metric: "medication_started_at_null_fallback",
+        patient_id_prefix: patientId.slice(0, 8),
+        medication_name: m.name,
+        created_at_used: m.created_at,
+        caller: "review-service:buildPatientContextForRules",
+      });
+    }
     if (isoBefore(eventAt, start)) return false;
     if (m.ended_at && isoLTE(m.ended_at, eventAt)) return false;
     return true;
