@@ -1,4 +1,7 @@
 import type { Metadata } from "next";
+// Shared design tokens (accent, focus-visible, .sr-only, .skip-to-main)
+// must load before globals.css so portal-specific overrides win cascade.
+import "@carebridge/ui-tokens/tokens.css";
 import "./globals.css";
 import { Providers } from "./providers";
 

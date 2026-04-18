@@ -1,0 +1,13 @@
+{
+  "name": "@carebridge/ui-tokens",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared CSS design tokens and accessibility utilities for CareBridge portal apps.",
+  "exports": {
+    "./tokens.css": "./tokens.css"
+  },
+  "files": [
+    "tokens.css"
+  ]
+}
