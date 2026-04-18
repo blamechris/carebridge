@@ -237,6 +237,24 @@ describe("hasPermission", () => {
   it("returns false for unknown permission strings", () => {
     expect(hasPermission(makeUser("admin"), "launch:missiles")).toBe(false);
   });
+
+  it("grants family_caregiver the patient read-set but never write permissions (issue #847)", () => {
+    const caregiver = makeUser("family_caregiver");
+    // Read permissions match the patient role at the role layer — granular
+    // filtering happens via family_relationships.access_scopes in the router.
+    expect(hasPermission(caregiver, "read:patients")).toBe(true);
+    expect(hasPermission(caregiver, "read:vitals")).toBe(true);
+    expect(hasPermission(caregiver, "read:labs")).toBe(true);
+    expect(hasPermission(caregiver, "read:medications")).toBe(true);
+    expect(hasPermission(caregiver, "read:notes")).toBe(true);
+    expect(hasPermission(caregiver, "read:flags")).toBe(true);
+    // No write / admin / sign permissions at the role layer.
+    expect(hasPermission(caregiver, "write:patients")).toBe(false);
+    expect(hasPermission(caregiver, "write:vitals")).toBe(false);
+    expect(hasPermission(caregiver, "write:notes")).toBe(false);
+    expect(hasPermission(caregiver, "sign:notes")).toBe(false);
+    expect(hasPermission(caregiver, "admin:users")).toBe(false);
+  });
 });
 
 describe("assertPermission", () => {
