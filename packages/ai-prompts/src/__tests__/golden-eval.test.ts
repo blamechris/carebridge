@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   loadFixtures,
   evaluateFixture,
+  evalFixtureSchema,
   type EvalFixture,
 } from "../../evals/eval-runner.js";
 import { buildReviewPrompt } from "../clinical-review.js";
@@ -171,5 +172,125 @@ describe("golden-eval: negative cases", () => {
     expect(fixture.expected.shouldFlag).toBe(false);
     expect(fixture.expected.forbiddenCategories).toContain("drug-interaction");
     expect(fixture.expected.forbiddenCategories).toContain("medication-safety");
+  });
+});
+
+describe("golden-eval: Zod schema validation", () => {
+  it("rejects a fixture missing required fields with a clear error", () => {
+    const malformed = {
+      id: "bad-fixture",
+      description: "missing context and expected",
+    };
+    const result = evalFixtureSchema.safeParse(malformed);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const paths = result.error.issues.map((i) => i.path.join("."));
+      expect(paths).toContain("context");
+      expect(paths).toContain("expected");
+    }
+  });
+
+  it("rejects a fixture with an invalid minimumSeverity value", () => {
+    const malformed = {
+      id: "bad-severity",
+      description: "invalid severity enum",
+      context: {
+        patient: {
+          age: 40,
+          sex: "female",
+          active_diagnoses: [],
+          allergies: [],
+        },
+        active_medications: [],
+        latest_vitals: {},
+        triggering_event: { type: "test", summary: "s", detail: "d" },
+        recent_flags: [],
+        care_team: [],
+      },
+      expected: {
+        shouldFlag: true,
+        minimumSeverity: "urgent",
+        mustMentionInPrompt: [],
+      },
+    };
+    const result = evalFixtureSchema.safeParse(malformed);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const severityIssue = result.error.issues.find((i) =>
+        i.path.includes("minimumSeverity"),
+      );
+      expect(severityIssue).toBeDefined();
+    }
+  });
+
+  it("rejects a fixture with wrong type for shouldFlag", () => {
+    const malformed = {
+      id: "bad-flag",
+      description: "shouldFlag is a string",
+      context: {
+        patient: {
+          age: 50,
+          sex: "male",
+          active_diagnoses: [],
+          allergies: [],
+        },
+        active_medications: [],
+        latest_vitals: {},
+        triggering_event: { type: "test", summary: "s", detail: "d" },
+        recent_flags: [],
+        care_team: [],
+      },
+      expected: {
+        shouldFlag: "yes",
+        mustMentionInPrompt: [],
+      },
+    };
+    const result = evalFixtureSchema.safeParse(malformed);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const flagIssue = result.error.issues.find((i) =>
+        i.path.includes("shouldFlag"),
+      );
+      expect(flagIssue).toBeDefined();
+    }
+  });
+
+  it("accepts a valid fixture without errors", () => {
+    const valid = {
+      id: "valid-fixture",
+      description: "a well-formed fixture",
+      context: {
+        patient: {
+          age: 55,
+          sex: "male",
+          allergy_status: "nkda" as const,
+          active_diagnoses: ["Hypertension"],
+          allergies: [],
+        },
+        active_medications: [
+          {
+            name: "Lisinopril",
+            dose: "10 mg",
+            route: "oral",
+            frequency: "daily",
+            started_at: "2026-01-01",
+          },
+        ],
+        latest_vitals: {},
+        triggering_event: {
+          type: "lab_result",
+          summary: "Routine labs",
+          detail: "Normal results",
+        },
+        recent_flags: [],
+        care_team: [{ name: "Dr. Test", specialty: "Internal Medicine" }],
+      },
+      expected: {
+        shouldFlag: false,
+        mustMentionInPrompt: ["Hypertension"],
+      },
+    };
+    const result = evalFixtureSchema.safeParse(valid);
+    expect(result.success).toBe(true);
   });
 });

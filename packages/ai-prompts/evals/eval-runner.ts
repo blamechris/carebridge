@@ -9,6 +9,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { z } from "zod";
 import { buildReviewPrompt } from "../src/clinical-review.js";
 import { estimateTokens, enforceTokenBudget, DEFAULT_TOKEN_BUDGET } from "../src/token-budget.js";
 import type { ReviewContext } from "../src/clinical-review.js";
@@ -16,18 +17,86 @@ import type { ReviewContext } from "../src/clinical-review.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = join(__dirname, "fixtures");
 
-export interface EvalFixture {
-  id: string;
-  description: string;
-  context: ReviewContext;
-  expected: {
-    shouldFlag: boolean;
-    expectedCategories?: string[];
-    forbiddenCategories?: string[];
-    minimumSeverity?: "critical" | "warning" | "info";
-    mustMentionInPrompt: string[];
-  };
-}
+const trendSchema = z.enum(["rising", "falling", "stable"]);
+
+const reviewContextSchema = z.object({
+  patient: z.object({
+    age: z.number(),
+    sex: z.string(),
+    allergy_status: z.enum(["nkda", "unknown", "has_allergies"]).optional(),
+    active_diagnoses: z.array(z.string()),
+    allergies: z.array(
+      z.union([
+        z.string(),
+        z.object({ allergen: z.string(), verification_status: z.string() }),
+      ]),
+    ),
+  }),
+  active_medications: z.array(
+    z.object({
+      name: z.string(),
+      dose: z.string(),
+      route: z.string(),
+      frequency: z.string(),
+      started_at: z.string(),
+    }),
+  ),
+  latest_vitals: z.record(
+    z.object({
+      value: z.number(),
+      unit: z.string(),
+      recorded_at: z.string(),
+      trend: trendSchema.optional(),
+    }),
+  ),
+  recent_labs: z
+    .array(
+      z.object({
+        test_name: z.string(),
+        value: z.number(),
+        unit: z.string(),
+        flag: z.string().nullable(),
+        trend: trendSchema.optional(),
+        collected_at: z.string(),
+      }),
+    )
+    .optional(),
+  triggering_event: z.object({
+    type: z.string(),
+    summary: z.string(),
+    detail: z.string(),
+  }),
+  recent_flags: z.array(
+    z.object({
+      severity: z.string(),
+      summary: z.string(),
+      status: z.string(),
+      created_at: z.string(),
+    }),
+  ),
+  care_team: z.array(
+    z.object({
+      name: z.string(),
+      specialty: z.string(),
+      recent_note_date: z.string().optional(),
+    }),
+  ),
+});
+
+export const evalFixtureSchema = z.object({
+  id: z.string(),
+  description: z.string(),
+  context: reviewContextSchema,
+  expected: z.object({
+    shouldFlag: z.boolean(),
+    expectedCategories: z.array(z.string()).optional(),
+    forbiddenCategories: z.array(z.string()).optional(),
+    minimumSeverity: z.enum(["critical", "warning", "info"]).optional(),
+    mustMentionInPrompt: z.array(z.string()),
+  }),
+});
+
+export type EvalFixture = z.infer<typeof evalFixtureSchema>;
 
 export interface EvalResult {
   fixtureId: string;
@@ -43,7 +112,7 @@ export function loadFixtures(): EvalFixture[] {
   const files = readdirSync(FIXTURES_DIR).filter((f) => f.endsWith(".json"));
   return files.map((file) => {
     const raw = readFileSync(join(FIXTURES_DIR, file), "utf-8");
-    return JSON.parse(raw) as EvalFixture;
+    return evalFixtureSchema.parse(JSON.parse(raw));
   });
 }
 
