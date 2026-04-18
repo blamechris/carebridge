@@ -1410,3 +1410,242 @@ describe("CROSS-QT-HYPOK-001 — QT-prolonging drug + hypokalemia (torsades risk
     expect(flag).toBeUndefined();
   });
 });
+
+describe("CROSS-METFORMIN-GFR-001 — Metformin + eGFR < 30 (contraindicated, lactic acidosis risk)", () => {
+  const metforminCtx = (
+    meds: string[],
+    egfr: number | null,
+    overrides: Partial<PatientContext> = {},
+  ): PatientContext => ({
+    active_diagnoses: ["Type 2 diabetes mellitus"],
+    active_diagnosis_codes: ["E11.9"],
+    active_medications: meds,
+    new_symptoms: [],
+    care_team_specialties: [],
+    recent_labs: egfr === null ? [] : [{ name: "eGFR", value: egfr }],
+    ...overrides,
+  });
+
+  it("fires CRITICAL when metformin active and eGFR < 30 (positive case)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      metforminCtx(["Metformin 500mg BID"], 25),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-METFORMIN-GFR-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("critical");
+    expect(flag!.category).toBe("cross-specialty");
+    expect(flag!.notify_specialties).toContain("nephrology");
+    expect(flag!.notify_specialties).toContain("endocrinology");
+  });
+
+  it("does NOT fire when eGFR >= 45 (no dose adjustment concern for this rule)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      metforminCtx(["Metformin 1000mg BID"], 45),
+    );
+    expect(
+      flags.find((f) => f.rule_id === "CROSS-METFORMIN-GFR-001"),
+    ).toBeUndefined();
+  });
+
+  it("does NOT fire at eGFR exactly 30 (threshold is strict < 30, matches FDA labeling)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      metforminCtx(["Metformin 500mg BID"], 30),
+    );
+    expect(
+      flags.find((f) => f.rule_id === "CROSS-METFORMIN-GFR-001"),
+    ).toBeUndefined();
+  });
+
+  it("fires at eGFR = 29 (just below threshold)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      metforminCtx(["Metformin 500mg BID"], 29),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-METFORMIN-GFR-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("critical");
+  });
+
+  it("does NOT fire when patient is not on metformin", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      metforminCtx(["Lisinopril 10mg", "Amlodipine 5mg"], 20),
+    );
+    expect(
+      flags.find((f) => f.rule_id === "CROSS-METFORMIN-GFR-001"),
+    ).toBeUndefined();
+  });
+
+  it("does NOT fire when eGFR is unknown (no lab value)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      metforminCtx(["Metformin 500mg"], null),
+    );
+    expect(
+      flags.find((f) => f.rule_id === "CROSS-METFORMIN-GFR-001"),
+    ).toBeUndefined();
+  });
+
+  it("detects eGFR under the alternative lab name 'GFR'", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      metforminCtx(["Metformin 500mg"], null, {
+        recent_labs: [{ name: "GFR", value: 20 }],
+      }),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-METFORMIN-GFR-001");
+    expect(flag).toBeDefined();
+  });
+
+  it("detects eGFR under the alternative lab name 'Estimated GFR'", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      metforminCtx(["Metformin 500mg"], null, {
+        recent_labs: [{ name: "Estimated GFR", value: 18 }],
+      }),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-METFORMIN-GFR-001");
+    expect(flag).toBeDefined();
+  });
+
+  it("fires for branded metformin combo (e.g. Janumet)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      metforminCtx(["Janumet 50-1000mg"], 22),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-METFORMIN-GFR-001");
+    expect(flag).toBeDefined();
+  });
+
+  it("fires for Glucophage brand (generic metformin)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      metforminCtx(["Glucophage 1000mg"], 25),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-METFORMIN-GFR-001");
+    expect(flag).toBeDefined();
+  });
+});
+
+describe("CROSS-THIAZIDE-HYPOK-001 — Thiazide diuretic + hypokalemia (electrolyte worsening)", () => {
+  const thiazideCtx = (
+    meds: string[],
+    potassiumValue: number | null,
+    overrides: Partial<PatientContext> = {},
+  ): PatientContext => ({
+    active_diagnoses: ["Essential hypertension"],
+    active_diagnosis_codes: ["I10"],
+    active_medications: meds,
+    new_symptoms: [],
+    care_team_specialties: [],
+    recent_labs:
+      potassiumValue === null
+        ? []
+        : [{ name: "Potassium", value: potassiumValue }],
+    ...overrides,
+  });
+
+  it("fires WARNING for HCTZ + K+ = 3.2 (mild hypokalemia)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      thiazideCtx(["Hydrochlorothiazide 25mg daily"], 3.2),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-THIAZIDE-HYPOK-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("warning");
+    expect(flag!.category).toBe("cross-specialty");
+  });
+
+  it("fires CRITICAL when K+ < 3.0 (escalation, mirrors CROSS-QT-HYPOK-001 pattern)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      thiazideCtx(["Chlorthalidone 25mg"], 2.9),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-THIAZIDE-HYPOK-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("critical");
+  });
+
+  it("fires WARNING at K+ boundary just below 3.5", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      thiazideCtx(["Hydrochlorothiazide 25mg"], 3.4),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-THIAZIDE-HYPOK-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("warning");
+  });
+
+  it("fires for indapamide", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      thiazideCtx(["Indapamide 2.5mg"], 3.1),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-THIAZIDE-HYPOK-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("warning");
+  });
+
+  it("fires for metolazone", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      thiazideCtx(["Metolazone 5mg"], 3.3),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-THIAZIDE-HYPOK-001");
+    expect(flag).toBeDefined();
+  });
+
+  it("fires for HCTZ abbreviation", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      thiazideCtx(["HCTZ 25mg"], 3.0),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-THIAZIDE-HYPOK-001");
+    expect(flag).toBeDefined();
+  });
+
+  it("does NOT fire for thiazide alone with normal K+ (3.8)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      thiazideCtx(["Hydrochlorothiazide 25mg"], 3.8),
+    );
+    expect(
+      flags.find((f) => f.rule_id === "CROSS-THIAZIDE-HYPOK-001"),
+    ).toBeUndefined();
+  });
+
+  it("does NOT fire at K+ exactly 3.5 (strict <3.5 threshold)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      thiazideCtx(["Hydrochlorothiazide 25mg"], 3.5),
+    );
+    expect(
+      flags.find((f) => f.rule_id === "CROSS-THIAZIDE-HYPOK-001"),
+    ).toBeUndefined();
+  });
+
+  it("does NOT fire without a thiazide (loop diuretic only)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      thiazideCtx(["Furosemide 40mg"], 3.0),
+    );
+    expect(
+      flags.find((f) => f.rule_id === "CROSS-THIAZIDE-HYPOK-001"),
+    ).toBeUndefined();
+  });
+
+  it("does NOT fire when potassium lab is unknown", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      thiazideCtx(["Hydrochlorothiazide 25mg"], null),
+    );
+    expect(
+      flags.find((f) => f.rule_id === "CROSS-THIAZIDE-HYPOK-001"),
+    ).toBeUndefined();
+  });
+
+  it("recognises potassium under 'K+' alias", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      thiazideCtx(["HCTZ 25mg"], null, {
+        recent_labs: [{ name: "K+", value: 3.1 }],
+      }),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-THIAZIDE-HYPOK-001");
+    expect(flag).toBeDefined();
+  });
+
+  it("fires in parallel with CROSS-QT-HYPOK-001 when patient is on both a thiazide and a QT-prolonger", () => {
+    // Overlap case — different mechanisms (electrolyte worsening vs. torsades
+    // risk) and different downstream actions, so both rules are expected to fire.
+    const flags = checkCrossSpecialtyPatterns(
+      thiazideCtx(["Hydrochlorothiazide 25mg", "Azithromycin 500mg"], 3.0),
+    );
+    const thiazide = flags.find((f) => f.rule_id === "CROSS-THIAZIDE-HYPOK-001");
+    const qt = flags.find((f) => f.rule_id === "CROSS-QT-HYPOK-001");
+    expect(thiazide).toBeDefined();
+    expect(qt).toBeDefined();
+  });
+});
