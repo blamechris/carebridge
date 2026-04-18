@@ -35,6 +35,9 @@ importers:
       '@carebridge/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
+      '@carebridge/ui-tokens':
+        specifier: workspace:*
+        version: link:../../packages/ui-tokens
       '@carebridge/validators':
         specifier: workspace:*
         version: link:../../packages/validators
@@ -108,6 +111,9 @@ importers:
       '@carebridge/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
+      '@carebridge/ui-tokens':
+        specifier: workspace:*
+        version: link:../../packages/ui-tokens
       '@tanstack/react-query':
         specifier: ^5.60.0
         version: 5.99.1(react@19.2.5)
@@ -328,6 +334,8 @@ importers:
       vitest:
         specifier: ^3.0.0
         version: 3.2.4(@types/node@22.19.17)(jsdom@29.0.2(@noble/hashes@2.0.1))(tsx@4.21.0)
+
+  packages/ui-tokens: {}
 
   packages/validators:
     dependencies:
