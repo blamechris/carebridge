@@ -43,7 +43,7 @@ Each fixture file must conform to the `EvalFixture` interface defined in
     "patient": {
       "age": 45,
       "sex": "female",
-      "allergy_status": "known",        // "nkda" | "known" | "unknown"
+      "allergy_status": "has_allergies",  // "nkda" | "has_allergies" | "unknown"
       "active_diagnoses": ["..."],
       "allergies": [
         {

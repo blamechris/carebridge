@@ -18,13 +18,11 @@ vi.mock("@carebridge/redis-config", () => ({
   },
 }));
 
-// ── Mock DB ─────────────────────────────────────────────────────
-const insertValuesMock = vi.fn().mockResolvedValue(undefined);
-const insertMock = vi.fn(() => ({ values: insertValuesMock }));
+// ── Mock @carebridge/outbox ─────────────────────────────────────
+const writeOutboxEntryMock = vi.fn().mockResolvedValue(undefined);
 
-vi.mock("@carebridge/db-schema", () => ({
-  getDb: () => ({ insert: insertMock }),
-  failedClinicalEvents: { id: "id" },
+vi.mock("@carebridge/outbox", () => ({
+  writeOutboxEntry: writeOutboxEntryMock,
 }));
 
 // ── Import after mocks ──────────────────────────────────────────
@@ -47,30 +45,26 @@ describe("emitClinicalEvent", () => {
     await emitClinicalEvent(sampleEvent);
 
     expect(addMock).toHaveBeenCalledWith(sampleEvent.type, sampleEvent);
-    expect(insertMock).not.toHaveBeenCalled();
+    expect(writeOutboxEntryMock).not.toHaveBeenCalled();
   });
 
-  it("falls back to DB outbox when queue fails", async () => {
+  it("falls back to outbox when queue fails", async () => {
     addMock.mockRejectedValueOnce(new Error("Redis connection refused"));
 
     await emitClinicalEvent(sampleEvent);
 
-    expect(insertMock).toHaveBeenCalled();
-    expect(insertValuesMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        event_type: "medication.created",
-        patient_id: "patient-1",
-        event_payload: sampleEvent,
-        error_message: "Redis connection refused",
-        status: "pending",
-        retry_count: 0,
-      }),
+    expect(writeOutboxEntryMock).toHaveBeenCalledWith(
+      sampleEvent,
+      expect.any(Error),
+    );
+    expect(writeOutboxEntryMock.mock.calls[0][1].message).toBe(
+      "Redis connection refused",
     );
   });
 
-  it("logs critical error when both queue and DB fallback fail", async () => {
+  it("logs critical error when both queue and outbox fallback fail", async () => {
     addMock.mockRejectedValueOnce(new Error("Redis down"));
-    insertValuesMock.mockRejectedValueOnce(new Error("DB down"));
+    writeOutboxEntryMock.mockRejectedValueOnce(new Error("DB down"));
 
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -91,9 +85,9 @@ describe("emitClinicalEvent", () => {
     await expect(emitClinicalEvent(sampleEvent)).resolves.toBeUndefined();
   });
 
-  it("does not throw when both queue and DB fail — caller mutation succeeds", async () => {
+  it("does not throw when both queue and outbox fail — caller mutation succeeds", async () => {
     addMock.mockRejectedValueOnce(new Error("Redis down"));
-    insertValuesMock.mockRejectedValueOnce(new Error("DB down"));
+    writeOutboxEntryMock.mockRejectedValueOnce(new Error("DB down"));
 
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     await expect(emitClinicalEvent(sampleEvent)).resolves.toBeUndefined();
@@ -105,10 +99,9 @@ describe("emitClinicalEvent", () => {
 
     await emitClinicalEvent(sampleEvent);
 
-    expect(insertValuesMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        error_message: "string error",
-      }),
+    expect(writeOutboxEntryMock).toHaveBeenCalledWith(
+      sampleEvent,
+      "string error",
     );
   });
 });
