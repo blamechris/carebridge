@@ -32,6 +32,11 @@ import {
   familyRelationships,
   users,
 } from "@carebridge/db-schema";
+import {
+  hasScope,
+  normaliseScopes,
+  type ScopeToken,
+} from "@carebridge/shared-types";
 import { and, eq } from "drizzle-orm";
 import type { Context } from "../context.js";
 import { assertCareTeamAccess } from "../middleware/rbac.js";
@@ -52,11 +57,15 @@ const protectedProcedure = t.procedure.use(isAuthenticated);
  * Throws TRPCError(FORBIDDEN) on denial.
  *
  * Role semantics mirror patient-records.ts — family_caregiver resolves via
- * an active family_relationships row joined through users.patient_id.
+ * an active family_relationships row joined through users.patient_id. When
+ * `requiredScope` is provided, the relationship's `access_scopes` array is
+ * checked (`hasScope` superset rules). Caregivers with only `view_summary`
+ * cannot read medications/labs/notes — each procedure declares its scope.
  */
 async function enforcePatientAccess(
   user: NonNullable<Context["user"]>,
   patientId: string,
+  requiredScope?: ScopeToken,
 ): Promise<void> {
   if (user.role === "admin") return;
 
@@ -74,7 +83,10 @@ async function enforcePatientAccess(
   if (user.role === "family_caregiver") {
     const db = getDb();
     const [row] = await db
-      .select({ id: familyRelationships.id })
+      .select({
+        id: familyRelationships.id,
+        access_scopes: familyRelationships.access_scopes,
+      })
       .from(familyRelationships)
       .innerJoin(users, eq(users.id, familyRelationships.patient_id))
       .where(
@@ -91,6 +103,17 @@ async function enforcePatientAccess(
         message:
           "Access denied: no active family relationship grants access to this patient",
       });
+    }
+    if (requiredScope !== undefined) {
+      const scopes = normaliseScopes(
+        (row.access_scopes ?? null) as ScopeToken[] | null,
+      );
+      if (!hasScope(scopes, requiredScope)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: `Access denied: caregiver lacks ${requiredScope} scope`,
+        });
+      }
     }
     return;
   }
@@ -111,6 +134,7 @@ const vitalsRouter = t.router({
   create: protectedProcedure
     .input(createVitalSchema)
     .mutation(async ({ ctx, input }) => {
+      // Mutations remain role-blocked elsewhere; no scope check on writes.
       await enforcePatientAccess(ctx.user, input.patient_id);
       return vitalRepo.createVital(input);
     }),
@@ -118,14 +142,15 @@ const vitalsRouter = t.router({
   getByPatient: protectedProcedure
     .input(z.object({ patientId: z.string().uuid(), type: vitalTypeSchema.optional() }))
     .query(async ({ ctx, input }) => {
-      await enforcePatientAccess(ctx.user, input.patientId);
+      // Vitals belong to the summary tier (like observations/diagnoses).
+      await enforcePatientAccess(ctx.user, input.patientId, "view_summary");
       return vitalRepo.getVitalsByPatient(input.patientId, input.type);
     }),
 
   getLatest: protectedProcedure
     .input(z.object({ patientId: z.string().uuid() }))
     .query(async ({ ctx, input }) => {
-      await enforcePatientAccess(ctx.user, input.patientId);
+      await enforcePatientAccess(ctx.user, input.patientId, "view_summary");
       return vitalRepo.getLatestVitals(input.patientId);
     }),
 });
@@ -143,14 +168,14 @@ const labsRouter = t.router({
   getByPatient: protectedProcedure
     .input(z.object({ patientId: z.string().uuid() }))
     .query(async ({ ctx, input }) => {
-      await enforcePatientAccess(ctx.user, input.patientId);
+      await enforcePatientAccess(ctx.user, input.patientId, "view_labs");
       return labRepo.getLabPanelsByPatient(input.patientId);
     }),
 
   getHistory: protectedProcedure
     .input(z.object({ patientId: z.string().uuid(), testName: z.string().min(1) }))
     .query(async ({ ctx, input }) => {
-      await enforcePatientAccess(ctx.user, input.patientId);
+      await enforcePatientAccess(ctx.user, input.patientId, "view_labs");
       return labRepo.getLabResultHistory(input.patientId, input.testName);
     }),
 });
@@ -196,7 +221,7 @@ const medicationsRouter = t.router({
   getByPatient: protectedProcedure
     .input(z.object({ patientId: z.string().uuid(), status: medStatusSchema.optional() }))
     .query(async ({ ctx, input }) => {
-      await enforcePatientAccess(ctx.user, input.patientId);
+      await enforcePatientAccess(ctx.user, input.patientId, "view_medications");
       return medicationRepo.getMedicationsByPatient(input.patientId, input.status);
     }),
 
@@ -251,7 +276,8 @@ const proceduresRouter = t.router({
   getByPatient: protectedProcedure
     .input(z.object({ patientId: z.string().uuid() }))
     .query(async ({ ctx, input }) => {
-      await enforcePatientAccess(ctx.user, input.patientId);
+      // Procedures are summary-tier — part of the patient's clinical snapshot.
+      await enforcePatientAccess(ctx.user, input.patientId, "view_summary");
       return procedureRepo.getProceduresByPatient(input.patientId);
     }),
 });
