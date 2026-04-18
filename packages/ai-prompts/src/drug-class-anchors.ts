@@ -15,8 +15,19 @@ export interface DrugClassCrossReaction {
 
 export const DRUG_CLASS_CROSS_REACTIONS: readonly DrugClassCrossReaction[] = [
   { class: "penicillin", examples: ["amoxicillin", "ampicillin", "piperacillin"] },
-  { class: "sulfa", examples: ["sulfonamide antibiotics"] },
-  { class: "aspirin", examples: ["other NSAIDs"] },
+  { class: "cephalosporin", examples: ["cefazolin", "ceftriaxone", "cephalexin", "cefepime"] },
+  { class: "penicillin-cephalosporin-cross", examples: ["penicillin → cephalosporin (~2% cross-reactivity)"] },
+  { class: "sulfa", examples: ["sulfonamide antibiotics", "sulfamethoxazole", "bactrim"] },
+  { class: "aspirin", examples: ["other NSAIDs", "ibuprofen", "naproxen", "celecoxib"] },
+  { class: "opioid", examples: ["codeine", "morphine", "hydrocodone", "oxycodone", "fentanyl"] },
+  { class: "fluoroquinolone", examples: ["ciprofloxacin", "levofloxacin", "moxifloxacin"] },
+  { class: "ACE inhibitor", examples: ["lisinopril", "enalapril", "ramipril", "captopril"] },
+  { class: "statin", examples: ["atorvastatin", "simvastatin", "rosuvastatin", "pravastatin"] },
+  { class: "macrolide", examples: ["azithromycin", "erythromycin", "clarithromycin"] },
+  { class: "tetracycline", examples: ["doxycycline", "minocycline", "tigecycline"] },
+  { class: "benzodiazepine", examples: ["diazepam", "lorazepam", "alprazolam", "clonazepam"] },
+  { class: "iodinated contrast", examples: ["iohexol", "iopamidol", "iodixanol"] },
+  { class: "latex", examples: ["natural rubber latex"] },
 ] as const;
 
 /**

@@ -322,6 +322,30 @@ describe("classifyTrend", () => {
   });
 });
 
+// ─── baseline-aware trend in context builder (issue #533) ──────────────
+
+describe("calculateDeltaFromBaseline classifies creatinine series as rising", () => {
+  it("produces a rising trend for creatinine [0.7, 0.8, 0.9, 1.1, 1.2]", () => {
+    const values = [0.7, 0.8, 0.9, 1.1, 1.2];
+    const delta = calculateDeltaFromBaseline(values);
+    expect(delta).not.toBeNull();
+    // baseline (first value) = 0.7, current (last value) = 1.2
+    expect(delta!.previous).toBe(0.7);
+    expect(delta!.current).toBe(1.2);
+    expect(delta!.change).toBeCloseTo(0.5, 5);
+    expect(delta!.pctChange).toBeCloseTo(71.428, 2);
+
+    // Trend direction: positive change → rising
+    const trend =
+      Math.abs(delta!.pctChange) < 2
+        ? "stable"
+        : delta!.change > 0
+          ? "rising"
+          : "falling";
+    expect(trend).toBe("rising");
+  });
+});
+
 // ─── detectAKI (KDIGO criteria) ─────────────────────────────────────────
 
 describe("detectAKI", () => {

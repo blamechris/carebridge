@@ -451,6 +451,19 @@ describe("patients.listRecent — HIPAA projection via .limit() path", () => {
     expect(selectCols).not.toHaveProperty("notes");
   });
 
+  it("calls .orderBy(desc(created_at)) before .limit()", async () => {
+    const admin = makeUser("admin", "admin-1111-1111-4111-8111-111111111111");
+    const caller = callerFor(admin);
+
+    await caller.listRecent({ limit: 5 });
+
+    // The mock chain records every call; verify orderBy was invoked with desc(created_at)
+    const selectChain = mocks.mockDb.select.mock.results[0]?.value;
+    const fromChain = selectChain.from.mock.results[0]?.value;
+    expect(fromChain.orderBy).toHaveBeenCalledTimes(1);
+    expect(fromChain.orderBy).toHaveBeenCalledWith({ op: "desc", col: "patients.created_at" });
+  });
+
   it("rejects non-admin users", async () => {
     const physician = makeUser("physician", PHYSICIAN_ID);
     const caller = callerFor(physician);
