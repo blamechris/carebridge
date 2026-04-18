@@ -347,7 +347,7 @@ describe("patientRecordsRbacRouter.list — HIPAA minimum-necessary filtering", 
       [{ patient_id: PATIENT_RECORD_1.id }],
       [PATIENT_RECORD_1],
     ]);
-    const caregiver = makeUser("family_caregiver" as User["role"], CAREGIVER_ID);
+    const caregiver = makeUser("family_caregiver", CAREGIVER_ID);
     const caller = callerFor(caregiver);
 
     const result = await caller.list();
@@ -366,7 +366,7 @@ describe("patientRecordsRbacRouter.list — HIPAA minimum-necessary filtering", 
     const CAREGIVER_ID = "77777777-7777-4777-8777-777777777777";
     // Queue: familyRelationships returns empty
     mocks.setResolvedDataQueue([[]]);
-    const caregiver = makeUser("family_caregiver" as User["role"], CAREGIVER_ID);
+    const caregiver = makeUser("family_caregiver", CAREGIVER_ID);
     const caller = callerFor(caregiver);
 
     const result = await caller.list();
@@ -395,7 +395,7 @@ describe("patientRecordsRbacRouter.list — HIPAA minimum-necessary filtering", 
           [{ patient_id: PATIENT_RECORD_1.id }],
           [PATIENT_RECORD_1],
         ]);
-        const user = makeUser("family_caregiver" as User["role"], CAREGIVER_ID);
+        const user = makeUser("family_caregiver", CAREGIVER_ID);
         const caller = callerFor(user);
 
         await caller.list();
