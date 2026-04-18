@@ -15,9 +15,23 @@ const selectMock = vi.fn();
 
 vi.mock("@carebridge/db-schema", () => ({
   getDb: () => ({ select: selectMock }),
-  diagnoses: { patient_id: "patient_id" },
-  medications: { patient_id: "patient_id" },
-  allergies: { patient_id: "patient_id" },
+  diagnoses: {
+    patient_id: "patient_id",
+    status: "status",
+    onset_date: "onset_date",
+    resolved_date: "resolved_date",
+  },
+  medications: {
+    patient_id: "patient_id",
+    status: "status",
+    started_at: "started_at",
+    ended_at: "ended_at",
+  },
+  allergies: {
+    patient_id: "patient_id",
+    created_at: "created_at",
+    verification_status: "verification_status",
+  },
   patients: {},
   labPanels: { id: "id", patient_id: "patient_id" },
   labResults: {
