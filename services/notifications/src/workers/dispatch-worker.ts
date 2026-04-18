@@ -19,7 +19,7 @@ import { notifications, users, careTeamAssignments } from "@carebridge/db-schema
 import { eq, and, isNull, inArray } from "drizzle-orm";
 import crypto from "node:crypto";
 import { createLogger } from "@carebridge/logger";
-import type { NotificationEvent } from "../queue.js";
+import type { NotificationEvent, NotificationAudience } from "../queue.js";
 import { notificationsQueue } from "../queue.js";
 import { publishNotification } from "../publish.js";
 import { redactPatientId } from "@carebridge/phi-sanitizer";
@@ -44,7 +44,7 @@ const log = createLogger("dispatch-worker");
  * here is a generic, PHI-free clinical taxonomy bucket; anything outside
  * this set falls back to `UNKNOWN_CATEGORY_LABEL` and is logged.
  */
-const CATEGORY_LABELS = {
+const CLINICAL_FLAG_CATEGORY_LABELS = {
   "cross-specialty": "Cross-specialty concern",
   "drug-interaction": "Drug interaction",
   "medication-safety": "Medication safety",
@@ -54,6 +54,21 @@ const CATEGORY_LABELS = {
   "documentation-discrepancy": "Documentation discrepancy",
   "patient-reported": "Patient-reported concern",
 } as const satisfies Record<FlagCategory, string>;
+
+/**
+ * Additional (non-clinical-flag) categories admitted to the lock-screen
+ * label whitelist. These are for patient-addressed notifications such as
+ * appointment reminders, where the clinical-flag taxonomy doesn't apply
+ * but we still need a PHI-free human-readable label.
+ */
+const PATIENT_CATEGORY_LABELS = {
+  "appointment-reminder": "Appointment reminder",
+} as const;
+
+const CATEGORY_LABELS = {
+  ...CLINICAL_FLAG_CATEGORY_LABELS,
+  ...PATIENT_CATEGORY_LABELS,
+} as const;
 
 type SafeCategory = keyof typeof CATEGORY_LABELS;
 
@@ -105,25 +120,62 @@ const dlq = new Queue(DLQ_NAME, {
 });
 
 /**
- * Find provider user IDs who should receive a notification for a given flag.
+ * Resolve the patient's own user id from a patient record id.
  *
- * Strategy:
- * 1. Look up active care_team_assignments for the patient — this is the
- *    RBAC source-of-truth that determines which users have access to the
- *    patient's records. Using this table (instead of care_team_members)
- *    ensures we only notify users who can actually act on the flag.
- * 2. Load their user rows (id, specialty, role, is_active)
- * 3. If `notify_specialties` is non-empty, use `filterRecipientsBySpecialty`
- *    to keep only providers whose specialty matches (plus admins).
- *    We do NOT silently fall back to the entire care team when the match
- *    set is empty — that would re-disclose PHI to unrelated providers.
- * 4. If `notify_specialties` is empty, notify every active care team
- *    provider (legacy behaviour for flags without a targeted specialty).
+ * `users.patient_id` links a patient-role user row to their clinical
+ * `patients` record. Returns `null` when no active user row is found
+ * (e.g. patient hasn't registered a portal account yet, or the account
+ * was deactivated) — in that case we simply can't deliver and the caller
+ * logs + skips.
+ */
+async function findPatientUserId(patientId: string): Promise<string | null> {
+  const db = getDb();
+  const rows = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(
+      and(
+        eq(users.patient_id, patientId),
+        eq(users.is_active, true),
+      ),
+    );
+  const row = rows[0];
+  return row?.id ?? null;
+}
+
+/**
+ * Find the user IDs that should receive a notification for a given event.
+ *
+ * Branch on `audience`:
+ *
+ * - `"patient"`: deliver to the patient's own user row (looked up via
+ *   `users.patient_id`). Used for patient-addressed notifications such as
+ *   appointment reminders. Care-team routing would misdeliver PHI to
+ *   providers instead of the patient.
+ *
+ * - `"providers"` (default): original clinical-flag strategy —
+ *   1. Look up active `care_team_assignments` for the patient (the RBAC
+ *      source-of-truth that determines which users have access to the
+ *      patient's records).
+ *   2. Load their user rows (id, specialty, role, is_active).
+ *   3. If `notify_specialties` is non-empty, keep only providers whose
+ *      specialty matches (plus admins) via `filterRecipientsBySpecialty`.
+ *      We do NOT silently fall back to the entire care team when the match
+ *      set is empty — that would re-disclose PHI to unrelated providers.
+ *   4. If `notify_specialties` is empty, notify every active care team
+ *      provider (legacy behaviour for flags without a targeted specialty).
  */
 async function findNotificationRecipients(
   patientId: string,
   notifySpecialties: string[],
+  audience: NotificationAudience = "providers",
 ): Promise<string[]> {
+  if (audience === "patient") {
+    const userId = await findPatientUserId(patientId);
+    if (!userId) return [];
+    return [userId];
+  }
+
   const db = getDb();
 
   // Get all active care team assignments (RBAC) for this patient.
@@ -167,31 +219,42 @@ async function findNotificationRecipients(
 }
 
 /**
- * Build a notification title based on flag severity and category.
+ * Build a notification title based on event source, severity, and category.
  *
  * HIPAA lock-screen safety: the title MUST NOT contain patient identifiers
  * or clinical numeric values. This function produces a generic
- * "CRITICAL: Clinical flag — Critical value" form with no PHI. Upstream
+ * "CRITICAL: Clinical flag — Critical value" (clinical-flag path) or
+ * "Appointment reminder" (patient-reminder path) with no PHI. Upstream
  * push-notification integrations (APNs, FCM) should render only this
- * title on device lock screens; clinical detail is behind the
- * authenticated portal fetch keyed off related_flag_id.
+ * title on device lock screens; detail is behind the authenticated portal
+ * fetch keyed off related_flag_id.
  *
  * The category portion is resolved via `resolveCategoryLabel`, which
  * enforces a whitelist and falls back to "Clinical alert" for any
  * unexpected value (see `CATEGORY_LABELS`).
+ *
+ * Source-based branching: `source === "scheduling.reminder"` (appointment
+ * reminders) renders just the category label, because prefixing it with
+ * "Info: Clinical flag —" would be misleading — an appointment reminder
+ * is neither a clinical flag nor a severity-graded alert.
  */
 function buildNotificationTitle(event: NotificationEvent, categoryLabel: string): string {
+  if (event.source === "scheduling.reminder") {
+    // Reminder titles skip the severity + "Clinical flag" prefix — those
+    // are semantically wrong for a system-initiated scheduling nudge.
+    return categoryLabel;
+  }
   const severityLabel = event.severity === "critical" ? "CRITICAL" : event.severity === "warning" ? "Warning" : "Info";
   return `${severityLabel}: Clinical flag — ${categoryLabel}`;
 }
 
 /**
- * Produce a lock-screen-safe rendering of the flag summary for push-layer
+ * Produce a lock-screen-safe rendering of the event summary for push-layer
  * delivery. Returns a template string built from the whitelisted category
  * label alone; `event.summary` is intentionally discarded (it may contain
- * PHI such as patient identifiers or clinical numeric values like
- * "BP 145/95" or "K+ 7.2 mmol/L" that must not surface on a locked
- * device).
+ * PHI such as patient identifiers, provider names, appointment times, or
+ * clinical numeric values like "BP 145/95" / "K+ 7.2 mmol/L" that must
+ * not surface on a locked device).
  *
  * The full summary is still persisted on `notifications.body` (encrypted
  * at rest) for authenticated portal render once the device is unlocked;
@@ -199,10 +262,19 @@ function buildNotificationTitle(event: NotificationEvent, categoryLabel: string)
  * will hand to the OS, and it is also persisted on
  * `notifications.summary_safe` so later fetches can surface the safe
  * variant without re-deriving it.
+ *
+ * Template is source-aware: appointment reminders get a reminder-shaped
+ * cue ("You have an upcoming appointment…") rather than the
+ * "Clinical flag —" prefix, which is misleading for non-flag
+ * notifications.
  */
-function buildSafeSummary(categoryLabel: string): string {
-  // Trust nothing from the event.summary — always fall back to the
-  // whitelisted category label (which itself guards against unknown values).
+function buildSafeSummary(event: NotificationEvent, categoryLabel: string): string {
+  // Trust nothing from the event.summary — always fall back to a template
+  // built from the whitelisted category label (which itself guards
+  // against unknown values).
+  if (event.source === "scheduling.reminder") {
+    return "You have an upcoming appointment. Open the portal for details.";
+  }
   return `Clinical flag — ${categoryLabel}. Open the portal to view details.`;
 }
 
@@ -239,13 +311,16 @@ async function processNotificationJob(event: NotificationEvent): Promise<number>
   const recipientIds = await findNotificationRecipients(
     event.patient_id,
     event.notify_specialties,
+    event.audience,
   );
 
   if (recipientIds.length === 0) {
-    log.info("No recipients found for flag", {
+    log.info("No recipients found for event", {
       flagId: event.flag_id,
       patient: redactPatientId(event.patient_id),
       specialties: event.notify_specialties,
+      audience: event.audience ?? "providers",
+      source: event.source,
     });
     return 0;
   }
@@ -255,7 +330,7 @@ async function processNotificationJob(event: NotificationEvent): Promise<number>
   const link = buildFlagLink(event);
   const now = new Date().toISOString();
   const urgent = isUrgentFlag(event.severity);
-  const safeSummary = buildSafeSummary(categoryLabel);
+  const safeSummary = buildSafeSummary(event, categoryLabel);
 
   let immediateCount = 0;
   let delayedCount = 0;
@@ -384,7 +459,7 @@ async function processDelayedNotification(event: DelayedNotificationPayload & { 
   const link = buildFlagLink(event);
   const now = new Date().toISOString();
 
-  const safeSummary = buildSafeSummary(categoryLabel);
+  const safeSummary = buildSafeSummary(event, categoryLabel);
   const record = {
     id: crypto.randomUUID(),
     user_id: userId,
