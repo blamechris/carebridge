@@ -9,6 +9,7 @@
 
 import type { FlagSeverity, FlagCategory, ClinicalEvent, RuleFlag } from "@carebridge/shared-types";
 import { QTC_PATTERN } from "./drug-interactions.js";
+import { getRecentPotassium } from "./lab-units.js";
 
 export interface PatientAllergy {
   allergen: string;
@@ -54,8 +55,15 @@ export interface PatientContext {
   allergies?: PatientAllergy[];
   /** The triggering clinical event, used by medication-status rules. */
   trigger_event?: ClinicalEvent;
-  /** Recent lab values, used by ANC-aware rules. */
-  recent_labs?: Array<{ name: string; value: number }>;
+  /**
+   * Recent lab values, used by ANC-aware rules and other threshold
+   * comparisons. Each entry carries a `unit` string (issue #856) so rules
+   * that compare against analyte-specific thresholds can verify the value
+   * is in the expected unit before firing. An empty `unit` means the
+   * source record had no recorded unit — downstream unit-aware helpers
+   * treat this as unknown and fail closed.
+   */
+  recent_labs?: Array<{ name: string; value: number; unit: string }>;
   /**
    * ISO 8601 event timestamp. Time-sensitive rules (e.g. VTE recency gate)
    * use this instead of wall-clock time so the evaluation is anchored to the
@@ -847,16 +855,16 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
     check: (ctx: PatientContext) => {
       const onQTDrug = ctx.active_medications.some((m) => QTC_PATTERN.test(m));
       if (!onQTDrug) return false;
-      const k = ctx.recent_labs?.find((l) =>
-        /^(potassium|k\+?)$/i.test(l.name.trim()),
-      )?.value;
+      // Unit-aware potassium lookup (#856). Refuses to match labs whose
+      // unit is not numerically equivalent to mEq/L (i.e. mmol/L). A K+
+      // value recorded in mg/dL or with no unit would cause the rule to
+      // skip rather than silently compare against the 3.5 mEq/L threshold.
+      const k = getRecentPotassium(ctx)?.value;
       if (k === undefined) return false;
       return k < 3.5;
     },
     buildSeverity: (ctx: PatientContext) => {
-      const k = ctx.recent_labs?.find((l) =>
-        /^(potassium|k\+?)$/i.test(l.name.trim()),
-      )?.value;
+      const k = getRecentPotassium(ctx)?.value;
       // Severe hypokalemia (K+ < 3.0) compounds torsades risk and is
       // independently critical per critical-values.ts. Escalate accordingly.
       if (k !== undefined && k < 3.0) return "critical";
@@ -880,9 +888,7 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       "QTc — if > 500 ms or > 60 ms above baseline, hold the QT-prolonging agent and consult cardiology. " +
       "Continuous telemetry until electrolytes corrected.",
     buildSuggestedAction: (ctx: PatientContext) => {
-      const k = ctx.recent_labs?.find((l) =>
-        /^(potassium|k\+?)$/i.test(l.name.trim()),
-      )?.value;
+      const k = getRecentPotassium(ctx)?.value;
       const base =
         "Replete potassium to > 4.0 mEq/L. Check magnesium concurrently and repeat if low (hypomagnesemia " +
         "impairs potassium correction and independently prolongs QT). Obtain baseline ECG and calculate " +
