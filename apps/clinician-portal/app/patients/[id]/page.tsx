@@ -329,7 +329,7 @@ function VitalsTab({ patientId }: { patientId: string }) {
       ) : null}
       <div className="detail-grid">
         {latest.map((vital, i) => {
-          const tier = classifyStaleness(vital.recorded_at);
+          const tier = classifyStaleness(vital.recorded_at, vital.type);
           const s = stalenessStyles(tier);
           const age = formatAge(vital.recorded_at);
           const staleExplainId = tier === "stale" ? `stale-explain-${i}` : undefined;
