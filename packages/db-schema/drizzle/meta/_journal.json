@@ -253,6 +253,13 @@
       "when": 1746720000000,
       "tag": "0033_review_jobs_trigger_event_index",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1746806400000,
+      "tag": "0036_note_versions_lifecycle_event",
+      "breakpoints": true
     }
   ]
 }

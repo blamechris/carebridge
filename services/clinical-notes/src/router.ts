@@ -4,11 +4,13 @@ import {
   createNoteSchema,
   updateNoteSchema,
   signNoteSchema,
+  cosignNoteSchema,
+  amendNoteSchema,
   noteTemplateTypeSchema,
 } from "@carebridge/validators";
 import type { NoteTemplateType } from "@carebridge/shared-types";
 import * as noteService from "./services/note-service.js";
-import { NoteConflictError } from "./services/note-service.js";
+import { NoteConflictError, NoteStateError } from "./services/note-service.js";
 import { createSOAPTemplate } from "./templates/soap.js";
 import { createProgressTemplate } from "./templates/progress.js";
 import { createHAndPTemplate } from "./templates/h-and-p.js";
@@ -50,6 +52,47 @@ export const clinicalNotesRouter = t.router({
     .input(z.object({ noteId: z.string().uuid() }).merge(signNoteSchema))
     .mutation(async ({ input }) => {
       return noteService.signNote(input.noteId, input.signed_by);
+    }),
+
+  cosign: t.procedure
+    // Cosigner identity is carried in the caller's auth context at the
+    // gateway tier; this internal router takes it as a second field to
+    // keep the service-under-router ergonomic for unit tests and for
+    // future call sites that don't go through the auth boundary.
+    .input(cosignNoteSchema.extend({ cosigned_by: z.string().uuid() }))
+    .mutation(async ({ input }) => {
+      try {
+        return await noteService.cosignNote(input.noteId, input.cosigned_by);
+      } catch (err) {
+        if (err instanceof NoteStateError) {
+          throw new TRPCError({ code: "CONFLICT", message: err.message });
+        }
+        throw err;
+      }
+    }),
+
+  amend: t.procedure
+    .input(amendNoteSchema.extend({ amended_by: z.string().uuid() }))
+    .mutation(async ({ input }) => {
+      try {
+        return await noteService.amendNote(
+          input.noteId,
+          input.amended_by,
+          input.sections,
+          input.reason,
+        );
+      } catch (err) {
+        if (err instanceof NoteStateError) {
+          throw new TRPCError({ code: "CONFLICT", message: err.message });
+        }
+        throw err;
+      }
+    }),
+
+  getVersionHistory: t.procedure
+    .input(z.object({ noteId: z.string().uuid() }))
+    .query(async ({ input }) => {
+      return noteService.getVersionHistory(input.noteId);
     }),
 
   getByPatient: t.procedure
