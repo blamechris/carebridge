@@ -56,9 +56,9 @@ function PatientDashboard() {
           </h2>
           <p aria-live="polite" style={{ margin: "0.25rem 0 0", color: "#999", fontSize: "0.8rem" }}>
             {healthQuery.data ? (
-              <span style={{ color: "#22c55e" }}>&#x2713; Connected to API</span>
+              <span style={{ color: "#22c55e" }} aria-label="API status: connected">&#x2713; Connected to API</span>
             ) : healthQuery.isError ? (
-              <span role="alert" style={{ color: "#ef4444" }}>&#x2717; API offline</span>
+              <span role="alert" style={{ color: "#ef4444" }} aria-label="API status: offline">&#x2717; API offline</span>
             ) : (
               "Connecting..."
             )}
