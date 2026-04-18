@@ -58,13 +58,20 @@ function DashboardContent() {
         <p className="page-subtitle">
           Here is your clinical overview for today.
           {healthQuery.data && (
-            <span style={{ marginLeft: 8, fontSize: 12, color: "var(--success)" }}>
-              API: {healthQuery.data.status}
+            <span
+              style={{ marginLeft: 8, fontSize: 12, color: "var(--success)" }}
+              aria-label={`API status: ${healthQuery.data.status}`}
+            >
+              &#x2713; API: {healthQuery.data.status}
             </span>
           )}
           {healthQuery.isError && (
-            <span style={{ marginLeft: 8, fontSize: 12, color: "var(--critical)" }}>
-              API: offline
+            <span
+              role="alert"
+              style={{ marginLeft: 8, fontSize: 12, color: "var(--critical)" }}
+              aria-label="API status: offline"
+            >
+              &#x2717; API: offline
             </span>
           )}
         </p>
@@ -89,12 +96,19 @@ function DashboardContent() {
                 ? "var(--critical)"
                 : "var(--text-secondary)",
             }}
+            aria-label={
+              healthQuery.isLoading
+                ? "API status: checking"
+                : healthQuery.data
+                ? "API status: OK"
+                : "API status: down"
+            }
           >
             {healthQuery.isLoading
               ? "..."
               : healthQuery.data
-              ? "OK"
-              : "Down"}
+              ? "\u2713 OK"
+              : "\u2717 Down"}
           </span>
           <span className="stat-detail">
             {healthQuery.data?.timestamp
@@ -104,8 +118,11 @@ function DashboardContent() {
         </div>
         <div className="stat-card">
           <span className="stat-label">Unsigned Notes</span>
-          <span className="stat-value warning">
-            {notesLoading ? "..." : unsignedCount}
+          <span
+            className="stat-value warning"
+            aria-label={notesLoading ? "Loading unsigned notes" : `${unsignedCount} unsigned notes`}
+          >
+            {notesLoading ? "..." : unsignedCount > 0 ? `\u26A0 ${unsignedCount}` : unsignedCount}
           </span>
           <span className="stat-detail">
             {notesLoading ? "Loading..." : "draft notes awaiting signature"}
@@ -116,8 +133,9 @@ function DashboardContent() {
           <span
             className={`stat-value${openFlagsCount > 0 ? " warning" : ""}`}
             style={openFlagsCount === 0 ? { color: "var(--text-primary)" } : undefined}
+            aria-label={openFlagsQuery.isLoading ? "Loading flags" : `${openFlagsCount} unresolved clinical flags`}
           >
-            {openFlagsQuery.isLoading ? "..." : openFlagsCount}
+            {openFlagsQuery.isLoading ? "..." : openFlagsCount > 0 ? `\u26A0 ${openFlagsCount}` : openFlagsCount}
           </span>
           <span className="stat-detail">
             {openFlagsQuery.isLoading
