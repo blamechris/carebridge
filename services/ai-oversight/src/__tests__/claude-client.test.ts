@@ -80,9 +80,12 @@ describe("reviewPatientRecord — successful API response", () => {
     });
 
     const pending = reviewPatientRecord(SAFE_SYSTEM, SAFE_PROMPT);
+    // Attach the rejection handler before advancing timers so the rejection
+    // is never seen as "unhandled" by Node.
+    const assertion = expect(pending).rejects.toThrow(/Claude API call failed after 3 attempts/);
     await vi.runAllTimersAsync();
 
-    await expect(pending).rejects.toThrow(/Claude API call failed after 3 attempts/);
+    await assertion;
     expect(create).toHaveBeenCalledTimes(3);
   });
 
@@ -90,9 +93,10 @@ describe("reviewPatientRecord — successful API response", () => {
     create.mockResolvedValue({ content: [] });
 
     const pending = reviewPatientRecord(SAFE_SYSTEM, SAFE_PROMPT);
+    const assertion = expect(pending).rejects.toThrow(/Claude API call failed after 3 attempts/);
     await vi.runAllTimersAsync();
 
-    await expect(pending).rejects.toThrow(/Claude API call failed after 3 attempts/);
+    await assertion;
   });
 });
 
@@ -145,11 +149,12 @@ describe("reviewPatientRecord — timeout and network errors", () => {
     create.mockRejectedValue(timeoutErr);
 
     const pending = reviewPatientRecord(SAFE_SYSTEM, SAFE_PROMPT);
-    await vi.runAllTimersAsync();
-
-    await expect(pending).rejects.toThrow(
+    const assertion = expect(pending).rejects.toThrow(
       /Claude API call failed after 3 attempts/,
     );
+    await vi.runAllTimersAsync();
+
+    await assertion;
     expect(create).toHaveBeenCalledTimes(3);
   });
 

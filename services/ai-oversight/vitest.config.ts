@@ -31,6 +31,18 @@ export default defineConfig({
         __dirname,
         "../../packages/db-schema/src/index.ts",
       ),
+      "@carebridge/notifications": path.resolve(
+        __dirname,
+        "../../services/notifications/src/index.ts",
+      ),
+      "@carebridge/outbox": path.resolve(
+        __dirname,
+        "../../packages/outbox/src/index.ts",
+      ),
+      "@carebridge/redis-config": path.resolve(
+        __dirname,
+        "../../packages/redis-config/src/index.ts",
+      ),
     },
   },
 });
