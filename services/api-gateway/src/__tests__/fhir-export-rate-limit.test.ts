@@ -187,6 +187,30 @@ describe("FHIR export per-user rate limit", () => {
     expect(event.ip).toBe("1.2.3.4");
   });
 
+  it("includes current request count in audit event for trend analysis", async () => {
+    const MAX = 5;
+    const hook = makeHook({ max: MAX });
+
+    // Exhaust the budget (5 allowed requests)
+    for (let i = 0; i < MAX; i++) {
+      await hook(makeReq("/trpc/fhir.exportPatient"), makeReply());
+    }
+    expect(auditEvents).toHaveLength(0);
+
+    // 6th request: borderline exceedance (count === 6)
+    await hook(makeReq("/trpc/fhir.exportPatient"), makeReply());
+    await flushMicrotasks();
+    expect(auditEvents).toHaveLength(1);
+    expect(auditEvents[0]!.count).toBe(6);
+
+    // Simulate a scraping pattern: jump counter to 50 and send another request.
+    redis._counts.set(`${FHIR_EXPORT_KEY_PREFIX}user-1`, 49);
+    await hook(makeReq("/trpc/fhir.exportPatient"), makeReply());
+    await flushMicrotasks();
+    expect(auditEvents).toHaveLength(2);
+    expect(auditEvents[1]!.count).toBe(50);
+  });
+
   it("rate-limits per user independently", async () => {
     const hook = makeHook({ max: 2 });
 
