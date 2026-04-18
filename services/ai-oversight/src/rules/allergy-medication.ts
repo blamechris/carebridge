@@ -17,7 +17,7 @@ import type { PatientContext } from "./cross-specialty.js";
  * Maps an allergen class to medication name patterns that share the same
  * active ingredient or belong to the same drug family.
  */
-const CROSS_REACTIVITY_MAP: Array<{
+export const CROSS_REACTIVITY_MAP: Array<{
   allergenPattern: RegExp;
   medicationPattern: RegExp;
   class: string;
