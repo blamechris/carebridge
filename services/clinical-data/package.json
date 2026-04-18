@@ -18,6 +18,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@carebridge/outbox": "workspace:*",
     "@carebridge/redis-config": "workspace:*",
     "@carebridge/shared-types": "workspace:*",
     "@carebridge/validators": "workspace:*",
