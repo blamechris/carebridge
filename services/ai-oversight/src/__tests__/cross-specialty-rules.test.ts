@@ -1137,3 +1137,276 @@ describe("RENAL-AMINOGLYCOSIDE-001 — Renal impairment + aminoglycoside", () =>
     expect(flag).toBeUndefined();
   });
 });
+
+describe("CROSS-ACE-ARB-PREG-001 — Pregnancy + ACE-I/ARB (teratogenic, all trimesters)", () => {
+  const pregnantCtx = (
+    meds: string[],
+    overrides: Partial<PatientContext> = {},
+  ): PatientContext => ({
+    active_diagnoses: ["Pregnancy, second trimester"],
+    active_diagnosis_codes: ["Z34.02"],
+    active_medications: meds,
+    new_symptoms: [],
+    care_team_specialties: ["obstetrics"],
+    ...overrides,
+  });
+
+  it.each([
+    ["lisinopril 10mg daily"],
+    ["enalapril 5mg BID"],
+    ["ramipril"],
+    ["captopril"],
+    ["benazepril 20mg"],
+    ["quinapril"],
+    ["fosinopril"],
+    ["perindopril"],
+    ["trandolapril"],
+    ["moexipril"],
+  ])("fires CRITICAL for ACE inhibitor: %s", (drug) => {
+    const flags = checkCrossSpecialtyPatterns(pregnantCtx([drug]));
+    const flag = flags.find((f) => f.rule_id === "CROSS-ACE-ARB-PREG-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("critical");
+    expect(flag!.category).toBe("medication-safety");
+    expect(flag!.notify_specialties).toContain("obstetrics");
+  });
+
+  it.each([
+    ["losartan 50mg"],
+    ["valsartan 80mg"],
+    ["irbesartan 150mg"],
+    ["candesartan"],
+    ["olmesartan"],
+    ["telmisartan 40mg"],
+    ["azilsartan"],
+    ["eprosartan"],
+  ])("fires CRITICAL for ARB: %s", (drug) => {
+    const flags = checkCrossSpecialtyPatterns(pregnantCtx([drug]));
+    const flag = flags.find((f) => f.rule_id === "CROSS-ACE-ARB-PREG-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("critical");
+  });
+
+  it.each([
+    ["Cozaar 50mg", "losartan brand name"],
+    ["Diovan 80mg", "valsartan brand name"],
+    ["Benicar", "olmesartan brand name"],
+    ["Micardis", "telmisartan brand name"],
+    ["Vasotec", "enalapril brand name"],
+    ["Altace", "ramipril brand name"],
+    ["Lotensin", "benazepril brand name"],
+    ["Capoten", "captopril brand name"],
+  ])("fires CRITICAL for brand name: %s (%s)", (drug) => {
+    const flags = checkCrossSpecialtyPatterns(pregnantCtx([drug]));
+    const flag = flags.find((f) => f.rule_id === "CROSS-ACE-ARB-PREG-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("critical");
+  });
+
+  it("fires when pregnancy detected by ICD-10 Z33 code", () => {
+    const ctx = pregnantCtx(["Lisinopril 10mg"], {
+      active_diagnoses: ["Pregnant state, incidental"],
+      active_diagnosis_codes: ["Z33.1"],
+    });
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "CROSS-ACE-ARB-PREG-001",
+    );
+    expect(flag).toBeDefined();
+  });
+
+  it("fires when pregnancy detected by ICD-10 O-code", () => {
+    const ctx = pregnantCtx(["Losartan 50mg"], {
+      active_diagnoses: ["Supervision of normal pregnancy"],
+      active_diagnosis_codes: ["O09.91"],
+    });
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "CROSS-ACE-ARB-PREG-001",
+    );
+    expect(flag).toBeDefined();
+  });
+
+  it("fires when pregnancy detected by description only (no ICD code)", () => {
+    const ctx = pregnantCtx(["Enalapril 10mg"], {
+      active_diagnoses: ["Pregnant, 22 weeks gestational age"],
+      active_diagnosis_codes: [""],
+    });
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "CROSS-ACE-ARB-PREG-001",
+    );
+    expect(flag).toBeDefined();
+  });
+
+  it("notifies both obstetrics and cardiology", () => {
+    const flags = checkCrossSpecialtyPatterns(pregnantCtx(["lisinopril"]));
+    const flag = flags.find((f) => f.rule_id === "CROSS-ACE-ARB-PREG-001");
+    expect(flag).toBeDefined();
+    expect(flag!.notify_specialties).toEqual(
+      expect.arrayContaining(["obstetrics", "cardiology"]),
+    );
+  });
+
+  it("does NOT fire without pregnancy diagnosis", () => {
+    const ctx: PatientContext = {
+      active_diagnoses: ["Hypertension"],
+      active_diagnosis_codes: ["I10"],
+      active_medications: ["lisinopril 10mg"],
+      new_symptoms: [],
+      care_team_specialties: ["primary_care"],
+    };
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "CROSS-ACE-ARB-PREG-001",
+    );
+    expect(flag).toBeUndefined();
+  });
+
+  it("does NOT fire for pregnant patient without ACE/ARB (pregnancy-safe antihypertensive)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      pregnantCtx(["labetalol 200mg BID", "methyldopa 250mg"]),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-ACE-ARB-PREG-001");
+    expect(flag).toBeUndefined();
+  });
+
+  it("does NOT fire for pregnant patient on acetaminophen only", () => {
+    const flags = checkCrossSpecialtyPatterns(pregnantCtx(["acetaminophen 500mg"]));
+    const flag = flags.find((f) => f.rule_id === "CROSS-ACE-ARB-PREG-001");
+    expect(flag).toBeUndefined();
+  });
+});
+
+describe("CROSS-QT-HYPOK-001 — QT-prolonging drug + hypokalemia (torsades risk)", () => {
+  const qtHypoKCtx = (
+    meds: string[],
+    potassiumValue: number | null,
+    overrides: Partial<PatientContext> = {},
+  ): PatientContext => ({
+    active_diagnoses: ["Hypertension"],
+    active_diagnosis_codes: ["I10"],
+    active_medications: meds,
+    new_symptoms: [],
+    care_team_specialties: [],
+    recent_labs:
+      potassiumValue === null
+        ? []
+        : [{ name: "Potassium", value: potassiumValue }],
+    ...overrides,
+  });
+
+  it.each([
+    ["amiodarone 200mg daily"],
+    ["sotalol 80mg BID"],
+    ["haloperidol 2mg"],
+    ["ondansetron 4mg IV"],
+    ["methadone 10mg"],
+    ["azithromycin 500mg"],
+    ["levofloxacin 500mg"],
+    ["ciprofloxacin 500mg BID"],
+    ["citalopram 20mg"],
+    ["escitalopram 10mg"],
+    ["quetiapine 100mg"],
+  ])("fires WARNING for QT-prolonger %s with K+ between 3.0 and 3.5", (drug) => {
+    const flags = checkCrossSpecialtyPatterns(qtHypoKCtx([drug], 3.2));
+    const flag = flags.find((f) => f.rule_id === "CROSS-QT-HYPOK-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("warning");
+    expect(flag!.category).toBe("cross-specialty");
+    expect(flag!.notify_specialties).toContain("cardiology");
+  });
+
+  it.each([
+    ["Zofran 4mg", "ondansetron brand"],
+    ["Haldol 2mg", "haloperidol brand"],
+    ["Zithromax 500mg", "azithromycin brand"],
+    ["Seroquel 100mg", "quetiapine brand"],
+    ["Pacerone 200mg", "amiodarone brand"],
+    ["Lexapro 10mg", "escitalopram brand"],
+  ])("fires WARNING for QT-prolonger brand name %s with hypokalemia (%s)", (drug) => {
+    const flags = checkCrossSpecialtyPatterns(qtHypoKCtx([drug], 3.3));
+    const flag = flags.find((f) => f.rule_id === "CROSS-QT-HYPOK-001");
+    expect(flag).toBeDefined();
+  });
+
+  it("fires CRITICAL when K+ < 3.0 (severe hypokalemia elevates torsades risk)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      qtHypoKCtx(["azithromycin 500mg"], 2.7),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-QT-HYPOK-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("critical");
+  });
+
+  it("fires WARNING at K+ boundary just below 3.5", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      qtHypoKCtx(["ondansetron 4mg"], 3.4),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-QT-HYPOK-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("warning");
+  });
+
+  it("detects potassium by alternative lab name 'K+'", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      qtHypoKCtx(["haloperidol 2mg"], null, {
+        recent_labs: [{ name: "K+", value: 3.1 }],
+      }),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-QT-HYPOK-001");
+    expect(flag).toBeDefined();
+  });
+
+  it("detects potassium by alternative lab name 'K'", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      qtHypoKCtx(["methadone 10mg"], null, {
+        recent_labs: [{ name: "K", value: 3.0 }],
+      }),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-QT-HYPOK-001");
+    expect(flag).toBeDefined();
+  });
+
+  it("does NOT fire when potassium is normal (K+ >= 3.5)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      qtHypoKCtx(["azithromycin 500mg"], 4.0),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-QT-HYPOK-001");
+    expect(flag).toBeUndefined();
+  });
+
+  it("does NOT fire at exactly K+ 3.5 (boundary is strict <3.5)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      qtHypoKCtx(["ondansetron 4mg"], 3.5),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-QT-HYPOK-001");
+    expect(flag).toBeUndefined();
+  });
+
+  it("does NOT fire when potassium lab is unknown", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      qtHypoKCtx(["azithromycin 500mg"], null),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-QT-HYPOK-001");
+    expect(flag).toBeUndefined();
+  });
+
+  it("does NOT fire without a QT-prolonging drug", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      qtHypoKCtx(["lisinopril 10mg", "metformin 500mg"], 2.9),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-QT-HYPOK-001");
+    expect(flag).toBeUndefined();
+  });
+
+  it("does NOT fire when recent_labs is undefined", () => {
+    const ctx: PatientContext = {
+      active_diagnoses: [],
+      active_diagnosis_codes: [],
+      active_medications: ["azithromycin 500mg"],
+      new_symptoms: [],
+      care_team_specialties: [],
+    };
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "CROSS-QT-HYPOK-001",
+    );
+    expect(flag).toBeUndefined();
+  });
+});
