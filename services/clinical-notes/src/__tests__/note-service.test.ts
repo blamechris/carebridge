@@ -21,6 +21,9 @@ vi.mock("@carebridge/db-schema", () => ({
     note_id: "note_id",
     version: "version",
   },
+  auditLog: {
+    id: "id",
+  },
 }));
 
 // ── Mock events ──────────────────────────────────────────────────
@@ -32,9 +35,13 @@ const {
   createNote,
   updateNote,
   signNote,
+  cosignNote,
+  amendNote,
   getNotesByPatient,
   getNoteById,
+  getVersionHistory,
   NoteConflictError,
+  NoteStateError,
 } = await import("../services/note-service.js");
 
 // ── Fixtures ────────────────────────────────────────────────────
@@ -411,3 +418,258 @@ describe("getNoteById", () => {
     expect(result!.note.signed_by).toBeUndefined();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────
+// cosignNote
+// ─────────────────────────────────────────────────────────────────
+const COSIGNER_ID = "55555555-5555-5555-5555-555555555555";
+
+const signedRow = {
+  ...existingRow,
+  status: "signed",
+  signed_at: "2026-03-15T11:00:00.000Z",
+  signed_by: PROVIDER_ID,
+};
+
+describe("cosignNote", () => {
+  it("transitions a signed note to cosigned and records cosigner", async () => {
+    db.willSelect([signedRow]);
+
+    const result = await cosignNote(NOTE_ID, COSIGNER_ID);
+
+    expect(result.status).toBe("cosigned");
+    expect(result.cosigned_by).toBe(COSIGNER_ID);
+    expect(result.cosigned_at).toBeDefined();
+    expect(typeof result.cosigned_at).toBe("string");
+  });
+
+  it("persists cosign via db.update with cosigned status", async () => {
+    db.willSelect([signedRow]);
+
+    await cosignNote(NOTE_ID, COSIGNER_ID);
+
+    expect(db.update).toHaveBeenCalled();
+    const updateCall = db.update.calls[0];
+    const setIndex = updateCall?.chain.indexOf("set") ?? -1;
+    expect(setIndex).toBeGreaterThanOrEqual(0);
+    const setArg = updateCall?.chainArgs[setIndex]?.[0] as {
+      status: string;
+      cosigned_by: string;
+      cosigned_at: string;
+    };
+    expect(setArg.status).toBe("cosigned");
+    expect(setArg.cosigned_by).toBe(COSIGNER_ID);
+    expect(setArg.cosigned_at).toBeDefined();
+  });
+
+  it("archives a version row snapshotting the signed state", async () => {
+    db.willSelect([signedRow]);
+
+    await cosignNote(NOTE_ID, COSIGNER_ID);
+
+    expect(db.insert).toHaveBeenCalledTimes(1);
+    const insertedValues = db.insert.calls[0]?.chainArgs[0]?.[0] as {
+      note_id: string;
+      version: number;
+      sections: unknown;
+      saved_by: string;
+    };
+    expect(insertedValues.note_id).toBe(NOTE_ID);
+    expect(insertedValues.version).toBe(signedRow.version);
+    expect(insertedValues.sections).toEqual(signedRow.sections);
+    expect(insertedValues.saved_by).toBe(COSIGNER_ID);
+  });
+
+  it("emits a note.cosigned clinical event", async () => {
+    db.willSelect([signedRow]);
+
+    await cosignNote(NOTE_ID, COSIGNER_ID);
+
+    expect(emitClinicalEvent).toHaveBeenCalledTimes(1);
+    const event = emitClinicalEvent.mock.calls[0][0];
+    expect(event.type).toBe("note.cosigned");
+    expect(event.patient_id).toBe(PATIENT_ID);
+    expect(event.data.cosignedBy).toBe(COSIGNER_ID);
+    expect(event.data.resourceId).toBe(NOTE_ID);
+  });
+
+  it("throws NoteStateError when note is in draft status", async () => {
+    db.willSelect([{ ...existingRow, status: "draft" }]);
+
+    const error = await cosignNote(NOTE_ID, COSIGNER_ID).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(NoteStateError);
+    expect((error as Error).message).toMatch(/cosign/i);
+    expect(emitClinicalEvent).not.toHaveBeenCalled();
+    expect(db.update).not.toHaveBeenCalled();
+  });
+
+  it("throws NoteStateError when note is already cosigned", async () => {
+    db.willSelect([
+      { ...signedRow, status: "cosigned", cosigned_by: "someone", cosigned_at: "x" },
+    ]);
+
+    const error = await cosignNote(NOTE_ID, COSIGNER_ID).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(NoteStateError);
+    expect(emitClinicalEvent).not.toHaveBeenCalled();
+    expect(db.update).not.toHaveBeenCalled();
+  });
+
+  it("throws NoteStateError when note is amended", async () => {
+    db.willSelect([{ ...signedRow, status: "amended" }]);
+
+    const error = await cosignNote(NOTE_ID, COSIGNER_ID).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(NoteStateError);
+  });
+
+  it("throws when note is not found", async () => {
+    db.willSelect([]);
+
+    await expect(cosignNote("nonexistent", COSIGNER_ID)).rejects.toThrow(
+      "Note nonexistent not found",
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
+// amendNote
+// ─────────────────────────────────────────────────────────────────
+const AMENDER_ID = "66666666-6666-6666-6666-666666666666";
+const AMEND_REASON = "Correcting dose recorded in error.";
+
+const cosignedRow = {
+  ...signedRow,
+  status: "cosigned",
+  cosigned_at: "2026-03-16T09:00:00.000Z",
+  cosigned_by: COSIGNER_ID,
+};
+
+describe("amendNote", () => {
+  it("amends a signed note, creating a new version and archiving the prior", async () => {
+    db.willSelect([signedRow]);
+
+    const result = await amendNote(NOTE_ID, AMENDER_ID, updatedSections, AMEND_REASON);
+
+    expect(result.status).toBe("amended");
+    expect(result.version).toBe(signedRow.version + 1);
+    expect(result.sections).toEqual(updatedSections);
+  });
+
+  it("archives the pre-amendment version in note_versions", async () => {
+    db.willSelect([signedRow]);
+
+    await amendNote(NOTE_ID, AMENDER_ID, updatedSections, AMEND_REASON);
+
+    expect(db.insert).toHaveBeenCalledTimes(1);
+    const archived = db.insert.calls[0]?.chainArgs[0]?.[0] as {
+      note_id: string;
+      version: number;
+      sections: unknown;
+      saved_by: string;
+    };
+    expect(archived.note_id).toBe(NOTE_ID);
+    expect(archived.version).toBe(signedRow.version);
+    expect(archived.sections).toEqual(signedRow.sections);
+    expect(archived.saved_by).toBe(AMENDER_ID);
+  });
+
+  it("updates the note row with new sections, bumped version, amended status", async () => {
+    db.willSelect([signedRow]);
+
+    await amendNote(NOTE_ID, AMENDER_ID, updatedSections, AMEND_REASON);
+
+    expect(db.update).toHaveBeenCalled();
+    const updateCall = db.update.calls[0];
+    const setIndex = updateCall?.chain.indexOf("set") ?? -1;
+    expect(setIndex).toBeGreaterThanOrEqual(0);
+    const setArg = updateCall?.chainArgs[setIndex]?.[0] as {
+      status: string;
+      version: number;
+      sections: unknown;
+    };
+    expect(setArg.status).toBe("amended");
+    expect(setArg.version).toBe(signedRow.version + 1);
+    expect(setArg.sections).toEqual(updatedSections);
+  });
+
+  it("emits a note.amended event including the reason", async () => {
+    db.willSelect([signedRow]);
+
+    await amendNote(NOTE_ID, AMENDER_ID, updatedSections, AMEND_REASON);
+
+    expect(emitClinicalEvent).toHaveBeenCalledTimes(1);
+    const event = emitClinicalEvent.mock.calls[0][0];
+    expect(event.type).toBe("note.amended");
+    expect(event.patient_id).toBe(PATIENT_ID);
+    expect(event.data.resourceId).toBe(NOTE_ID);
+    expect(event.data.amendedBy).toBe(AMENDER_ID);
+    expect(event.data.reason).toBe(AMEND_REASON);
+  });
+
+  it("allows amending a cosigned note", async () => {
+    db.willSelect([cosignedRow]);
+
+    const result = await amendNote(NOTE_ID, AMENDER_ID, updatedSections, AMEND_REASON);
+
+    expect(result.status).toBe("amended");
+  });
+
+  it("allows amending an already-amended note (chain)", async () => {
+    db.willSelect([{ ...signedRow, status: "amended" }]);
+
+    const result = await amendNote(NOTE_ID, AMENDER_ID, updatedSections, AMEND_REASON);
+
+    expect(result.status).toBe("amended");
+  });
+
+  it("throws NoteStateError when amending a draft note", async () => {
+    db.willSelect([{ ...existingRow, status: "draft" }]);
+
+    const error = await amendNote(NOTE_ID, AMENDER_ID, updatedSections, AMEND_REASON).catch(
+      (e: unknown) => e,
+    );
+
+    expect(error).toBeInstanceOf(NoteStateError);
+    expect(emitClinicalEvent).not.toHaveBeenCalled();
+    expect(db.update).not.toHaveBeenCalled();
+  });
+
+  it("throws when note is not found", async () => {
+    db.willSelect([]);
+
+    await expect(
+      amendNote("nonexistent", AMENDER_ID, updatedSections, AMEND_REASON),
+    ).rejects.toThrow("Note nonexistent not found");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────
+// getVersionHistory
+// ─────────────────────────────────────────────────────────────────
+describe("getVersionHistory", () => {
+  it("returns versions ordered by version number ascending", async () => {
+    db.willSelect([
+      { note_id: NOTE_ID, version: 1, sections: [], saved_at: "t1", saved_by: PROVIDER_ID },
+      { note_id: NOTE_ID, version: 2, sections: [], saved_at: "t2", saved_by: PROVIDER_ID },
+      { note_id: NOTE_ID, version: 3, sections: [], saved_at: "t3", saved_by: COSIGNER_ID },
+    ]);
+
+    const versions = await getVersionHistory(NOTE_ID);
+
+    expect(versions).toHaveLength(3);
+    expect(versions[0].version).toBe(1);
+    expect(versions[1].version).toBe(2);
+    expect(versions[2].version).toBe(3);
+  });
+
+  it("returns empty array when no history exists", async () => {
+    db.willSelect([]);
+
+    const versions = await getVersionHistory(NOTE_ID);
+
+    expect(versions).toEqual([]);
+  });
+});
+
