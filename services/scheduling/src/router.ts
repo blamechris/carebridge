@@ -11,8 +11,11 @@ import { getDb } from "@carebridge/db-schema";
 import { appointments, providerSchedules, scheduleBlocks } from "@carebridge/db-schema";
 import { eq, and, gte, lte, desc, ne } from "drizzle-orm";
 import crypto from "node:crypto";
+import { createLogger } from "@carebridge/logger";
+import { scheduleReminders, cancelReminders } from "./reminders.js";
 
 const t = initTRPC.create();
+const log = createLogger("scheduling");
 
 export const schedulingRouter = t.router({
   appointments: t.router({
@@ -87,11 +90,37 @@ export const schedulingRouter = t.router({
             status: "scheduled",
             location: input.location ?? null,
             reason: input.reason ?? null,
+            reminder_24h_job_id: null as string | null,
+            reminder_2h_job_id: null as string | null,
             created_at: now,
             updated_at: now,
           };
 
           await tx.insert(appointments).values(appointment);
+
+          // Issue #333: schedule 24 h / 2 h reminder jobs. Failures here
+          // are non-fatal — reminders are nice-to-have and MUST NOT block
+          // appointment booking. We log and continue.
+          try {
+            const ids = await scheduleReminders(appointment);
+            if (ids.reminder_24h_job_id || ids.reminder_2h_job_id) {
+              await tx
+                .update(appointments)
+                .set({
+                  reminder_24h_job_id: ids.reminder_24h_job_id,
+                  reminder_2h_job_id: ids.reminder_2h_job_id,
+                })
+                .where(eq(appointments.id, appointment.id));
+              appointment.reminder_24h_job_id = ids.reminder_24h_job_id;
+              appointment.reminder_2h_job_id = ids.reminder_2h_job_id;
+            }
+          } catch (error) {
+            log.warn("Failed to schedule appointment reminders", {
+              appointmentId: appointment.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+
           return appointment;
         });
       }),
@@ -107,15 +136,44 @@ export const schedulingRouter = t.router({
         const db = getDb();
         const now = new Date().toISOString();
 
+        // Load reminder job IDs before marking cancelled so we can remove
+        // any queued reminders once the status transition is committed.
+        const [existing] = await db
+          .select({
+            reminder_24h_job_id: appointments.reminder_24h_job_id,
+            reminder_2h_job_id: appointments.reminder_2h_job_id,
+          })
+          .from(appointments)
+          .where(eq(appointments.id, input.appointmentId));
+
         await db.update(appointments)
           .set({
             status: "cancelled",
             cancelled_at: now,
             cancelled_by: input.cancelledBy,
             cancel_reason: input.reason,
+            reminder_24h_job_id: null,
+            reminder_2h_job_id: null,
             updated_at: now,
           })
           .where(eq(appointments.id, input.appointmentId));
+
+        // Issue #333: remove queued reminder jobs. Best-effort — if
+        // BullMQ is unreachable or a job has already fired, the reminder
+        // worker double-checks status === "cancelled" before emitting.
+        if (existing) {
+          try {
+            await cancelReminders({
+              reminder_24h_job_id: existing.reminder_24h_job_id,
+              reminder_2h_job_id: existing.reminder_2h_job_id,
+            });
+          } catch (error) {
+            log.warn("Failed to cancel appointment reminders", {
+              appointmentId: input.appointmentId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
 
         return { success: true };
       }),
@@ -145,9 +203,24 @@ export const schedulingRouter = t.router({
             cancelled_at: now,
             cancelled_by: input.cancelledBy,
             cancel_reason: "Rescheduled",
+            reminder_24h_job_id: null,
+            reminder_2h_job_id: null,
             updated_at: now,
           })
           .where(eq(appointments.id, input.appointmentId));
+
+        // Remove reminders for the cancelled original. Best-effort.
+        try {
+          await cancelReminders({
+            reminder_24h_job_id: original.reminder_24h_job_id,
+            reminder_2h_job_id: original.reminder_2h_job_id,
+          });
+        } catch (error) {
+          log.warn("Failed to cancel reminders on reschedule", {
+            appointmentId: input.appointmentId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
 
         // Check for conflicts at new time
         const overlapping = await db.select().from(appointments)
@@ -175,11 +248,35 @@ export const schedulingRouter = t.router({
           status: "scheduled",
           location: original.location,
           reason: original.reason,
+          reminder_24h_job_id: null as string | null,
+          reminder_2h_job_id: null as string | null,
           created_at: now,
           updated_at: now,
         };
 
         await db.insert(appointments).values(newAppt);
+
+        // Schedule fresh reminders for the rescheduled slot. Best-effort.
+        try {
+          const ids = await scheduleReminders(newAppt);
+          if (ids.reminder_24h_job_id || ids.reminder_2h_job_id) {
+            await db
+              .update(appointments)
+              .set({
+                reminder_24h_job_id: ids.reminder_24h_job_id,
+                reminder_2h_job_id: ids.reminder_2h_job_id,
+              })
+              .where(eq(appointments.id, newAppt.id));
+            newAppt.reminder_24h_job_id = ids.reminder_24h_job_id;
+            newAppt.reminder_2h_job_id = ids.reminder_2h_job_id;
+          }
+        } catch (error) {
+          log.warn("Failed to schedule reminders on reschedule", {
+            appointmentId: newAppt.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+
         return newAppt;
       }),
   }),
