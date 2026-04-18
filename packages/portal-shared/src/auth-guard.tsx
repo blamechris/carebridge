@@ -6,21 +6,25 @@ import { useAuth } from "./auth";
 
 /**
  * Wraps a page component and redirects to /login if not authenticated.
+ *
+ * Waits for both localStorage hydration AND the `/auth/me` server round-trip
+ * to complete before deciding whether the user is authenticated. This ensures
+ * a stale or tampered localStorage identity is never briefly displayed.
  */
 export function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, hydrated } = useAuth();
+  const { isAuthenticated, hydrated, verifying } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
-    if (hydrated && !isAuthenticated) {
+    if (hydrated && !verifying && !isAuthenticated) {
       router.replace("/login");
     }
-  }, [hydrated, isAuthenticated, router]);
+  }, [hydrated, verifying, isAuthenticated, router]);
 
-  if (!hydrated || !isAuthenticated) {
+  if (!hydrated || verifying || !isAuthenticated) {
     return (
       <div style={{ padding: 40, color: "var(--text-muted)" }}>
-        {hydrated ? "Redirecting to login..." : "Loading..."}
+        {!hydrated || verifying ? "Loading..." : "Redirecting to login..."}
       </div>
     );
   }

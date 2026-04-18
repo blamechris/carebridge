@@ -216,6 +216,25 @@ async function main() {
     return { ok: true };
   });
 
+  // Returns the authenticated user's profile as resolved by the auth
+  // middleware (JWT verification + DB lookup).  Clients call this on mount
+  // to validate the identity stored in localStorage and to detect stale or
+  // tampered sessions before rendering any PHI.
+  server.get("/auth/me", async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ error: "Not authenticated" });
+    }
+    return {
+      id: request.user.id,
+      email: request.user.email,
+      name: request.user.name,
+      role: request.user.role,
+      specialty: request.user.specialty,
+      department: request.user.department,
+      patient_id: request.user.patient_id,
+    };
+  });
+
   // --- SSE notification stream ---
   registerNotificationSSE(server);
 
