@@ -11,6 +11,7 @@
     "clean": "rm -rf .next"
   },
   "dependencies": {
+    "@carebridge/medical-logic": "workspace:*",
     "@carebridge/portal-shared": "workspace:*",
     "@carebridge/shared-types": "workspace:*",
     "@carebridge/validators": "workspace:*",

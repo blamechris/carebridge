@@ -72,22 +72,22 @@ describe("formatAge", () => {
 });
 
 // ---------------------------------------------------------------------------
-// classifyStaleness
+// classifyStaleness — default thresholds (no vital type / unknown type)
 // ---------------------------------------------------------------------------
 describe("classifyStaleness", () => {
-  it('returns "current" for timestamps <= 4h ago', () => {
+  it('returns "current" for timestamps <= 4h ago (default)', () => {
     expect(classifyStaleness(ago(0))).toBe("current");
     expect(classifyStaleness(ago(2 * HOUR))).toBe("current");
     expect(classifyStaleness(ago(4 * HOUR))).toBe("current");
   });
 
-  it('returns "overdue" for timestamps >4h and <=24h ago', () => {
+  it('returns "overdue" for timestamps >4h and <=24h ago (default)', () => {
     expect(classifyStaleness(ago(4 * HOUR + 1))).toBe("overdue");
     expect(classifyStaleness(ago(12 * HOUR))).toBe("overdue");
     expect(classifyStaleness(ago(24 * HOUR))).toBe("overdue");
   });
 
-  it('returns "stale" for timestamps >24h ago', () => {
+  it('returns "stale" for timestamps >24h ago (default)', () => {
     expect(classifyStaleness(ago(24 * HOUR + 1))).toBe("stale");
     expect(classifyStaleness(ago(7 * DAY))).toBe("stale");
   });
@@ -110,10 +110,79 @@ describe("classifyStaleness", () => {
   });
 
   it('returns "stale" for invalid ISO strings (NaN guard)', () => {
-    // new Date("not-a-date").getTime() => NaN; Date.now() - NaN => NaN
-    // NaN is caught by the Number.isNaN guard and treated as stale
     expect(classifyStaleness("not-a-date")).toBe("stale");
     expect(classifyStaleness("")).toBe("stale");
     expect(classifyStaleness("abc123")).toBe("stale");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// classifyStaleness — per-vital-type thresholds
+// ---------------------------------------------------------------------------
+describe("classifyStaleness per-vital-type", () => {
+  // --- Acute-care vitals (4h / 24h) — same as default ---
+  describe.each([
+    "blood_pressure",
+    "heart_rate",
+    "temperature",
+    "o2_sat",
+    "respiratory_rate",
+  ] as const)("%s (4h/24h)", (vitalType) => {
+    it("current at 4h", () => {
+      expect(classifyStaleness(ago(4 * HOUR), vitalType)).toBe("current");
+    });
+    it("overdue at 4h+1ms", () => {
+      expect(classifyStaleness(ago(4 * HOUR + 1), vitalType)).toBe("overdue");
+    });
+    it("overdue at 24h", () => {
+      expect(classifyStaleness(ago(24 * HOUR), vitalType)).toBe("overdue");
+    });
+    it("stale at 24h+1ms", () => {
+      expect(classifyStaleness(ago(24 * HOUR + 1), vitalType)).toBe("stale");
+    });
+  });
+
+  // --- Weight (24h / 7d) ---
+  describe("weight (24h/168h)", () => {
+    it("current at 12h", () => {
+      expect(classifyStaleness(ago(12 * HOUR), "weight")).toBe("current");
+    });
+
+    it("current at exactly 24h", () => {
+      expect(classifyStaleness(ago(24 * HOUR), "weight")).toBe("current");
+    });
+
+    it("overdue at 24h+1ms", () => {
+      expect(classifyStaleness(ago(24 * HOUR + 1), "weight")).toBe("overdue");
+    });
+
+    it("overdue at 3 days", () => {
+      expect(classifyStaleness(ago(3 * DAY), "weight")).toBe("overdue");
+    });
+
+    it("overdue at exactly 7 days", () => {
+      expect(classifyStaleness(ago(7 * DAY), "weight")).toBe("overdue");
+    });
+
+    it("stale at 7 days + 1ms", () => {
+      expect(classifyStaleness(ago(7 * DAY + 1), "weight")).toBe("stale");
+    });
+
+    it("stale at 14 days", () => {
+      expect(classifyStaleness(ago(14 * DAY), "weight")).toBe("stale");
+    });
+  });
+
+  // --- Unknown vital type falls back to default ---
+  describe("unknown vital type", () => {
+    it("uses default 4h/24h thresholds", () => {
+      expect(classifyStaleness(ago(4 * HOUR), "unknown_type")).toBe("current");
+      expect(classifyStaleness(ago(4 * HOUR + 1), "unknown_type")).toBe(
+        "overdue",
+      );
+      expect(classifyStaleness(ago(24 * HOUR + 1), "unknown_type")).toBe(
+        "stale",
+      );
+    });
   });
 });
