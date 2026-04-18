@@ -19,6 +19,18 @@ export default defineConfig({
         __dirname,
         "../../packages/ai-prompts/src/index.ts",
       ),
+      "@carebridge/phi-sanitizer": path.resolve(
+        __dirname,
+        "../../packages/phi-sanitizer/src/index.ts",
+      ),
+      "@carebridge/logger": path.resolve(
+        __dirname,
+        "../../packages/logger/src/index.ts",
+      ),
+      "@carebridge/db-schema": path.resolve(
+        __dirname,
+        "../../packages/db-schema/src/index.ts",
+      ),
     },
   },
 });
