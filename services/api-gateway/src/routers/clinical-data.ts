@@ -26,8 +26,13 @@ import {
   procedureRepo,
   ConflictError,
 } from "@carebridge/clinical-data";
-import { getDb, medications } from "@carebridge/db-schema";
-import { eq } from "drizzle-orm";
+import {
+  getDb,
+  medications,
+  familyRelationships,
+  users,
+} from "@carebridge/db-schema";
+import { and, eq } from "drizzle-orm";
 import type { Context } from "../context.js";
 import { assertCareTeamAccess } from "../middleware/rbac.js";
 
@@ -45,6 +50,9 @@ const protectedProcedure = t.procedure.use(isAuthenticated);
 /**
  * Enforce HIPAA minimum-necessary access for a given user / patientId pair.
  * Throws TRPCError(FORBIDDEN) on denial.
+ *
+ * Role semantics mirror patient-records.ts — family_caregiver resolves via
+ * an active family_relationships row joined through users.patient_id.
  */
 async function enforcePatientAccess(
   user: NonNullable<Context["user"]>,
@@ -53,10 +61,35 @@ async function enforcePatientAccess(
   if (user.role === "admin") return;
 
   if (user.role === "patient") {
-    if (user.id !== patientId) {
+    const ownRecord = user.patient_id ?? user.id;
+    if (ownRecord !== patientId) {
       throw new TRPCError({
         code: "FORBIDDEN",
         message: "Access denied: patients may only access their own records",
+      });
+    }
+    return;
+  }
+
+  if (user.role === "family_caregiver") {
+    const db = getDb();
+    const [row] = await db
+      .select({ id: familyRelationships.id })
+      .from(familyRelationships)
+      .innerJoin(users, eq(users.id, familyRelationships.patient_id))
+      .where(
+        and(
+          eq(familyRelationships.caregiver_id, user.id),
+          eq(users.patient_id, patientId),
+          eq(familyRelationships.status, "active"),
+        ),
+      )
+      .limit(1);
+    if (!row) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message:
+          "Access denied: no active family relationship grants access to this patient",
       });
     }
     return;

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { trpc } from "@/lib/trpc";
 import { useMyPatientRecord } from "@/lib/use-my-patient";
+import { useActivePatient } from "@/lib/active-patient";
 
 const OBSERVATION_TYPES = [
   { value: "pain", label: "Pain" },
@@ -31,6 +32,7 @@ export default function SymptomsPage() {
   const utils = trpc.useUtils();
 
   const { patient: myRecord, isLoading: patientLoading, isUnlinked } = useMyPatientRecord();
+  const { isViewingAsCaregiver } = useActivePatient();
 
   const observationsQuery = trpc.patients.observations.getByPatient.useQuery(
     { patientId: myRecord?.id ?? "" },
@@ -112,6 +114,25 @@ export default function SymptomsPage() {
         <p style={{ color: "#ef4444" }}>
           Your account is not linked to a patient record. Please contact your care team.
         </p>
+      )}
+
+      {isViewingAsCaregiver && (
+        <div
+          role="note"
+          data-testid="symptoms-caregiver-readonly-notice"
+          style={{
+            backgroundColor: "#1e3a8a20",
+            border: "1px solid #3b82f6",
+            borderRadius: 8,
+            padding: "0.75rem",
+            marginBottom: "1rem",
+            color: "#bfdbfe",
+            fontSize: "0.85rem",
+          }}
+        >
+          Symptom observations must be entered by the patient. Caregivers can
+          view past entries but cannot submit on behalf of the patient.
+        </div>
       )}
 
       {submitted && (
@@ -239,15 +260,31 @@ export default function SymptomsPage() {
 
         <button
           onClick={handleSubmit}
-          disabled={!description.trim() || createMutation.isPending}
+          disabled={
+            !description.trim() ||
+            createMutation.isPending ||
+            isViewingAsCaregiver
+          }
+          aria-disabled={isViewingAsCaregiver || undefined}
+          title={
+            isViewingAsCaregiver
+              ? "Caregivers cannot submit symptom entries on the patient's behalf. The patient must sign in to add observations."
+              : undefined
+          }
+          data-testid="symptoms-submit"
           style={{
             width: "100%",
             padding: "0.75rem",
-            backgroundColor: description.trim() ? "#2563eb" : "#333",
+            backgroundColor:
+              description.trim() && !isViewingAsCaregiver ? "#2563eb" : "#333",
             border: "none",
             borderRadius: 6,
-            color: description.trim() ? "#fff" : "#666",
-            cursor: description.trim() ? "pointer" : "not-allowed",
+            color:
+              description.trim() && !isViewingAsCaregiver ? "#fff" : "#666",
+            cursor:
+              description.trim() && !isViewingAsCaregiver
+                ? "pointer"
+                : "not-allowed",
             fontSize: "0.9rem",
             fontWeight: 600,
           }}
