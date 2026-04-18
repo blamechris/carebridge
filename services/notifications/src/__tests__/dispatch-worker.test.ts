@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createMockDb, type MockDb } from "@carebridge/test-utils";
 
 /**
  * Unit tests for dispatch worker notification creation logic.
@@ -12,28 +13,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // ── DB mocks ────────────────────────────────────────────────────────
 
-const mockSelectResult: Array<Record<string, unknown>> = [];
-const mockSelectResult2: Array<Record<string, unknown>> = [];
-let selectCallCount = 0;
-
-const mockInsertValues = vi.fn().mockResolvedValue(undefined);
-const mockInsert = vi.fn().mockReturnValue({ values: mockInsertValues });
-
-const mockDb = {
-  select: vi.fn().mockImplementation(() => {
-    const currentCall = selectCallCount++;
-    const resultSet = currentCall === 0 ? mockSelectResult : mockSelectResult2;
-    return {
-      from: vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue(resultSet),
-      }),
-    };
-  }),
-  insert: mockInsert,
-};
+let db: MockDb;
 
 vi.mock("@carebridge/db-schema", () => ({
-  getDb: () => mockDb,
+  getDb: () => db,
   notifications: { user_id: "user_id" },
   users: {
     id: "id",
@@ -84,18 +67,7 @@ vi.mock("../publish.js", () => ({
 
 // ── Import module under test (after mocks) ──────────────────────────
 
-// The dispatch worker exports `startDispatchWorker` which instantiates
-// a BullMQ Worker. We need to access `processNotificationJob` which is
-// internal. Instead we re-test the exported helpers indirectly by
-// invoking the worker callback captured from the Worker constructor mock.
-
 import type { NotificationEvent } from "../queue.js";
-
-// Since processNotificationJob is not exported, we'll test through the
-// worker callback. But actually the Worker constructor is mocked, so we
-// need a different approach. Let's test the logic by importing and
-// calling startDispatchWorker, then extracting the processor callback.
-
 import { startDispatchWorker } from "../workers/dispatch-worker.js";
 import { Worker } from "bullmq";
 
@@ -114,14 +86,40 @@ function makeEvent(overrides: Partial<NotificationEvent> = {}): NotificationEven
   };
 }
 
+/**
+ * Prime the `db` mock for a full dispatch-worker job:
+ *  1. care_team_assignments select
+ *  2. users select
+ *  3. per-recipient notification_preferences select (one per recipient;
+ *     empty → opt-out default).
+ */
+function primeDispatch(
+  assignments: Array<Record<string, unknown>>,
+  providers: Array<Record<string, unknown>>,
+): void {
+  db.willSelect(assignments);
+  db.willSelect(providers);
+  for (let i = 0; i < providers.length; i++) {
+    db.willSelect([]);
+  }
+}
+
+/**
+ * Extract the records array passed to `db.insert(notifications).values(...)`.
+ */
+function getInsertedRecords(): Array<Record<string, unknown>> {
+  const call = db.insert.calls[0];
+  if (!call) throw new Error("expected db.insert to have been called");
+  const valuesIdx = call.chain.indexOf("values");
+  return call.chainArgs[valuesIdx]?.[0] as Array<Record<string, unknown>>;
+}
+
 describe("dispatch-worker", () => {
   let processorFn: (job: { data: NotificationEvent; id: string }) => Promise<void>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    selectCallCount = 0;
-    mockSelectResult.length = 0;
-    mockSelectResult2.length = 0;
+    db = createMockDb();
 
     // Extract the processor function passed to the Worker constructor
     const WorkerMock = Worker as unknown as ReturnType<typeof vi.fn>;
@@ -134,20 +132,16 @@ describe("dispatch-worker", () => {
   });
 
   it("creates urgent notifications for critical severity flags", async () => {
-    // First select: care_team_assignments returns one user
-    mockSelectResult.push({ user_id: "user-neuro" });
-    // Second select: users table returns the provider
-    mockSelectResult2.push({
-      id: "user-neuro",
-      specialty: "Neurology",
-      role: "physician",
-    });
+    primeDispatch(
+      [{ user_id: "user-neuro" }],
+      [{ id: "user-neuro", specialty: "Neurology", role: "physician" }],
+    );
 
     const event = makeEvent({ severity: "critical" });
     await processorFn({ data: event, id: "job-1" });
 
-    expect(mockInsertValues).toHaveBeenCalledTimes(1);
-    const insertedRecords = mockInsertValues.mock.calls[0][0];
+    expect(db.insert).toHaveBeenCalledOnce();
+    const insertedRecords = getInsertedRecords();
     expect(insertedRecords).toHaveLength(1);
     expect(insertedRecords[0].is_urgent).toBe(true);
     expect(insertedRecords[0].type).toBe("ai-flag");
@@ -155,68 +149,62 @@ describe("dispatch-worker", () => {
   });
 
   it("creates urgent notifications for high severity flags", async () => {
-    mockSelectResult.push({ user_id: "user-onco" });
-    mockSelectResult2.push({
-      id: "user-onco",
-      specialty: "Hematology/Oncology",
-      role: "physician",
-    });
+    primeDispatch(
+      [{ user_id: "user-onco" }],
+      [{ id: "user-onco", specialty: "Hematology/Oncology", role: "physician" }],
+    );
 
     const event = makeEvent({ severity: "high" });
     await processorFn({ data: event, id: "job-2" });
 
-    const insertedRecords = mockInsertValues.mock.calls[0][0];
+    const insertedRecords = getInsertedRecords();
     expect(insertedRecords[0].is_urgent).toBe(true);
   });
 
   it("creates non-urgent notifications for warning severity flags", async () => {
-    mockSelectResult.push({ user_id: "user-onco" });
-    mockSelectResult2.push({
-      id: "user-onco",
-      specialty: "Hematology/Oncology",
-      role: "physician",
-    });
+    primeDispatch(
+      [{ user_id: "user-onco" }],
+      [{ id: "user-onco", specialty: "Hematology/Oncology", role: "physician" }],
+    );
 
     const event = makeEvent({ severity: "warning" });
     await processorFn({ data: event, id: "job-3" });
 
-    const insertedRecords = mockInsertValues.mock.calls[0][0];
+    const insertedRecords = getInsertedRecords();
     expect(insertedRecords[0].is_urgent).toBe(false);
   });
 
   it("creates non-urgent notifications for info severity flags", async () => {
-    mockSelectResult.push({ user_id: "user-onco" });
-    mockSelectResult2.push({
-      id: "user-onco",
-      specialty: "Hematology/Oncology",
-      role: "physician",
-    });
+    primeDispatch(
+      [{ user_id: "user-onco" }],
+      [{ id: "user-onco", specialty: "Hematology/Oncology", role: "physician" }],
+    );
 
     const event = makeEvent({ severity: "info" });
     await processorFn({ data: event, id: "job-4" });
 
-    const insertedRecords = mockInsertValues.mock.calls[0][0];
+    const insertedRecords = getInsertedRecords();
     expect(insertedRecords[0].is_urgent).toBe(false);
   });
 
   it("creates no notifications when no care team assignments exist", async () => {
-    // First select returns empty (no assignments)
-    // mockSelectResult is already empty
+    // First select returns empty (no assignments) — subsequent selects
+    // are never reached because the early-return in
+    // `findNotificationRecipients` fires on the empty result.
+    db.willSelect([]);
 
     const event = makeEvent();
     await processorFn({ data: event, id: "job-5" });
 
-    expect(mockInsertValues).not.toHaveBeenCalled();
+    expect(db.insert).not.toHaveBeenCalled();
     expect(mockPublishNotification).not.toHaveBeenCalled();
   });
 
   it("publishes real-time SSE notification with is_urgent flag", async () => {
-    mockSelectResult.push({ user_id: "user-neuro" });
-    mockSelectResult2.push({
-      id: "user-neuro",
-      specialty: "Neurology",
-      role: "physician",
-    });
+    primeDispatch(
+      [{ user_id: "user-neuro" }],
+      [{ id: "user-neuro", specialty: "Neurology", role: "physician" }],
+    );
 
     const event = makeEvent({ severity: "critical" });
     await processorFn({ data: event, id: "job-6" });
@@ -229,19 +217,18 @@ describe("dispatch-worker", () => {
   });
 
   it("creates notifications for multiple care team members", async () => {
-    mockSelectResult.push(
-      { user_id: "user-neuro" },
-      { user_id: "user-onco" },
-    );
-    mockSelectResult2.push(
-      { id: "user-neuro", specialty: "Neurology", role: "physician" },
-      { id: "user-onco", specialty: "Hematology/Oncology", role: "physician" },
+    primeDispatch(
+      [{ user_id: "user-neuro" }, { user_id: "user-onco" }],
+      [
+        { id: "user-neuro", specialty: "Neurology", role: "physician" },
+        { id: "user-onco", specialty: "Hematology/Oncology", role: "physician" },
+      ],
     );
 
     const event = makeEvent();
     await processorFn({ data: event, id: "job-7" });
 
-    const insertedRecords = mockInsertValues.mock.calls[0][0];
+    const insertedRecords = getInsertedRecords();
     expect(insertedRecords).toHaveLength(2);
     expect(mockPublishNotification).toHaveBeenCalledTimes(2);
   });
@@ -262,12 +249,10 @@ describe("dispatch-worker", () => {
       });
 
     it("published body contains no numeric values", async () => {
-      mockSelectResult.push({ user_id: "user-neuro" });
-      mockSelectResult2.push({
-        id: "user-neuro",
-        specialty: "Neurology",
-        role: "physician",
-      });
+      primeDispatch(
+        [{ user_id: "user-neuro" }],
+        [{ id: "user-neuro", specialty: "Neurology", role: "physician" }],
+      );
 
       const event = phiEvent();
       await processorFn({ data: event, id: "job-phi-1" });
@@ -278,12 +263,10 @@ describe("dispatch-worker", () => {
     });
 
     it("published body does not contain the raw event.summary text", async () => {
-      mockSelectResult.push({ user_id: "user-neuro" });
-      mockSelectResult2.push({
-        id: "user-neuro",
-        specialty: "Neurology",
-        role: "physician",
-      });
+      primeDispatch(
+        [{ user_id: "user-neuro" }],
+        [{ id: "user-neuro", specialty: "Neurology", role: "physician" }],
+      );
 
       const event = phiEvent();
       await processorFn({ data: event, id: "job-phi-2" });
@@ -298,12 +281,10 @@ describe("dispatch-worker", () => {
     });
 
     it("persisted record.summary_safe equals the buildSafeSummary output", async () => {
-      mockSelectResult.push({ user_id: "user-neuro" });
-      mockSelectResult2.push({
-        id: "user-neuro",
-        specialty: "Neurology",
-        role: "physician",
-      });
+      primeDispatch(
+        [{ user_id: "user-neuro" }],
+        [{ id: "user-neuro", specialty: "Neurology", role: "physician" }],
+      );
 
       const event = phiEvent();
       await processorFn({ data: event, id: "job-phi-3" });
@@ -315,7 +296,7 @@ describe("dispatch-worker", () => {
       const expectedSafe =
         "Clinical flag — Critical value. Open the portal to view details.";
 
-      const insertedRecords = mockInsertValues.mock.calls[0][0];
+      const insertedRecords = getInsertedRecords();
       expect(insertedRecords).toHaveLength(1);
       expect(insertedRecords[0].summary_safe).toBe(expectedSafe);
 
@@ -325,17 +306,15 @@ describe("dispatch-worker", () => {
     });
 
     it("persisted record.body still equals event.summary (full, for authenticated fetch)", async () => {
-      mockSelectResult.push({ user_id: "user-neuro" });
-      mockSelectResult2.push({
-        id: "user-neuro",
-        specialty: "Neurology",
-        role: "physician",
-      });
+      primeDispatch(
+        [{ user_id: "user-neuro" }],
+        [{ id: "user-neuro", specialty: "Neurology", role: "physician" }],
+      );
 
       const event = phiEvent();
       await processorFn({ data: event, id: "job-phi-4" });
 
-      const insertedRecords = mockInsertValues.mock.calls[0][0];
+      const insertedRecords = getInsertedRecords();
       expect(insertedRecords[0].body).toBe(event.summary);
     });
   });
@@ -347,12 +326,10 @@ describe("dispatch-worker", () => {
   // lock in the whitelist + generic fallback + observability behaviour.
   describe("category whitelist", () => {
     const primeRecipients = (): void => {
-      mockSelectResult.push({ user_id: "user-neuro" });
-      mockSelectResult2.push({
-        id: "user-neuro",
-        specialty: "Neurology",
-        role: "physician",
-      });
+      primeDispatch(
+        [{ user_id: "user-neuro" }],
+        [{ id: "user-neuro", specialty: "Neurology", role: "physician" }],
+      );
     };
 
     const knownCategoryCases: Array<[string, string]> = [
@@ -377,7 +354,7 @@ describe("dispatch-worker", () => {
         const event = makeEvent({ severity: "warning", category });
         await processorFn({ data: event, id: `job-cat-${category}` });
 
-        const insertedRecords = mockInsertValues.mock.calls[0][0];
+        const insertedRecords = getInsertedRecords();
         expect(insertedRecords[0].title).toBe(
           `Warning: Clinical flag — ${label}`,
         );
@@ -414,7 +391,7 @@ describe("dispatch-worker", () => {
       });
       await processorFn({ data: event, id: "job-cat-unknown" });
 
-      const insertedRecords = mockInsertValues.mock.calls[0][0];
+      const insertedRecords = getInsertedRecords();
       const title = insertedRecords[0].title as string;
       const safeSummary = insertedRecords[0].summary_safe as string;
 

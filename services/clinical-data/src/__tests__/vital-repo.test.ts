@@ -1,22 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createMockDb, type MockDb } from "@carebridge/test-utils";
 
 // ── Mock DB ──────────────────────────────────────────────────────
-const insertValuesMock = vi.fn().mockResolvedValue(undefined);
-const insertMock = vi.fn(() => ({ values: insertValuesMock }));
-
-const selectFromWhereMock = vi.fn().mockReturnValue({
-  orderBy: vi.fn().mockResolvedValue([]),
-});
-const selectFromMock = vi.fn((table: unknown) => ({
-  where: selectFromWhereMock,
-}));
-const selectMock = vi.fn(() => ({ from: selectFromMock }));
+let db: MockDb;
 
 vi.mock("@carebridge/db-schema", () => ({
-  getDb: () => ({
-    insert: insertMock,
-    select: selectMock,
-  }),
+  getDb: () => db,
   vitals: { patient_id: "patient_id", type: "type", recorded_at: "recorded_at" },
 }));
 
@@ -41,14 +30,15 @@ const sampleVitalInput = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  db = createMockDb();
 });
 
 describe("createVital", () => {
   it("inserts a vital record and returns it with all fields", async () => {
     const result = await createVital(sampleVitalInput);
 
-    expect(insertMock).toHaveBeenCalledOnce();
-    expect(insertValuesMock).toHaveBeenCalledOnce();
+    expect(db.insert).toHaveBeenCalledOnce();
+    expect(db.insert.calls[0]?.chain).toContain("values");
 
     expect(result).toMatchObject({
       patient_id: PATIENT_ID,
@@ -100,13 +90,11 @@ describe("getVitalsByPatient", () => {
       },
     ];
 
-    selectFromWhereMock.mockReturnValueOnce({
-      orderBy: vi.fn().mockResolvedValue(mockRows),
-    });
+    db.willSelect(mockRows);
 
     const results = await getVitalsByPatient(PATIENT_ID);
 
-    expect(selectMock).toHaveBeenCalled();
+    expect(db.select).toHaveBeenCalled();
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({
       id: "v1",
@@ -118,9 +106,7 @@ describe("getVitalsByPatient", () => {
   });
 
   it("returns empty array when no vitals exist for patient", async () => {
-    selectFromWhereMock.mockReturnValueOnce({
-      orderBy: vi.fn().mockResolvedValue([]),
-    });
+    db.willSelect([]);
 
     const results = await getVitalsByPatient("nonexistent-id");
     expect(results).toEqual([]);

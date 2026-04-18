@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { TRPCError } from "@trpc/server";
+import { createMockDb, type MockDb } from "@carebridge/test-utils";
 
 // ---------------------------------------------------------------------------
 // Mocks — set up before importing the module under test
@@ -75,23 +76,10 @@ vi.mock("@carebridge/redis-config", () => ({
   }),
 }));
 
-// Controllable user-row result for the router's db lookup.
-let mockUserRows: unknown[] = [];
-
-const mockLimit = vi.fn(async () => mockUserRows);
-const mockWhere = vi.fn(() => ({ limit: mockLimit }));
-const mockFrom = vi.fn(() => ({ where: mockWhere }));
-const mockSelect = vi.fn(() => ({ from: mockFrom }));
+let db: MockDb;
 
 vi.mock("@carebridge/db-schema", () => ({
-  getDb: () => ({
-    select: mockSelect,
-    insert: vi.fn(() => ({ values: vi.fn(async () => undefined) })),
-    update: vi.fn(() => ({
-      set: vi.fn(() => ({ where: vi.fn(async () => undefined) })),
-    })),
-    delete: vi.fn(() => ({ where: vi.fn(async () => undefined) })),
-  }),
+  getDb: () => db,
   users: {
     id: "users.id",
     email: "users.email",
@@ -154,8 +142,8 @@ function createCaller() {
 describe("mfaCompleteLogin — user enumeration hardening (issue #278)", () => {
   beforeEach(() => {
     redisStore.clear();
-    mockUserRows = [];
     vi.clearAllMocks();
+    db = createMockDb();
   });
 
   async function callAndCaptureError(): Promise<TRPCError> {
@@ -183,7 +171,7 @@ describe("mfaCompleteLogin — user enumeration hardening (issue #278)", () => {
   it("returns the SAME generic error when the pending session references a deleted user", async () => {
     // Pending session exists, but the user row has been deleted.
     setPendingSessionInRedis(VALID_UUID, "deleted-user-id");
-    mockUserRows = []; // db returns no rows
+    db.willSelect([]); // db returns no rows
 
     const err = await callAndCaptureError();
     expect(err.code).toBe("UNAUTHORIZED");
@@ -198,7 +186,7 @@ describe("mfaCompleteLogin — user enumeration hardening (issue #278)", () => {
 
     // Branch 2: valid MFA session but deleted user.
     setPendingSessionInRedis(VALID_UUID, "deleted-user-id");
-    mockUserRows = [];
+    db.willSelect([]);
     const deletedUserErr = await callAndCaptureError();
 
     expect(deletedUserErr.code).toBe(expiredErr.code);

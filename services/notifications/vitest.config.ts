@@ -27,6 +27,10 @@ export default defineConfig({
         __dirname,
         "../../packages/phi-sanitizer/src/index.ts",
       ),
+      "@carebridge/test-utils": path.resolve(
+        __dirname,
+        "../../packages/test-utils/src/index.ts",
+      ),
     },
   },
 });
