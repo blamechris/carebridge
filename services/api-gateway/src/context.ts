@@ -19,9 +19,8 @@ export interface Context {
 export async function createContext(
   opts: CreateFastifyContextOptions,
 ): Promise<Context> {
-  const req = opts.req as unknown as Record<string, unknown>;
-  const user = (req.user as User | null) ?? null;
-  const sessionId = (req.sessionId as string | null) ?? null;
+  const user = opts.req.user ?? null;
+  const sessionId = opts.req.sessionId ?? null;
 
   return {
     db: getDb(),
