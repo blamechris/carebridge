@@ -226,7 +226,7 @@ describe("patient-read rate-limit integration (real Fastify server)", () => {
     // (Previous tests may have called incr, so check the calls array for
     // any key that does NOT contain a user id — there should be none.)
     const unauthedCalls = redis.incr.mock.calls.filter(
-      ([key]: [string]) => key.includes(":undefined") || key.endsWith(":"),
+      ([key]) => key.includes(":undefined") || key.endsWith(":"),
     );
     expect(unauthedCalls).toHaveLength(0);
   });
