@@ -215,6 +215,25 @@ importers:
         specifier: ^3.0.0
         version: 3.2.4(@types/node@22.19.17)(jsdom@29.0.2(@noble/hashes@2.0.1))(tsx@4.21.0)
 
+  packages/outbox:
+    dependencies:
+      '@carebridge/db-schema':
+        specifier: workspace:*
+        version: link:../db-schema
+      '@carebridge/shared-types':
+        specifier: workspace:*
+        version: link:../shared-types
+      drizzle-orm:
+        specifier: ^0.38.0
+        version: 0.38.4(@types/react@19.2.14)(postgres@3.4.8)(react@19.2.4)
+    devDependencies:
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@22.19.17)(jsdom@29.0.2(@noble/hashes@2.0.1))(tsx@4.21.0)
+
   packages/phi-sanitizer:
     dependencies:
       '@carebridge/logger':
@@ -322,6 +341,9 @@ importers:
       '@carebridge/notifications':
         specifier: workspace:*
         version: link:../notifications
+      '@carebridge/outbox':
+        specifier: workspace:*
+        version: link:../../packages/outbox
       '@carebridge/phi-sanitizer':
         specifier: workspace:*
         version: link:../../packages/phi-sanitizer
@@ -508,6 +530,9 @@ importers:
       '@carebridge/medical-logic':
         specifier: workspace:*
         version: link:../../packages/medical-logic
+      '@carebridge/outbox':
+        specifier: workspace:*
+        version: link:../../packages/outbox
       '@carebridge/redis-config':
         specifier: workspace:*
         version: link:../../packages/redis-config
@@ -545,6 +570,9 @@ importers:
       '@carebridge/db-schema':
         specifier: workspace:*
         version: link:../../packages/db-schema
+      '@carebridge/outbox':
+        specifier: workspace:*
+        version: link:../../packages/outbox
       '@carebridge/redis-config':
         specifier: workspace:*
         version: link:../../packages/redis-config
