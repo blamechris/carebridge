@@ -9,7 +9,7 @@
  * The review_jobs table records every run for auditability.
  */
 
-import { eq, desc, gte, and, inArray, or, sql } from "drizzle-orm";
+import { eq, desc, gte, lte, gt, and, inArray, or, ne, sql } from "drizzle-orm";
 import { getDb } from "@carebridge/db-schema";
 import {
   reviewJobs,
@@ -563,6 +563,14 @@ export async function buildPatientContextForRules(
 ): Promise<PatientContext> {
   const db = getDb();
 
+  // TOCTOU fix — filter rows to their state AS OF event.timestamp, not as of
+  // review time. Validated before use (#517) — malformed timestamps
+  // fall back to `now` with a structured warning.
+  const eventAt = validateEventTimestamp(event.timestamp, {
+    eventId: event.id,
+    caller: "review-service:buildPatientContextForRules",
+  });
+
   // Recent labs window — rules like CHEMO-FEVER-001 (ANC-aware) need lab
   // values from the last 48h. Keep the window tight so we don't pick up
   // stale baseline values.
@@ -571,12 +579,60 @@ export async function buildPatientContextForRules(
     Date.now() - LAB_WINDOW_HOURS * 60 * 60 * 1000,
   ).toISOString();
 
+  // Push snapshot predicates into SQL (#514) to avoid fetching the full
+  // patient history into application memory. The text-column timestamps
+  // sort correctly under lexicographic compare for the Z-form values the
+  // platform emits (ISO-8601 `YYYY-MM-DDTHH:MM:SS.sssZ`). Offset-form
+  // and bare-date edge cases are caught by the in-memory filters below
+  // which remain as a correctness backstop.
   const [allDiagnoses, allMeds, allAllergies, recentLabRows] = await Promise.all([
-    db.select().from(diagnoses).where(eq(diagnoses.patient_id, patientId)),
-    db.select().from(medications).where(eq(medications.patient_id, patientId)),
-    db.select().from(allergies).where(eq(allergies.patient_id, patientId)),
-    // Join lab_results → lab_panels → filter by patient and freshness.
-    // Single round-trip, no N+1.
+    db
+      .select()
+      .from(diagnoses)
+      .where(
+        and(
+          eq(diagnoses.patient_id, patientId),
+          ne(diagnoses.status, "entered_in_error"),
+          or(
+            sql`${diagnoses.onset_date} IS NULL`,
+            lte(diagnoses.onset_date, eventAt),
+          ),
+          or(
+            sql`${diagnoses.resolved_date} IS NULL`,
+            gt(diagnoses.resolved_date, eventAt),
+          ),
+        ),
+      ),
+    db
+      .select()
+      .from(medications)
+      .where(
+        and(
+          eq(medications.patient_id, patientId),
+          ne(medications.status, "entered_in_error"),
+          or(
+            sql`${medications.started_at} IS NULL`,
+            lte(medications.started_at, eventAt),
+          ),
+          or(
+            sql`${medications.ended_at} IS NULL`,
+            gt(medications.ended_at, eventAt),
+          ),
+        ),
+      ),
+    db
+      .select()
+      .from(allergies)
+      .where(
+        and(
+          eq(allergies.patient_id, patientId),
+          lte(allergies.created_at, eventAt),
+          ne(allergies.verification_status, "entered_in_error"),
+          ne(allergies.verification_status, "refuted"),
+        ),
+      ),
+    // Join lab_results → lab_panels → filter by patient, freshness, and
+    // event-time upper bound (#514).
     db
       .select({
         test_name: labResults.test_name,
@@ -590,6 +646,7 @@ export async function buildPatientContextForRules(
         and(
           eq(labPanels.patient_id, patientId),
           gte(labResults.created_at, labCutoff),
+          lte(labResults.created_at, eventAt),
         ),
       )
       .orderBy(desc(labResults.created_at)),
@@ -598,21 +655,11 @@ export async function buildPatientContextForRules(
   // Extract new symptoms from the event data
   const newSymptoms = extractSymptoms(event);
 
-  // TOCTOU fix — filter rows to their state AS OF event.timestamp, not as of
-  // review time. Without this, a med discontinued or an allergy added between
-  // event emit and review causes missed/false flags: the rules see a newer
-  // snapshot than the event they are evaluating. See #258.
-  //
-  // All comparisons go through isoBefore/isoLTE (normalized via Date.parse)
-  // rather than lexicographic string compares so offset-form (-05:00) and
-  // bare-date (2025-12-01) timestamps sort correctly against Z-form event
-  // timestamps. See #513. Validated before use (#517) — malformed timestamps
-  // fall back to `now` with a structured warning.
-  const eventAt = validateEventTimestamp(event.timestamp, {
-    eventId: event.id,
-    caller: "review-service:buildPatientContextForRules",
-  });
-
+  // In-memory backstop — the SQL predicates above use lexicographic text
+  // comparison which handles Z-form correctly but may mis-sort offset-form
+  // (-05:00) or bare-date (2025-12-01) timestamps. The in-memory filters
+  // below use Date.parse-normalized comparisons (isoBefore/isoLTE) to catch
+  // any rows that slipped through. See #513.
   function wasActiveAt(
     row: {
       onset_date?: string | null;
@@ -636,8 +683,8 @@ export async function buildPatientContextForRules(
 
   // Dedupe recent labs by test_name, keeping the freshest value per name.
   // labRows are ordered desc by created_at, so the first occurrence wins.
-  // Also exclude labs reported *after* event time so the rule doesn't "see
-  // the future".
+  // SQL already filters by event-time upper bound and lab window (#514);
+  // the retraction and future-lab checks remain as in-memory backstops.
   const seenLabs = new Set<string>();
   const recentLabs: Array<{ name: string; value: number }> = [];
   for (const row of recentLabRows) {

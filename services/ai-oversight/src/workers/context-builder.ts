@@ -6,7 +6,7 @@
  * the triggering event in isolation.
  */
 
-import { eq, and, desc, inArray } from "drizzle-orm";
+import { eq, and, desc, lte, gt, ne, or, sql, inArray } from "drizzle-orm";
 import { getDb } from "@carebridge/db-schema";
 import {
   patients,
@@ -105,10 +105,12 @@ export async function buildPatientContext(
     caller: "context-builder:buildPatientContext",
   });
 
-  // Run all queries in parallel for speed. We fetch the full history for
-  // diagnoses / medications / allergies and then filter in-memory to the
-  // event-time snapshot (same approach as the rule context builder;
-  // moving the predicate into SQL is tracked in #514).
+  // Push snapshot predicates into SQL (#514) to avoid fetching the full
+  // patient history into application memory. The text-column timestamps
+  // sort correctly under lexicographic compare for the Z-form values the
+  // platform emits (ISO-8601 `YYYY-MM-DDTHH:MM:SS.sssZ`). Offset-form
+  // and bare-date edge cases are caught by the in-memory filters below
+  // which remain as a correctness backstop.
   const [
     patientRow,
     allDiagnoses,
@@ -122,13 +124,60 @@ export async function buildPatientContext(
     db.query.patients.findFirst({
       where: eq(patients.id, patientId),
     }),
-    db.select().from(diagnoses).where(eq(diagnoses.patient_id, patientId)),
-    db.select().from(allergies).where(eq(allergies.patient_id, patientId)),
-    db.select().from(medications).where(eq(medications.patient_id, patientId)),
+    db
+      .select()
+      .from(diagnoses)
+      .where(
+        and(
+          eq(diagnoses.patient_id, patientId),
+          ne(diagnoses.status, "entered_in_error"),
+          or(
+            sql`${diagnoses.onset_date} IS NULL`,
+            lte(diagnoses.onset_date, eventAt),
+          ),
+          or(
+            sql`${diagnoses.resolved_date} IS NULL`,
+            gt(diagnoses.resolved_date, eventAt),
+          ),
+        ),
+      ),
+    db
+      .select()
+      .from(allergies)
+      .where(
+        and(
+          eq(allergies.patient_id, patientId),
+          lte(allergies.created_at, eventAt),
+          ne(allergies.verification_status, "entered_in_error"),
+          ne(allergies.verification_status, "refuted"),
+        ),
+      ),
+    db
+      .select()
+      .from(medications)
+      .where(
+        and(
+          eq(medications.patient_id, patientId),
+          ne(medications.status, "entered_in_error"),
+          or(
+            sql`${medications.started_at} IS NULL`,
+            lte(medications.started_at, eventAt),
+          ),
+          or(
+            sql`${medications.ended_at} IS NULL`,
+            gt(medications.ended_at, eventAt),
+          ),
+        ),
+      ),
     db
       .select()
       .from(vitals)
-      .where(eq(vitals.patient_id, patientId))
+      .where(
+        and(
+          eq(vitals.patient_id, patientId),
+          lte(vitals.recorded_at, eventAt),
+        ),
+      )
       .orderBy(desc(vitals.recorded_at))
       .limit(100),
     db
@@ -154,15 +203,18 @@ export async function buildPatientContext(
       ),
   ]);
 
-  // Event-time snapshot filtering — diagnoses active at event time.
+  // In-memory backstop filters (#514). The SQL predicates above handle the
+  // common Z-form case, but offset-form (-05:00) and bare-date (2025-12-01)
+  // timestamps may mis-sort under lexicographic text compare. The Date.parse-
+  // normalized comparisons below catch any rows that slipped through. See #513.
+
+  // Diagnoses active at event time.
   const activeDiagnoses = allDiagnoses.filter((d) =>
     diagnosisWasActiveAt(d, eventAt),
   );
 
-  // Event-time snapshot filtering — medications active at event time.
-  // A med is active if it started at/before event time AND either is
-  // still open (no ended_at) or ended strictly after event time. Falls
-  // back to created_at if started_at is null (defensive; see #516).
+  // Medications active at event time. Falls back to created_at if started_at
+  // is null (defensive; see #516).
   const activeMeds = allMeds.filter((m) => {
     if (isMedicationRetracted(m)) return false;
     const start = m.started_at ?? m.created_at;
@@ -171,21 +223,16 @@ export async function buildPatientContext(
     return true;
   });
 
-  // Event-time snapshot — allergies recorded at/before the event.
-  // Also exclude logical retractions (entered_in_error, refuted); these
-  // are charting corrections and must not appear in the LLM context.
-  // See #515.
+  // Allergies recorded at/before the event, excluding retractions (#515).
   const patientAllergies = allAllergies.filter((a) => {
     if (isoBefore(eventAt, a.created_at)) return false;
     if (isAllergyRetracted(a)) return false;
     return true;
   });
 
-  // Event-time snapshot — vitals recorded at/before the event. Keep the
+  // Vitals recorded at/before the event — SQL already filters, keep the
   // 20 most recent eligible rows to match the previous budget.
-  const latestVitals = allVitals
-    .filter((v) => isoLTE(v.recorded_at, eventAt))
-    .slice(0, 20);
+  const latestVitals = allVitals.slice(0, 20);
 
   // Calculate patient age
   let age = 0;
