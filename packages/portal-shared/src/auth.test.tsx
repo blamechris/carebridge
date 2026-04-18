@@ -57,6 +57,25 @@ const DIFFERENT_USER: User = {
   role: "physician",
 };
 
+// Issue #821: /auth/me returns specialty/department for clinical staff and
+// patient_id for patients. These must flow through to the client User object.
+const CLINICIAN_USER: User = {
+  id: "user-3",
+  email: "dr.smith@carebridge.dev",
+  name: "Dr. Smith",
+  role: "physician",
+  specialty: "Hematology/Oncology",
+  department: "Oncology",
+};
+
+const PATIENT_USER_WITH_RECORD: User = {
+  id: "user-4",
+  email: "patient@carebridge.dev",
+  name: "Pat Ient",
+  role: "patient",
+  patient_id: "patient-abc-123",
+};
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -236,6 +255,89 @@ describe("AuthProvider /auth/me hydration", () => {
     // @ts-expect-error "doctor" is not a member of UserRole
     const _typo: User = { ...user, role: "doctor" };
     void _typo;
+  });
+
+  // Regression tests for issue #821: the User type must expose specialty,
+  // department, and patient_id so portal consumers can read them without a
+  // separate fetch. If any of these fields is dropped on the type or during
+  // hydration, consumers like useMyPatientRecord and the clinician sidebar
+  // silently break.
+  it("preserves specialty and department fields from /auth/me for clinical staff", async () => {
+    localStorage.setItem("carebridge_user", JSON.stringify({
+      id: CLINICIAN_USER.id,
+      email: CLINICIAN_USER.email,
+      name: CLINICIAN_USER.name,
+      role: CLINICIAN_USER.role,
+    }));
+    localStorage.setItem("carebridge_has_session", "true");
+    mockAuthMeResponse(CLINICIAN_USER);
+
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.verifying).toBe(false));
+
+    // Fields returned by the server must survive into the context user object.
+    expect(result.current.user?.specialty).toBe("Hematology/Oncology");
+    expect(result.current.user?.department).toBe("Oncology");
+
+    // They must also be persisted to localStorage so they survive a reload
+    // before the next /auth/me round-trip completes.
+    const stored = JSON.parse(
+      localStorage.getItem("carebridge_user") ?? "{}",
+    ) as User;
+    expect(stored.specialty).toBe("Hematology/Oncology");
+    expect(stored.department).toBe("Oncology");
+  });
+
+  it("preserves patient_id field from /auth/me for patient users", async () => {
+    localStorage.setItem("carebridge_user", JSON.stringify({
+      id: PATIENT_USER_WITH_RECORD.id,
+      email: PATIENT_USER_WITH_RECORD.email,
+      name: PATIENT_USER_WITH_RECORD.name,
+      role: PATIENT_USER_WITH_RECORD.role,
+    }));
+    localStorage.setItem("carebridge_has_session", "true");
+    mockAuthMeResponse(PATIENT_USER_WITH_RECORD);
+
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.verifying).toBe(false));
+
+    // patient_id is used by useMyPatientRecord for direct patient lookup.
+    expect(result.current.user?.patient_id).toBe("patient-abc-123");
+
+    const stored = JSON.parse(
+      localStorage.getItem("carebridge_user") ?? "{}",
+    ) as User;
+    expect(stored.patient_id).toBe("patient-abc-123");
+  });
+
+  it("preserves all extended fields through setSession (login path)", async () => {
+    mockAuthMeResponse(null);
+
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.hydrated).toBe(true));
+
+    act(() => {
+      result.current.setSession(CLINICIAN_USER, "test-session-token");
+    });
+
+    expect(result.current.user?.specialty).toBe("Hematology/Oncology");
+    expect(result.current.user?.department).toBe("Oncology");
+    expect(result.current.isAuthenticated).toBe(true);
+
+    const stored = JSON.parse(
+      localStorage.getItem("carebridge_user") ?? "{}",
+    ) as User;
+    expect(stored.specialty).toBe("Hematology/Oncology");
+    expect(stored.department).toBe("Oncology");
   });
 
   it("skips /auth/me when no session flag exists in localStorage", async () => {

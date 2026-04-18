@@ -16,11 +16,24 @@ export interface User {
    * compiler rejects typos (e.g. "doctor" vs "physician"). See issue #829.
    */
   role: UserRole;
+  /**
+   * Clinical specialty for physicians/specialists (e.g. "Hematology/Oncology",
+   * "Interventional Radiology"). Populated by the auth service when the user
+   * has a specialty assigned. Absent for patients and non-specialist roles.
+   */
   specialty?: string;
+  /**
+   * Clinical department for staff (e.g. "Oncology", "Emergency"). Populated
+   * for clinical staff; absent for patients.
+   */
   department?: string;
-  // Patient-role users link to their patient record via this id. Set on the
-  // users table by the auth service. Used by useMyPatientRecord to do a direct
-  // lookup instead of the legacy fragile name-match.
+  /**
+   * Patient-role users link to their patient record via this id. Set on the
+   * users table by the auth service. Used by useMyPatientRecord to do a
+   * direct lookup instead of the legacy fragile name-match. Kept in
+   * snake_case to match the API gateway's /auth/me response shape and the
+   * users.patient_id DB column.
+   */
   patient_id?: string;
 }
 

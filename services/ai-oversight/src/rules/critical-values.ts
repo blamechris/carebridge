@@ -487,65 +487,101 @@ export function checkCriticalValues(event: ClinicalEvent): RuleFlag[] {
 
         // ── 2. Heuristic fallback for labs without explicit thresholds ─
         if (!matchedExplicit) {
-          let isCritical = false;
+          // The analyzing laboratory's flag is authoritative. If a lab
+          // reports `flag: "critical" | "H" | "L"`, we emit a flag
+          // regardless of whether the result carries a reference range
+          // and regardless of whether the test is in COMMON_LAB_TESTS.
+          // Previously, unknown labs with no reference range could slip
+          // through silently when the lab had already marked them high /
+          // low / critical (see issue #244).
+          let severity: FlagSeverity | null = null;
+          let direction: "low" | "high" | null = null;
           let reason = "";
 
-          // Check explicit critical flag
           if (result.flag === "critical") {
-            isCritical = true;
-            reason = `Lab result flagged as critical by the analyzing laboratory.`;
-          }
-
-          // Check if value is far outside reference range (more than 2x the range deviation)
-          if (
-            !isCritical &&
-            result.reference_low !== undefined &&
-            result.reference_high !== undefined
-          ) {
-            const range = result.reference_high - result.reference_low;
-            if (
-              result.value < result.reference_low - range ||
-              result.value > result.reference_high + range
-            ) {
-              isCritical = true;
-              reason =
-                `Value of ${result.value} ${result.unit} is far outside reference range ` +
-                `(${result.reference_low}–${result.reference_high} ${result.unit}).`;
-            }
-          }
-
-          // Fallback: check against COMMON_LAB_TESTS for known tests without explicit references
-          if (!isCritical && result.reference_low === undefined) {
-            const ref = COMMON_LAB_TESTS[result.test_name];
-            if (ref) {
-              const range = ref.typical_high - ref.typical_low;
-              if (
-                result.value < ref.typical_low - range ||
-                result.value > ref.typical_high + range
-              ) {
-                isCritical = true;
-                reason =
-                  `Value of ${result.value} ${result.unit} is far outside typical range ` +
-                  `(${ref.typical_low}–${ref.typical_high} ${ref.unit}).`;
-              }
-            }
-          }
-
-          if (isCritical) {
-            const direction =
+            severity = "critical";
+            // Use per-result reference range when present to infer direction;
+            // otherwise default to "high" (most lab-panel critical flags are
+            // elevations; direction is refined below if we can compute it).
+            direction =
               result.reference_low !== undefined &&
               result.value < result.reference_low
                 ? "low"
                 : "high";
+            reason = `Lab result flagged as critical by the analyzing laboratory.`;
+          } else if (result.flag === "H") {
+            severity = "warning";
+            direction = "high";
+            reason = `Lab result flagged as high (H) by the analyzing laboratory.`;
+          } else if (result.flag === "L") {
+            severity = "warning";
+            direction = "low";
+            reason = `Lab result flagged as low (L) by the analyzing laboratory.`;
+          }
+
+          // Per-result reference range is authoritative over COMMON_LAB_TESTS.
+          // Only use the shared typical range as a fallback when the result
+          // does not carry its own reference_low / reference_high.
+          if (severity === null) {
+            if (
+              result.reference_low !== undefined &&
+              result.reference_high !== undefined
+            ) {
+              const range = result.reference_high - result.reference_low;
+              if (
+                result.value < result.reference_low - range ||
+                result.value > result.reference_high + range
+              ) {
+                severity = "critical";
+                direction =
+                  result.value < result.reference_low ? "low" : "high";
+                reason =
+                  `Value of ${result.value} ${result.unit} is far outside reference range ` +
+                  `(${result.reference_low}–${result.reference_high} ${result.unit}).`;
+              }
+            } else if (
+              result.reference_low === undefined &&
+              result.reference_high === undefined
+            ) {
+              // Fallback: check against COMMON_LAB_TESTS for known tests
+              // without explicit references.
+              const ref = COMMON_LAB_TESTS[result.test_name];
+              if (ref) {
+                const range = ref.typical_high - ref.typical_low;
+                if (
+                  result.value < ref.typical_low - range ||
+                  result.value > ref.typical_high + range
+                ) {
+                  severity = "critical";
+                  direction = result.value < ref.typical_low ? "low" : "high";
+                  reason =
+                    `Value of ${result.value} ${result.unit} is far outside typical range ` +
+                    `(${ref.typical_low}–${ref.typical_high} ${ref.unit}).`;
+                }
+              }
+            }
+          }
+
+          if (severity !== null) {
+            const resolvedDirection = direction ?? "high";
+            const summaryPrefix =
+              severity === "critical"
+                ? "Critical lab result"
+                : resolvedDirection === "high"
+                  ? "High lab result"
+                  : "Low lab result";
 
             flags.push({
-              severity: "critical",
+              severity,
               category: "critical-value",
-              summary: `Critical lab result: ${result.test_name} = ${result.value} ${result.unit}`,
+              summary: `${summaryPrefix}: ${result.test_name} = ${result.value} ${result.unit}`,
               rationale: reason,
-              suggested_action: `Review critical ${result.test_name} result immediately. Correlate with clinical status and consider repeat testing or intervention.`,
+              suggested_action:
+                severity === "critical"
+                  ? `Review critical ${result.test_name} result immediately. Correlate with clinical status and consider repeat testing or intervention.`
+                  : `Review ${resolvedDirection} ${result.test_name} result. Correlate with clinical status and trend; repeat testing as indicated.`,
               notify_specialties: [],
-              rule_id: `CRITICAL-LAB-${result.test_name.replace(/\s+/g, "_").toUpperCase()}`,
+              rule_id: `${severity === "critical" ? "CRITICAL" : "WARNING"}-LAB-${result.test_name.replace(/\s+/g, "_").toUpperCase()}`,
             });
           }
         }
