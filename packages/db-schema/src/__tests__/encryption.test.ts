@@ -220,3 +220,51 @@ describe("getPreviousKey reads PHI_ENCRYPTION_KEY_PREVIOUS from env", () => {
     assert.throws(() => getPreviousKey(), /must be exactly 32 bytes/);
   });
 });
+
+describe("numeric field encryption (encryptedNumeric pattern)", () => {
+  it("round-trips an integer through encrypt(String(n)) / Number(decrypt())", () => {
+    const value = 72;
+    const ciphertext = encrypt(String(value), TEST_KEY);
+    assert.equal(typeof ciphertext, "string");
+    assert.ok(ciphertext.includes(":"), "ciphertext should be in iv:tag:data format");
+    const decrypted = Number(decrypt(ciphertext, TEST_KEY));
+    assert.equal(decrypted, value);
+  });
+
+  it("round-trips a float", () => {
+    const value = 98.6;
+    const ciphertext = encrypt(String(value), TEST_KEY);
+    const decrypted = Number(decrypt(ciphertext, TEST_KEY));
+    assert.equal(decrypted, value);
+  });
+
+  it("round-trips zero", () => {
+    const ciphertext = encrypt(String(0), TEST_KEY);
+    const decrypted = Number(decrypt(ciphertext, TEST_KEY));
+    assert.equal(decrypted, 0);
+  });
+
+  it("round-trips negative numbers", () => {
+    const value = -1.5;
+    const ciphertext = encrypt(String(value), TEST_KEY);
+    const decrypted = Number(decrypt(ciphertext, TEST_KEY));
+    assert.equal(decrypted, value);
+  });
+
+  it("produces different ciphertexts for the same numeric value (non-deterministic)", () => {
+    const a = encrypt(String(120), TEST_KEY);
+    const b = encrypt(String(120), TEST_KEY);
+    assert.notEqual(a, b);
+    assert.equal(Number(decrypt(a, TEST_KEY)), 120);
+    assert.equal(Number(decrypt(b, TEST_KEY)), 120);
+  });
+
+  it("preserves floating point precision for clinical values", () => {
+    const clinicalValues = [3.8, 10.2, 198, 1.8, 680, 12.1, 1.0, 0.04, 7.35];
+    for (const value of clinicalValues) {
+      const ciphertext = encrypt(String(value), TEST_KEY);
+      const decrypted = Number(decrypt(ciphertext, TEST_KEY));
+      assert.equal(decrypted, value, `Failed to preserve precision for ${value}`);
+    }
+  });
+});
