@@ -39,72 +39,29 @@ vi.mock("@/components/stale-data-banner", () => ({
   StaleDataBanner: () => null,
 }));
 
-// Every child tab pulls tRPC queries. Stub a permissive mock so any
-// chained access returns a `useQuery`/`useMutation` that resolves to an
-// empty/loading shape. This keeps the test focused on the tab strip.
-const stubQuery = () => ({
-  data: undefined,
-  isLoading: true,
-  isError: false,
-});
-const stubMutation = () => ({ mutate: vi.fn(), isPending: false });
+// `vi.mock` factories are hoisted above top-level imports, so any value
+// referenced inside must also be hoisted via `vi.hoisted`.
+const { patient } = vi.hoisted(() => ({
+  patient: {
+    id: "patient-1",
+    name: "Jane Doe",
+    mrn: "MRN-0001",
+    date_of_birth: "1970-01-01",
+    biological_sex: "F",
+  },
+}));
 
-const patient = {
-  id: "patient-1",
-  name: "Jane Doe",
-  mrn: "MRN-0001",
-  date_of_birth: "1970-01-01",
-  biological_sex: "F",
-};
-
-vi.mock("@/lib/trpc", () => {
-  // Flexible deep-getter — every leaf provides useQuery/useMutation.
-  const makeLeaf = (key: string) => {
-    const leaf: Record<string, unknown> = {
-      useQuery: (..._args: unknown[]) => {
-        if (key === "patients.getById") {
-          return { data: patient, isLoading: false, isError: false };
-        }
-        return stubQuery();
-      },
-      useMutation: () => stubMutation(),
-    };
-    return leaf;
-  };
-
-  // A thin shim for `trpc.useUtils()` — every invalidate is a resolved noop.
-  const utilsProxy = (): unknown =>
-    new Proxy(
-      {},
-      {
-        get(_t, prop: string) {
-          if (prop === "invalidate") {
-            return () => Promise.resolve();
-          }
-          return utilsProxy();
-        },
-      },
-    );
-
-  const proxy = (path: string[]): unknown =>
-    new Proxy(
-      {},
-      {
-        get(_t, prop: string) {
-          if (prop === "then") return undefined; // not a thenable
-          if (prop === "useUtils") return () => utilsProxy();
-          const nextPath = [...path, prop];
-          if (prop === "useQuery" || prop === "useMutation") {
-            return makeLeaf(path.join("."))[prop];
-          }
-          return proxy(nextPath);
-        },
-      },
-    );
-
-  return {
-    trpc: proxy([]) as unknown,
-  };
+// Every child tab pulls tRPC queries. The permissive mock answers any
+// `trpc.<router>.<proc>.useQuery/useMutation` with a loading-but-quiet
+// stub so the test stays focused on the tab strip; the single override
+// gives `patients.getById` a real patient so the header renders.
+vi.mock("@/lib/trpc", async () => {
+  const { createPermissiveTrpcMock } = await import("./helpers/trpc-mock");
+  return createPermissiveTrpcMock({
+    overrides: {
+      "patients.getById": { data: patient, isLoading: false, isError: false },
+    },
+  });
 });
 
 import PatientChartPage from "../../app/patients/[id]/page";
