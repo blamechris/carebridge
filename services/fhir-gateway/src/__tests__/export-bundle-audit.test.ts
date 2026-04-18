@@ -76,6 +76,20 @@ vi.mock("@carebridge/db-schema", () => ({
 // stub `eq` to a no-op sentinel.
 vi.mock("drizzle-orm", () => ({
   eq: (_col: unknown, _val: unknown) => ({ __eq: true }),
+  and: (..._args: unknown[]) => ({ __and: true }),
+  sql: Object.assign(
+    (_strings: TemplateStringsArray, ..._values: unknown[]) => ({ __sql: true }),
+    { raw: (s: string) => ({ __raw: s }) },
+  ),
+}));
+
+vi.mock("@carebridge/logger", () => ({
+  createLogger: () => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  }),
 }));
 
 // The router also imports FHIR generators — mock to identity-ish stubs so

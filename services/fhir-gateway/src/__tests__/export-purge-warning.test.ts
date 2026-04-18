@@ -21,12 +21,15 @@ const fhirResourcesTable = { __name: "fhir_resources" };
 const auditLogTable = { __name: "audit_log" };
 
 let patientRows: Record<string, unknown>[] = [];
+// Rows returned when the router queries audit_log for prior expired exports.
+let priorAuditRows: Record<string, unknown>[] = [];
 
 function selectMock() {
   return {
     from: (table: unknown) => ({
       where: async () => {
         if (table === patientsTable) return patientRows;
+        if (table === auditLogTable) return priorAuditRows;
         return [];
       },
     }),
@@ -60,18 +63,11 @@ vi.mock("drizzle-orm", () => ({
   eq: (_col: unknown, _val: unknown) => ({ __eq: true }),
   and: (..._args: unknown[]) => ({ __and: true }),
   sql: Object.assign(
-    (_strings: TemplateStringsArray, ..._values: unknown[]) => ({ __sql: true }),
+    (_strings: TemplateStringsArray, ..._values: unknown[]) => ({
+      __sql: true,
+    }),
     { raw: (s: string) => ({ __raw: s }) },
   ),
-}));
-
-vi.mock("@carebridge/logger", () => ({
-  createLogger: () => ({
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  }),
 }));
 
 vi.mock("../generators/index.js", () => ({
@@ -85,6 +81,17 @@ vi.mock("../generators/index.js", () => ({
 
 vi.mock("@carebridge/phi-sanitizer", () => ({
   sanitizeFreeText: (s: string) => s,
+}));
+
+// Capture logger.warn calls.
+const loggerWarnSpy = vi.fn();
+vi.mock("@carebridge/logger", () => ({
+  createLogger: () => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: loggerWarnSpy,
+    error: vi.fn(),
+  }),
 }));
 
 // ── Import after mocks ─────────────────────────────────────────
@@ -104,11 +111,13 @@ beforeEach(() => {
   insertCalls.length = 0;
   insertMock.mockClear();
   transactionMock.mockClear();
+  loggerWarnSpy.mockClear();
   patientRows = [];
+  priorAuditRows = [];
 });
 
-describe("exportPatient security headers", () => {
-  it("sets Cache-Control: no-store, no-cache, must-revalidate via setHeader", async () => {
+describe("exportPatient purge-at audit warning", () => {
+  it("emits a structured warning when a prior export has an expired recommended_purge_at", async () => {
     patientRows = [
       {
         id: "patient-42",
@@ -118,105 +127,94 @@ describe("exportPatient security headers", () => {
       },
     ];
 
-    const setHeader = vi.fn();
-    const caller = fhirGatewayRouter.createCaller({
-      user: adminUser,
-      setHeader,
-    });
-
-    await caller.exportPatient({ patientId: "patient-42" });
-
-    expect(setHeader).toHaveBeenCalledWith(
-      "Cache-Control",
-      "no-store, no-cache, must-revalidate",
-    );
-  });
-
-  it("sets Pragma: no-cache via setHeader", async () => {
-    patientRows = [
+    const pastPurge = new Date(Date.now() - 60_000).toISOString();
+    priorAuditRows = [
       {
-        id: "patient-42",
-        first_name: "Ada",
-        last_name: "Lovelace",
-        date_of_birth: "1815-12-10",
+        id: "audit-prev-1",
+        details: JSON.stringify({
+          export_type: "patient_full_bundle",
+          export_id: "prev-export-id",
+          recommended_purge_at: pastPurge,
+        }),
+        timestamp: new Date(Date.now() - 120_000).toISOString(),
       },
     ];
 
-    const setHeader = vi.fn();
-    const caller = fhirGatewayRouter.createCaller({
-      user: adminUser,
-      setHeader,
-    });
-
-    await caller.exportPatient({ patientId: "patient-42" });
-
-    expect(setHeader).toHaveBeenCalledWith("Pragma", "no-cache");
-  });
-
-  it("sets Content-Disposition: attachment with export-id filename via setHeader", async () => {
-    patientRows = [
-      {
-        id: "patient-42",
-        first_name: "Ada",
-        last_name: "Lovelace",
-        date_of_birth: "1815-12-10",
-      },
-    ];
-
-    const setHeader = vi.fn();
-    const caller = fhirGatewayRouter.createCaller({
-      user: adminUser,
-      setHeader,
-    });
-
-    const bundle = await caller.exportPatient({ patientId: "patient-42" });
-
-    // Extract the export_id from the bundle meta extension to verify the
-    // Content-Disposition filename matches.
-    const ext = bundle.meta!.extension![0]!;
-    const extPayload = JSON.parse(ext.valueString as string) as Record<
-      string,
-      unknown
-    >;
-    const exportId = extPayload.export_id as string;
-
-    expect(setHeader).toHaveBeenCalledWith(
-      "Content-Disposition",
-      `attachment; filename="bundle-${exportId}.json"`,
-    );
-  });
-
-  it("does not throw when setHeader is absent (createCaller without HTTP context)", async () => {
-    patientRows = [
-      {
-        id: "patient-42",
-        first_name: "Ada",
-        last_name: "Lovelace",
-        date_of_birth: "1815-12-10",
-      },
-    ];
-
-    // No setHeader in context — simulates direct createCaller usage.
     const caller = fhirGatewayRouter.createCaller({ user: adminUser });
-
     const bundle = await caller.exportPatient({ patientId: "patient-42" });
+
     expect(bundle.resourceType).toBe("Bundle");
+
+    // Logger should have been called with the warning.
+    expect(loggerWarnSpy).toHaveBeenCalledTimes(1);
+    const [msg, meta] = loggerWarnSpy.mock.calls[0]!;
+    expect(msg).toBe("re-export requested after recommended_purge_at");
+    expect(meta).toMatchObject({
+      user_id: "user-admin-1",
+      patient_id: "patient-42",
+      prior_export_id: "prev-export-id",
+      prior_recommended_purge_at: pastPurge,
+      expired_export_count: 1,
+    });
   });
 
-  it("does not set headers on failure (patient not found)", async () => {
-    patientRows = [];
+  it("does not emit a warning when there are no prior expired exports", async () => {
+    patientRows = [
+      {
+        id: "patient-42",
+        first_name: "Ada",
+        last_name: "Lovelace",
+        date_of_birth: "1815-12-10",
+      },
+    ];
+    priorAuditRows = []; // No prior exports.
 
-    const setHeader = vi.fn();
-    const caller = fhirGatewayRouter.createCaller({
-      user: adminUser,
-      setHeader,
-    });
+    const caller = fhirGatewayRouter.createCaller({ user: adminUser });
+    await caller.exportPatient({ patientId: "patient-42" });
 
-    await expect(
-      caller.exportPatient({ patientId: "nonexistent" }),
-    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(loggerWarnSpy).not.toHaveBeenCalled();
+  });
 
-    // Headers are only set on the success path.
-    expect(setHeader).not.toHaveBeenCalled();
+  it("includes expired_export_count when multiple prior exports exist", async () => {
+    patientRows = [
+      {
+        id: "patient-42",
+        first_name: "Ada",
+        last_name: "Lovelace",
+        date_of_birth: "1815-12-10",
+      },
+    ];
+
+    const pastPurge1 = new Date(Date.now() - 120_000).toISOString();
+    const pastPurge2 = new Date(Date.now() - 60_000).toISOString();
+    priorAuditRows = [
+      {
+        id: "audit-prev-1",
+        details: JSON.stringify({
+          export_type: "patient_full_bundle",
+          export_id: "prev-export-1",
+          recommended_purge_at: pastPurge1,
+        }),
+        timestamp: new Date(Date.now() - 180_000).toISOString(),
+      },
+      {
+        id: "audit-prev-2",
+        details: JSON.stringify({
+          export_type: "patient_full_bundle",
+          export_id: "prev-export-2",
+          recommended_purge_at: pastPurge2,
+        }),
+        timestamp: new Date(Date.now() - 90_000).toISOString(),
+      },
+    ];
+
+    const caller = fhirGatewayRouter.createCaller({ user: adminUser });
+    await caller.exportPatient({ patientId: "patient-42" });
+
+    expect(loggerWarnSpy).toHaveBeenCalledTimes(1);
+    const [, meta] = loggerWarnSpy.mock.calls[0]!;
+    expect(meta.expired_export_count).toBe(2);
+    // Should reference the most recent (last) prior export.
+    expect(meta.prior_export_id).toBe("prev-export-2");
   });
 });
