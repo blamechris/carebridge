@@ -62,7 +62,7 @@ export async function authMiddleware(
     if (devUserId) {
       const devUser = DEV_USERS[devUserId];
       if (devUser) {
-        (request as unknown as Record<string, unknown>).user = devUser;
+        request.user = devUser;
         return;
       }
       // Unknown dev user ID — fall through to normal JWT auth rather than
@@ -78,10 +78,8 @@ export async function authMiddleware(
   let sessionId: string | undefined;
 
   // Parsed by @fastify/cookie plugin registered in server.ts.
-  const cookies = (request as unknown as { cookies?: Record<string, string> })
-    .cookies;
-  if (cookies?.session) {
-    sessionId = cookies.session;
+  if (request.cookies?.session) {
+    sessionId = request.cookies.session;
   }
 
   if (!sessionId) {
@@ -187,9 +185,7 @@ export async function authMiddleware(
     return;
   }
 
-  const req = request as unknown as Record<string, unknown>;
-
-  req.user = {
+  request.user = {
     id: row.id,
     email: row.email,
     name: row.name,
@@ -202,5 +198,5 @@ export async function authMiddleware(
     updated_at: row.updated_at,
   } satisfies User;
 
-  req.sessionId = sessionId;
+  request.sessionId = sessionId;
 }

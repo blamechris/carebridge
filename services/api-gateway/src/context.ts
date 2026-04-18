@@ -1,4 +1,5 @@
 import type { CreateFastifyContextOptions } from "@trpc/server/adapters/fastify";
+import type { FastifyRequest } from "fastify";
 import type { User } from "@carebridge/shared-types";
 import { getDb } from "@carebridge/db-schema";
 import crypto from "node:crypto";
@@ -19,9 +20,12 @@ export interface Context {
 export async function createContext(
   opts: CreateFastifyContextOptions,
 ): Promise<Context> {
-  const req = opts.req as unknown as Record<string, unknown>;
-  const user = (req.user as User | null) ?? null;
-  const sessionId = (req.sessionId as string | null) ?? null;
+  // Cast to the decorated shape so this file compiles even when the ambient
+  // module augmentation (./fastify.d.ts) is not in scope — e.g. when the
+  // patient-portal transpiles this package via Next.js transpilePackages.
+  const req = opts.req as FastifyRequest & { user?: User; sessionId?: string };
+  const user = req.user ?? null;
+  const sessionId = req.sessionId ?? null;
 
   return {
     db: getDb(),
