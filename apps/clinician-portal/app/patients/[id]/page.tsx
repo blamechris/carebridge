@@ -23,6 +23,11 @@ import {
   type StalenessTier,
 } from "@/lib/vitals-staleness";
 import { formatReferenceRange } from "@/lib/formatting";
+import {
+  isOutOfRange as labIsOutOfRange,
+  labValueColor,
+  deriveInferredFlag,
+} from "@/lib/lab-display";
 
 const tabs = [
   { key: "overview", label: "Overview" },
@@ -485,54 +490,15 @@ function LabsTab({ patientId }: { patientId: string }) {
                   const refLow = r.reference_low;
                   const refHigh = r.reference_high;
 
-                  // A value is out-of-range when it falls below reference_low or
-                  // above reference_high. This catches "borderline abnormal"
-                  // cases (e.g. K+ 3.2 with ref 3.5–5.0) that the server-side
-                  // `flag` field often leaves unset — the lab instrument may
-                  // only assign "critical" for extreme values, leaving
-                  // clinically meaningful drift unmarked.
-                  const isOutOfRange =
-                    typeof value === "number" &&
-                    ((typeof refLow === "number" && value < refLow) ||
-                      (typeof refHigh === "number" && value > refHigh));
-
-                  const valueColor =
-                    flag === "critical"
-                      ? "var(--critical)"
-                      : flag === "H" || flag === "L"
-                      ? "var(--warning)"
-                      : isOutOfRange
-                      ? "var(--warning)"
-                      : "var(--text-primary)";
-
+                  const outOfRange = labIsOutOfRange(value, refLow, refHigh);
+                  const valueColor = labValueColor(flag, outOfRange);
                   const referenceRange = formatReferenceRange(refLow, refHigh);
-
-                  /*
-                   * Flag precedence contract:
-                   *
-                   * The server-side `flag` field (from the lab instrument or
-                   * LIS) is authoritative when present. It reflects the
-                   * performing lab's own reference ranges, delta checks, and
-                   * critical-value logic — all of which may be more nuanced
-                   * than a simple low/high boundary comparison.
-                   *
-                   * Client-inferred H/L is a safety net for instruments and
-                   * legacy result feeds that do not flag borderline
-                   * out-of-range values. It only renders when `!flag &&
-                   * isOutOfRange`, ensuring the server flag always wins when
-                   * both are available.
-                   */
-                  const inferredFlag =
-                    !flag && isOutOfRange && typeof value === "number"
-                      ? typeof refLow === "number" && value < refLow
-                        ? "low"
-                        : "high"
-                      : "";
+                  const inferredFlag = deriveInferredFlag(value, flag, refLow, refHigh);
 
                   // Dev-only: warn when the server flag and client-inferred
                   // direction disagree. This catches mapping bugs and stale
                   // reference ranges early without polluting production logs.
-                  if (process.env.NODE_ENV !== "production" && flag && isOutOfRange && typeof value === "number") {
+                  if (process.env.NODE_ENV !== "production" && flag && outOfRange && typeof value === "number") {
                     const clientDirection =
                       typeof refLow === "number" && value < refLow
                         ? "low"
@@ -607,6 +573,80 @@ function LabsTab({ patientId }: { patientId: string }) {
   );
 }
 
+interface MedicationBadge {
+  label: string;
+  className: string;
+  title?: string;
+}
+
+interface MedicationStatusSectionProps {
+  medications: Array<{
+    id: string;
+    name: string;
+    dose_amount?: string | number | null;
+    dose_unit?: string | null;
+    route?: string | null;
+    frequency?: string | null;
+  }>;
+  title: string;
+  titleColor?: string;
+  textColor: string;
+  badge: MedicationBadge;
+}
+
+function MedicationStatusSection({
+  medications,
+  title,
+  titleColor,
+  textColor,
+  badge,
+}: MedicationStatusSectionProps) {
+  if (medications.length === 0) return null;
+
+  return (
+    <div className="table-container">
+      <div className="table-header">
+        <span
+          className="table-title"
+          style={titleColor ? { color: titleColor } : undefined}
+        >
+          {title}
+        </span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Medication</th>
+            <th>Dose</th>
+            <th>Route</th>
+            <th>Frequency</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {medications.map((med) => (
+            <tr key={med.id}>
+              <td style={{ fontWeight: 500, color: titleColor ?? undefined }}>
+                {med.name}
+              </td>
+              <td style={{ color: textColor }}>
+                {med.dose_amount} {med.dose_unit}
+              </td>
+              <td style={{ color: textColor }}>{med.route}</td>
+              <td style={{ color: textColor }}>{med.frequency}</td>
+              <td>
+                <span className={badge.className} title={badge.title}>
+                  {badge.label}
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function MedicationsTab({ patientId }: { patientId: string }) {
   const medsQuery = trpc.clinicalData.medications.getByPatient.useQuery({
     patientId,
@@ -631,168 +671,42 @@ function MedicationsTab({ patientId }: { patientId: string }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {active.length > 0 && (
-        <div className="table-container">
-          <div className="table-header">
-            <span className="table-title">Active Medications</span>
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th>Medication</th>
-                <th>Dose</th>
-                <th>Route</th>
-                <th>Frequency</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {active.map((med) => (
-                <tr key={med.id}>
-                  <td style={{ fontWeight: 500 }}>{med.name}</td>
-                  <td style={{ color: "var(--text-secondary)" }}>
-                    {med.dose_amount} {med.dose_unit}
-                  </td>
-                  <td style={{ color: "var(--text-secondary)" }}>{med.route}</td>
-                  <td style={{ color: "var(--text-secondary)" }}>{med.frequency}</td>
-                  <td>
-                    <span className="badge badge-success">Active</span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {held.length > 0 && (
-        <div className="table-container">
-          <div className="table-header">
-            <span className="table-title">Held</span>
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th>Medication</th>
-                <th>Dose</th>
-                <th>Route</th>
-                <th>Frequency</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {held.map((med) => (
-                <tr key={med.id}>
-                  <td style={{ fontWeight: 500 }}>{med.name}</td>
-                  <td style={{ color: "var(--text-secondary)" }}>
-                    {med.dose_amount} {med.dose_unit}
-                  </td>
-                  <td style={{ color: "var(--text-secondary)" }}>{med.route}</td>
-                  <td style={{ color: "var(--text-secondary)" }}>{med.frequency}</td>
-                  <td>
-                    <span
-                      className="badge badge-warning"
-                      title="Temporarily paused — intent to resume"
-                    >
-                      Held
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {discontinued.length > 0 && (
-        <div className="table-container">
-          <div className="table-header">
-            <span className="table-title" style={{ color: "var(--text-muted)" }}>
-              Discontinued
-            </span>
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th>Medication</th>
-                <th>Dose</th>
-                <th>Route</th>
-                <th>Frequency</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {discontinued.map((med) => (
-                <tr key={med.id}>
-                  <td style={{ color: "var(--text-muted)" }}>{med.name}</td>
-                  <td style={{ color: "var(--text-muted)" }}>
-                    {med.dose_amount} {med.dose_unit}
-                  </td>
-                  <td style={{ color: "var(--text-muted)" }}>{med.route}</td>
-                  <td style={{ color: "var(--text-muted)" }}>{med.frequency}</td>
-                  <td>
-                    <span
-                      className="badge"
-                      style={{
-                        background: "rgba(255,255,255,0.05)",
-                        color: "var(--text-muted)",
-                        border: "1px solid var(--border)",
-                      }}
-                    >
-                      Discontinued
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {completed.length > 0 && (
-        <div className="table-container">
-          <div className="table-header">
-            <span className="table-title" style={{ color: "var(--text-muted)" }}>
-              Completed
-            </span>
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th>Medication</th>
-                <th>Dose</th>
-                <th>Route</th>
-                <th>Frequency</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {completed.map((med) => (
-                <tr key={med.id}>
-                  <td style={{ color: "var(--text-muted)" }}>{med.name}</td>
-                  <td style={{ color: "var(--text-muted)" }}>
-                    {med.dose_amount} {med.dose_unit}
-                  </td>
-                  <td style={{ color: "var(--text-muted)" }}>{med.route}</td>
-                  <td style={{ color: "var(--text-muted)" }}>{med.frequency}</td>
-                  <td>
-                    <span
-                      className="badge"
-                      style={{
-                        background: "rgba(99,179,237,0.1)",
-                        color: "#63b3ed",
-                        border: "1px solid rgba(99,179,237,0.3)",
-                      }}
-                    >
-                      Completed
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <MedicationStatusSection
+        medications={active}
+        title="Active Medications"
+        textColor="var(--text-secondary)"
+        badge={{ label: "Active", className: "badge badge-success" }}
+      />
+      <MedicationStatusSection
+        medications={held}
+        title="Held"
+        textColor="var(--text-secondary)"
+        badge={{
+          label: "Held",
+          className: "badge badge-warning",
+          title: "Temporarily paused \u2014 intent to resume",
+        }}
+      />
+      <MedicationStatusSection
+        medications={discontinued}
+        title="Discontinued"
+        titleColor="var(--text-muted)"
+        textColor="var(--text-muted)"
+        badge={{
+          label: "Discontinued",
+          className: "badge badge-muted",
+        }}
+      />
+      <MedicationStatusSection
+        medications={completed}
+        title="Completed"
+        titleColor="var(--text-muted)"
+        textColor="var(--text-muted)"
+        badge={{
+          label: "Completed",
+          className: "badge badge-completed",
+        }}
+      />
     </div>
   );
 }

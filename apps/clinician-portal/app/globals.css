@@ -444,6 +444,18 @@ tr:hover td {
   border: 1px solid var(--success-border);
 }
 
+.badge-muted {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.badge-completed {
+  background: rgba(99, 179, 237, 0.1);
+  color: #63b3ed;
+  border: 1px solid rgba(99, 179, 237, 0.3);
+}
+
 .badge-inferred {
   background: var(--warning-bg);
   color: var(--warning);
