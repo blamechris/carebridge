@@ -15,6 +15,10 @@ export default defineConfig({
         __dirname,
         "../../packages/medical-logic/src/index.ts",
       ),
+      "@carebridge/ai-prompts": path.resolve(
+        __dirname,
+        "../../packages/ai-prompts/src/index.ts",
+      ),
     },
   },
 });

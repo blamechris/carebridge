@@ -28,6 +28,44 @@ Only `audit_log` satisfies the HIPAA tamper-evidence requirement
 decision reconstruction but is **not** covered by immutability triggers
 and should not be cited as part of the tamper-evident audit trail.
 
+## review_jobs Retention and PHI Handling
+
+The `review_jobs` table — including its `rules_output`, `redacted_prompt`,
+and `redaction_audit` columns — is subject to the same **7-year retention
+policy** as `audit_log`. These records support forensic decision
+reconstruction (which rules fired, what context was available, what was
+redacted before LLM submission) and must be preserved for the full
+retention window.
+
+### PHI-adjacent data in rules_output
+
+`rules_output` stores serialized `RuleFlag` records produced by the
+deterministic rules engine. These records may contain **PHI-adjacent
+details** including:
+
+- Matched drug names and allergy substrates
+- Severity reasoning tied to a specific patient encounter
+- Condition and diagnosis context used in cross-specialty pattern matching
+
+This data is **not encrypted at the column level** (unlike
+`patient_diagnosis_notes`, which uses column-level encryption per
+migration 0028). It is also **not covered by append-only immutability
+triggers** — see the scope-of-immutability table above. Access to
+`review_jobs` rows must therefore be controlled through application-level
+authorization, database role restrictions, and audit logging of any
+direct queries against the table.
+
+### Relationship to other review_jobs columns
+
+| Column | Contents | Encrypted | Immutable |
+|---|---|---|---|
+| `redacted_prompt` | Sanitized prompt sent to LLM | No | No |
+| `redaction_audit` | Record of what was redacted | No | No |
+| `rules_output` | Serialized RuleFlag results | No | No |
+
+All three columns share the same retention, access-control, and
+archival treatment described in this document.
+
 ## Archival Plan (future work)
 
 To keep the hot `audit_log` table fast while preserving long-term

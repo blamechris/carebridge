@@ -39,6 +39,7 @@ The software is non-device CDS only if it meets **all four**:
 | LLM flags record `model_id` and `prompt_version` for reproducibility | `clinical_flags.model_id`, `clinical_flags.prompt_version` |
 | LLM flags are gated by `requires_human_review = true` | `services/ai-oversight/src/services/flag-service.ts` |
 | Redacted prompt persisted for forensics | `review_jobs.redacted_prompt` |
+| Deterministic rule output persisted for decision reconstruction | `review_jobs.rules_output` (see `docs/hipaa-retention.md`) |
 | Clinician must enter a reason to dismiss/resolve | `apps/clinician-portal/src/components/flag-action-modal.tsx` |
 | Patient portal does NOT surface AI flags | `apps/patient-portal/` (no flag UI) |
 

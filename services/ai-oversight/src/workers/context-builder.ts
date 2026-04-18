@@ -22,7 +22,7 @@ import {
 import { users } from "@carebridge/db-schema";
 import type { ReviewContext } from "@carebridge/ai-prompts";
 import type { AllergyStatus, ClinicalEvent } from "@carebridge/shared-types";
-import { calculateDelta } from "@carebridge/medical-logic";
+import { calculateDeltaFromBaseline } from "@carebridge/medical-logic";
 import { sanitizeFreeText } from "@carebridge/phi-sanitizer";
 
 import {
@@ -211,7 +211,7 @@ export async function buildPatientContext(
   for (const [type, records] of vitalsByType) {
     const latest = records[0];
     const values = records.map((r) => r.value_primary).reverse();
-    const delta = calculateDelta(values);
+    const delta = calculateDeltaFromBaseline(values);
     let trend: "rising" | "falling" | "stable" | undefined;
     if (delta) {
       if (Math.abs(delta.pctChange) < 2) trend = "stable";
