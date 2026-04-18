@@ -134,9 +134,9 @@ describe("authMiddleware — JWT verification", () => {
     expect(mockDb.select).toHaveBeenCalled();
 
     // User was resolved
-    const user = (request as unknown as Record<string, unknown>).user;
+    const user = request.user;
     expect(user).toBeDefined();
-    expect((user as Record<string, unknown>).id).toBe("user-1");
+    expect(user?.id).toBe("user-1");
   });
 
   it("returns unauthenticated (no user) when JWT is invalid", async () => {
@@ -157,7 +157,7 @@ describe("authMiddleware — JWT verification", () => {
 
     // User stays null — middleware does not send 401 for invalid JWT,
     // it just leaves the user unset for downstream handlers to decide.
-    const user = (request as unknown as Record<string, unknown>).user;
+    const user = request.user;
     expect(user).toBeUndefined();
   });
 
@@ -185,7 +185,7 @@ describe("authMiddleware — JWT verification", () => {
     expect(mockVerifyJWT).not.toHaveBeenCalled();
     expect(mockDb.select).not.toHaveBeenCalled();
 
-    const user = (request as unknown as Record<string, unknown>).user;
+    const user = request.user;
     expect(user).toBeUndefined();
   });
 
@@ -208,7 +208,7 @@ describe("authMiddleware — JWT verification", () => {
 
     expect(mockVerifyJWT).toHaveBeenCalledWith("cookie-jwt-token");
 
-    const user = (request as unknown as Record<string, unknown>).user;
+    const user = request.user;
     expect(user).toBeDefined();
   });
 });
@@ -238,7 +238,7 @@ describe("authMiddleware — dev bypass", () => {
     await authMiddleware(request, reply);
 
     // Without a Bearer token or cookie, the user stays null
-    const user = (request as unknown as Record<string, unknown>).user;
+    const user = request.user;
     expect(user).toBeUndefined();
 
     // No JWT verification or DB lookup performed
