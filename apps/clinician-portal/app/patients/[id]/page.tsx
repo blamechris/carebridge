@@ -23,6 +23,11 @@ import {
   type StalenessTier,
 } from "@/lib/vitals-staleness";
 import { formatReferenceRange } from "@/lib/formatting";
+import {
+  isOutOfRange as labIsOutOfRange,
+  labValueColor,
+  deriveInferredFlag,
+} from "@/lib/lab-display";
 
 const tabs = [
   { key: "overview", label: "Overview" },
@@ -485,54 +490,15 @@ function LabsTab({ patientId }: { patientId: string }) {
                   const refLow = r.reference_low;
                   const refHigh = r.reference_high;
 
-                  // A value is out-of-range when it falls below reference_low or
-                  // above reference_high. This catches "borderline abnormal"
-                  // cases (e.g. K+ 3.2 with ref 3.5–5.0) that the server-side
-                  // `flag` field often leaves unset — the lab instrument may
-                  // only assign "critical" for extreme values, leaving
-                  // clinically meaningful drift unmarked.
-                  const isOutOfRange =
-                    typeof value === "number" &&
-                    ((typeof refLow === "number" && value < refLow) ||
-                      (typeof refHigh === "number" && value > refHigh));
-
-                  const valueColor =
-                    flag === "critical"
-                      ? "var(--critical)"
-                      : flag === "H" || flag === "L"
-                      ? "var(--warning)"
-                      : isOutOfRange
-                      ? "var(--warning)"
-                      : "var(--text-primary)";
-
+                  const outOfRange = labIsOutOfRange(value, refLow, refHigh);
+                  const valueColor = labValueColor(flag, outOfRange);
                   const referenceRange = formatReferenceRange(refLow, refHigh);
-
-                  /*
-                   * Flag precedence contract:
-                   *
-                   * The server-side `flag` field (from the lab instrument or
-                   * LIS) is authoritative when present. It reflects the
-                   * performing lab's own reference ranges, delta checks, and
-                   * critical-value logic — all of which may be more nuanced
-                   * than a simple low/high boundary comparison.
-                   *
-                   * Client-inferred H/L is a safety net for instruments and
-                   * legacy result feeds that do not flag borderline
-                   * out-of-range values. It only renders when `!flag &&
-                   * isOutOfRange`, ensuring the server flag always wins when
-                   * both are available.
-                   */
-                  const inferredFlag =
-                    !flag && isOutOfRange && typeof value === "number"
-                      ? typeof refLow === "number" && value < refLow
-                        ? "low"
-                        : "high"
-                      : "";
+                  const inferredFlag = deriveInferredFlag(value, flag, refLow, refHigh);
 
                   // Dev-only: warn when the server flag and client-inferred
                   // direction disagree. This catches mapping bugs and stale
                   // reference ranges early without polluting production logs.
-                  if (process.env.NODE_ENV !== "production" && flag && isOutOfRange && typeof value === "number") {
+                  if (process.env.NODE_ENV !== "production" && flag && outOfRange && typeof value === "number") {
                     const clientDirection =
                       typeof refLow === "number" && value < refLow
                         ? "low"
