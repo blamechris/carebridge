@@ -1,28 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createMockDb, type MockDb } from "@carebridge/test-utils";
 
 // ── Mock DB ──────────────────────────────────────────────────────
-const insertValuesMock = vi.fn().mockResolvedValue(undefined);
-const insertMock = vi.fn(() => ({ values: insertValuesMock }));
-
-const updateWhereMock = vi.fn().mockResolvedValue(undefined);
-const updateSetMock = vi.fn(() => ({ where: updateWhereMock }));
-const updateMock = vi.fn(() => ({ set: updateSetMock }));
-
-const selectLimitMock = vi.fn();
-const selectWhereMock = vi.fn(() => ({ limit: selectLimitMock }));
-const selectOrderByMock = vi.fn(() => ({ limit: vi.fn().mockResolvedValue([]) }));
-const selectFromMock = vi.fn(() => ({
-  where: selectWhereMock,
-  orderBy: selectOrderByMock,
-}));
-const selectMock = vi.fn(() => ({ from: selectFromMock }));
+// A single MockDb instance is reused across tests; `beforeEach` recreates it
+// so per-test queues and call records start fresh.
+let db: MockDb;
+const getDb = vi.fn(() => db);
 
 vi.mock("@carebridge/db-schema", () => ({
-  getDb: () => ({
-    insert: insertMock,
-    select: selectMock,
-    update: updateMock,
-  }),
+  getDb: () => getDb(),
   hmacForIndex: (val: string) => `hmac_${val}`,
   patients: { id: "patients.id" },
   diagnoses: { id: "diagnoses.id", patient_id: "diagnoses.patient_id" },
@@ -63,6 +49,7 @@ const PATIENT_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  db = createMockDb();
 });
 
 // ── Create ──────────────────────────────────────────────────────
@@ -84,8 +71,8 @@ describe("patient-records create", () => {
     });
     expect(result.id).toBeDefined();
     expect(result.created_at).toBeDefined();
-    expect(insertMock).toHaveBeenCalledOnce();
-    expect(insertValuesMock).toHaveBeenCalledOnce();
+    expect(db.insert).toHaveBeenCalledOnce();
+    expect(db.insert.calls[0]?.chain).toContain("values");
   });
 
   it("handles missing mrn by setting mrn_hmac to undefined", async () => {
@@ -94,7 +81,7 @@ describe("patient-records create", () => {
     const result = await caller.create(input);
 
     expect(result.mrn_hmac).toBeUndefined();
-    expect(insertMock).toHaveBeenCalledOnce();
+    expect(db.insert).toHaveBeenCalledOnce();
   });
 });
 
@@ -107,9 +94,10 @@ describe("patient-records update", () => {
     });
 
     expect(result).toMatchObject({ id: PATIENT_ID, name: "Updated Name" });
-    expect(updateMock).toHaveBeenCalledOnce();
-    expect(updateSetMock).toHaveBeenCalledOnce();
-    expect(updateWhereMock).toHaveBeenCalledOnce();
+    expect(db.update).toHaveBeenCalledOnce();
+    const call = db.update.calls[0];
+    expect(call?.chain).toContain("set");
+    expect(call?.chain).toContain("where");
   });
 });
 
@@ -120,11 +108,7 @@ describe("patient-records getById", () => {
       id: PATIENT_ID,
       name: "Jane Doe",
     };
-    // getById uses select().from().where() which returns array directly
-    selectFromMock.mockReturnValueOnce({
-      where: vi.fn().mockResolvedValueOnce([patientRow]),
-      orderBy: selectOrderByMock,
-    });
+    db.willSelect([patientRow]);
 
     const result = await caller.getById({ id: PATIENT_ID });
 
@@ -132,10 +116,7 @@ describe("patient-records getById", () => {
   });
 
   it("returns null when patient is not found", async () => {
-    selectFromMock.mockReturnValueOnce({
-      where: vi.fn().mockResolvedValueOnce([]),
-      orderBy: selectOrderByMock,
-    });
+    db.willSelect([]);
 
     const result = await caller.getById({ id: "nonexistent" });
 
@@ -150,14 +131,7 @@ describe("patient-records list", () => {
       { id: "1", name: "Alice" },
       { id: "2", name: "Bob" },
     ];
-    selectFromMock.mockReturnValueOnce({
-      where: selectWhereMock,
-      orderBy: selectOrderByMock,
-    });
-    // list() calls select().from(patients) which resolves directly
-    selectMock.mockReturnValueOnce({
-      from: vi.fn().mockResolvedValueOnce(rows),
-    });
+    db.willSelect(rows);
 
     const result = await caller.list();
 
