@@ -134,16 +134,71 @@ export function getVitalRangeForAge(
   return pediatricRange ?? adultRange;
 }
 
+/** Per-age-group pulse pressure thresholds (narrow and wide, warning and critical). */
+export interface PulsePressureThresholds {
+  narrowCritical: number;  // PP below this → critically narrow
+  narrowWarning: number;   // PP below this → narrow warning
+  wideCritical: number;    // PP above this → critically wide
+  wideWarning: number;     // PP above this → wide warning
+}
+
+/** Adult pulse pressure thresholds (default when age is unknown or >= 18). */
+const ADULT_PP_THRESHOLDS: PulsePressureThresholds = {
+  narrowCritical: 15,
+  narrowWarning: 25,
+  wideCritical: 100,
+  wideWarning: 60,
+};
+
+/**
+ * Age-stratified pulse pressure thresholds.
+ * Pediatric PP norms are narrower due to lower stroke volume and
+ * more compliant vasculature.
+ *
+ * References:
+ *  - Park MK, Pediatric Cardiology 6th ed, Ch.2 (normative BP tables)
+ *  - Flynn JT et al., Pediatrics 2017; 140(3): AAP CPG for pediatric HTN
+ */
+export const PEDIATRIC_PP_THRESHOLDS: Record<
+  Exclude<AgeGroup, "adult">,
+  PulsePressureThresholds
+> = {
+  neonate: { narrowCritical: 10, narrowWarning: 15, wideCritical: 35, wideWarning: 25 },
+  infant: { narrowCritical: 10, narrowWarning: 15, wideCritical: 35, wideWarning: 25 },
+  child: { narrowCritical: 10, narrowWarning: 15, wideCritical: 45, wideWarning: 30 },
+  school_age: { narrowCritical: 15, narrowWarning: 20, wideCritical: 60, wideWarning: 40 },
+  adolescent: { narrowCritical: 15, narrowWarning: 20, wideCritical: 80, wideWarning: 50 },
+};
+
+/**
+ * Return pulse pressure thresholds appropriate for the given age.
+ * Falls back to adult thresholds when age is unknown.
+ */
+export function getPulsePressureThresholds(
+  ageYears?: number | undefined,
+): PulsePressureThresholds {
+  if (ageYears === undefined || ageYears === null) return ADULT_PP_THRESHOLDS;
+  const group = classifyAgeGroup(ageYears);
+  if (group === "adult") return ADULT_PP_THRESHOLDS;
+  return PEDIATRIC_PP_THRESHOLDS[group];
+}
+
 export interface ValidationResult {
   valid: boolean;
   warnings: string[];
   errors: string[];
 }
 
+/**
+ * Validate a vital sign value and return errors/warnings.
+ * @param ageYears - Optional patient age in years; when provided, uses
+ *   age-appropriate pulse pressure thresholds for blood pressure validation.
+ */
 export function validateVital(
   type: VitalType,
   primary: number,
-  secondary?: number
+  secondary?: number,
+  ageYears?: number,
 ): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -181,30 +236,29 @@ export function validateVital(
       errors.push(`Diastolic ${secondary} is outside plausible range (20–200)`);
     }
 
-    // Pulse-pressure tiered check (issue #519). Normal adult PP ~30-50 mmHg.
-    // Narrow PP: <25 warning (low stroke volume, tamponade, hypovolemia),
-    //            <15 critical (impending circulatory collapse).
-    // Wide PP:   >60 warning (aortic stiffening, AR, thyrotoxicosis),
-    //            >100 critical (severe AR or measurement error).
-    // Refs: Dart & Gregoire 2012, ESC 2018 arterial stiffness guidelines.
+    // Pulse-pressure tiered check (issue #519, #518).
+    // Thresholds are age-stratified — pediatric patients have physiologically
+    // narrower pulse pressures than adults.
+    // Refs: Dart & Gregoire 2012, ESC 2018, Park MK Pediatric Cardiology 6th ed.
     if (secondary < primary) {
       const pulsePressure = primary - secondary;
-      if (pulsePressure < 15) {
+      const pp = getPulsePressureThresholds(ageYears);
+      if (pulsePressure < pp.narrowCritical) {
         warnings.push(
           `Critically narrow pulse pressure ${pulsePressure} mmHg (${primary}/${secondary}) — ` +
             `consider impending circulatory collapse, cardiac tamponade, or measurement artifact`,
         );
-      } else if (pulsePressure < 25) {
+      } else if (pulsePressure < pp.narrowWarning) {
         warnings.push(
           `Narrow pulse pressure ${pulsePressure} mmHg (${primary}/${secondary}) — ` +
             `consider shock, cardiac tamponade, or hypovolemia`,
         );
-      } else if (pulsePressure > 100) {
+      } else if (pulsePressure > pp.wideCritical) {
         warnings.push(
           `Critically wide pulse pressure ${pulsePressure} mmHg (${primary}/${secondary}) — ` +
             `consider severe aortic regurgitation or measurement error`,
         );
-      } else if (pulsePressure > 60) {
+      } else if (pulsePressure > pp.wideWarning) {
         warnings.push(
           `Wide pulse pressure ${pulsePressure} mmHg (${primary}/${secondary}) — ` +
             `consider aortic stiffening, aortic regurgitation, or thyrotoxicosis`,

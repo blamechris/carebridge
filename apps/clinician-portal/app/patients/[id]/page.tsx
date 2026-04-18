@@ -366,11 +366,9 @@ function VitalsTab({ patientId }: { patientId: string }) {
               >
                 {new Date(vital.recorded_at).toLocaleString()}
               </span>
-              {tier !== "current" && (
+              {tier === "overdue" && (
                 <span className="sr-only">
-                  {tier === "overdue"
-                    ? "This vital is overdue for recheck."
-                    : "This vital is stale. Older than 24 hours — do not treat as current."}
+                  This vital is overdue for recheck.
                 </span>
               )}
               {staleExplainId && (
