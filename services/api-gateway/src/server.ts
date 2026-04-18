@@ -11,6 +11,7 @@ import { authMiddleware } from "./middleware/auth.js";
 import { auditMiddleware } from "./middleware/audit.js";
 import { makeAcceptInviteRateLimitHook } from "./middleware/accept-invite-rate-limit.js";
 import { makePatientReadRateLimitHook } from "./middleware/patient-read-rate-limit.js";
+import { makeFhirExportRateLimitHook } from "./middleware/fhir-export-rate-limit.js";
 import { registerNotificationSSE } from "./routes/notifications-sse.js";
 import { redactUrlIds } from "@carebridge/phi-sanitizer";
 import { startBackgroundWorkers } from "./workers.js";
@@ -151,6 +152,16 @@ async function main() {
     }),
   );
 
+  // Per-user rate limit for FHIR exports (issue #234):
+  // 5 exports/hour/user to prevent bulk data exfiltration.
+  // Must run as preHandler (after auth) so req.user is populated.
+  server.addHook(
+    "preHandler",
+    makeFhirExportRateLimitHook({
+      redis: redisClient,
+    }),
+  );
+
   // Per-user rate limit for patient record reads (issue #552):
   // 60 req/min for getSummary, 120 req/min for getById.
   // Must run as preHandler (after auth) so req.user is populated.
@@ -203,6 +214,25 @@ async function main() {
   server.post("/auth/session/clear", async (_request, reply) => {
     reply.clearCookie("session", { path: "/" });
     return { ok: true };
+  });
+
+  // Returns the authenticated user's profile as resolved by the auth
+  // middleware (JWT verification + DB lookup).  Clients call this on mount
+  // to validate the identity stored in localStorage and to detect stale or
+  // tampered sessions before rendering any PHI.
+  server.get("/auth/me", async (request, reply) => {
+    if (!request.user) {
+      return reply.code(401).send({ error: "Not authenticated" });
+    }
+    return {
+      id: request.user.id,
+      email: request.user.email,
+      name: request.user.name,
+      role: request.user.role,
+      specialty: request.user.specialty,
+      department: request.user.department,
+      patient_id: request.user.patient_id,
+    };
   });
 
   // --- SSE notification stream ---

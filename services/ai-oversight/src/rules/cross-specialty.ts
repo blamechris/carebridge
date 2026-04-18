@@ -501,7 +501,7 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
   },
   {
     id: "CHEMO-NEUTRO-FEVER-001",
-    name: "Confirmed febrile neutropenia (chemo + fever + ANC < 1500)",
+    name: "Chemotherapy + fever screening trigger (ANC-stratified severity)",
     check: (ctx: PatientContext) => {
       const onChemo = ctx.active_medications.some((m) =>
         CHEMO_MED_PATTERN.test(m),
@@ -513,6 +513,15 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       const anc = ctx.recent_labs?.find((l) => /\bANC\b/i.test(l.name))?.value;
       // Only fire when ANC is known AND below the febrile-neutropenia threshold.
       return anc !== undefined && anc < 1500;
+    },
+    buildSeverity: (ctx: PatientContext) => {
+      const anc = ctx.recent_labs?.find((l) => /\bANC\b/i.test(l.name))?.value;
+      // ANC <= 500: severe neutropenia — true febrile neutropenia emergency.
+      // ANC > 500 (but < 1500): mild neutropenia — fever source is likely
+      // non-neutropenic (e.g. UTI, cellulitis); downgrade to "info" to avoid
+      // unnecessary escalation (issue #214).
+      if (anc !== undefined && anc > 500) return "info";
+      return "critical";
     },
     buildSuggestedAction: (ctx: PatientContext) => {
       const anc = ctx.recent_labs?.find((l) => /\bANC\b/i.test(l.name))?.value;
@@ -533,16 +542,27 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
           "reverse isolation."
         );
       }
+      // ANC > 500: mild neutropenia — likely non-neutropenic fever source.
+      if (anc !== undefined && anc > 500) {
+        return (
+          "ANC > 500: fever in this chemotherapy patient is likely from a non-neutropenic source. " +
+          "Evaluate for infectious etiology (UTI, cellulitis, pneumonia). Standard fever workup; " +
+          "febrile neutropenia protocol not indicated at current ANC. Continue to monitor ANC trend."
+        );
+      }
       return base;
     },
     severity: "critical" as const,
     category: "cross-specialty" as const,
     summary:
-      "Febrile neutropenia confirmed — ED-level emergency, antibiotics within 60 minutes",
+      "Chemotherapy patient with fever and low ANC — severity stratified by neutropenia depth",
     rationale:
       "Chemotherapy + fever + ANC < 1500 meets the IDSA definition of febrile neutropenia. " +
-      "Infection-related mortality rises sharply for every hour antibiotics are delayed; this is " +
-      "one of the few oncology emergencies where time-to-antibiotic is a direct mortality driver.",
+      "However, ANC > 500 carries substantially lower sepsis risk than ANC <= 500 (severe " +
+      "neutropenia). When ANC > 500, the fever source is more likely non-neutropenic (e.g. UTI, " +
+      "cellulitis) and aggressive escalation causes unnecessary harm — ICU diversion, broad-spectrum " +
+      "antibiotic exposure, and alert fatigue. Severity is stratified: critical when ANC <= 500, " +
+      "info when ANC > 500.",
     suggested_action:
       "Start broad-spectrum IV antibiotics within 60 minutes of fever onset. Cultures before antibiotics if no delay. Admit.",
     notify_specialties: ["oncology", "infectious_disease", "emergency"],
