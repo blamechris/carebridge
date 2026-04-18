@@ -35,6 +35,22 @@ export function formatAge(recordedAtIso: string): string {
  */
 export type StalenessTier = "current" | "overdue" | "stale";
 
+/**
+ * Minimum age (ms) at which latest vitals/labs are flagged as stale in the
+ * patient chart banner.
+ *
+ * 7 days (604 800 000 ms). Chosen because:
+ *  - Acute-care vitals are re-checked on a 4–24h cadence (see
+ *    `classifyStaleness`), but the chart-level "stale data" banner targets
+ *    the broader case where *any* data point is old enough to be
+ *    clinically unreliable — regardless of care setting.
+ *  - 7 days is the standard maximum interval between routine ambulatory
+ *    vital re-checks in most clinical protocols; data older than this
+ *    should not be treated as representative of the patient's current
+ *    physiological state.
+ */
+export const STALE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
+
 export function classifyStaleness(recordedAtIso: string): StalenessTier {
   const ageMs = Date.now() - new Date(recordedAtIso).getTime();
   if (Number.isNaN(ageMs)) return "stale";

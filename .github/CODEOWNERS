@@ -1,0 +1,3 @@
+# Clinical safety–critical files require domain review
+packages/ai-prompts/src/drug-class-anchors.ts @blamechris
+packages/ai-prompts/src/clinical-review.ts @blamechris

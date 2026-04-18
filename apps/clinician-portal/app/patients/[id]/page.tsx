@@ -20,6 +20,7 @@ import type { LabResult } from "@carebridge/shared-types";
 import {
   formatAge,
   classifyStaleness,
+  STALE_THRESHOLD_MS,
   type StalenessTier,
 } from "@/lib/vitals-staleness";
 import { formatReferenceRange } from "@/lib/formatting";
@@ -55,9 +56,6 @@ function ErrorState({ label }: { label: string }) {
     </div>
   );
 }
-
-/** Minimum age (ms) at which a latest vital/lab is flagged as stale. 7 days. */
-const STALE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
 
 function stalenessStyles(tier: StalenessTier): {
   color?: string;
