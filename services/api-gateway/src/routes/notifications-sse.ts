@@ -31,7 +31,7 @@ export function registerNotificationSSE(server: FastifyInstance): void {
     "/notifications/stream",
     async (request: FastifyRequest, reply: FastifyReply) => {
       // Extract user ID from the auth context (set by authMiddleware)
-      const userId = (request as unknown as { userId?: string }).userId;
+      const userId = request.user?.id;
 
       if (!userId) {
         return reply.code(401).send({ error: "Authentication required" });
