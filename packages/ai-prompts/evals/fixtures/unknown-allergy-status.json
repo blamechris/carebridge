@@ -1,0 +1,71 @@
+{
+  "id": "unknown-allergy-status-documentation-gap",
+  "description": "Patient with allergy_status === 'unknown' and empty allergies — should flag documentation gap",
+  "context": {
+    "patient": {
+      "age": 38,
+      "sex": "female",
+      "allergy_status": "unknown",
+      "active_diagnoses": [
+        "Community-acquired pneumonia",
+        "Type 2 diabetes mellitus"
+      ],
+      "allergies": []
+    },
+    "active_medications": [
+      {
+        "name": "Azithromycin",
+        "dose": "500 mg",
+        "route": "oral",
+        "frequency": "daily",
+        "started_at": "2026-04-16"
+      },
+      {
+        "name": "Metformin",
+        "dose": "1000 mg",
+        "route": "oral",
+        "frequency": "BID",
+        "started_at": "2025-01-15"
+      }
+    ],
+    "latest_vitals": {
+      "blood_pressure": {
+        "value": 118,
+        "unit": "mmHg systolic",
+        "recorded_at": "2026-04-16T10:00:00Z"
+      },
+      "heart_rate": {
+        "value": 88,
+        "unit": "bpm",
+        "recorded_at": "2026-04-16T10:00:00Z"
+      },
+      "temperature": {
+        "value": 38.5,
+        "unit": "°C",
+        "recorded_at": "2026-04-16T10:00:00Z"
+      }
+    },
+    "triggering_event": {
+      "type": "medication_prescribed",
+      "summary": "Azithromycin prescribed for pneumonia",
+      "detail": "New antibiotic prescribed. Allergy status has never been assessed — allergies list is empty and allergy_status is 'unknown'. This represents a documentation gap that should be addressed before administering any medication."
+    },
+    "recent_flags": [],
+    "care_team": [
+      {
+        "name": "Dr. Patel",
+        "specialty": "Internal Medicine",
+        "recent_note_date": "2026-04-16"
+      }
+    ]
+  },
+  "expected": {
+    "shouldFlag": true,
+    "expectedCategories": ["documentation-discrepancy"],
+    "minimumSeverity": "warning",
+    "mustMentionInPrompt": [
+      "ALLERGY STATUS UNKNOWN",
+      "do NOT assume NKDA"
+    ]
+  }
+}

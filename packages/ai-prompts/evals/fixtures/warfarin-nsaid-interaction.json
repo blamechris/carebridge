@@ -1,0 +1,99 @@
+{
+  "id": "warfarin-nsaid-interaction",
+  "description": "Patient on warfarin prescribed ibuprofen — should flag drug interaction with bleeding risk",
+  "context": {
+    "patient": {
+      "age": 72,
+      "sex": "male",
+      "allergy_status": "nkda",
+      "active_diagnoses": [
+        "Atrial fibrillation",
+        "Osteoarthritis, bilateral knees",
+        "History of GI bleed (2024)"
+      ],
+      "allergies": []
+    },
+    "active_medications": [
+      {
+        "name": "Warfarin",
+        "dose": "5 mg",
+        "route": "oral",
+        "frequency": "daily",
+        "started_at": "2025-02-01"
+      },
+      {
+        "name": "Ibuprofen",
+        "dose": "400 mg",
+        "route": "oral",
+        "frequency": "TID",
+        "started_at": "2026-04-16"
+      },
+      {
+        "name": "Metoprolol",
+        "dose": "50 mg",
+        "route": "oral",
+        "frequency": "BID",
+        "started_at": "2025-02-01"
+      }
+    ],
+    "latest_vitals": {
+      "blood_pressure": {
+        "value": 128,
+        "unit": "mmHg systolic",
+        "recorded_at": "2026-04-16T11:00:00Z"
+      },
+      "heart_rate": {
+        "value": 68,
+        "unit": "bpm",
+        "recorded_at": "2026-04-16T11:00:00Z"
+      }
+    },
+    "recent_labs": [
+      {
+        "test_name": "INR",
+        "value": 2.8,
+        "unit": "ratio",
+        "flag": null,
+        "trend": "stable",
+        "collected_at": "2026-04-14"
+      },
+      {
+        "test_name": "Hemoglobin",
+        "value": 12.1,
+        "unit": "g/dL",
+        "flag": null,
+        "trend": "stable",
+        "collected_at": "2026-04-14"
+      }
+    ],
+    "triggering_event": {
+      "type": "medication_prescribed",
+      "summary": "Ibuprofen 400 mg TID prescribed for knee pain",
+      "detail": "NSAID prescribed for osteoarthritis flare. Patient is on chronic warfarin therapy for atrial fibrillation with therapeutic INR of 2.8. History of GI bleed in 2024. Concurrent NSAID + anticoagulant use significantly increases bleeding risk."
+    },
+    "recent_flags": [],
+    "care_team": [
+      {
+        "name": "Dr. Chen",
+        "specialty": "Cardiology",
+        "recent_note_date": "2026-04-10"
+      },
+      {
+        "name": "Dr. Brown",
+        "specialty": "Orthopedic Surgery",
+        "recent_note_date": "2026-04-16"
+      }
+    ]
+  },
+  "expected": {
+    "shouldFlag": true,
+    "expectedCategories": ["drug-interaction"],
+    "minimumSeverity": "critical",
+    "mustMentionInPrompt": [
+      "Warfarin",
+      "Ibuprofen",
+      "GI bleed",
+      "INR"
+    ]
+  }
+}

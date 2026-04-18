@@ -1,0 +1,77 @@
+{
+  "id": "penicillin-allergy-on-amoxicillin",
+  "description": "Patient with documented penicillin allergy prescribed amoxicillin — should flag medication-safety",
+  "context": {
+    "patient": {
+      "age": 45,
+      "sex": "female",
+      "allergy_status": "has_allergies",
+      "active_diagnoses": [
+        "Acute bacterial sinusitis",
+        "Hypertension"
+      ],
+      "allergies": [
+        {
+          "allergen": "Penicillin",
+          "verification_status": "confirmed"
+        }
+      ]
+    },
+    "active_medications": [
+      {
+        "name": "Amoxicillin",
+        "dose": "500 mg",
+        "route": "oral",
+        "frequency": "TID",
+        "started_at": "2026-04-16"
+      },
+      {
+        "name": "Lisinopril",
+        "dose": "10 mg",
+        "route": "oral",
+        "frequency": "daily",
+        "started_at": "2025-06-01"
+      }
+    ],
+    "latest_vitals": {
+      "blood_pressure": {
+        "value": 132,
+        "unit": "mmHg systolic",
+        "recorded_at": "2026-04-16T09:00:00Z"
+      },
+      "heart_rate": {
+        "value": 78,
+        "unit": "bpm",
+        "recorded_at": "2026-04-16T09:00:00Z"
+      },
+      "temperature": {
+        "value": 38.2,
+        "unit": "°C",
+        "recorded_at": "2026-04-16T09:00:00Z"
+      }
+    },
+    "triggering_event": {
+      "type": "medication_prescribed",
+      "summary": "Amoxicillin 500 mg TID prescribed for sinusitis",
+      "detail": "New prescription for amoxicillin entered by covering physician. Patient chart documents confirmed penicillin allergy."
+    },
+    "recent_flags": [],
+    "care_team": [
+      {
+        "name": "Dr. Williams",
+        "specialty": "Internal Medicine",
+        "recent_note_date": "2026-04-16"
+      }
+    ]
+  },
+  "expected": {
+    "shouldFlag": true,
+    "expectedCategories": ["medication-safety"],
+    "minimumSeverity": "critical",
+    "mustMentionInPrompt": [
+      "Penicillin",
+      "Amoxicillin",
+      "confirmed"
+    ]
+  }
+}
