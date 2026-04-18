@@ -34,9 +34,11 @@ export function isOutOfRange(
 /**
  * Map server flag + out-of-range status to a CSS colour variable.
  *
+ * Flag is normalized to lowercase so "H", "h", "high", etc. all match.
+ *
  * Priority order:
  * 1. Server "critical" flag → critical colour
- * 2. Server "H" or "L" flag → warning colour
+ * 2. Server H/L flag (any casing, short or long form) → warning colour
  * 3. Client-detected out-of-range → warning colour
  * 4. Otherwise → default text colour
  */
@@ -44,8 +46,10 @@ export function labValueColor(
   flag: LabFlag | "" | undefined | null,
   outOfRange: boolean,
 ): ValueColor {
-  if (flag === "critical") return "var(--critical)";
-  if (flag === "H" || flag === "L") return "var(--warning)";
+  const norm = flag?.toLowerCase() ?? "";
+  if (norm === "critical") return "var(--critical)";
+  if (norm === "h" || norm === "l" || norm === "high" || norm === "low")
+    return "var(--warning)";
   if (outOfRange) return "var(--warning)";
   return "var(--text-primary)";
 }
