@@ -8,6 +8,7 @@
  */
 
 import type { FlagSeverity, FlagCategory, ClinicalEvent, RuleFlag } from "@carebridge/shared-types";
+import { QTC_PATTERN } from "./drug-interactions.js";
 
 export interface PatientAllergy {
   allergen: string;
@@ -791,6 +792,112 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       "pregnancy-safe alternative. Consult obstetrics and relevant specialty. If continued, ensure informed " +
       "consent and enhanced fetal monitoring.",
     notify_specialties: ["obstetrics", "pharmacology"],
+  },
+  {
+    // CROSS-ACE-ARB-PREG-001 — ACE inhibitors and ARBs are known teratogens.
+    // First-trimester exposure is associated with cardiovascular and CNS
+    // malformations; second- and third-trimester exposure causes fetal
+    // renal failure, oligohydramnios, pulmonary hypoplasia, skull
+    // hypoplasia, and neonatal death (ACE inhibitor fetopathy). FDA labels
+    // both classes as contraindicated in pregnancy (Category D historically;
+    // equivalent current boxed warning). This complements the existing
+    // Category X/D rules, which do NOT cover ACE/ARB.
+    id: "CROSS-ACE-ARB-PREG-001",
+    name: "Pregnancy + ACE inhibitor or ARB (teratogenic / fetopathic)",
+    check: (ctx: PatientContext) => {
+      const isPregnant =
+        ctx.active_diagnosis_codes.some((code) =>
+          PREGNANCY_ICD10_PATTERN.test(code),
+        ) ||
+        ctx.active_diagnoses.some((d) =>
+          PREGNANCY_DESCRIPTION_PATTERN.test(d),
+        );
+      if (!isPregnant) return false;
+      return ctx.active_medications.some((m) => ACE_ARB_PATTERN.test(m));
+    },
+    severity: "critical" as const,
+    category: "medication-safety" as const,
+    summary:
+      "Pregnant patient on ACE inhibitor or ARB — contraindicated, risk of fetal renal failure and malformations",
+    rationale:
+      "ACE inhibitors and ARBs are contraindicated in all trimesters of pregnancy. First-trimester " +
+      "exposure is associated with cardiovascular and CNS malformations. Second- and third-trimester " +
+      "exposure causes ACE inhibitor fetopathy: fetal renal failure, oligohydramnios, pulmonary hypoplasia, " +
+      "skull hypoplasia (membranous calvaria), limb contractures, hypotension, and neonatal death. Both " +
+      "classes carry an FDA boxed warning. Safer alternatives for hypertension in pregnancy include " +
+      "labetalol, nifedipine, and methyldopa.",
+    suggested_action:
+      "IMMEDIATE medication review required. Discontinue the ACE inhibitor or ARB and switch to a " +
+      "pregnancy-safe antihypertensive (labetalol, nifedipine, or methyldopa). Consult obstetrics and " +
+      "maternal-fetal medicine. Assess fetal exposure duration; if past 18 weeks, obtain an urgent " +
+      "fetal ultrasound to evaluate amniotic fluid volume and renal anatomy.",
+    notify_specialties: ["obstetrics", "cardiology", "pharmacology"],
+  },
+  {
+    // CROSS-QT-HYPOK-001 — Co-occurrence of any QT-prolonging agent with
+    // hypokalemia (K+ < 3.5 mEq/L) sharply elevates risk of torsades de
+    // pointes. CredibleMeds and FDA QT-prolongation labeling flag hypokalemia
+    // as a key modifier. Neither DI-QTC-COMBO (requires two QT drugs) nor
+    // the individual critical-values potassium rule (no drug context) covers
+    // this clinically important combination. Severity follows potassium depth:
+    // K+ < 3.0 is critical (aligned with critical-values.ts), K+ 3.0–3.4 is
+    // warning.
+    id: "CROSS-QT-HYPOK-001",
+    name: "QT-prolonging drug + hypokalemia (torsades risk)",
+    check: (ctx: PatientContext) => {
+      const onQTDrug = ctx.active_medications.some((m) => QTC_PATTERN.test(m));
+      if (!onQTDrug) return false;
+      const k = ctx.recent_labs?.find((l) =>
+        /^(potassium|k\+?)$/i.test(l.name.trim()),
+      )?.value;
+      if (k === undefined) return false;
+      return k < 3.5;
+    },
+    buildSeverity: (ctx: PatientContext) => {
+      const k = ctx.recent_labs?.find((l) =>
+        /^(potassium|k\+?)$/i.test(l.name.trim()),
+      )?.value;
+      // Severe hypokalemia (K+ < 3.0) compounds torsades risk and is
+      // independently critical per critical-values.ts. Escalate accordingly.
+      if (k !== undefined && k < 3.0) return "critical";
+      return "warning";
+    },
+    severity: "warning" as const,
+    category: "cross-specialty" as const,
+    summary:
+      "Patient on QT-prolonging medication with hypokalemia (K+ < 3.5) — elevated risk of torsades de pointes",
+    rationale:
+      "Hypokalemia prolongs ventricular repolarization by reducing the outward IKr current, independently " +
+      "increasing QT interval. When combined with a QT-prolonging drug (class I/III antiarrhythmics, " +
+      "antipsychotics, macrolides, fluoroquinolones, ondansetron, methadone, citalopram/escitalopram, " +
+      "or other agents on the CredibleMeds QTDrugs list), the additive effect markedly elevates the risk " +
+      "of torsades de pointes, a polymorphic ventricular tachycardia that can degenerate to ventricular " +
+      "fibrillation. Risk compounds further with hypomagnesemia, bradycardia, female sex, heart failure, " +
+      "and hepatic/renal impairment.",
+    suggested_action:
+      "Replete potassium to > 4.0 mEq/L. Check magnesium concurrently and repeat if low (hypomagnesemia " +
+      "impairs potassium correction and independently prolongs QT). Obtain baseline ECG and calculate " +
+      "QTc — if > 500 ms or > 60 ms above baseline, hold the QT-prolonging agent and consult cardiology. " +
+      "Continuous telemetry until electrolytes corrected.",
+    buildSuggestedAction: (ctx: PatientContext) => {
+      const k = ctx.recent_labs?.find((l) =>
+        /^(potassium|k\+?)$/i.test(l.name.trim()),
+      )?.value;
+      const base =
+        "Replete potassium to > 4.0 mEq/L. Check magnesium concurrently and repeat if low (hypomagnesemia " +
+        "impairs potassium correction and independently prolongs QT). Obtain baseline ECG and calculate " +
+        "QTc — if > 500 ms or > 60 ms above baseline, hold the QT-prolonging agent and consult cardiology. " +
+        "Continuous telemetry until electrolytes corrected.";
+      if (k !== undefined && k < 3.0) {
+        return (
+          base +
+          " Severe hypokalemia (K+ < 3.0): initiate IV potassium replacement with continuous telemetry " +
+          "monitoring and hold the QT-prolonging agent pending electrolyte correction and ECG review."
+        );
+      }
+      return base;
+    },
+    notify_specialties: ["cardiology"],
   },
 ];
 

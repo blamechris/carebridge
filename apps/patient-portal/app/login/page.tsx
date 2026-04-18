@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import type { UserRole } from "@carebridge/shared-types";
 import { useAuth } from "@/lib/auth";
 import { trpcVanilla } from "@/lib/trpc";
 import { PasswordInput } from "@carebridge/portal-shared/password-input";
@@ -33,7 +34,7 @@ export default function LoginPage() {
         return;
       }
       const loginResult = result as {
-        user: { id: string; name: string; email: string; role: string };
+        user: { id: string; name: string; email: string; role: UserRole };
         session: { id: string };
       };
       setSession(loginResult.user, loginResult.session.id);
@@ -165,7 +166,11 @@ export default function LoginPage() {
               </div>
 
               {error && (
-                <div role="alert" style={{ color: "#ef4444", fontSize: "0.8rem", marginBottom: 12 }}>
+                <div
+                  role="alert"
+                  aria-live="assertive"
+                  style={{ color: "#ef4444", fontSize: "0.8rem", marginBottom: 12 }}
+                >
                   {error}
                 </div>
               )}
@@ -234,7 +239,11 @@ export default function LoginPage() {
               </div>
 
               {error && (
-                <div role="alert" style={{ color: "#ef4444", fontSize: "0.8rem", marginBottom: 12 }}>
+                <div
+                  role="alert"
+                  aria-live="assertive"
+                  style={{ color: "#ef4444", fontSize: "0.8rem", marginBottom: 12 }}
+                >
                   {error}
                 </div>
               )}

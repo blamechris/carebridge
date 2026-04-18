@@ -15,6 +15,8 @@ import type { ClinicalEvent } from "@carebridge/shared-types";
 
 export type { ClinicalEvent };
 
+export { emitClinicalEvent } from "./emit.js";
+
 export type OutboxRow = InferSelectModel<typeof failedClinicalEvents>;
 
 /** Rows with retry_count equal to this after a failure are parked as `failed`. */

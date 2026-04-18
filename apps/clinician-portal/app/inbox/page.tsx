@@ -240,6 +240,7 @@ function InboxContent() {
                     className="btn btn-success btn-sm"
                     onClick={() => openModal(flag, "acknowledge")}
                     disabled={isSubmitting}
+                    aria-label={`Acknowledge flag: ${flag.summary}`}
                   >
                     Acknowledge
                   </button>
@@ -247,6 +248,7 @@ function InboxContent() {
                     className="btn btn-primary btn-sm"
                     onClick={() => openModal(flag, "resolve")}
                     disabled={isSubmitting}
+                    aria-label={`Resolve flag: ${flag.summary}`}
                   >
                     Resolve
                   </button>
@@ -254,6 +256,7 @@ function InboxContent() {
                     className="btn btn-ghost btn-sm"
                     onClick={() => openModal(flag, "dismiss")}
                     disabled={isSubmitting}
+                    aria-label={`Dismiss flag: ${flag.summary}`}
                   >
                     Dismiss
                   </button>
