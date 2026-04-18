@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import type { LabFlag } from "@carebridge/shared-types";
 import {
   isOutOfRange,
   labValueColor,
@@ -78,6 +79,60 @@ describe("labValueColor", () => {
   it("returns default colour when in range and no flag", () => {
     expect(labValueColor("", false)).toBe("var(--text-primary)");
     expect(labValueColor(undefined, false)).toBe("var(--text-primary)");
+  });
+
+  // --- Issue #795: expanded labValueColor coverage ---
+
+  it("returns warning colour for lowercase short flags 'h' and 'l'", () => {
+    expect(labValueColor("h" as LabFlag, false)).toBe("var(--warning)");
+    expect(labValueColor("l" as LabFlag, false)).toBe("var(--warning)");
+  });
+
+  it("returns warning colour for long-form flags 'high' and 'low'", () => {
+    expect(labValueColor("high" as LabFlag, false)).toBe("var(--warning)");
+    expect(labValueColor("low" as LabFlag, false)).toBe("var(--warning)");
+  });
+
+  it("returns warning colour for uppercase long-form flag 'HIGH'", () => {
+    expect(labValueColor("HIGH" as LabFlag, false)).toBe("var(--warning)");
+  });
+
+  it("returns warning colour for mixed-case long-form flags", () => {
+    expect(labValueColor("High" as LabFlag, false)).toBe("var(--warning)");
+    expect(labValueColor("Low" as LabFlag, false)).toBe("var(--warning)");
+    expect(labValueColor("LOW" as LabFlag, false)).toBe("var(--warning)");
+  });
+
+  it("returns critical colour for 'critical' in all casings", () => {
+    expect(labValueColor("critical" as LabFlag, false)).toBe("var(--critical)");
+    expect(labValueColor("CRITICAL" as LabFlag, false)).toBe("var(--critical)");
+    expect(labValueColor("Critical" as LabFlag, false)).toBe("var(--critical)");
+  });
+
+  it("returns default colour for null flag with outOfRange=false", () => {
+    expect(labValueColor(null, false)).toBe("var(--text-primary)");
+  });
+
+  it("returns default colour for undefined flag with outOfRange=false", () => {
+    expect(labValueColor(undefined, false)).toBe("var(--text-primary)");
+  });
+
+  it("returns default colour for empty string flag with outOfRange=false", () => {
+    expect(labValueColor("", false)).toBe("var(--text-primary)");
+  });
+
+  it("server flag 'H' takes precedence over outOfRange=false", () => {
+    // flag present but outOfRange is false — flag wins
+    expect(labValueColor("H", false)).toBe("var(--warning)");
+  });
+
+  it("server flag takes precedence over client outOfRange", () => {
+    // critical flag + outOfRange=true → critical (not warning)
+    expect(labValueColor("critical", true)).toBe("var(--critical)");
+    // H flag + outOfRange=true → warning (flag matched, not fallthrough)
+    expect(labValueColor("H", true)).toBe("var(--warning)");
+    // H flag + outOfRange=false → warning (flag alone sufficient)
+    expect(labValueColor("H", false)).toBe("var(--warning)");
   });
 });
 

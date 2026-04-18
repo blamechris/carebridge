@@ -1,5 +1,5 @@
 import { pgTable, text, real, index, jsonb } from "drizzle-orm/pg-core";
-import { encryptedText } from "../encryption.js";
+import { encryptedText, encryptedNumeric } from "../encryption.js";
 import { patients } from "./patients.js";
 
 export const medications = pgTable("medications", {
@@ -45,8 +45,8 @@ export const vitals = pgTable("vitals", {
   recorded_at: text("recorded_at").notNull(),
   type: text("type").notNull(),
   loinc_code: text("loinc_code"),
-  value_primary: real("value_primary").notNull(),
-  value_secondary: real("value_secondary"),
+  value_primary: encryptedNumeric("value_primary").notNull(),
+  value_secondary: encryptedNumeric("value_secondary"),
   unit: text("unit").notNull(),
   notes: encryptedText("notes"),
   provider_id: text("provider_id"),
@@ -78,11 +78,11 @@ export const labResults = pgTable("lab_results", {
   panel_id: text("panel_id").notNull().references(() => labPanels.id),
   test_name: text("test_name").notNull(),
   test_code: text("test_code"),
-  value: real("value").notNull(),
+  value: encryptedNumeric("value").notNull(),
   unit: text("unit").notNull(),
-  reference_low: real("reference_low"),
-  reference_high: real("reference_high"),
-  flag: text("flag"),
+  reference_low: encryptedNumeric("reference_low"),
+  reference_high: encryptedNumeric("reference_high"),
+  flag: encryptedText("flag"),
   notes: encryptedText("notes"),
   created_at: text("created_at").notNull(),
 }, (table) => [
