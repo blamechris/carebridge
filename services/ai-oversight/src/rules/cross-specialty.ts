@@ -302,6 +302,64 @@ function classifyBleedingSeverity(symptoms: string[]): "critical" | "warning" | 
 const ANTICOAG_BLEED_ANY_PATTERN =
   /hemorrhage|haemorrhage|hematemesis|melena|hematochezia|hemoptysis|intracranial bleed|gi bleed|gastrointestinal bleed|retroperitoneal|blood in stool|hematuria|blood in urine|epistaxis|nosebleed|post.?procedural bleeding|bleeding|bruis|petechiae|ecchymosis/i;
 
+/**
+ * Lab-name pattern for serum potassium. Matches "potassium", "K", "K+" with
+ * optional surrounding whitespace. Shared by CROSS-QT-HYPOK-001 and
+ * CROSS-THIAZIDE-HYPOK-001 so the set of accepted aliases evolves in lockstep.
+ */
+const POTASSIUM_LAB_NAME_PATTERN = /^(potassium|k\+?)$/i;
+
+/**
+ * Look up the most recent serum potassium value in mEq/L from the patient's
+ * `recent_labs` context. Returns undefined when the lab is absent. K+ in mEq/L
+ * and mmol/L are numerically equivalent so no unit conversion is performed.
+ *
+ * Extracted per issue #855 to keep CROSS-QT-HYPOK-001's check / buildSeverity /
+ * buildSuggestedAction paths aligned, and re-used by CROSS-THIAZIDE-HYPOK-001.
+ */
+export function getRecentPotassium(ctx: PatientContext): number | undefined {
+  return ctx.recent_labs?.find((l) => POTASSIUM_LAB_NAME_PATTERN.test(l.name.trim()))
+    ?.value;
+}
+
+/**
+ * Lab-name pattern for estimated glomerular filtration rate (eGFR), reported
+ * in mL/min/1.73m². Accepts "eGFR", "GFR", and "Estimated GFR" (case-
+ * insensitive, tolerant of surrounding whitespace).
+ */
+const EGFR_LAB_NAME_PATTERN = /^(e?gfr|estimated\s*gfr)$/i;
+
+/**
+ * Look up the most recent eGFR value in mL/min/1.73m² from the patient's
+ * `recent_labs` context. Returns undefined when the lab is absent.
+ *
+ * Used by CROSS-METFORMIN-GFR-001 to detect metformin contraindication
+ * territory (eGFR < 30).
+ */
+export function getRecentEGFR(ctx: PatientContext): number | undefined {
+  return ctx.recent_labs?.find((l) => EGFR_LAB_NAME_PATTERN.test(l.name.trim()))
+    ?.value;
+}
+
+/**
+ * Thiazide diuretic name pattern. Distinct from LOOP_THIAZIDE_DIURETIC_PATTERN
+ * (which also includes loop diuretics for the triple-whammy rule) — this list
+ * is thiazide-only because only thiazides have the chronic-hypokalemia
+ * exacerbation profile targeted by CROSS-THIAZIDE-HYPOK-001. Loop diuretics
+ * cause hypokalemia too but have different kinetics and monitoring needs.
+ */
+const THIAZIDE_PATTERN =
+  /hydrochlorothiazide|hctz|chlorthalidone|thalitone|indapamide|lozol|metolazone|zaroxolyn|chlorothiazide|diuril/i;
+
+/**
+ * Metformin name pattern (generic + brand combinations). Includes fixed-dose
+ * combination brand names commonly prescribed in type 2 diabetes, so the rule
+ * fires regardless of whether the EHR records "metformin" plainly or the
+ * branded combo.
+ */
+const METFORMIN_PATTERN =
+  /\bmetformin\b|glucophage|glumetza|fortamet|riomet|janumet|jentadueto|kombiglyze|synjardy|xigduo|invokamet|kazano|prandimet/i;
+
 interface CrossSpecialtyRule {
   id: string;
   name: string;
@@ -847,16 +905,12 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
     check: (ctx: PatientContext) => {
       const onQTDrug = ctx.active_medications.some((m) => QTC_PATTERN.test(m));
       if (!onQTDrug) return false;
-      const k = ctx.recent_labs?.find((l) =>
-        /^(potassium|k\+?)$/i.test(l.name.trim()),
-      )?.value;
+      const k = getRecentPotassium(ctx);
       if (k === undefined) return false;
       return k < 3.5;
     },
     buildSeverity: (ctx: PatientContext) => {
-      const k = ctx.recent_labs?.find((l) =>
-        /^(potassium|k\+?)$/i.test(l.name.trim()),
-      )?.value;
+      const k = getRecentPotassium(ctx);
       // Severe hypokalemia (K+ < 3.0) compounds torsades risk and is
       // independently critical per critical-values.ts. Escalate accordingly.
       if (k !== undefined && k < 3.0) return "critical";
@@ -880,9 +934,7 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       "QTc — if > 500 ms or > 60 ms above baseline, hold the QT-prolonging agent and consult cardiology. " +
       "Continuous telemetry until electrolytes corrected.",
     buildSuggestedAction: (ctx: PatientContext) => {
-      const k = ctx.recent_labs?.find((l) =>
-        /^(potassium|k\+?)$/i.test(l.name.trim()),
-      )?.value;
+      const k = getRecentPotassium(ctx);
       const base =
         "Replete potassium to > 4.0 mEq/L. Check magnesium concurrently and repeat if low (hypomagnesemia " +
         "impairs potassium correction and independently prolongs QT). Obtain baseline ECG and calculate " +
@@ -898,6 +950,117 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       return base;
     },
     notify_specialties: ["cardiology"],
+  },
+  {
+    // CROSS-METFORMIN-GFR-001 — Metformin is contraindicated at eGFR < 30
+    // mL/min/1.73m² per FDA labeling (2016 update) and ADA guidelines because
+    // impaired renal clearance allows metformin accumulation, raising the risk
+    // of life-threatening lactic acidosis (MALA — metformin-associated lactic
+    // acidosis). Between eGFR 30–45 metformin can be continued at reduced
+    // dose with monitoring, but below 30 it must be stopped. This rule is
+    // complementary to DI-METFORMIN-CONTRAST (which addresses transient AKI
+    // risk around contrast administration) and targets chronic/stable low
+    // eGFR that is a hard contraindication.
+    //
+    // Units: eGFR in mL/min/1.73m². Threshold is strictly < 30 to mirror FDA
+    // labeling exactly; eGFR = 30 does not fire.
+    id: "CROSS-METFORMIN-GFR-001",
+    name: "Metformin + eGFR < 30 (contraindicated, MALA risk)",
+    check: (ctx: PatientContext) => {
+      const onMetformin = ctx.active_medications.some((m) =>
+        METFORMIN_PATTERN.test(m),
+      );
+      if (!onMetformin) return false;
+      const egfr = getRecentEGFR(ctx);
+      if (egfr === undefined) return false;
+      return egfr < 30;
+    },
+    severity: "critical" as const,
+    category: "cross-specialty" as const,
+    summary:
+      "Patient on metformin with eGFR < 30 mL/min/1.73m² — contraindicated, risk of lactic acidosis",
+    rationale:
+      "Metformin is renally cleared unchanged; accumulation in advanced renal impairment drives mitochondrial " +
+      "inhibition of gluconeogenesis and lactate oxidation, producing metformin-associated lactic acidosis " +
+      "(MALA). MALA carries a mortality of 30–50%. FDA labeling (updated 2016) and ADA guidelines " +
+      "contraindicate metformin at eGFR < 30 mL/min/1.73m². Between 30 and 45, metformin may be continued at " +
+      "reduced dose with monitoring; below 30 it must be discontinued.",
+    suggested_action:
+      "Discontinue metformin. Switch to a renally-appropriate glycemic agent (e.g., DPP-4 inhibitor with " +
+      "renal dose adjustment, insulin, or GLP-1 agonist per current eGFR). Assess for signs of lactic acidosis " +
+      "(hyperventilation, malaise, nausea, non-specific abdominal pain); obtain venous blood gas and lactate " +
+      "if any concern. Nephrology and endocrinology consultation recommended.",
+    notify_specialties: ["nephrology", "endocrinology"],
+  },
+  {
+    // CROSS-THIAZIDE-HYPOK-001 — Thiazide diuretics induce potassium wasting
+    // at the distal convoluted tubule. Starting or continuing a thiazide in a
+    // patient who already has hypokalemia worsens the electrolyte deficit and
+    // increases the risk of cardiac arrhythmia, muscle weakness, and
+    // rhabdomyolysis. Loop diuretics also cause hypokalemia but have
+    // different kinetics, so this rule intentionally only matches thiazides.
+    //
+    // Overlap with CROSS-QT-HYPOK-001 is deliberate and left un-deduplicated:
+    // the two rules address different mechanisms (electrolyte worsening vs.
+    // torsades risk) and generate different actions (hold thiazide / replace
+    // K+ vs. QTc monitoring and cardiology review). Firing both gives the
+    // reviewer a complete picture.
+    //
+    // Units: K+ in mEq/L (numerically equivalent to mmol/L). Severity mirrors
+    // CROSS-QT-HYPOK-001: warning at K+ 3.0–3.4, critical when K+ < 3.0.
+    id: "CROSS-THIAZIDE-HYPOK-001",
+    name: "Thiazide diuretic + hypokalemia (electrolyte worsening)",
+    check: (ctx: PatientContext) => {
+      const onThiazide = ctx.active_medications.some((m) =>
+        THIAZIDE_PATTERN.test(m),
+      );
+      if (!onThiazide) return false;
+      const k = getRecentPotassium(ctx);
+      if (k === undefined) return false;
+      return k < 3.5;
+    },
+    buildSeverity: (ctx: PatientContext) => {
+      const k = getRecentPotassium(ctx);
+      // Severe hypokalemia (K+ < 3.0) is independently critical per
+      // critical-values.ts and mirrors the escalation pattern used by
+      // CROSS-QT-HYPOK-001.
+      if (k !== undefined && k < 3.0) return "critical";
+      return "warning";
+    },
+    severity: "warning" as const,
+    category: "cross-specialty" as const,
+    summary:
+      "Patient on thiazide diuretic with hypokalemia (K+ < 3.5) — elevated arrhythmia risk",
+    rationale:
+      "Thiazide diuretics (hydrochlorothiazide, chlorthalidone, indapamide, metolazone) increase urinary " +
+      "potassium excretion by delivering more sodium to the cortical collecting duct and stimulating " +
+      "aldosterone-mediated potassium secretion. Continuing a thiazide in an already hypokalemic patient " +
+      "exacerbates the deficit and raises the risk of ventricular arrhythmia, muscle weakness, leg cramps, " +
+      "rhabdomyolysis, and worsened glucose tolerance. Risk compounds with concurrent QT-prolonging drugs, " +
+      "heart failure, and hypomagnesemia.",
+    suggested_action:
+      "Replete potassium toward > 4.0 mEq/L. Consider holding the thiazide until K+ is corrected, or " +
+      "switching to a potassium-sparing regimen (ACE-I/ARB + aldosterone antagonist, or adding amiloride). " +
+      "Check serum magnesium concurrently and replete if low. Review other contributors (low dietary K+, " +
+      "concurrent corticosteroid, GI losses). Recheck electrolytes within 1–2 weeks.",
+    buildSuggestedAction: (ctx: PatientContext) => {
+      const k = getRecentPotassium(ctx);
+      const base =
+        "Replete potassium toward > 4.0 mEq/L. Consider holding the thiazide until K+ is corrected, or " +
+        "switching to a potassium-sparing regimen (ACE-I/ARB + aldosterone antagonist, or adding amiloride). " +
+        "Check serum magnesium concurrently and replete if low. Review other contributors (low dietary K+, " +
+        "concurrent corticosteroid, GI losses). Recheck electrolytes within 1–2 weeks.";
+      if (k !== undefined && k < 3.0) {
+        return (
+          base +
+          " Severe hypokalemia (K+ < 3.0): hold the thiazide, initiate urgent potassium replacement, " +
+          "obtain ECG to assess for arrhythmogenic changes, and consider continuous telemetry until " +
+          "electrolytes are corrected."
+        );
+      }
+      return base;
+    },
+    notify_specialties: ["nephrology", "cardiology"],
   },
 ];
 

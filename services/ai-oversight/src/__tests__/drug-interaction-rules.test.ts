@@ -136,3 +136,62 @@ describe("DI-QTC-COMBO brand/generic dedup", () => {
     });
   });
 });
+
+describe("DI-STATIN-GEMFIBROZIL — severity upgrade (issue #263)", () => {
+  // Rationale: gemfibrozil inhibits statin glucuronidation and raises plasma
+  // statin levels sharply, producing a rhabdomyolysis rate that led Pfizer to
+  // withdraw cerivastatin. Clinical consensus (FDA labeling, ACC/AHA, NLA) is
+  // that gemfibrozil + statin is contraindicated for most statins; fenofibrate
+  // is the preferred fibrate when combination therapy is necessary and
+  // remains at warning-level risk.
+  it("flags simvastatin + gemfibrozil as CRITICAL (rhabdomyolysis contraindication)", () => {
+    const flags = checkDrugInteractions(["Simvastatin 40mg", "Gemfibrozil 600mg"]);
+    const interaction = flags.find((f) => f.rule_id === "DI-STATIN-GEMFIBROZIL");
+    expect(interaction).toBeDefined();
+    expect(interaction!.severity).toBe("critical");
+    expect(interaction!.category).toBe("drug-interaction");
+  });
+
+  it("flags atorvastatin + gemfibrozil as CRITICAL", () => {
+    const flags = checkDrugInteractions(["Atorvastatin 20mg", "Gemfibrozil 600mg"]);
+    const interaction = flags.find((f) => f.rule_id === "DI-STATIN-GEMFIBROZIL");
+    expect(interaction).toBeDefined();
+    expect(interaction!.severity).toBe("critical");
+  });
+
+  it("flags rosuvastatin + gemfibrozil as CRITICAL", () => {
+    const flags = checkDrugInteractions(["Rosuvastatin 10mg", "Gemfibrozil 600mg"]);
+    const interaction = flags.find((f) => f.rule_id === "DI-STATIN-GEMFIBROZIL");
+    expect(interaction).toBeDefined();
+    expect(interaction!.severity).toBe("critical");
+  });
+
+  it("keeps statin + fenofibrate at WARNING (separate rule DI-STATIN-FENOFIBRATE)", () => {
+    const flags = checkDrugInteractions(["Simvastatin 40mg", "Fenofibrate 145mg"]);
+    const fenoFlag = flags.find((f) => f.rule_id === "DI-STATIN-FENOFIBRATE");
+    expect(fenoFlag).toBeDefined();
+    expect(fenoFlag!.severity).toBe("warning");
+
+    const gemFlag = flags.find((f) => f.rule_id === "DI-STATIN-GEMFIBROZIL");
+    expect(gemFlag).toBeUndefined();
+  });
+
+  it("tricor (fenofibrate brand) + statin also fires as WARNING", () => {
+    const flags = checkDrugInteractions(["Atorvastatin 40mg", "Tricor 145mg"]);
+    const fenoFlag = flags.find((f) => f.rule_id === "DI-STATIN-FENOFIBRATE");
+    expect(fenoFlag).toBeDefined();
+    expect(fenoFlag!.severity).toBe("warning");
+  });
+
+  it("does NOT fire gemfibrozil rule without a statin", () => {
+    const flags = checkDrugInteractions(["Gemfibrozil 600mg", "Aspirin 81mg"]);
+    expect(flags.find((f) => f.rule_id === "DI-STATIN-GEMFIBROZIL")).toBeUndefined();
+  });
+
+  it("notifies cardiology for statin + gemfibrozil", () => {
+    const flags = checkDrugInteractions(["Simvastatin 40mg", "Gemfibrozil 600mg"]);
+    const interaction = flags.find((f) => f.rule_id === "DI-STATIN-GEMFIBROZIL");
+    expect(interaction).toBeDefined();
+    expect(interaction!.notify_specialties).toContain("cardiology");
+  });
+});

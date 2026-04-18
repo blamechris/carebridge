@@ -313,13 +313,20 @@ describe("checkCriticalValues — lab heuristic fallback", () => {
     expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-HEMOGLOBIN");
   });
 
-  it("does not flag unknown lab with no reference and no COMMON_LAB_TESTS entry", () => {
+  it("emits an info-severity 'unable-to-evaluate' signal for unknown lab with no reference and no COMMON_LAB_TESTS entry (issue #835)", () => {
+    // Issue #835: previously this result was silently dropped. The rule
+    // layer cannot assess the value against any threshold, but it also
+    // must not leave a totally silent lab result invisible to downstream
+    // LLM review. Emit info severity (not critical — we do not know the
+    // value is abnormal) to surface the result without over-alerting.
     const flags = checkCriticalValues(
       makeLabEvent([
         { test_name: "Obscure Marker X", value: 999, unit: "U/L" },
       ]),
     );
-    expect(flags).toHaveLength(0);
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("info");
+    expect(flags[0]!.rule_id).toBe("WARNING-LAB-UNEVALUATED-OBSCURE_MARKER_X");
   });
 });
 
@@ -713,10 +720,12 @@ describe("checkCriticalValues — unrecognized flag handling (issues #834, #837)
     expect(unrecognizedCalls).toHaveLength(0);
   });
 
-  it("maps HL7v2 'HH' (panic high) to a warning flag with direction='high'", () => {
-    // HL7v2 abnormal-flags: "HH" means panic/critical-high. Treat as warning
-    // (not critical) to avoid over-alerting pending principled mapping —
-    // see issue #834 discussion. Warning is the floor, not the ceiling.
+  it("maps HL7v2 'HH' (panic high) to a critical flag with direction='high' (issues #849, #853)", () => {
+    // HL7v2 abnormal-flags: "HH" means panic/critical-high. Promoting HH to
+    // critical matches HL7v2 semantics (panic > out-of-range) AND naturally
+    // resolves the severity-ceiling concern of issue #849: even though the
+    // numeric range-check branch is gated on `severity === null`, the
+    // HL7 mapping now emits the top severity so nothing is being suppressed.
     const flags = checkCriticalValues(
       makeLabEvent([
         {
@@ -728,14 +737,14 @@ describe("checkCriticalValues — unrecognized flag handling (issues #834, #837)
       ]),
     );
     expect(flags).toHaveLength(1);
-    expect(flags[0]!.severity).toBe("warning");
-    expect(flags[0]!.summary).toContain("High");
+    expect(flags[0]!.severity).toBe("critical");
+    expect(flags[0]!.summary.toLowerCase()).toContain("high");
     // This mapping should still emit the warn log so operators notice
     // non-enum flags arriving through FHIR/HL7 ingress paths.
     expect(mockWarn).toHaveBeenCalled();
   });
 
-  it("maps HL7v2 'LL' (panic low) to a warning flag with direction='low'", () => {
+  it("maps HL7v2 'LL' (panic low) to a critical flag with direction='low' (issues #849, #853)", () => {
     const flags = checkCriticalValues(
       makeLabEvent([
         {
@@ -747,8 +756,220 @@ describe("checkCriticalValues — unrecognized flag handling (issues #834, #837)
       ]),
     );
     expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("critical");
+    expect(flags[0]!.summary.toLowerCase()).toContain("low");
+    expect(mockWarn).toHaveBeenCalled();
+  });
+
+  it("emits critical severity for LL even when numeric range check would have agreed (issue #849 regression guard)", () => {
+    // The original #849 scenario: LL with value 0.1, reference_low 3.5,
+    // reference_high 5.0. Range-deviation check would fire critical
+    // (0.1 < 3.5 - 1.5 = 2.0), but the HL7 flag branch pre-empted with
+    // warning, suppressing the signal. Pinning critical severity ensures
+    // the panic-low lab is not silently compressed to warning.
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Nonstandard Electrolyte",
+          value: 0.1,
+          unit: "mEq/L",
+          reference_low: 3.5,
+          reference_high: 5.0,
+          flag: "LL",
+        },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("critical");
+    expect(flags[0]!.summary.toLowerCase()).toContain("low");
+  });
+
+  it("emits critical severity for HH even when value is far above reference_high (issue #849 regression guard)", () => {
+    // Symmetric counterpart: HH with value 999, reference_high 200.
+    // Single-letter 'H' remains warning (unchanged); 'HH' is the panic-level
+    // signal from the lab and must reach critical severity.
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Nonstandard Electrolyte",
+          value: 999,
+          unit: "mEq/L",
+          reference_low: 100,
+          reference_high: 200,
+          flag: "HH",
+        },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("critical");
+    expect(flags[0]!.summary.toLowerCase()).toContain("high");
+  });
+
+  it("preserves single-letter 'H' → warning semantics (unchanged from PR #842)", () => {
+    // HL7v2 single-letter H is "out of reference range high" — not panic.
+    // It remains warning-severity; only HH/LL escalate to critical. This
+    // test guards against an accidental promotion of H/L alongside HH/LL.
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Novel Biomarker",
+          value: 42,
+          unit: "pg/mL",
+          flag: "H",
+        },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("warning");
+    expect(flags[0]!.summary).toContain("High");
+  });
+
+  it("preserves single-letter 'L' → warning semantics (unchanged from PR #842)", () => {
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Novel Biomarker",
+          value: 0.1,
+          unit: "pg/mL",
+          flag: "L",
+        },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
     expect(flags[0]!.severity).toBe("warning");
     expect(flags[0]!.summary).toContain("Low");
-    expect(mockWarn).toHaveBeenCalled();
+  });
+});
+
+// ─── No-flag / no-range / unknown-name gap (issue #835) ──────────
+// A lab result with no `flag`, no `reference_low` / `reference_high`, and
+// no entry in `COMMON_LAB_TESTS` currently slips through the deterministic
+// layer entirely. Even a clinically catastrophic "Potassium Level" (non-
+// canonical name) with value 8.0 receives no signal. This is the no-flag
+// variant of the issue #244 silent-drop class.
+//
+// Fix: emit an info-severity "unable-to-evaluate" signal that gives the
+// downstream LLM review pipeline visibility into the result, and log a
+// structured `lab_unevaluated` warning so operators can quantify the gap.
+// Critical-severity is intentionally NOT used — we do not know whether the
+// value is abnormal. The info-severity flag exists specifically to surface
+// the result for LLM context assembly rather than to fire a clinical alert.
+describe("checkCriticalValues — no-flag/no-range gap (issue #835)", () => {
+  beforeEach(() => {
+    mockWarn.mockClear();
+  });
+
+  it("emits an info-severity 'lab-unevaluated' signal when a lab has no flag, no reference range, and no COMMON_LAB_TESTS entry", () => {
+    // Exact scenario from issue #835: non-canonical "Potassium Level" name
+    // with value 8.0 (clinically catastrophic) but no flag and no range.
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Potassium Level",
+          value: 8.0,
+          unit: "mEq/L",
+        },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("info");
+    expect(flags[0]!.category).toBe("critical-value");
+    expect(flags[0]!.rule_id).toBe("WARNING-LAB-UNEVALUATED-POTASSIUM_LEVEL");
+    // Summary should name the test so downstream LLM review has context.
+    expect(flags[0]!.summary).toContain("Potassium Level");
+    expect(flags[0]!.summary).toContain("8");
+  });
+
+  it("also emits a structured logger.warn('lab_unevaluated') for observability", () => {
+    checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Rare Obscure Analyte",
+          value: 42,
+          unit: "U/L",
+        },
+      ]),
+    );
+    const call = mockWarn.mock.calls.find(
+      ([msg]) => typeof msg === "string" && msg.includes("lab_unevaluated"),
+    );
+    expect(call).toBeDefined();
+    const meta = call![1] as Record<string, unknown>;
+    expect(meta.test_name).toBe("Rare Obscure Analyte");
+    expect(meta.value).toBe(42);
+    expect(meta.unit).toBe("U/L");
+  });
+
+  it("does NOT emit an unevaluated signal when the lab is in COMMON_LAB_TESTS", () => {
+    // Hemoglobin with a normal value 14.0 is in COMMON_LAB_TESTS and within
+    // the typical range; the existing fallback correctly returns nothing.
+    // The new unevaluated branch must NOT activate for labs the rule can
+    // evaluate (even when the evaluation concludes "normal").
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        { test_name: "Hemoglobin", value: 14.0, unit: "g/dL" },
+      ]),
+    );
+    expect(flags).toHaveLength(0);
+  });
+
+  it("does NOT emit an unevaluated signal when reference_low/reference_high are provided", () => {
+    // A per-result reference range means the lab CAN be evaluated by the
+    // range-deviation branch. Value 10 is mid-range — no flag expected.
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Rare Analyte",
+          value: 10,
+          unit: "U/L",
+          reference_low: 5,
+          reference_high: 15,
+        },
+      ]),
+    );
+    expect(flags).toHaveLength(0);
+  });
+
+  it("does NOT emit an unevaluated signal when the lab provides a flag", () => {
+    // Any flag value (even an unrecognized one) means the lab has expressed
+    // intent about the result. The unevaluated branch is only for totally
+    // silent results where we have no signal at all.
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Rare Analyte",
+          value: 42,
+          unit: "U/L",
+          flag: "abnormal",
+        },
+      ]),
+    );
+    // 'abnormal' is a non-enum flag — logger.warn fires via the existing
+    // unrecognized-flag branch, but no flag is emitted (fall-through).
+    expect(flags).toHaveLength(0);
+  });
+
+  it("does NOT emit an unevaluated signal for explicit critical thresholds (Potassium canonical name)", () => {
+    // The canonical "Potassium" name matches CRITICAL_LAB_THRESHOLDS, so the
+    // explicit threshold fires and the unevaluated branch is unreachable.
+    // This confirms issue #835's observation — the gap is specifically for
+    // non-canonical names that slip past matching.
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        { test_name: "Potassium", value: 8.0, unit: "mEq/L" },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("critical");
+    expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-POTASSIUM");
+  });
+
+  it("does NOT emit an unevaluated signal for a canonical vital event", () => {
+    // The unevaluated branch should only apply to lab.resulted events. A
+    // vital.created event with a normal value must not trigger it.
+    const flags = checkCriticalValues(
+      makeVitalEvent({ type: "heart_rate", value_primary: 75 }),
+    );
+    expect(flags).toHaveLength(0);
   });
 });
