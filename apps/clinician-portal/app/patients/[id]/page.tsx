@@ -23,6 +23,7 @@ import {
   type StalenessTier,
 } from "@/lib/vitals-staleness";
 import { formatReferenceRange } from "@/lib/formatting";
+import { StaleDataBanner } from "@/components/stale-data-banner";
 import {
   isOutOfRange as labIsOutOfRange,
   labValueColor,
@@ -57,47 +58,6 @@ function ErrorState({ label }: { label: string }) {
 
 /** Minimum age (ms) at which a latest vital/lab is flagged as stale. 7 days. */
 const STALE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
-
-/**
- * Distinguishes "data present but stale" from "data present and current".
- * Without this banner, a 30-day-old BP reading renders the same way as one
- * taken an hour ago — the clinician cannot tell at a glance that the
- * displayed number is not a current assessment.
- */
-function StaleDataBanner({
-  lastRecordedAt,
-  label,
-}: {
-  lastRecordedAt: string;
-  label: string;
-}) {
-  const ageMs = Date.now() - new Date(lastRecordedAt).getTime();
-  const ageDays = Math.round(ageMs / (24 * 60 * 60 * 1000));
-  // role="status" (polite live region) rather than role="alert" (assertive):
-  // a chronic chart banner should not interrupt a screen-reader mid-sentence
-  // every time the clinician opens a patient with week-old data. Explicit
-  // aria-live="polite" belt-and-suspenders in case any AT doesn't map
-  // role="status" to a polite region by default. (Issue #525.)
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      style={{
-        background: "var(--color-warning-bg, #fff3cd)",
-        border: "1px solid var(--color-warning-border, #ffc107)",
-        color: "var(--color-warning-text, #856404)",
-        padding: "12px 16px",
-        borderRadius: 6,
-        fontSize: 14,
-      }}
-    >
-      <strong>Stale {label}:</strong> last recorded {ageDays} day
-      {ageDays === 1 ? "" : "s"} ago (
-      {new Date(lastRecordedAt).toLocaleString()}). Values shown may not
-      reflect the patient&rsquo;s current state.
-    </div>
-  );
-}
 
 function stalenessStyles(tier: StalenessTier): {
   color?: string;
