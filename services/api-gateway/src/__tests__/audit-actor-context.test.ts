@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { User } from "@carebridge/shared-types";
+import type { User, UserRole } from "@carebridge/shared-types";
 
 // ---------------------------------------------------------------------------
 // Mocks — covers @carebridge/db-schema and drizzle-orm so deriveActorContext
@@ -50,7 +50,7 @@ import { deriveActorContext, getFamilyRelationshipType } from "../middleware/aud
 // ---------------------------------------------------------------------------
 
 function makeUser(
-  role: string,
+  role: UserRole,
   id = "user-1",
   patient_id?: string,
 ): User {
@@ -58,7 +58,7 @@ function makeUser(
     id,
     email: `${role}@carebridge.dev`,
     name: `Test ${role}`,
-    role: role as User["role"],
+    role,
     is_active: true,
     patient_id,
     created_at: "2026-01-01T00:00:00.000Z",
@@ -113,7 +113,7 @@ describe("deriveActorContext", () => {
   });
 
   it("returns null for clinicians (physician, nurse, specialist)", async () => {
-    for (const role of ["physician", "nurse", "specialist"]) {
+    for (const role of ["physician", "nurse", "specialist"] as const) {
       expect(
         await deriveActorContext(makeUser(role), "pat-1"),
       ).toEqual({ actorRelationship: null, onBehalfOfPatientId: null });
