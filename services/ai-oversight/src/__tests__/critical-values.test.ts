@@ -1,4 +1,16 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Mock @carebridge/logger so we can assert on logger.warn() calls when an
+// unrecognized lab flag is encountered (issue #834).
+const { mockWarn } = vi.hoisted(() => ({ mockWarn: vi.fn() }));
+vi.mock("@carebridge/logger", () => ({
+  createLogger: () => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: mockWarn,
+    error: vi.fn(),
+  }),
+}));
 
 // Mock workspace dependencies before importing the module under test.
 vi.mock("@carebridge/shared-types", () => ({
@@ -515,5 +527,228 @@ describe("CRITICAL_LAB_THRESHOLDS — structure validation", () => {
     expect(warningHigh).not.toBeNull();
     expect(warningHigh!.severity).toBe("warning");
     expect(warningHigh!.direction).toBe("high");
+  });
+});
+
+// ─── Direction inference for critical flag (issue #833) ──────────
+// Regression guard for the half-bounded reference-range case. Prior to the
+// fix, `direction` defaulted to "high" whenever `reference_low` was missing,
+// even when the value was clearly below `reference_high`. A critical-low
+// result mis-tagged as "high" erodes clinician trust and can delay treatment
+// (e.g., a panic-low magnesium reported as "high").
+describe("checkCriticalValues — direction inference (issue #833)", () => {
+  it("infers direction='low' when reference_high is provided, reference_low is absent, and value is below reference_high", () => {
+    // Half-bounded reference range (reference_low missing). Value 0.4 is
+    // clearly below reference_high 1.5, so direction MUST be 'low'.
+    // The fix surfaces direction in the summary: "Critical low lab result"
+    // instead of the previous mis-directed "Critical high lab result".
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Obscure Marker Y",
+          value: 0.4,
+          unit: "mg/dL",
+          reference_high: 1.5,
+          flag: "critical",
+        },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("critical");
+    // Regression assertion — the summary must describe direction truthfully.
+    expect(flags[0]!.summary.toLowerCase()).toContain("low");
+    expect(flags[0]!.summary.toLowerCase()).not.toContain("high");
+  });
+
+  it("infers direction='high' when reference_low is provided, reference_high is absent, and value is above reference_low", () => {
+    // Half-bounded the other way — only reference_low present. Value 999 is
+    // clearly above reference_low 10, so direction MUST be 'high'.
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Obscure Marker Z",
+          value: 999,
+          unit: "U/L",
+          reference_low: 10,
+          flag: "critical",
+        },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("critical");
+    expect(flags[0]!.summary.toLowerCase()).toContain("high");
+    // The summary should not claim "low" when the value is above the only
+    // reference bound we have.
+    expect(flags[0]!.summary.toLowerCase()).not.toContain("low");
+  });
+
+  it("defaults direction='high' when no reference bounds are provided (unchanged behavior)", () => {
+    // With neither reference_low nor reference_high, we cannot infer
+    // direction from the reference range. The historical default is 'high'.
+    // Most laboratory "critical" flags are elevations in practice, so this
+    // is a reasonable fallback. Pin the behavior so changes are intentional.
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Obscure Marker W",
+          value: 42,
+          unit: "U/L",
+          flag: "critical",
+        },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("critical");
+    expect(flags[0]!.summary.toLowerCase()).toContain("high");
+  });
+});
+
+// ─── Unrecognized flag handling (issues #834 and #837) ───────────
+// When a lab result carries a non-null `flag` string that is not in the
+// validator enum ('H' | 'L' | 'critical'), we must:
+//   1. Still fall through to the range checks (no behavior change).
+//   2. Emit logger.warn so silent drops of an explicit lab abnormality
+//      signal become observable. Silent drops of explicit lab-marked
+//      abnormalities are exactly the class of bug #244 was filed to fix.
+// We additionally map common HL7v2 abnormal-flag values:
+//   - "HH" (panic high) → warning, direction="high"
+//   - "LL" (panic low)  → warning, direction="low"
+// Other non-enum values (e.g. "abnormal", "A", "") still fall through
+// but the warn fires. See issues #833 and #834 for rationale.
+describe("checkCriticalValues — unrecognized flag handling (issues #834, #837)", () => {
+  beforeEach(() => {
+    mockWarn.mockClear();
+  });
+
+  it("falls through to range checks when flag is an unrecognized value", () => {
+    // Issue #837: pin current fall-through behavior so future regressions are
+    // intentional. Lab with an unrecognized "abnormal" flag, no reference
+    // range, not in COMMON_LAB_TESTS → no flag emitted from the flag branch.
+    // (With HH/LL mapping, the test uses a value that is not HH/LL.)
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Obscure Marker X",
+          value: 999,
+          unit: "U/L",
+          flag: "abnormal",
+        },
+      ]),
+    );
+    expect(flags).toHaveLength(0);
+  });
+
+  it("logs a warning when a non-null flag is not in the recognized enum (empty string)", () => {
+    checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Obscure Marker X",
+          value: 5,
+          unit: "U/L",
+          flag: "",
+        },
+      ]),
+    );
+    expect(mockWarn).toHaveBeenCalled();
+    const call = mockWarn.mock.calls.find(
+      ([msg]) => typeof msg === "string" && msg.includes("unrecognized_lab_flag"),
+    );
+    expect(call).toBeDefined();
+  });
+
+  it("logs a warning for an unrecognized flag value 'abnormal'", () => {
+    checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Obscure Marker X",
+          value: 5,
+          unit: "U/L",
+          flag: "abnormal",
+        },
+      ]),
+    );
+    expect(mockWarn).toHaveBeenCalled();
+    const call = mockWarn.mock.calls.find(
+      ([msg]) => typeof msg === "string" && msg.includes("unrecognized_lab_flag"),
+    );
+    expect(call).toBeDefined();
+    // Meta payload should capture the offending flag value (no PHI).
+    const meta = call![1] as Record<string, unknown>;
+    expect(meta.flag).toBe("abnormal");
+    expect(meta.test_name).toBe("Obscure Marker X");
+  });
+
+  it("does not warn when flag is in the recognized enum ('H', 'L', 'critical') or absent", () => {
+    checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Hemoglobin",
+          value: 13.5,
+          unit: "g/dL",
+          flag: "H",
+        },
+        {
+          test_name: "Hemoglobin",
+          value: 11.5,
+          unit: "g/dL",
+          flag: "L",
+        },
+        {
+          test_name: "Hemoglobin",
+          value: 14,
+          unit: "g/dL",
+          flag: "critical",
+        },
+        {
+          test_name: "Hemoglobin",
+          value: 14,
+          unit: "g/dL",
+        },
+      ]),
+    );
+    // None of these should trigger unrecognized_lab_flag warnings.
+    const unrecognizedCalls = mockWarn.mock.calls.filter(
+      ([msg]) => typeof msg === "string" && msg.includes("unrecognized_lab_flag"),
+    );
+    expect(unrecognizedCalls).toHaveLength(0);
+  });
+
+  it("maps HL7v2 'HH' (panic high) to a warning flag with direction='high'", () => {
+    // HL7v2 abnormal-flags: "HH" means panic/critical-high. Treat as warning
+    // (not critical) to avoid over-alerting pending principled mapping —
+    // see issue #834 discussion. Warning is the floor, not the ceiling.
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Obscure Marker X",
+          value: 999,
+          unit: "U/L",
+          flag: "HH",
+        },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("warning");
+    expect(flags[0]!.summary).toContain("High");
+    // This mapping should still emit the warn log so operators notice
+    // non-enum flags arriving through FHIR/HL7 ingress paths.
+    expect(mockWarn).toHaveBeenCalled();
+  });
+
+  it("maps HL7v2 'LL' (panic low) to a warning flag with direction='low'", () => {
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Obscure Marker X",
+          value: 0.01,
+          unit: "U/L",
+          flag: "LL",
+        },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("warning");
+    expect(flags[0]!.summary).toContain("Low");
+    expect(mockWarn).toHaveBeenCalled();
   });
 });
