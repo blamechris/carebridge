@@ -17,10 +17,17 @@
  *
  * PHI safety:
  *   `summary` MAY contain provider name + time (encrypted at rest by the
- *   notifications chain), but `summary_safe` is the lock-screen-safe
- *   payload that a future APNs/FCM integration would surface on a locked
- *   device. We build `summary_safe` from a static template that contains
- *   NO patient name, provider name, diagnosis, or MRN.
+ *   notifications chain). The dispatch worker derives a PHI-free
+ *   `summary_safe` string from a static, source-aware template (driven
+ *   by `source: "scheduling.reminder"`) for lock-screen surface — it
+ *   contains NO patient name, provider name, diagnosis, or MRN.
+ *
+ * Audience routing:
+ *   The emitted event sets `audience: "patient"`, which tells the
+ *   dispatch worker to look up the patient's own user row (via
+ *   `users.patient_id`) rather than routing via
+ *   `care_team_assignments` (which would misdeliver the reminder to the
+ *   patient's providers).
  */
 
 import { Worker } from "bullmq";
@@ -40,15 +47,6 @@ import {
 } from "../reminders.js";
 
 const log = createLogger("reminder-worker");
-
-/**
- * Lock-screen-safe summary shown on push notifications. MUST NOT contain
- * patient identifiers, provider names, diagnosis codes, or appointment
- * times. The authenticated portal fetch (keyed off `appointment_id` via
- * `related_flag_id`) is responsible for rendering detail once the device
- * is unlocked.
- */
-const SAFE_SUMMARY = "You have an upcoming appointment. Open the portal for details.";
 
 /**
  * Render the full (encrypted-at-rest) summary text. May contain PHI —
@@ -147,23 +145,36 @@ export async function processReminderJob(
   // Piggy-back on the existing `NotificationEvent` shape so the dispatch
   // chain's PHI encryption / preferences / SSE logic all apply unchanged.
   //
-  // - `category: "patient-reported"` is the closest whitelisted category
-  //   for a patient-addressed message (see CATEGORY_LABELS in
-  //   notifications/workers/dispatch-worker.ts). Using a non-whitelisted
-  //   value would fall back to "Clinical alert" on the lock screen.
-  // - `flag_id` carries the appointment ID so the patient portal can deep
-  //   link to the appointment record via the existing `related_flag_id`
-  //   column.
+  // - `audience: "patient"` tells the dispatch worker to deliver to the
+  //   patient's own user row (looked up via `users.patient_id`) rather
+  //   than routing through `care_team_assignments` — which would
+  //   misdeliver the reminder to the patient's PROVIDERS.
+  // - `category: "appointment-reminder"` is the whitelisted category for
+  //   patient-addressed scheduling reminders (see CATEGORY_LABELS in
+  //   notifications/workers/dispatch-worker.ts). "patient-reported" is
+  //   semantically wrong — this notification is system-initiated, not a
+  //   patient-submitted concern.
+  // - `source: "scheduling.reminder"` drives title + safe-summary
+  //   rendering in the dispatch worker so reminders are NOT prefixed
+  //   with "Info: Clinical flag —".
+  // - `flag_id` carries the appointment ID so the patient portal can
+  //   deep link to the appointment record via the existing
+  //   `related_flag_id` column.
+  // - `suggested_action` is intentionally unused by the dispatch worker
+  //   for reminders (the source-aware `buildSafeSummary` owns the
+  //   lock-screen copy); we pass an empty string to keep the payload
+  //   shape stable.
   const event: NotificationEvent = {
     flag_id: appointment.id,
     patient_id: appointment.patient_id,
     severity: "info",
-    category: "patient-reported",
+    category: "appointment-reminder",
     summary, // full PHI, encrypted at rest by the notifications chain
-    suggested_action: SAFE_SUMMARY,
+    suggested_action: "",
     notify_specialties: [],
     source: "scheduling.reminder",
     created_at: new Date().toISOString(),
+    audience: "patient",
   };
 
   await emitNotificationEvent(event);

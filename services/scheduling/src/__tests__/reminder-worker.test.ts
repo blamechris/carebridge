@@ -2,11 +2,14 @@
  * Unit tests for the appointment-reminders worker (issue #333).
  *
  * Validates:
- *   - Happy path: fires, loads the appointment, emits a notification event.
+ *   - Happy path: fires, loads the appointment, emits a notification event
+ *     with `audience: "patient"`, `source: "scheduling.reminder"`, and
+ *     `category: "appointment-reminder"`.
  *   - Cancelled appointment: skips without emitting.
  *   - Missing appointment (e.g. deleted): skips without throwing.
- *   - PHI safety: `summary_safe` (via `suggested_action`) carries no PHI;
- *     full summary MAY contain provider name + time.
+ *   - PHI safety: full `summary` MAY contain provider name + time
+ *     (encrypted at rest); the dispatch worker owns the lock-screen-safe
+ *     render via its source-aware `buildSafeSummary`.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -182,6 +185,8 @@ describe("processReminderJob", () => {
     expect(event.patient_id).toBe("patient-1");
     expect(event.severity).toBe("info");
     expect(event.source).toBe("scheduling.reminder");
+    expect(event.audience).toBe("patient");
+    expect(event.category).toBe("appointment-reminder");
     expect(event.summary).toContain("Dr. Smith");
     expect(event.summary).toContain("tomorrow");
     expect(event.summary).toContain("Main Clinic");
@@ -257,10 +262,84 @@ describe("processReminderJob", () => {
     expect(event.summary).not.toContain("tomorrow");
   });
 
-  // ── PHI lock-screen safety (issue #333) ───────────────────────────
+  // ── Audience routing (issue #897 fix) ─────────────────────────────
+
+  describe("audience routing", () => {
+    it("emits with audience='patient' so dispatch routes to the patient, not the care team", async () => {
+      primeAppointmentAndProvider({
+        appointment: {
+          id: "appt-1",
+          status: "scheduled",
+          patient_id: "patient-1",
+          provider_id: "provider-1",
+          start_time: "2026-04-18T14:30:00.000Z",
+          location: null,
+          reason: null,
+        },
+        provider: { name: "Dr. Smith" },
+      });
+
+      await processReminderJob(makePayload());
+
+      const event = mockEmitNotificationEvent.mock.calls[0][0];
+      expect(event.audience).toBe("patient");
+    });
+
+    it("uses the scheduling-specific category so the title does not render as a clinical flag", async () => {
+      primeAppointmentAndProvider({
+        appointment: {
+          id: "appt-1",
+          status: "scheduled",
+          patient_id: "patient-1",
+          provider_id: "provider-1",
+          start_time: "2026-04-18T14:30:00.000Z",
+          location: null,
+          reason: null,
+        },
+        provider: { name: "Dr. Smith" },
+      });
+
+      await processReminderJob(makePayload());
+
+      const event = mockEmitNotificationEvent.mock.calls[0][0];
+      // Was "patient-reported" before #897 fix — semantically wrong for
+      // a system-initiated scheduling nudge, and it rendered as
+      // "Info: Clinical flag — Patient-reported concern".
+      expect(event.category).toBe("appointment-reminder");
+    });
+
+    it("marks the event source as scheduling.reminder for title/safe-summary branching", async () => {
+      primeAppointmentAndProvider({
+        appointment: {
+          id: "appt-1",
+          status: "scheduled",
+          patient_id: "patient-1",
+          provider_id: "provider-1",
+          start_time: "2026-04-18T14:30:00.000Z",
+          location: null,
+          reason: null,
+        },
+        provider: { name: "Dr. Smith" },
+      });
+
+      await processReminderJob(makePayload());
+
+      const event = mockEmitNotificationEvent.mock.calls[0][0];
+      expect(event.source).toBe("scheduling.reminder");
+    });
+  });
+
+  // ── PHI safety (issue #333) ───────────────────────────────────────
+  //
+  // The lock-screen-safe render is owned by the dispatch worker's
+  // source-aware `buildSafeSummary` (driven by `source:
+  // "scheduling.reminder"`). These tests assert that the reminder
+  // worker itself does not leak PHI into any field the dispatch worker
+  // might mis-render, and that the full summary (on `summary`) is the
+  // only field that carries provider name + time.
 
   describe("PHI safety", () => {
-    it("suggested_action (the safe summary) contains no provider name", async () => {
+    it("full summary carries PHI (provider name, time, reason) — encrypted at rest", async () => {
       primeAppointmentAndProvider({
         appointment: {
           id: "appt-1",
@@ -277,64 +356,12 @@ describe("processReminderJob", () => {
       await processReminderJob(makePayload());
 
       const event = mockEmitNotificationEvent.mock.calls[0][0];
-      // The "safe" payload lives on `suggested_action`; dispatch-worker
-      // already owns the separate PHI-free `summary_safe` render from the
-      // whitelisted category label, but our suggested_action itself must
-      // not leak PHI either.
-      expect(event.suggested_action).not.toContain("Alice");
-      expect(event.suggested_action).not.toContain("Smith");
-      expect(event.suggested_action).not.toContain("Dr.");
-      expect(event.suggested_action).not.toContain("Oncology");
-      expect(event.suggested_action).not.toContain("Chemotherapy");
-    });
-
-    it("suggested_action contains no patient id or appointment time", async () => {
-      primeAppointmentAndProvider({
-        appointment: {
-          id: "appt-1",
-          status: "scheduled",
-          patient_id: "patient-mrn-123456",
-          provider_id: "provider-1",
-          start_time: "2026-04-18T14:30:00.000Z",
-          location: null,
-          reason: null,
-        },
-        provider: { name: "Dr. Smith" },
-      });
-
-      await processReminderJob(makePayload());
-
-      const event = mockEmitNotificationEvent.mock.calls[0][0];
-      expect(event.suggested_action).not.toContain("patient-mrn-123456");
-      expect(event.suggested_action).not.toContain("2:30");
-      expect(event.suggested_action).not.toContain("2026-04-18");
-      // Safe summary is static — contains no digits at all.
-      expect(event.suggested_action).not.toMatch(/\d/);
-    });
-
-    it("uses a whitelisted category for lock-screen label safety", async () => {
-      primeAppointmentAndProvider({
-        appointment: {
-          id: "appt-1",
-          status: "scheduled",
-          patient_id: "patient-1",
-          provider_id: "provider-1",
-          start_time: "2026-04-18T14:30:00.000Z",
-          location: null,
-          reason: null,
-        },
-        provider: { name: "Dr. Smith" },
-      });
-
-      await processReminderJob(makePayload());
-
-      const event = mockEmitNotificationEvent.mock.calls[0][0];
-      // The dispatch-worker's CATEGORY_LABELS whitelist (see
-      // services/notifications/src/workers/dispatch-worker.ts) maps this
-      // to "Patient-reported concern" — PHI-free by construction. Using
-      // any non-whitelisted category would fall back to "Clinical alert"
-      // which is still safe, but we want a predictable label here.
-      expect(event.category).toBe("patient-reported");
+      // The full summary is the PHI-carrying path (encrypted at rest by
+      // the notifications chain); the dispatch worker keeps it off the
+      // lock-screen surface via its source-aware buildSafeSummary.
+      expect(event.summary).toContain("Dr. Alice Smith");
+      expect(event.summary).toContain("Oncology Suite 4");
+      expect(event.summary).toContain("Chemotherapy follow-up");
     });
   });
 });
