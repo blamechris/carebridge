@@ -147,4 +147,85 @@ describe("Sidebar mobile toggle (Issue #404)", () => {
     fireEvent.click(toggle);
     expect(iconSpan?.textContent).toBe("\u2715"); // ✕ close
   });
+
+  // Focus management (WCAG 2.1.2 / 2.4.3 / 2.4.7): opening moves focus
+  // in, Tab cycles within, Escape closes, closing restores focus.
+  it("moves focus into the drawer when it opens", () => {
+    const { container } = render(<Sidebar />);
+    const toggle = screen.getByRole("button", {
+      name: /toggle navigation menu/i,
+    });
+
+    fireEvent.click(toggle);
+
+    const aside = container.querySelector("aside.sidebar");
+    expect(aside?.contains(document.activeElement)).toBe(true);
+  });
+
+  it("closes the drawer when Escape is pressed and restores focus to the toggle", () => {
+    const { container } = render(<Sidebar />);
+    const toggle = screen.getByRole("button", {
+      name: /toggle navigation menu/i,
+    }) as HTMLButtonElement;
+
+    toggle.focus();
+    fireEvent.click(toggle);
+
+    // Drawer opened and focus moved inside.
+    expect(
+      container.querySelector("aside.sidebar")?.classList.contains("sidebar-open"),
+    ).toBe(true);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(
+      container.querySelector("aside.sidebar")?.classList.contains("sidebar-open"),
+    ).toBe(false);
+    // Focus returned to the element that opened the drawer.
+    expect(document.activeElement).toBe(toggle);
+  });
+
+  it("traps Tab within the drawer (wraps from last focusable back to first)", () => {
+    const { container } = render(<Sidebar />);
+    const toggle = screen.getByRole("button", {
+      name: /toggle navigation menu/i,
+    });
+    fireEvent.click(toggle);
+
+    const aside = container.querySelector("aside.sidebar") as HTMLElement;
+    const focusables = aside.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+    expect(focusables.length).toBeGreaterThan(1);
+
+    const first = focusables[0]!;
+    const last = focusables[focusables.length - 1]!;
+
+    // Place focus on last focusable, then Tab should wrap to first.
+    last.focus();
+    expect(document.activeElement).toBe(last);
+
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(document.activeElement).toBe(first);
+  });
+
+  it("traps Shift+Tab within the drawer (wraps from first focusable back to last)", () => {
+    const { container } = render(<Sidebar />);
+    const toggle = screen.getByRole("button", {
+      name: /toggle navigation menu/i,
+    });
+    fireEvent.click(toggle);
+
+    const aside = container.querySelector("aside.sidebar") as HTMLElement;
+    const focusables = aside.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+    const first = focusables[0]!;
+    const last = focusables[focusables.length - 1]!;
+
+    first.focus();
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(last);
+  });
 });

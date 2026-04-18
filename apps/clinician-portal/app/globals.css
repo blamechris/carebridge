@@ -924,17 +924,16 @@ tr:hover td {
     border-bottom: none;
   }
 
-  /* Touch-friendly buttons (WCAG 44x44 min) */
-  .btn {
+  /* Touch-friendly buttons (WCAG 2.5.5 — 44x44 min) */
+  .btn,
+  .btn-sm {
     min-height: 44px;
     min-width: 44px;
-    padding: 10px 18px;
+    padding: 10px 14px;
     font-size: 14px;
   }
 
   .btn-sm {
-    min-height: 40px;
-    padding: 8px 14px;
     font-size: 13px;
   }
 

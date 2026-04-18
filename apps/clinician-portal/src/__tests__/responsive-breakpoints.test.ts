@@ -77,9 +77,13 @@ describe("clinician-portal responsive breakpoints (Issue #404)", () => {
     // Tables become cards: <tr> is block, <thead> is offscreen.
     expect(phone).toMatch(/thead\s*\{[^}]*position:\s*absolute/);
     expect(phone).toMatch(/td::before\s*\{[^}]*content:\s*attr\(data-label\)/);
-    // Primary button meets WCAG 2.5.5 minimum (44×44).
-    expect(phone).toMatch(/\.btn\s*\{[^}]*min-height:\s*44px/);
-    expect(phone).toMatch(/\.btn\s*\{[^}]*min-width:\s*44px/);
+    // Both .btn AND .btn-sm meet WCAG 2.5.5 minimum (44x44) on mobile.
+    // They share a single combined selector so the floor applies to
+    // every button variant — including the "Open" row actions on
+    // patients/dashboard/notes tables that render as .btn-sm.
+    expect(phone).toMatch(
+      /\.btn\s*,\s*\.btn-sm\s*\{[^}]*min-height:\s*44px[^}]*min-width:\s*44px/s,
+    );
   });
 
   it("sets body overflow-x: hidden to prevent page-level horizontal scroll", () => {
