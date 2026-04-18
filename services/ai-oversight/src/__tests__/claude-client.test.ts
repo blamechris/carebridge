@@ -154,7 +154,7 @@ describe("reviewPatientRecord — timeout and network errors", () => {
   });
 
   it("does not retry on non-transient AuthenticationError", async () => {
-    const authErr = new Anthropic.AuthenticationError("unauthorized");
+    const authErr = new Anthropic.AuthenticationError(401, undefined, "unauthorized", undefined as any);
     create.mockRejectedValueOnce(authErr);
 
     await expect(
@@ -166,7 +166,7 @@ describe("reviewPatientRecord — timeout and network errors", () => {
   });
 
   it("does not retry on non-transient BadRequestError", async () => {
-    const badReq = new Anthropic.BadRequestError("bad request");
+    const badReq = new Anthropic.BadRequestError(400, undefined, "bad request", undefined as any);
     create.mockRejectedValueOnce(badReq);
 
     await expect(
