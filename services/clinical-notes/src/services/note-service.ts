@@ -1,7 +1,12 @@
 import { eq, and, asc, desc } from "drizzle-orm";
 import { getDb, clinicalNotes, noteVersions } from "@carebridge/db-schema";
 import type { CreateNoteInput, UpdateNoteInput } from "@carebridge/validators";
-import type { ClinicalNote, NoteSection, NoteVersion } from "@carebridge/shared-types";
+import type {
+  ClinicalNote,
+  NoteLifecycleEvent,
+  NoteSection,
+  NoteVersion,
+} from "@carebridge/shared-types";
 import { emitClinicalEvent } from "../events.js";
 
 /**
@@ -33,6 +38,12 @@ export class NoteStateError extends Error {
  * the live `clinical_notes` row so history can be reconstructed even if
  * later edits overwrite the current sections. The `note_versions` table has
  * no UPDATE path at the application layer — rows are insert-only.
+ *
+ * `lifecycleEvent` labels which transition caused the archive. This is
+ * required to disambiguate rows that share the same `version` number:
+ * signNote and cosignNote both archive at `existing.version` without
+ * bumping it, so without the label `getVersionHistory` could not tell
+ * a signed snapshot apart from the cosigned one that follows it.
  */
 async function archiveVersion(params: {
   noteId: string;
@@ -40,6 +51,7 @@ async function archiveVersion(params: {
   sections: unknown;
   savedBy: string;
   savedAt: string;
+  lifecycleEvent: NoteLifecycleEvent;
 }): Promise<void> {
   const db = getDb();
   await db.insert(noteVersions).values({
@@ -49,6 +61,7 @@ async function archiveVersion(params: {
     sections: params.sections,
     saved_at: params.savedAt,
     saved_by: params.savedBy,
+    lifecycle_event: params.lifecycleEvent,
   });
 }
 
@@ -118,14 +131,15 @@ export async function updateNote(
     throw new Error(`Note ${noteId} not found`);
   }
 
-  // Archive the current version
-  await db.insert(noteVersions).values({
-    id: crypto.randomUUID(),
-    note_id: noteId,
+  // Archive the current version. updateNote is the draft-edit path — the
+  // archived snapshot represents the pre-edit draft state.
+  await archiveVersion({
+    noteId,
     version: existing.version,
     sections: existing.sections,
-    saved_at: now,
-    saved_by: existing.provider_id,
+    savedBy: existing.provider_id,
+    savedAt: now,
+    lifecycleEvent: "draft",
   });
 
   const newVersion = existing.version + 1;
@@ -204,6 +218,7 @@ export async function signNote(
     sections: existing.sections,
     savedBy: signedBy,
     savedAt: now,
+    lifecycleEvent: "signed",
   });
 
   await db
@@ -278,6 +293,7 @@ export async function cosignNote(
     sections: existing.sections,
     savedBy: cosignedBy,
     savedAt: now,
+    lifecycleEvent: "cosigned",
   });
 
   await db
@@ -362,6 +378,7 @@ export async function amendNote(
     sections: existing.sections,
     savedBy: amendedBy,
     savedAt: now,
+    lifecycleEvent: "amended",
   });
 
   const newVersion = existing.version + 1;
@@ -408,10 +425,16 @@ export async function amendNote(
 }
 
 /**
- * Fetch every version row for a note, ordered chronologically by version
- * number (ascending). `getNoteById` returns the same data in descending
- * order for UI "latest first" displays; this helper is the canonical
- * chronological view used for audit timelines.
+ * Fetch every version row for a note, ordered chronologically by
+ * `saved_at`. `getNoteById` returns the same data in descending order for UI
+ * "latest first" displays; this helper is the canonical chronological view
+ * used for audit timelines.
+ *
+ * Ordering by `saved_at` (not `version`) is deliberate: signNote and
+ * cosignNote archive at the same `existing.version` without bumping it, so
+ * a `version`-only sort is unstable across sign/cosign pairs. `saved_at` is
+ * the monotonic source of truth for transition order; the `version` column
+ * remains meaningful for identifying amendment-boundary snapshots.
  */
 export async function getVersionHistory(noteId: string): Promise<NoteVersion[]> {
   const db = getDb();
@@ -420,7 +443,7 @@ export async function getVersionHistory(noteId: string): Promise<NoteVersion[]> 
     .select()
     .from(noteVersions)
     .where(eq(noteVersions.note_id, noteId))
-    .orderBy(asc(noteVersions.version));
+    .orderBy(asc(noteVersions.saved_at));
 
   return rows.map((v) => ({
     note_id: v.note_id,
@@ -428,6 +451,7 @@ export async function getVersionHistory(noteId: string): Promise<NoteVersion[]> 
     sections: v.sections as NoteVersion["sections"],
     saved_at: v.saved_at,
     saved_by: v.saved_by,
+    lifecycle_event: v.lifecycle_event as NoteVersion["lifecycle_event"],
   }));
 }
 
@@ -508,6 +532,7 @@ export async function getNoteById(
       sections: v.sections as NoteVersion["sections"],
       saved_at: v.saved_at,
       saved_by: v.saved_by,
+      lifecycle_event: v.lifecycle_event as NoteVersion["lifecycle_event"],
     })),
   };
 }
