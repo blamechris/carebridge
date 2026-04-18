@@ -3,12 +3,29 @@
  *
  * Wraps scheduling procedures with authentication. Patients can only
  * view/manage their own appointments. Providers can manage their schedule.
+ *
+ * Patient-ownership enforcement on mutations (HIPAA):
+ *  - appointments.create / appointments.cancel both resolve the target
+ *    patient record id and run the same access check used by
+ *    appointments.listByPatient before touching the database. The check
+ *    mirrors patient-records.enforcePatientAccess:
+ *      - admin: unrestricted
+ *      - patient: own record only
+ *      - family_caregiver: active family_relationships row joined through
+ *        users.patient_id
+ *      - clinicians: active care-team assignment (assertCareTeamAccess)
  */
 
 import { z } from "zod";
 import { TRPCError, initTRPC } from "@trpc/server";
 import { getDb } from "@carebridge/db-schema";
-import { appointments, providerSchedules, scheduleBlocks } from "@carebridge/db-schema";
+import {
+  appointments,
+  providerSchedules,
+  scheduleBlocks,
+  familyRelationships,
+  users,
+} from "@carebridge/db-schema";
 import { eq, and, gte, lte, desc, ne } from "drizzle-orm";
 import crypto from "node:crypto";
 import type { Context } from "../context.js";
@@ -25,22 +42,90 @@ const isAuthenticated = t.middleware(({ ctx, next }) => {
 
 const protectedProcedure = t.procedure.use(isAuthenticated);
 
+/**
+ * Resolve whether a family caregiver user currently has an active
+ * family_relationships row granting them access to the given patient
+ * record id.
+ *
+ * family_relationships.patient_id references users.id (the patient's
+ * user account), but appointments.patient_id references patients.id,
+ * so the query joins through users to close the mapping.
+ */
+async function hasActiveFamilyLink(
+  caregiverUserId: string,
+  patientRecordId: string,
+): Promise<boolean> {
+  const db = getDb();
+  const [row] = await db
+    .select({ id: familyRelationships.id })
+    .from(familyRelationships)
+    .innerJoin(users, eq(users.id, familyRelationships.patient_id))
+    .where(
+      and(
+        eq(familyRelationships.caregiver_id, caregiverUserId),
+        eq(users.patient_id, patientRecordId),
+        eq(familyRelationships.status, "active"),
+      ),
+    )
+    .limit(1);
+  return !!row;
+}
+
+/**
+ * Enforce HIPAA minimum-necessary access for a given user / patientId pair
+ * on scheduling mutations. Throws TRPCError(FORBIDDEN) on denial.
+ *
+ * Role semantics mirror patient-records.enforcePatientAccess so a caller
+ * who can read a patient's appointments can also mutate them through the
+ * same authorisation boundary.
+ */
+async function enforcePatientAccess(
+  user: NonNullable<Context["user"]>,
+  patientId: string,
+): Promise<void> {
+  if (user.role === "admin") return;
+
+  if (user.role === "patient") {
+    // user.patient_id is the canonical mapping; fall back to user.id for
+    // test fixtures that use the user id as the patient record id.
+    const ownRecord = user.patient_id ?? user.id;
+    if (ownRecord !== patientId) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "Access denied: patients may only manage their own appointments",
+      });
+    }
+    return;
+  }
+
+  if (user.role === "family_caregiver") {
+    const hasLink = await hasActiveFamilyLink(user.id, patientId);
+    if (!hasLink) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message:
+          "Access denied: no active family relationship grants access to this patient",
+      });
+    }
+    return;
+  }
+
+  // Clinicians (physician, specialist, nurse) must be on the care team.
+  const hasAccess = await assertCareTeamAccess(user.id, patientId);
+  if (!hasAccess) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Access denied: no active care-team assignment for this patient",
+    });
+  }
+}
+
 export const schedulingRbacRouter = t.router({
   appointments: t.router({
     listByPatient: protectedProcedure
       .input(z.object({ patientId: z.string() }))
       .query(async ({ ctx, input }) => {
-        // Patients can only see their own
-        if (ctx.user.role === "patient" && ctx.user.id !== input.patientId) {
-          throw new TRPCError({ code: "FORBIDDEN", message: "Access denied" });
-        }
-        // Clinicians must be on care team
-        if (ctx.user.role !== "patient" && ctx.user.role !== "admin") {
-          const hasAccess = await assertCareTeamAccess(ctx.user.id, input.patientId);
-          if (!hasAccess) {
-            throw new TRPCError({ code: "FORBIDDEN", message: "No care team access" });
-          }
-        }
+        await enforcePatientAccess(ctx.user, input.patientId);
         const db = getDb();
         return db.select().from(appointments)
           .where(eq(appointments.patient_id, input.patientId))
@@ -66,7 +151,13 @@ export const schedulingRbacRouter = t.router({
 
     create: protectedProcedure
       .input(z.object({
-        patientId: z.string(),
+        // Optional on the wire — defaulted from ctx.user.patient_id for
+        // patient-role callers below so the existing patient portal client
+        // code (which historically passed patientId implicitly) keeps
+        // working without modification. For any other role the field is
+        // required and the access check enforces care-team / family-link
+        // membership.
+        patientId: z.string().optional(),
         providerId: z.string(),
         appointmentType: z.enum(["follow_up", "new_patient", "procedure", "telehealth"]),
         startTime: z.string(),
@@ -75,6 +166,33 @@ export const schedulingRbacRouter = t.router({
         reason: z.string().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
+        // Resolve the target patient record.
+        //  - patient role: default to the caller's linked record when absent;
+        //    when present it must match (prevents a patient booking for
+        //    someone else).
+        //  - every other role: patientId must be supplied explicitly.
+        let patientId: string;
+        if (ctx.user.role === "patient") {
+          const ownRecord = ctx.user.patient_id ?? ctx.user.id;
+          if (input.patientId !== undefined && input.patientId !== ownRecord) {
+            throw new TRPCError({
+              code: "FORBIDDEN",
+              message: "Access denied: patients may only book their own appointments",
+            });
+          }
+          patientId = ownRecord;
+        } else {
+          if (!input.patientId) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "patientId is required for non-patient roles",
+            });
+          }
+          patientId = input.patientId;
+        }
+
+        await enforcePatientAccess(ctx.user, patientId);
+
         const db = getDb();
         const now = new Date().toISOString();
 
@@ -95,7 +213,7 @@ export const schedulingRbacRouter = t.router({
 
           const appointment = {
             id: crypto.randomUUID(),
-            patient_id: input.patientId,
+            patient_id: patientId,
             provider_id: input.providerId,
             appointment_type: input.appointmentType,
             start_time: input.startTime,
@@ -116,6 +234,26 @@ export const schedulingRbacRouter = t.router({
       .input(z.object({ appointmentId: z.string(), reason: z.string() }))
       .mutation(async ({ ctx, input }) => {
         const db = getDb();
+
+        // Load the appointment so we can run the access check against the
+        // target patient record before mutating. Single select by primary
+        // key — cheap and keeps the check server-authoritative (a tampered
+        // client can't supply its own patient_id).
+        const [existing] = await db
+          .select({ patient_id: appointments.patient_id })
+          .from(appointments)
+          .where(eq(appointments.id, input.appointmentId))
+          .limit(1);
+
+        if (!existing) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: `Appointment ${input.appointmentId} not found`,
+          });
+        }
+
+        await enforcePatientAccess(ctx.user, existing.patient_id);
+
         const now = new Date().toISOString();
         await db.update(appointments)
           .set({

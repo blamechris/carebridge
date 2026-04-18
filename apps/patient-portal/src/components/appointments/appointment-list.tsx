@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { appointmentTypeLabel } from "./prep-instructions.js";
-import { btnRowSmall } from "./styles.js";
+import { appointmentTypeLabel } from "./prep-instructions";
+import { btnRowSmall } from "./styles";
 
 export interface AppointmentRow {
   id: string;

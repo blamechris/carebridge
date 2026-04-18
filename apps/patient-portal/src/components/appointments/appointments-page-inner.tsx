@@ -8,13 +8,13 @@
  */
 
 import { useMemo, useState } from "react";
-import { AppointmentList, type AppointmentRow } from "./appointment-list.js";
+import { AppointmentList, type AppointmentRow } from "./appointment-list";
 import {
   BookAppointmentModal, type BookPayload,
   type CareTeamProvider, type SlotOption,
-} from "./book-appointment-modal.js";
-import { CancelAppointmentModal } from "./cancel-appointment-modal.js";
-import { AppointmentDetailView } from "./appointment-detail-view.js";
+} from "./book-appointment-modal";
+import { CancelAppointmentModal } from "./cancel-appointment-modal";
+import { AppointmentDetailView } from "./appointment-detail-view";
 
 export interface AppointmentsPageInnerProps {
   patientId: string;

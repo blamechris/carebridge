@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { modalOverlay, modalCard, btnGhost, inputBase } from "./styles.js";
+import { modalOverlay, modalCard, btnGhost, inputBase } from "./styles";
 
 export interface CancelAppointmentModalProps {
   appointmentId: string;

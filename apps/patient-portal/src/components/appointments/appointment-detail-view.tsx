@@ -1,8 +1,8 @@
 "use client";
 
-import { appointmentTypeLabel, prepInstructionsFor } from "./prep-instructions.js";
-import type { AppointmentRow } from "./appointment-list.js";
-import { modalOverlay, modalCard, DetailRow } from "./styles.js";
+import { appointmentTypeLabel, prepInstructionsFor } from "./prep-instructions";
+import type { AppointmentRow } from "./appointment-list";
+import { modalOverlay, modalCard, DetailRow } from "./styles";
 
 export interface AppointmentDetailViewProps {
   appointment: AppointmentRow;

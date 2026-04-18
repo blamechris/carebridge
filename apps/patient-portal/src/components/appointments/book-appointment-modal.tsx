@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { appointmentTypeLabel, type AppointmentType } from "./prep-instructions.js";
-import { modalOverlay, modalCard, btnPrimary, btnGhost, inputBase, DetailRow } from "./styles.js";
+import { appointmentTypeLabel, type AppointmentType } from "./prep-instructions";
+import { modalOverlay, modalCard, btnPrimary, btnGhost, inputBase, DetailRow } from "./styles";
 
 export interface CareTeamProvider {
   provider_id: string;
