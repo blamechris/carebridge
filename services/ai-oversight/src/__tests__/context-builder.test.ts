@@ -534,7 +534,7 @@ describe("buildPatientContext — event-time snapshot (LLM path)", () => {
 
     // No null-fallback warning should fire.
     const fallbackCalls = mockWarn.mock.calls.filter(
-      ([msg]: [string]) => msg === "medication_started_at_null_fallback",
+      ([msg]: any[]) => msg === "medication_started_at_null_fallback",
     );
     expect(fallbackCalls).toHaveLength(0);
   });
