@@ -24,6 +24,7 @@ import {
 import { and, eq, isNull } from "drizzle-orm";
 import crypto from "node:crypto";
 import type { Context } from "../context.js";
+import { assertCareTeamAccess } from "../middleware/rbac.js";
 
 const t = initTRPC.context<Context>().create();
 
@@ -48,6 +49,41 @@ function assertCanManageCareTeam(user: NonNullable<Context["user"]>): void {
     throw new TRPCError({
       code: "FORBIDDEN",
       message: "Only physicians, specialists, and admins can manage care teams",
+    });
+  }
+}
+
+/**
+ * HIPAA minimum-necessary access check — mirrors the helper used by every
+ * other patient-scoped router (clinical-data, clinical-notes, patient-records,
+ * fhir, ai-oversight). Role gating (`assertCanManageCareTeam`) governs *what*
+ * a user can do; this gate governs *which patients* they can do it to.
+ *
+ * - admins bypass (unrestricted cross-patient access)
+ * - patients never reach here (role gate rejects first), but kept consistent
+ * - clinicians must have an active `careTeamAssignments` row for the patient
+ */
+async function enforcePatientAccess(
+  user: NonNullable<Context["user"]>,
+  patientId: string,
+): Promise<void> {
+  if (user.role === "admin") return;
+
+  if (user.role === "patient") {
+    if (user.id !== patientId) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "Access denied: patients may only access their own records",
+      });
+    }
+    return;
+  }
+
+  const hasAccess = await assertCareTeamAccess(user.id, patientId);
+  if (!hasAccess) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Access denied: no active care-team assignment for this patient",
     });
   }
 }
@@ -98,6 +134,7 @@ export const careTeamRbacRouter = t.router({
     .input(addCareTeamMemberSchema)
     .mutation(async ({ ctx, input }) => {
       assertCanManageCareTeam(ctx.user);
+      await enforcePatientAccess(ctx.user, input.patient_id);
       const db = getDb();
       const now = new Date().toISOString();
       const memberId = crypto.randomUUID();
@@ -168,6 +205,11 @@ export const careTeamRbacRouter = t.router({
         });
       }
 
+      // Patient is resolved from the member row — mirrors the pattern used in
+      // clinical-data.medications.update where the resource id is the only
+      // input and patient_id is looked up before the access check.
+      await enforcePatientAccess(ctx.user, existing.patient_id as string);
+
       const now = new Date().toISOString();
       await db.transaction(async (tx) => {
         await tx
@@ -215,6 +257,8 @@ export const careTeamRbacRouter = t.router({
         });
       }
 
+      await enforcePatientAccess(ctx.user, existing.patient_id as string);
+
       const patch: Record<string, unknown> = { role: input.role };
       if (input.specialty !== undefined) patch.specialty = input.specialty;
 
@@ -259,6 +303,7 @@ export const careTeamRbacRouter = t.router({
       .input(grantCareTeamAssignmentSchema)
       .mutation(async ({ ctx, input }) => {
         assertCanManageCareTeam(ctx.user);
+        await enforcePatientAccess(ctx.user, input.patient_id);
         const db = getDb();
         const now = new Date().toISOString();
         const assignmentId = crypto.randomUUID();
@@ -311,6 +356,8 @@ export const careTeamRbacRouter = t.router({
             message: `Care-team assignment ${input.assignment_id} not found or already revoked`,
           });
         }
+
+        await enforcePatientAccess(ctx.user, existing.patient_id as string);
 
         const now = new Date().toISOString();
         await db.transaction(async (tx) => {

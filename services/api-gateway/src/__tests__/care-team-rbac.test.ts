@@ -34,6 +34,13 @@ const mocks = vi.hoisted(() => {
     failTransactionAfterFirstInsert: false,
   };
 
+  // Default: acting clinician is on the patient's care team. Individual tests
+  // override via mockResolvedValueOnce(false) to exercise the FORBIDDEN path.
+  // Signature mirrors `middleware/rbac.ts#assertCareTeamAccess`.
+  const assertCareTeamAccess = fn(
+    async (_userId: string, _patientId: string): Promise<boolean> => true,
+  );
+
   function tableOf(t: unknown): string {
     return (t as { __table?: string })?.__table ?? "unknown";
   }
@@ -89,7 +96,7 @@ const mocks = vi.hoisted(() => {
     }),
   };
 
-  return { state, mockDb };
+  return { state, mockDb, assertCareTeamAccess };
 });
 
 vi.mock("@carebridge/db-schema", () => ({
@@ -107,6 +114,13 @@ vi.mock("drizzle-orm", () => ({
   eq: (col: unknown, val: unknown) => ({ eq: col, val }),
   and: (...args: unknown[]) => ({ and: args }),
   isNull: (col: unknown) => ({ isNull: col }),
+}));
+
+// Patient-access gate — mocked so individual tests can flip the acting
+// clinician's care-team membership on/off without touching the DB mock.
+vi.mock("../middleware/rbac.js", () => ({
+  assertCareTeamAccess: (userId: string, patientId: string) =>
+    mocks.assertCareTeamAccess(userId, patientId),
 }));
 
 import { careTeamRbacRouter } from "../routers/care-team.js";
@@ -148,6 +162,11 @@ function reset() {
 beforeEach(() => {
   vi.clearAllMocks();
   reset();
+  // Reset implementation AND drain any leftover `mockResolvedValueOnce`
+  // queue. Without this, an admin-bypass test (which never consumes its
+  // queued `false`) would poison the NEXT test's first access check.
+  mocks.assertCareTeamAccess.mockReset();
+  mocks.assertCareTeamAccess.mockImplementation(async () => true);
 });
 
 describe("careTeam.addMember", () => {
@@ -204,6 +223,24 @@ describe("careTeam.addMember", () => {
     await expect(callerFor(null).addMember(input)).rejects.toMatchObject({
       code: "UNAUTHORIZED",
     });
+  });
+
+  it("rejects physician NOT on the patient's care team (FORBIDDEN)", async () => {
+    // HIPAA minimum-necessary: role-gate alone isn't enough; the acting
+    // clinician must also be on this specific patient's care team.
+    mocks.assertCareTeamAccess.mockResolvedValueOnce(false);
+    await expect(
+      callerFor(makeUser("physician")).addMember(input),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(memberRows()).toHaveLength(0);
+    expect(auditRows()).toHaveLength(0);
+  });
+
+  it("allows admin regardless of care-team membership (bypass)", async () => {
+    // Admin is unrestricted — assertCareTeamAccess must not even be called.
+    mocks.assertCareTeamAccess.mockResolvedValueOnce(false);
+    await expect(callerFor(makeUser("admin")).addMember(input)).resolves.toBeDefined();
+    expect(mocks.assertCareTeamAccess).not.toHaveBeenCalled();
   });
 
   it("rolls back the team insert when the atomic RBAC grant fails", async () => {
@@ -271,6 +308,16 @@ describe("careTeam.removeMember (soft delete)", () => {
       callerFor(makeUser("physician")).removeMember({ member_id: MEMBER_ID }),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
+
+  it("rejects physician NOT on the patient's care team (FORBIDDEN)", async () => {
+    mocks.state.limitResults = [[existing]];
+    mocks.assertCareTeamAccess.mockResolvedValueOnce(false);
+    await expect(
+      callerFor(makeUser("physician")).removeMember({ member_id: MEMBER_ID }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mocks.state.updatedRows).toHaveLength(0);
+    expect(auditRows()).toHaveLength(0);
+  });
 });
 
 describe("careTeam.updateRole", () => {
@@ -321,6 +368,16 @@ describe("careTeam.updateRole", () => {
       callerFor(makeUser("physician")).updateRole({ member_id: MEMBER_ID, role: "coordinator" }),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
+
+  it("rejects physician NOT on the patient's care team (FORBIDDEN)", async () => {
+    mocks.state.limitResults = [[existing]];
+    mocks.assertCareTeamAccess.mockResolvedValueOnce(false);
+    await expect(
+      callerFor(makeUser("physician")).updateRole({ member_id: MEMBER_ID, role: "coordinator" }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mocks.state.updatedRows).toHaveLength(0);
+    expect(auditRows()).toHaveLength(0);
+  });
 });
 
 describe("careTeam.assignments.grant", () => {
@@ -346,6 +403,15 @@ describe("careTeam.assignments.grant", () => {
       callerFor(makeUser(role)).assignments.grant(input),
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(assignmentRows()).toHaveLength(0);
+  });
+
+  it("rejects physician NOT on the patient's care team (FORBIDDEN)", async () => {
+    mocks.assertCareTeamAccess.mockResolvedValueOnce(false);
+    await expect(
+      callerFor(makeUser("physician")).assignments.grant(input),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(assignmentRows()).toHaveLength(0);
+    expect(auditRows()).toHaveLength(0);
   });
 });
 
@@ -391,5 +457,15 @@ describe("careTeam.assignments.revoke", () => {
     await expect(
       callerFor(null).assignments.revoke({ assignment_id: ASSIGNMENT_ID }),
     ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  });
+
+  it("rejects physician NOT on the patient's care team (FORBIDDEN)", async () => {
+    mocks.state.limitResults = [[existing]];
+    mocks.assertCareTeamAccess.mockResolvedValueOnce(false);
+    await expect(
+      callerFor(makeUser("physician")).assignments.revoke({ assignment_id: ASSIGNMENT_ID }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mocks.state.updatedRows).toHaveLength(0);
+    expect(auditRows()).toHaveLength(0);
   });
 });
