@@ -20,6 +20,7 @@ import type { LabResult } from "@carebridge/shared-types";
 import {
   formatAge,
   classifyStaleness,
+  STALE_THRESHOLD_MS,
   type StalenessTier,
 } from "@/lib/vitals-staleness";
 import { formatReferenceRange } from "@/lib/formatting";
@@ -55,9 +56,6 @@ function ErrorState({ label }: { label: string }) {
     </div>
   );
 }
-
-/** Minimum age (ms) at which a latest vital/lab is flagged as stale. 7 days. */
-const STALE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
 
 function stalenessStyles(tier: StalenessTier): {
   color?: string;
@@ -333,6 +331,9 @@ function VitalsTab({ patientId }: { patientId: string }) {
         {latest.map((vital, i) => {
           const tier = classifyStaleness(vital.recorded_at, vital.type);
           const s = stalenessStyles(tier);
+          const age = formatAge(vital.recorded_at);
+          const staleExplainId = tier === "stale" ? `stale-explain-${i}` : undefined;
+          const ariaLabel = `${vital.type} ${vital.value_primary} ${vital.unit}, recorded ${age}${s.note ? `, ${s.note}` : ""}`;
           return (
             <div
               key={i}
@@ -342,6 +343,8 @@ function VitalsTab({ patientId }: { patientId: string }) {
                 border: s.border,
                 color: s.color,
               }}
+              aria-label={ariaLabel}
+              aria-describedby={staleExplainId}
             >
               <span className="stat-label">{vital.type}</span>
               <span
@@ -354,7 +357,7 @@ function VitalsTab({ patientId }: { patientId: string }) {
                 {vital.value_primary} {vital.unit}
               </span>
               <span className="stat-detail">
-                {formatAge(vital.recorded_at)}
+                {age}
                 {s.note ? ` — ${s.note}` : ""}
               </span>
               <span
@@ -363,6 +366,18 @@ function VitalsTab({ patientId }: { patientId: string }) {
               >
                 {new Date(vital.recorded_at).toLocaleString()}
               </span>
+              {tier !== "current" && (
+                <span className="sr-only">
+                  {tier === "overdue"
+                    ? "This vital is overdue for recheck."
+                    : "This vital is stale. Older than 24 hours — do not treat as current."}
+                </span>
+              )}
+              {staleExplainId && (
+                <span id={staleExplainId} className="sr-only">
+                  Older than 24 hours — do not treat as current.
+                </span>
+              )}
             </div>
           );
         })}

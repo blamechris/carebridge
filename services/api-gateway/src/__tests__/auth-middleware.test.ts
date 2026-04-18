@@ -151,10 +151,10 @@ describe("authMiddleware", () => {
 
     await authMiddleware(request, reply);
 
-    const user = (request as unknown as Record<string, unknown>).user;
+    const user = request.user;
     expect(user).toBeDefined();
-    expect((user as Record<string, unknown>).id).toBe("user-1");
-    expect((user as Record<string, unknown>).is_active).toBe(true);
+    expect(user?.id).toBe("user-1");
+    expect(user?.is_active).toBe(true);
     expect((reply as unknown as Record<string, unknown>).code).not.toHaveBeenCalled();
   });
 
@@ -170,7 +170,7 @@ describe("authMiddleware", () => {
     await authMiddleware(request, reply);
 
     // Should not attach user
-    const user = (request as unknown as Record<string, unknown>).user;
+    const user = request.user;
     expect(user).toBeUndefined();
 
     // Should respond 401
@@ -195,7 +195,7 @@ describe("authMiddleware", () => {
 
     await authMiddleware(request, reply);
 
-    const user = (request as unknown as Record<string, unknown>).user;
+    const user = request.user;
     expect(user).toBeUndefined();
     // No 401 sent — the middleware just leaves user null for expired sessions
   });
@@ -211,7 +211,7 @@ describe("authMiddleware", () => {
 
     await authMiddleware(request, reply);
 
-    const user = (request as unknown as Record<string, unknown>).user;
+    const user = request.user;
     expect(user).toBeUndefined();
   });
 
@@ -263,7 +263,7 @@ describe("authMiddleware", () => {
     await authMiddleware(request, reply);
 
     // User should not be attached — session exceeded absolute lifetime.
-    const user = (request as unknown as Record<string, unknown>).user;
+    const user = request.user;
     expect(user).toBeUndefined();
 
     // Session should have been deleted.
@@ -287,8 +287,8 @@ describe("authMiddleware", () => {
 
     await authMiddleware(request, reply);
 
-    const user = (request as unknown as Record<string, unknown>).user;
+    const user = request.user;
     expect(user).toBeDefined();
-    expect((user as Record<string, unknown>).id).toBe("user-1");
+    expect(user?.id).toBe("user-1");
   });
 });
