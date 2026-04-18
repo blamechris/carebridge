@@ -1,6 +1,17 @@
 import type { MutableRecord } from "./base.js";
 
-export type UserRole = "patient" | "nurse" | "physician" | "specialist" | "admin";
+export type UserRole =
+  | "patient"
+  | "nurse"
+  | "physician"
+  | "specialist"
+  | "admin"
+  // Family caregivers are invited by a patient and gain scoped read access to
+  // that patient's record via the `family_relationships` table. Write access
+  // to clinical data (diagnoses, allergies, notes, orders) is always denied —
+  // the role is read-only by design. See services/auth/src/family-invite-flow.ts
+  // and the `list` projection in services/api-gateway/src/routers/patient-records.ts.
+  | "family_caregiver";
 
 export interface User extends MutableRecord {
   email: string;
@@ -67,6 +78,11 @@ export type Permission =
 
 export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   patient: ["read:patients", "read:vitals", "read:labs", "read:medications", "read:notes", "read:flags"],
+  // Family caregivers inherit the patient read-set at the role level; granular
+  // filtering by active relationship and per-relationship access_scopes is
+  // enforced separately at the router layer. No write permissions are granted
+  // at the role level — clinical write-paths explicitly deny family_caregiver.
+  family_caregiver: ["read:patients", "read:vitals", "read:labs", "read:medications", "read:notes", "read:flags"],
   nurse: [
     "read:patients", "write:patients",
     "read:vitals", "write:vitals",

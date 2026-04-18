@@ -200,7 +200,7 @@ export async function deriveActorContext(
     return { actorRelationship: null, onBehalfOfPatientId: null };
   }
 
-  if ((user.role as string) === "family_caregiver") {
+  if (user.role === "family_caregiver") {
     if (!patientId) {
       return { actorRelationship: "caregiver", onBehalfOfPatientId: null };
     }

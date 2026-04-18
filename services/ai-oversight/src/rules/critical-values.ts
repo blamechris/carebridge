@@ -20,15 +20,25 @@ import { createLogger } from "@carebridge/logger";
 const logger = createLogger("ai-oversight");
 
 /**
- * Common HL7v2 abnormal-flag values we promote to at-least-warning severity
- * pending a principled mapping (see issue #834). We keep these conservative
- * (warning rather than critical) to avoid over-alerting from ingress paths
- * that bypass the Zod validator. Callers who want critical severity should
- * normalize to `"critical"` upstream.
+ * Common HL7v2 abnormal-flag values we promote to deterministic severities.
  *
- *   - HH → panic/critical-high; mapped to warning direction=high
- *   - LL → panic/critical-low;  mapped to warning direction=low
+ * HL7v2 precedent: single-letter `H` / `L` means "out-of-reference-range
+ * high/low"; double-letter `HH` / `LL` means "panic high/low" — the lab's
+ * explicit panic-threshold signal, which is a strictly stronger claim than
+ * `H` / `L`. Issue #853 revisited the original PR #842 mapping (which
+ * compressed `HH` / `LL` to warning) and concluded that panic flags should
+ * map to `critical` to match HL7v2 semantics.
  *
+ *   - HH → critical, direction=high   (panic-high)
+ *   - LL → critical, direction=low    (panic-low)
+ *
+ * Promoting to `critical` also sidesteps the severity-ceiling concern
+ * flagged in issue #849: because the numeric range-check branch below is
+ * gated on `severity === null`, a lower-than-critical mapping here would
+ * pre-empt a potentially-critical range-deviation signal. Critical is the
+ * top severity, so no downstream suppression is possible.
+ *
+ * Single-letter `H` / `L` remain as warnings (unchanged from PR #842).
  * Other common HL7v2 values (A, AA, N, U, '' etc.) remain unmapped and fall
  * through to the range checks; a structured warn is emitted so operators can
  * observe silent drops.
@@ -37,8 +47,8 @@ const HL7_FLAG_MAPPINGS: Record<
   string,
   { severity: FlagSeverity; direction: "low" | "high" }
 > = {
-  HH: { severity: "warning", direction: "high" },
-  LL: { severity: "warning", direction: "low" },
+  HH: { severity: "critical", direction: "high" },
+  LL: { severity: "critical", direction: "low" },
 };
 
 // ─── Explicit Critical Lab Thresholds ────────────────────────────
@@ -553,8 +563,14 @@ export function checkCriticalValues(event: ClinicalEvent): RuleFlag[] {
       for (const result of results) {
         // ── 1. Explicit critical thresholds (highest priority) ────────
         let matchedExplicit = false;
+        // Track whether the test name matched an explicit threshold
+        // definition at all (even when `evaluate` returned null for a normal
+        // value). Labs that match an explicit def were evaluated and must
+        // not trip the issue #835 "unable-to-evaluate" fallback below.
+        let matchedExplicitDef = false;
         for (const [ruleKey, def] of Object.entries(CRITICAL_LAB_THRESHOLDS)) {
           if (matchesCriticalLab(result.test_name, result.test_code, def)) {
+            matchedExplicitDef = true;
             const threshold = def.evaluate(result.value, { medications });
             if (threshold) {
               matchedExplicit = true;
@@ -716,6 +732,71 @@ export function checkCriticalValues(event: ClinicalEvent): RuleFlag[] {
                 result.test_name.replace(/\s+/g, "_").toUpperCase(),
               ),
             });
+          } else if (
+            // ── 3. Unable-to-evaluate fallback (issue #835) ─────────
+            // A result with NO `flag`, NO `reference_low` / `reference_high`,
+            // and NOT in `COMMON_LAB_TESTS` currently has no signal at all.
+            // Example from issue #835: a non-canonical "Potassium Level"
+            // with value 8.0 slips past the deterministic layer entirely
+            // because the canonical matcher requires "Potassium".
+            //
+            // We do NOT know whether the value is abnormal — firing
+            // critical would be over-alerting. Instead, emit an
+            // info-severity signal so the downstream LLM review pipeline
+            // can assemble context around the result, and log a
+            // structured warning for operator observability.
+            //
+            // Preconditions (must all hold to reach this branch):
+            //   - severity is still null (no flag match, no range match,
+            //     not flagged as critical, not in COMMON_LAB_TESTS)
+            //   - result.flag is undefined / null (any flag would have
+            //     gone through branch 2 above, emitted a warn, and
+            //     possibly fallen through; we only want truly silent labs)
+            //   - no reference bounds at all
+            //   - not in COMMON_LAB_TESTS
+            result.flag === undefined ||
+            result.flag === null
+          ) {
+            const hasReferenceRange =
+              result.reference_low !== undefined ||
+              result.reference_high !== undefined;
+            const inCommonLabTests = COMMON_LAB_TESTS[result.test_name] !== undefined;
+
+            if (
+              !hasReferenceRange &&
+              !inCommonLabTests &&
+              !matchedExplicitDef
+            ) {
+              logger.warn("lab_unevaluated_total", {
+                metric: "lab_unevaluated_total",
+                test_name: result.test_name,
+                test_code: result.test_code,
+                value: result.value,
+                unit: result.unit,
+              });
+
+              flags.push({
+                severity: "info",
+                category: "critical-value",
+                summary:
+                  `Lab result not evaluable by deterministic rules: ` +
+                  `${result.test_name} = ${result.value} ${result.unit}`,
+                rationale:
+                  `Lab result for "${result.test_name}" arrived with no lab-provided ` +
+                  `flag, no reference range, and no entry in COMMON_LAB_TESTS. The ` +
+                  `deterministic rule layer cannot assess the value against a threshold; ` +
+                  `surfacing as an info signal so LLM review and clinicians have visibility.`,
+                suggested_action:
+                  `Clinician review recommended. Verify test name mapping and reference ` +
+                  `range metadata with the sending laboratory. Consider adding this test ` +
+                  `to COMMON_LAB_TESTS or CRITICAL_LAB_THRESHOLDS if clinically relevant.`,
+                notify_specialties: [],
+                rule_id: buildLabRuleId(
+                  "info",
+                  `UNEVALUATED-${result.test_name.replace(/\s+/g, "_").toUpperCase()}`,
+                ),
+              });
+            }
           }
         }
       }

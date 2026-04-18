@@ -172,7 +172,7 @@ describe("patientRecordsRbacRouter — diagnoses role restrictions", () => {
   });
 
   it("rejects family_caregiver from creating a diagnosis (FORBIDDEN)", async () => {
-    const caller = callerFor(makeUser("family_caregiver" as User["role"]));
+    const caller = callerFor(makeUser("family_caregiver"));
     await expect(caller.diagnoses.create(diagnosisInput)).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
@@ -188,7 +188,7 @@ describe("patientRecordsRbacRouter — diagnoses role restrictions", () => {
   });
 
   it("rejects family_caregiver from updating a diagnosis (FORBIDDEN)", async () => {
-    const caller = callerFor(makeUser("family_caregiver" as User["role"]));
+    const caller = callerFor(makeUser("family_caregiver"));
     await expect(
       caller.diagnoses.update({ id: DIAGNOSIS_ID, status: "resolved" }),
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
@@ -232,7 +232,7 @@ describe("patientRecordsRbacRouter — allergies role restrictions", () => {
   });
 
   it("rejects family_caregiver from creating an allergy (FORBIDDEN)", async () => {
-    const caller = callerFor(makeUser("family_caregiver" as User["role"]));
+    const caller = callerFor(makeUser("family_caregiver"));
     await expect(caller.allergies.create(allergyInput)).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
@@ -248,7 +248,7 @@ describe("patientRecordsRbacRouter — allergies role restrictions", () => {
   });
 
   it("rejects family_caregiver from updating an allergy (FORBIDDEN)", async () => {
-    const caller = callerFor(makeUser("family_caregiver" as User["role"]));
+    const caller = callerFor(makeUser("family_caregiver"));
     await expect(
       caller.allergies.update({ id: ALLERGY_ID, severity: "severe" }),
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
@@ -466,4 +466,48 @@ describe("patientRecordsRbacRouter — care-team enforcement (allergies)", () =>
       }
     },
   );
+});
+
+// ---------------------------------------------------------------------------
+// Regression guard for issue #847 — "family_caregiver" must be a first-class
+// member of the User["role"] union so the router deny-branches compile as
+// type-safe equality checks without `(ctx.user.role as string)` casts.
+// ---------------------------------------------------------------------------
+
+describe("family_caregiver role typing (issue #847)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("accepts family_caregiver as a literal User['role'] value without casts", () => {
+    // If this compiles, the union includes "family_caregiver". If it ever
+    // regresses back to the narrower union, tsc will fail at build time.
+    const caregiver: User = {
+      id: ROLE_IDS.family_caregiver!,
+      email: "caregiver@carebridge.dev",
+      name: "Test Caregiver",
+      role: "family_caregiver",
+      is_active: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    expect(caregiver.role).toBe("family_caregiver");
+  });
+
+  it("rejects family_caregiver through the type-safe deny branch on diagnoses.create", async () => {
+    // Before issue #847 the router relied on `(ctx.user.role as string) === "family_caregiver"`
+    // because the union was too narrow. With the union widened, the equality
+    // check is type-safe and this assertion protects the deny path.
+    const caller = callerFor(makeUser("family_caregiver"));
+    await expect(caller.diagnoses.create(diagnosisInput)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    expect(mocks.createDiagnosis).not.toHaveBeenCalled();
+  });
+
+  it("rejects family_caregiver through the type-safe deny branch on allergies.update", async () => {
+    const caller = callerFor(makeUser("family_caregiver"));
+    await expect(
+      caller.allergies.update({ id: ALLERGY_ID, severity: "severe" }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mocks.updateAllergy).not.toHaveBeenCalled();
+  });
 });

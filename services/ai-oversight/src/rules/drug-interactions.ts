@@ -268,16 +268,51 @@ const INTERACTION_PAIRS: DrugInteractionPair[] = [
     notify_specialties: ["cardiology"],
   },
   {
-    id: "DI-STATIN-FIBRATE",
+    // Gemfibrozil + statin: upgraded to CRITICAL per issue #263.
+    // Gemfibrozil inhibits statin glucuronidation (OATP1B1 and UGT pathways),
+    // raising plasma statin levels several-fold. Rhabdomyolysis risk on this
+    // combination led Pfizer to withdraw cerivastatin (Baycol) from the market
+    // in 2001 after 52 deaths. FDA labeling now contraindicates gemfibrozil
+    // with simvastatin, lovastatin, pitavastatin, and rosuvastatin, and
+    // recommends avoidance with other statins.
+    id: "DI-STATIN-GEMFIBROZIL",
     drugA: /atorvastatin|simvastatin|rosuvastatin|pravastatin|lovastatin|fluvastatin|pitavastatin/i,
-    drugB: /gemfibrozil|fenofibrate|tricor/i,
-    severity: "warning",
-    summary: "Statin + Fibrate: increased rhabdomyolysis risk",
+    drugB: /gemfibrozil|lopid/i,
+    severity: "critical",
+    summary: "Statin + Gemfibrozil: contraindicated — severe rhabdomyolysis risk",
     rationale:
-      "Concurrent use of statins and fibrates (especially gemfibrozil) increases the risk of myopathy " +
-      "and rhabdomyolysis. Gemfibrozil inhibits statin glucuronidation, raising statin levels significantly.",
+      "Gemfibrozil inhibits statin glucuronidation and OATP1B1-mediated hepatic uptake, markedly " +
+      "increasing plasma statin levels and producing a dramatically elevated risk of myopathy, " +
+      "rhabdomyolysis, and acute kidney injury. Pfizer withdrew cerivastatin in 2001 because of fatal " +
+      "rhabdomyolysis cases on this combination. FDA labeling contraindicates gemfibrozil with " +
+      "simvastatin, lovastatin, pitavastatin, and rosuvastatin and recommends avoidance with other " +
+      "statins; fenofibrate is the preferred fibrate when combination therapy is clinically necessary.",
     suggested_action:
-      "If combination needed, fenofibrate is preferred over gemfibrozil. Monitor CK levels and educate patient on muscle pain symptoms.",
+      "CONTRAINDICATED combination per FDA labeling. Switch gemfibrozil to fenofibrate, or discontinue " +
+      "fibrate therapy if LDL is the primary target. If the combination cannot be avoided, document " +
+      "indication, use the lowest effective statin dose, obtain baseline and follow-up CK, and counsel " +
+      "the patient to stop the statin immediately for muscle pain, weakness, or dark urine.",
+    notify_specialties: ["cardiology"],
+  },
+  {
+    // Fenofibrate + statin: warning-level risk. Fenofibrate does NOT inhibit
+    // statin glucuronidation, so the interaction is far less pronounced than
+    // with gemfibrozil. ACC/AHA and NLA guidelines support this combination
+    // for mixed dyslipidemia with appropriate monitoring.
+    id: "DI-STATIN-FENOFIBRATE",
+    drugA: /atorvastatin|simvastatin|rosuvastatin|pravastatin|lovastatin|fluvastatin|pitavastatin/i,
+    drugB: /fenofibrate|tricor|antara|lipofen|lofibra|triglide|trilipix/i,
+    severity: "warning",
+    summary: "Statin + Fenofibrate: monitor for myopathy",
+    rationale:
+      "Fenofibrate added to a statin modestly increases the risk of myopathy and rhabdomyolysis, though " +
+      "substantially less than gemfibrozil because fenofibrate does not inhibit statin glucuronidation. " +
+      "This combination is clinically acceptable for mixed dyslipidemia when indicated, with CK monitoring " +
+      "and patient education on muscle symptoms.",
+    suggested_action:
+      "If combination is necessary, use the lowest effective doses, obtain baseline CK, and educate the " +
+      "patient to report muscle pain, weakness, or dark urine. Monitor renal function as fenofibrate " +
+      "may transiently elevate creatinine.",
     notify_specialties: ["cardiology"],
   },
   {

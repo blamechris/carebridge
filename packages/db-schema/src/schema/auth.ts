@@ -6,7 +6,7 @@ export const users = pgTable("users", {
   email: text("email").notNull().unique(),
   password_hash: text("password_hash").notNull(),
   name: text("name").notNull(),
-  role: text("role").notNull(), // patient, nurse, physician, specialist, admin
+  role: text("role").notNull(), // patient, nurse, physician, specialist, admin, family_caregiver
   patient_id: text("patient_id"), // links patient users to their patient record
   specialty: text("specialty"),
   department: text("department"),

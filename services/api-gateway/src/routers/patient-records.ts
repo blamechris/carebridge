@@ -225,7 +225,7 @@ export const patientRecordsRbacRouter = t.router({
     }
 
     // Family caregivers: only patients linked via an active family_relationships row.
-    if ((ctx.user.role as string) === "family_caregiver") {
+    if (ctx.user.role === "family_caregiver") {
       const activeRelationships = await db
         .select({ patient_user_id: familyRelationships.patient_id })
         .from(familyRelationships)
@@ -305,7 +305,7 @@ export const patientRecordsRbacRouter = t.router({
     create: protectedProcedure
       .input(createDiagnosisSchema)
       .mutation(async ({ ctx, input }) => {
-        if (ctx.user.role === "patient" || (ctx.user.role as string) === "family_caregiver") {
+        if (ctx.user.role === "patient" || ctx.user.role === "family_caregiver") {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Patients cannot create clinical diagnoses",
@@ -318,7 +318,7 @@ export const patientRecordsRbacRouter = t.router({
     update: protectedProcedure
       .input(z.object({ id: z.string().uuid() }).merge(updateDiagnosisSchema))
       .mutation(async ({ ctx, input }) => {
-        if (ctx.user.role === "patient" || (ctx.user.role as string) === "family_caregiver") {
+        if (ctx.user.role === "patient" || ctx.user.role === "family_caregiver") {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Patients cannot update clinical diagnoses",
@@ -355,7 +355,7 @@ export const patientRecordsRbacRouter = t.router({
     create: protectedProcedure
       .input(createAllergySchema)
       .mutation(async ({ ctx, input }) => {
-        if (ctx.user.role === "patient" || (ctx.user.role as string) === "family_caregiver") {
+        if (ctx.user.role === "patient" || ctx.user.role === "family_caregiver") {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Patients cannot create clinical allergies",
@@ -368,7 +368,7 @@ export const patientRecordsRbacRouter = t.router({
     update: protectedProcedure
       .input(z.object({ id: z.string().uuid() }).merge(updateAllergySchema))
       .mutation(async ({ ctx, input }) => {
-        if (ctx.user.role === "patient" || (ctx.user.role as string) === "family_caregiver") {
+        if (ctx.user.role === "patient" || ctx.user.role === "family_caregiver") {
           throw new TRPCError({
             code: "FORBIDDEN",
             message: "Patients cannot update clinical allergies",
