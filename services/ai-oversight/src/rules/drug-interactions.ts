@@ -19,6 +19,7 @@
  */
 
 import type { FlagSeverity, FlagCategory, RuleFlag } from "@carebridge/shared-types";
+import { METFORMIN_PATTERN } from "./shared-drug-patterns.js";
 
 interface DrugInteractionPair {
   id: string;
@@ -369,8 +370,12 @@ const INTERACTION_PAIRS: DrugInteractionPair[] = [
     notify_specialties: ["nephrology", "cardiology"],
   },
   {
+    // Metformin pattern is shared with cross-specialty.ts's
+    // CROSS-METFORMIN-GFR-001 via `shared-drug-patterns.ts` so the two rules
+    // stay in lockstep — patients on branded fixed-dose combos (Janumet,
+    // Jentadueto, Synjardy, etc.) are covered by both. Issue #865.
     id: "DI-METFORMIN-CONTRAST",
-    drugA: /metformin|glucophage/i,
+    drugA: METFORMIN_PATTERN,
     drugB: /contrast|iodinated/i,
     severity: "warning",
     summary: "Metformin + iodinated contrast: lactic acidosis risk",
