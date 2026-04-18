@@ -80,6 +80,22 @@ describe("lab flag precedence", () => {
     it("returns empty string when value is null", () => {
       expect(deriveInferredFlag("", null, 3.5, 5.0)).toBe("");
     });
+
+    it("returns empty string when value equals refLow exactly", () => {
+      expect(deriveInferredFlag("", 3.5, 3.5, 5.0)).toBe("");
+    });
+
+    it("returns empty string when value equals refHigh exactly", () => {
+      expect(deriveInferredFlag("", 5.0, 3.5, 5.0)).toBe("");
+    });
+
+    it("returns 'low' when value is one cent below refLow", () => {
+      expect(deriveInferredFlag("", 3.49, 3.5, 5.0)).toBe("low");
+    });
+
+    it("returns 'high' when value is one cent above refHigh", () => {
+      expect(deriveInferredFlag("", 5.01, 3.5, 5.0)).toBe("high");
+    });
   });
 
   describe("server/client disagreement warning", () => {
