@@ -166,7 +166,11 @@ export default function LoginPage() {
               </div>
 
               {error && (
-                <div role="alert" style={{ color: "#ef4444", fontSize: "0.8rem", marginBottom: 12 }}>
+                <div
+                  role="alert"
+                  aria-live="assertive"
+                  style={{ color: "#ef4444", fontSize: "0.8rem", marginBottom: 12 }}
+                >
                   {error}
                 </div>
               )}
@@ -235,7 +239,11 @@ export default function LoginPage() {
               </div>
 
               {error && (
-                <div role="alert" style={{ color: "#ef4444", fontSize: "0.8rem", marginBottom: 12 }}>
+                <div
+                  role="alert"
+                  aria-live="assertive"
+                  style={{ color: "#ef4444", fontSize: "0.8rem", marginBottom: 12 }}
+                >
                   {error}
                 </div>
               )}

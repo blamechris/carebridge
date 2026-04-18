@@ -33,6 +33,7 @@ function PatientsContent() {
         <input
           type="text"
           placeholder="Search by name or MRN..."
+          aria-label="Search by patient name or MRN"
           className="search-input"
           style={{ maxWidth: 400 }}
           value={search}
