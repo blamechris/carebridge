@@ -42,14 +42,14 @@ vi.mock("@carebridge/db-schema", () => {
   return {
     getDb: () => fakeDb,
     reviewJobs: {},
-    diagnoses: {},
-    medications: {},
+    diagnoses: { patient_id: "patient_id", status: "status", onset_date: "onset_date", resolved_date: "resolved_date" },
+    medications: { patient_id: "patient_id", status: "status", started_at: "started_at", ended_at: "ended_at" },
     patients: {},
-    allergies: {},
+    allergies: { patient_id: "patient_id", created_at: "created_at", verification_status: "verification_status" },
     messages: {},
     patientObservations: {},
     labPanels: {},
-    labResults: {},
+    labResults: { created_at: "created_at" },
     clinicalFlags: {},
     encounters: {
       patient_id: "patient_id",
@@ -65,8 +65,11 @@ vi.mock("drizzle-orm", () => {
   (sqlTag as unknown as Record<string, unknown>).raw = vi.fn((v: string) => ({ __raw: v }));
   return {
     eq: vi.fn(),
+    ne: vi.fn(),
     desc: vi.fn(),
     gte: vi.fn(),
+    lte: vi.fn(),
+    gt: vi.fn(),
     and: vi.fn(),
     or: vi.fn(),
     inArray: vi.fn(),

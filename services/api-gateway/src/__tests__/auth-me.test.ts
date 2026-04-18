@@ -1,12 +1,15 @@
 import { describe, it, expect } from "vitest";
+import type { User } from "@carebridge/shared-types";
+import { handleAuthMe } from "../handlers/auth-me.js";
 
 /**
  * Tests for the GET /auth/me endpoint behaviour.
  *
- * The endpoint is a thin Fastify route registered in server.ts that returns
- * `request.user` (populated by the auth middleware) or 401. These tests
- * exercise the route handler logic directly rather than booting the full
- * Fastify server, so we only need to validate the contract:
+ * The endpoint is a thin Fastify route registered in server.ts that delegates
+ * to `handleAuthMe` (see ../handlers/auth-me.ts). Importing the extracted
+ * handler directly lets us exercise the full contract without bootstrapping
+ * Fastify and all its plugins, while guaranteeing the test and the route
+ * share the exact same code path.
  *
  *   - 401 when `request.user` is falsy
  *   - User profile payload when `request.user` is present
@@ -35,46 +38,28 @@ function createMockReply(): MockReply {
   return reply;
 }
 
-// Re-implement the handler logic inline (mirrors server.ts) so we can test
-// without bootstrapping Fastify + all its plugins.
-async function authMeHandler(
-  request: { user?: { id: string; email: string; name: string; role: string; specialty?: string; department?: string; patient_id?: string } },
-  reply: MockReply,
-) {
-  if (!request.user) {
-    return reply.code(401).send({ error: "Not authenticated" });
-  }
-  return {
-    id: request.user.id,
-    email: request.user.email,
-    name: request.user.name,
-    role: request.user.role,
-    specialty: request.user.specialty,
-    department: request.user.department,
-    patient_id: request.user.patient_id,
-  };
-}
-
 describe("GET /auth/me handler", () => {
   it("returns 401 when request.user is not set", async () => {
     const reply = createMockReply();
-    await authMeHandler({ user: undefined }, reply);
+    await handleAuthMe({ user: undefined }, reply);
     expect(reply.statusCode).toBe(401);
     expect(reply.body).toEqual({ error: "Not authenticated" });
   });
 
   it("returns the user profile when authenticated", async () => {
-    const user = {
+    const user: User = {
       id: "u-1",
       email: "dr.smith@carebridge.dev",
       name: "Dr. Smith",
       role: "physician",
       specialty: "Hematology/Oncology",
       department: "Oncology",
-      patient_id: undefined,
+      is_active: true,
+      created_at: "2025-01-01T00:00:00.000Z",
+      updated_at: "2025-01-01T00:00:00.000Z",
     };
     const reply = createMockReply();
-    const result = await authMeHandler({ user }, reply);
+    const result = await handleAuthMe({ user }, reply);
     expect(result).toEqual({
       id: "u-1",
       email: "dr.smith@carebridge.dev",
@@ -87,15 +72,18 @@ describe("GET /auth/me handler", () => {
   });
 
   it("includes patient_id for patient-role users", async () => {
-    const user = {
+    const user: User = {
       id: "u-2",
       email: "patient@carebridge.dev",
       name: "Patient User",
       role: "patient",
       patient_id: "pat-123",
+      is_active: true,
+      created_at: "2025-01-01T00:00:00.000Z",
+      updated_at: "2025-01-01T00:00:00.000Z",
     };
     const reply = createMockReply();
-    const result = await authMeHandler({ user }, reply);
+    const result = await handleAuthMe({ user }, reply);
     expect(result).toEqual(
       expect.objectContaining({ patient_id: "pat-123" }),
     );
