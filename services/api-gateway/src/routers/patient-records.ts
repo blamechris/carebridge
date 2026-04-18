@@ -14,8 +14,11 @@ import {
   patients,
   diagnoses,
   allergies,
+  allergyOverrides,
+  auditLog,
   careTeamMembers,
   careTeamAssignments,
+  clinicalFlags,
   familyRelationships,
   users,
 } from "@carebridge/db-schema";
@@ -33,6 +36,7 @@ import {
   updateDiagnosisSchema,
   createAllergySchema,
   updateAllergySchema,
+  overrideAllergyFlagSchema,
 } from "@carebridge/validators";
 import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import crypto from "node:crypto";
@@ -529,6 +533,149 @@ export const patientRecordsRbacRouter = t.router({
         }
         await enforcePatientAccess(ctx.user, existing.patient_id);
         return updateAllergy(id, data);
+      }),
+
+    /**
+     * Formally override an allergy / contraindication warning (issue #233).
+     *
+     * Unlike the generic `aiOversight.flags.dismiss` (which takes optional
+     * free-text `dismiss_reason`), this procedure REQUIRES a structured
+     * `override_reason` enum value plus a substantive
+     * `clinical_justification`. The pairing gives HIPAA quality reviewers
+     * a stable aggregation key *and* a human-readable narrative.
+     *
+     * Three rows are written in a single transaction:
+     *   1. `allergy_overrides` — the permanent, structured record.
+     *   2. `clinical_flags` — the triggering flag transitions to `dismissed`
+     *      with a summarised `dismiss_reason` for backwards compatibility
+     *      with existing flag-dismissal UIs.
+     *   3. `audit_log` — an explicit row capturing actor, flag_id, reason,
+     *      and justification. The onResponse audit middleware also writes
+     *      a generic procedure-level row, but this explicit entry is what
+     *      reviewers will query when auditing override patterns.
+     *
+     * Role gate: nurses, patients, and family_caregivers cannot override —
+     * only physicians, specialists, and admins. Care-team access is
+     * enforced via enforcePatientAccess (admin bypass preserved).
+     */
+    override: protectedProcedure
+      .input(overrideAllergyFlagSchema)
+      .mutation(async ({ ctx, input }) => {
+        if (
+          ctx.user.role !== "physician" &&
+          ctx.user.role !== "specialist" &&
+          ctx.user.role !== "admin"
+        ) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message:
+              "Only physicians, specialists, and admins can override allergy warnings",
+          });
+        }
+
+        const db = getDb();
+        const [flag] = await db
+          .select()
+          .from(clinicalFlags)
+          .where(eq(clinicalFlags.id, input.flag_id))
+          .limit(1);
+        if (!flag) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: `Clinical flag ${input.flag_id} not found`,
+          });
+        }
+
+        await enforcePatientAccess(ctx.user, flag.patient_id);
+
+        // If an allergy_id is supplied, verify it belongs to the SAME
+        // patient as the flag. This blocks cross-patient override bleed
+        // (an attacker passing a valid flag_id for patient A together with
+        // a valid allergy_id for patient B to dilute the audit trail).
+        if (input.allergy_id) {
+          const [allergyRow] = await db
+            .select()
+            .from(allergies)
+            .where(eq(allergies.id, input.allergy_id))
+            .limit(1);
+          if (!allergyRow) {
+            throw new TRPCError({
+              code: "NOT_FOUND",
+              message: `Allergy ${input.allergy_id} not found`,
+            });
+          }
+          if (allergyRow.patient_id !== flag.patient_id) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message:
+                "allergy_id does not belong to the same patient as the flag",
+            });
+          }
+        }
+
+        const now = new Date().toISOString();
+        const overrideId = crypto.randomUUID();
+
+        // Summarised dismiss_reason keeps existing flag-inbox UIs working
+        // even though the structured record lives in allergy_overrides.
+        // Keep this below the flags.dismiss_reason column limit (2000).
+        const dismissSummary =
+          `Overridden (${input.override_reason}): ${input.clinical_justification}`.slice(
+            0,
+            2000,
+          );
+
+        await db.transaction(async (tx) => {
+          await tx.insert(allergyOverrides).values({
+            id: overrideId,
+            patient_id: flag.patient_id,
+            allergy_id: input.allergy_id ?? null,
+            flag_id: input.flag_id,
+            overridden_by: ctx.user.id,
+            override_reason: input.override_reason,
+            clinical_justification: input.clinical_justification,
+            overridden_at: now,
+          });
+
+          await tx
+            .update(clinicalFlags)
+            .set({
+              status: "dismissed",
+              dismissed_by: ctx.user.id,
+              dismissed_at: now,
+              dismiss_reason: dismissSummary,
+            })
+            .where(eq(clinicalFlags.id, input.flag_id));
+
+          await tx.insert(auditLog).values({
+            id: crypto.randomUUID(),
+            user_id: ctx.user.id,
+            action: "allergy_override",
+            resource_type: "allergy_override",
+            resource_id: overrideId,
+            procedure_name: "allergies.override",
+            patient_id: flag.patient_id,
+            details: JSON.stringify({
+              flag_id: input.flag_id,
+              allergy_id: input.allergy_id ?? null,
+              override_reason: input.override_reason,
+              clinical_justification: input.clinical_justification,
+            }),
+            ip_address: "",
+            timestamp: now,
+          });
+        });
+
+        return {
+          id: overrideId,
+          flag_id: input.flag_id,
+          patient_id: flag.patient_id,
+          allergy_id: input.allergy_id ?? null,
+          overridden_by: ctx.user.id,
+          override_reason: input.override_reason,
+          clinical_justification: input.clinical_justification,
+          overridden_at: now,
+        };
       }),
   }),
 

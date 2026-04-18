@@ -11,6 +11,7 @@ const diagnosesSelect = vi.fn();
 const medicationsSelect = vi.fn();
 const allergiesSelect = vi.fn();
 const labsSelect = vi.fn();
+const overridesSelect = vi.fn();
 const selectMock = vi.fn();
 
 vi.mock("@carebridge/db-schema", () => ({
@@ -31,6 +32,17 @@ vi.mock("@carebridge/db-schema", () => ({
     patient_id: "patient_id",
     created_at: "created_at",
     verification_status: "verification_status",
+  },
+  allergyOverrides: {
+    patient_id: "patient_id",
+    allergy_id: "allergy_id",
+    flag_id: "flag_id",
+    override_reason: "override_reason",
+    overridden_at: "overridden_at",
+  },
+  clinicalFlags: {
+    id: "id",
+    summary: "summary",
   },
   patients: {},
   labPanels: { id: "id", patient_id: "patient_id" },
@@ -58,9 +70,12 @@ function primeSelectMocks(): void {
   medicationsSelect.mockReset();
   allergiesSelect.mockReset();
   labsSelect.mockReset();
+  overridesSelect.mockReset();
 
   // Default: empty allergies. Tests that care about allergies override.
   allergiesSelect.mockResolvedValue([]);
+  // Default: no overrides. Tests targeting issue #233 suppression override.
+  overridesSelect.mockResolvedValue([]);
 
   // Re-prime the sequenced mock implementations (they are consumed per call).
   selectMock
@@ -78,6 +93,12 @@ function primeSelectMocks(): void {
         innerJoin: () => ({
           where: () => ({ orderBy: () => labsSelect() }),
         }),
+      }),
+    }))
+    // 5th: allergy_overrides left-joined with clinical_flags (#233).
+    .mockImplementationOnce(() => ({
+      from: () => ({
+        leftJoin: () => ({ where: () => overridesSelect() }),
       }),
     }));
 }

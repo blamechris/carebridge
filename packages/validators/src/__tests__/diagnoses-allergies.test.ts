@@ -306,3 +306,105 @@ describe("patientAllergyStatusSchema", () => {
     expect(result.success).toBe(false);
   });
 });
+
+// ─── Allergy Override Schema (issue #233) ─────────────────────
+
+import {
+  allergyOverrideReasonSchema,
+  overrideAllergyFlagSchema,
+} from "../clinical-data.js";
+
+const VALID_FLAG_ID = "11111111-1111-4111-8111-111111111111";
+const VALID_ALLERGY_ID = "22222222-2222-4222-8222-222222222222";
+const VALID_JUSTIFICATION =
+  "Patient tolerated amoxicillin twice since the penicillin allergy was documented in 2018.";
+
+describe("allergyOverrideReasonSchema", () => {
+  it("accepts all six structured override reasons", () => {
+    for (const reason of [
+      "mild_reaction_ok",
+      "patient_tolerated_previously",
+      "benefit_exceeds_risk",
+      "desensitized",
+      "misdiagnosed_allergy",
+      "other",
+    ]) {
+      const result = allergyOverrideReasonSchema.safeParse(reason);
+      expect(result.success, `Expected reason "${reason}" to pass`).toBe(true);
+    }
+  });
+
+  it("rejects unrecognised reason values", () => {
+    expect(allergyOverrideReasonSchema.safeParse("clinician_judgment").success).toBe(false);
+    expect(allergyOverrideReasonSchema.safeParse("").success).toBe(false);
+    expect(allergyOverrideReasonSchema.safeParse(null).success).toBe(false);
+  });
+});
+
+describe("overrideAllergyFlagSchema", () => {
+  const base = {
+    flag_id: VALID_FLAG_ID,
+    allergy_id: VALID_ALLERGY_ID,
+    override_reason: "patient_tolerated_previously" as const,
+    clinical_justification: VALID_JUSTIFICATION,
+  };
+
+  it("accepts a fully-populated override", () => {
+    const result = overrideAllergyFlagSchema.safeParse(base);
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts an override without allergy_id (contraindication-only)", () => {
+    const { allergy_id: _ignored, ...withoutAllergy } = base;
+    const result = overrideAllergyFlagSchema.safeParse(withoutAllergy);
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects empty clinical_justification", () => {
+    const result = overrideAllergyFlagSchema.safeParse({
+      ...base,
+      clinical_justification: "",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects whitespace-only clinical_justification", () => {
+    const result = overrideAllergyFlagSchema.safeParse({
+      ...base,
+      clinical_justification: "         ",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects justification shorter than 10 characters", () => {
+    const result = overrideAllergyFlagSchema.safeParse({
+      ...base,
+      clinical_justification: "ok",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects non-UUID flag_id", () => {
+    const result = overrideAllergyFlagSchema.safeParse({
+      ...base,
+      flag_id: "not-a-uuid",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects unrecognised override_reason", () => {
+    const result = overrideAllergyFlagSchema.safeParse({
+      ...base,
+      override_reason: "clinician_felt_like_it",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects justification exceeding max length", () => {
+    const result = overrideAllergyFlagSchema.safeParse({
+      ...base,
+      clinical_justification: "x".repeat(2001),
+    });
+    expect(result.success).toBe(false);
+  });
+});

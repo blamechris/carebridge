@@ -14,9 +14,42 @@ import { getRecentPotassium, getRecentEGFR } from "./lab-units.js";
 
 export interface PatientAllergy {
   allergen: string;
+  /**
+   * Optional stable identifier for the allergy row. Used by the allergy
+   * override suppression logic (issue #233) to match a triggered flag back
+   * to a permanent override record, so the rule layer can suppress repeat
+   * flags for an allergy-drug pair the clinician has already cleared.
+   */
+  id?: string | null;
   rxnorm_code?: string | null;
   severity?: string | null; // mild, moderate, severe
   reaction?: string | null;
+}
+
+/**
+ * Structured allergy override record surfaced into the rule context so
+ * `checkAllergyMedication` can suppress flags for an allergy-drug pair a
+ * clinician has already formally cleared via the `allergies.override`
+ * procedure. See issue #233.
+ *
+ * A flag is suppressed iff:
+ *   - the override references the same allergy_id as the candidate flag's
+ *     source allergy; OR
+ *   - (allergy_id absent on either side) the override's allergen-class
+ *     matches the candidate medication pattern.
+ *
+ * Suppression is ONLY applied to allergy-medication flags; cross-specialty
+ * and drug-interaction rules are unaffected by this field.
+ */
+export interface ResolvedAllergyOverride {
+  /** Nullable when the original flag was a cross-reactivity contraindication. */
+  allergy_id: string | null;
+  /** The allergen name as recorded on the override (may be absent on contraindication-only overrides). */
+  allergen?: string | null;
+  /** Optional drug / drug-class name recorded on the overridden medication. */
+  medication?: string | null;
+  override_reason: string;
+  overridden_at: string;
 }
 
 /**
@@ -54,6 +87,13 @@ export interface PatientContext {
   care_team_specialties: string[];
   /** Patient allergies for cross-checking against medications. */
   allergies?: PatientAllergy[];
+  /**
+   * Previously granted allergy / contraindication overrides (issue #233).
+   * Populated by `buildPatientContextForRules` from the allergy_overrides
+   * table. When present, `checkAllergyMedication` uses these to suppress
+   * flags for allergy-drug pairs already formally cleared by a clinician.
+   */
+  resolved_overrides?: ResolvedAllergyOverride[];
   /** The triggering clinical event, used by medication-status rules. */
   trigger_event?: ClinicalEvent;
   /**

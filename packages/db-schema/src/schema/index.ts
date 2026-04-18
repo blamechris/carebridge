@@ -12,3 +12,4 @@ export * from "./scheduling.js";
 export * from "./emergency-access.js";
 export * from "./fhir.js";
 export * from "./family-access.js";
+export * from "./allergy-overrides.js";
