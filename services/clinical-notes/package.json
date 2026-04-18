@@ -31,6 +31,7 @@
   "devDependencies": {
     "typescript": "^5.7.0",
     "@types/node": "^22.0.0",
-    "vitest": "^3.0.0"
+    "vitest": "^3.0.0",
+    "@carebridge/test-utils": "workspace:*"
   }
 }

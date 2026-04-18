@@ -23,6 +23,10 @@ export default defineConfig({
         __dirname,
         "../../packages/redis-config/src/index.ts",
       ),
+      "@carebridge/test-utils": path.resolve(
+        __dirname,
+        "../../packages/test-utils/src/index.ts",
+      ),
     },
   },
 });
