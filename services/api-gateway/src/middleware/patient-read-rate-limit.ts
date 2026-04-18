@@ -15,7 +15,6 @@
 
 import type { FastifyRequest, FastifyReply } from "fastify";
 import type Redis from "ioredis";
-import type { User } from "@carebridge/shared-types";
 import { getDb, auditLog } from "@carebridge/db-schema";
 import crypto from "node:crypto";
 
@@ -110,9 +109,7 @@ export function makePatientReadRateLimitHook(
 
     // Must have an authenticated user — this hook runs as preHandler after
     // authMiddleware, so req.user should be populated. Guard defensively.
-    const user = (req as unknown as Record<string, unknown>).user as
-      | User
-      | undefined;
+    const user = req.user;
     if (!user) return;
 
     const max = limits[procedure]!;
