@@ -233,6 +233,26 @@ function PatientDashboard() {
             Open Messages
           </button>
         </Card>
+
+        <Card title="Appointments">
+          <p style={{ margin: 0, color: "#999", fontSize: "0.875rem", marginBottom: "0.75rem" }}>
+            View upcoming visits, book, or reschedule.
+          </p>
+          <button
+            onClick={() => router.push("/appointments")}
+            style={{
+              padding: "6px 14px",
+              backgroundColor: "#2563eb",
+              border: "none",
+              borderRadius: 6,
+              color: "#fff",
+              cursor: "pointer",
+              fontSize: "0.8rem",
+            }}
+          >
+            Open Appointments
+          </button>
+        </Card>
       </div>
     </div>
   );
