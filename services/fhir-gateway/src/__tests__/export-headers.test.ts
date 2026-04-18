@@ -132,6 +132,27 @@ describe("exportPatient security headers", () => {
     );
   });
 
+  it("sets Pragma: no-cache via setHeader", async () => {
+    patientRows = [
+      {
+        id: "patient-42",
+        first_name: "Ada",
+        last_name: "Lovelace",
+        date_of_birth: "1815-12-10",
+      },
+    ];
+
+    const setHeader = vi.fn();
+    const caller = fhirGatewayRouter.createCaller({
+      user: adminUser,
+      setHeader,
+    });
+
+    await caller.exportPatient({ patientId: "patient-42" });
+
+    expect(setHeader).toHaveBeenCalledWith("Pragma", "no-cache");
+  });
+
   it("sets Content-Disposition: attachment with export-id filename via setHeader", async () => {
     patientRows = [
       {

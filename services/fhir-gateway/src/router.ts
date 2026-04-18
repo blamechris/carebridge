@@ -415,6 +415,7 @@ export const fhirGatewayRouter = t.router({
             "Content-Disposition",
             `attachment; filename="bundle-${exportId}.json"`,
           );
+          ctx.setHeader("Pragma", "no-cache");
         }
 
         // The bundle is returned inline rather than via a signed short-TTL
