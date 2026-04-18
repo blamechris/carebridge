@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Shared CSS design tokens and accessibility utilities for CareBridge portal apps.",
+  "sideEffects": ["*.css", "./tokens.css"],
   "exports": {
     "./tokens.css": "./tokens.css"
   },
