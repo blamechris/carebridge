@@ -120,6 +120,18 @@ describe("createUserSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  it("accepts family_caregiver role", () => {
+    // family_caregiver is a first-class role (see UserRole union) and must
+    // be creatable through the admin createUser flow that family-invite
+    // acceptance maps onto.
+    const result = createUserSchema.safeParse({
+      ...validUser,
+      email: "caregiver@carebridge.dev",
+      role: "family_caregiver",
+    });
+    expect(result.success).toBe(true);
+  });
+
   it("rejects missing required fields", () => {
     expect(createUserSchema.safeParse({}).success).toBe(false);
   });

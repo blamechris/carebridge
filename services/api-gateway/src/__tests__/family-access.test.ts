@@ -49,19 +49,12 @@ vi.mock("@carebridge/auth/family-invite-flow", () => ({
 import { familyAccessRbacRouter } from "../routers/family-access.js";
 import type { Context } from "../context.js";
 
-/**
- * Test-only role union. `User["role"]` from `@carebridge/shared-types` does
- * not include "family_caregiver" yet; this alias keeps the `as User["role"]`
- * cast localized to `makeUser` so future union-expansion is a single edit.
- */
-type TestRole = User["role"] | "family_caregiver";
-
-function makeUser(role: TestRole, id = ROLE_IDS[role]!): User {
+function makeUser(role: User["role"], id = ROLE_IDS[role]!): User {
   return {
     id,
     email: `${role}@carebridge.dev`,
     name: `Test ${role}`,
-    role: role as User["role"],
+    role,
     is_active: true,
     created_at: "2026-01-01T00:00:00.000Z",
     updated_at: "2026-01-01T00:00:00.000Z",
