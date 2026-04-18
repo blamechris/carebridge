@@ -1,4 +1,16 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Mock @carebridge/logger so we can assert on logger.warn() calls emitted
+// by lab-units when a recorded unit is not in the accepted set.
+const { mockWarn } = vi.hoisted(() => ({ mockWarn: vi.fn() }));
+vi.mock("@carebridge/logger", () => ({
+  createLogger: () => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: mockWarn,
+    error: vi.fn(),
+  }),
+}));
 
 import {
   findRecentLab,
@@ -8,6 +20,10 @@ import {
   getRecentEGFR,
 } from "../rules/lab-units.js";
 import type { PatientContext } from "../rules/cross-specialty.js";
+
+beforeEach(() => {
+  mockWarn.mockReset();
+});
 
 /**
  * Minimal PatientContext used across these tests. Only `recent_labs` is
@@ -174,6 +190,47 @@ describe("getRecentEGFR (#856)", () => {
 
   it("refuses mg/dL for eGFR (wrong unit)", () => {
     const ctx = ctxWithLabs([{ name: "eGFR", value: 1.2, unit: "mg/dL" }]);
+    expect(getRecentEGFR(ctx)).toBeUndefined();
+  });
+
+  it("returns the BSA-indexed eGFR (mL/min/1.73m²) at value=25 (positive case)", () => {
+    const ctx = ctxWithLabs([
+      { name: "eGFR", value: 25, unit: "mL/min/1.73m²" },
+    ]);
+    const lab = getRecentEGFR(ctx);
+    expect(lab).toBeDefined();
+    expect(lab!.value).toBe(25);
+    expect(lab!.unit).toBe("mL/min/1.73m²");
+  });
+
+  it("returns the BSA-indexed eGFR (ASCII variant mL/min/1.73m2) at value=25", () => {
+    const ctx = ctxWithLabs([
+      { name: "eGFR", value: 25, unit: "mL/min/1.73m2" },
+    ]);
+    const lab = getRecentEGFR(ctx);
+    expect(lab).toBeDefined();
+    expect(lab!.value).toBe(25);
+  });
+
+  it("REFUSES raw 'ml/min' (unindexed Cockcroft-Gault CrCl) and emits rule_lab_unit_mismatch warn (CROSS-METFORMIN-GFR-001 safety)", () => {
+    // Raw mL/min is Cockcroft-Gault creatinine clearance — NOT numerically
+    // equivalent to BSA-indexed mL/min/1.73m² eGFR. Can diverge 20–30% in
+    // non-average-BSA patients, so the unit-check infra must fail closed.
+    const ctx = ctxWithLabs([{ name: "eGFR", value: 25, unit: "ml/min" }]);
+    const lab = getRecentEGFR(ctx);
+    expect(lab).toBeUndefined();
+    expect(mockWarn).toHaveBeenCalledWith(
+      "rule_lab_unit_mismatch",
+      expect.objectContaining({
+        metric: "rule_lab_unit_mismatch",
+        analyte: "eGFR",
+        lab_unit: "ml/min",
+      }),
+    );
+  });
+
+  it("REFUSES raw 'mL/min' (mixed-case, unindexed) — normalization must not smuggle it back in", () => {
+    const ctx = ctxWithLabs([{ name: "eGFR", value: 25, unit: "mL/min" }]);
     expect(getRecentEGFR(ctx)).toBeUndefined();
   });
 });

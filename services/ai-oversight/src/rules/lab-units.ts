@@ -58,17 +58,25 @@ const CHLORIDE_ACCEPTED_UNITS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * eGFR is reported as mL/min/1.73m² in the U.S. and often written with
- * various spacing / encoding variants. All listed values are numerically
- * equivalent — we only tolerate formatting variance, not a real unit
- * mismatch.
+ * eGFR is reported as mL/min/1.73m² (BSA-indexed MDRD / CKD-EPI) in the
+ * U.S. and often written with various spacing / encoding variants. All
+ * listed values are the BSA-indexed estimated GFR — only formatting
+ * variance is tolerated here.
+ *
+ * Raw "mL/min" (unindexed Cockcroft-Gault creatinine clearance) is
+ * DELIBERATELY NOT accepted: it is not numerically equivalent to the
+ * BSA-indexed value used by the FDA metformin contraindication threshold
+ * (<30 mL/min/1.73m²) and can diverge 20–30% in non-average-BSA patients.
+ * Aliasing the two would defeat the whole point of the unit-check
+ * infrastructure for CROSS-METFORMIN-GFR-001. Labs recorded as raw
+ * "mL/min" must fail closed (rule_lab_unit_mismatch) so the gap is
+ * surfaced rather than silently compared.
  */
 const EGFR_ACCEPTED_UNITS: ReadonlySet<string> = new Set([
   "ml/min/1.73m2",
   "ml/min/1.73m²",
   "ml/min/1.73 m2",
   "ml/min/1.73 m²",
-  "ml/min",
 ]);
 
 /** Normalize a unit string for set-lookup: trim, lowercase. */
@@ -161,9 +169,10 @@ export function getRecentChloride(ctx: PatientContext): RecentLab | undefined {
 }
 
 /**
- * Find the most-recent eGFR value with accepted unit (mL/min/1.73m² or
- * tolerant variants). mL/min is also accepted as a tolerant fallback used
- * by some reporting systems.
+ * Find the most-recent eGFR value with accepted unit (BSA-indexed
+ * mL/min/1.73m² or spacing/encoding-tolerant variants). Raw "mL/min"
+ * (unindexed Cockcroft-Gault CrCl) is NOT accepted — see
+ * EGFR_ACCEPTED_UNITS for rationale.
  */
 export function getRecentEGFR(ctx: PatientContext): RecentLab | undefined {
   const NAME = /^(egfr|estimated gfr|gfr)$/i;
