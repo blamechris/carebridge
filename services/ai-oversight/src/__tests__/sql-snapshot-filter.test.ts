@@ -46,6 +46,7 @@ vi.mock("@carebridge/db-schema", () => ({
     created_at: "lab_results.created_at",
     test_name: "lab_results.test_name",
     value: "lab_results.value",
+    unit: "lab_results.unit",
   },
   reviewJobs: {},
 }));

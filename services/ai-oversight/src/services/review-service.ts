@@ -635,11 +635,14 @@ export async function buildPatientContextForRules(
         ),
       ),
     // Join lab_results → lab_panels → filter by patient, freshness, and
-    // event-time upper bound (#514).
+    // event-time upper bound (#514). The `unit` column (#856) is selected
+    // so unit-aware rule helpers can verify threshold comparisons are
+    // against the canonical unit for each analyte.
     db
       .select({
         test_name: labResults.test_name,
         value: labResults.value,
+        unit: labResults.unit,
         created_at: labResults.created_at,
         flag: labResults.flag,
       })
@@ -688,14 +691,28 @@ export async function buildPatientContextForRules(
   // labRows are ordered desc by created_at, so the first occurrence wins.
   // SQL already filters by event-time upper bound and lab window (#514);
   // the retraction and future-lab checks remain as in-memory backstops.
+  //
+  // The `unit` field (#856) is forwarded as-is so rules can perform
+  // unit-aware threshold comparisons. Rows missing a unit degrade to an
+  // empty string with a structured warn — unit-aware helpers then treat
+  // the lab as unknown rather than silently comparing wrong-unit values.
   const seenLabs = new Set<string>();
-  const recentLabs: Array<{ name: string; value: number }> = [];
+  const recentLabs: Array<{ name: string; value: number; unit: string }> = [];
   for (const row of recentLabRows) {
     if (isLabRetracted(row)) continue;
     if (isoBefore(eventAt, row.created_at)) continue;
     if (seenLabs.has(row.test_name)) continue;
+    const unit = (row.unit ?? "").trim();
+    if (unit === "") {
+      logger.warn("lab_result_unit_missing", {
+        metric: "lab_result_unit_missing",
+        patient_id_prefix: patientId.slice(0, 8),
+        test_name: row.test_name,
+        caller: "review-service:buildPatientContextForRules",
+      });
+    }
     seenLabs.add(row.test_name);
-    recentLabs.push({ name: row.test_name, value: row.value });
+    recentLabs.push({ name: row.test_name, value: row.value, unit });
   }
 
   // A medication was "active at event time" if it had started (started_at
