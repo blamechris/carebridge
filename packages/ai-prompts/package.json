@@ -15,6 +15,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "eval": "vitest run --config vitest.config.ts golden-eval",
     "clean": "rm -rf dist"
   },
   "dependencies": {

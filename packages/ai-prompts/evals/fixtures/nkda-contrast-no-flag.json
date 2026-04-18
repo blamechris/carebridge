@@ -1,0 +1,70 @@
+{
+  "id": "nkda-patient-on-contrast",
+  "description": "NKDA patient receiving IV contrast — should NOT flag allergy concern",
+  "context": {
+    "patient": {
+      "age": 55,
+      "sex": "male",
+      "allergy_status": "nkda",
+      "active_diagnoses": [
+        "Suspected pulmonary embolism"
+      ],
+      "allergies": []
+    },
+    "active_medications": [
+      {
+        "name": "Iohexol (Omnipaque)",
+        "dose": "100 mL",
+        "route": "IV",
+        "frequency": "once",
+        "started_at": "2026-04-17"
+      },
+      {
+        "name": "Heparin",
+        "dose": "5000 units",
+        "route": "IV bolus",
+        "frequency": "once",
+        "started_at": "2026-04-17"
+      }
+    ],
+    "latest_vitals": {
+      "blood_pressure": {
+        "value": 140,
+        "unit": "mmHg systolic",
+        "recorded_at": "2026-04-17T08:00:00Z"
+      },
+      "heart_rate": {
+        "value": 105,
+        "unit": "bpm",
+        "recorded_at": "2026-04-17T08:00:00Z",
+        "trend": "rising"
+      },
+      "spo2": {
+        "value": 93,
+        "unit": "%",
+        "recorded_at": "2026-04-17T08:00:00Z"
+      }
+    },
+    "triggering_event": {
+      "type": "procedure_ordered",
+      "summary": "CT pulmonary angiogram with IV contrast ordered",
+      "detail": "CTPA ordered for suspected PE. Patient has confirmed NKDA status. Renal function within normal limits (eGFR 88). No prior contrast reactions."
+    },
+    "recent_flags": [],
+    "care_team": [
+      {
+        "name": "Dr. Martinez",
+        "specialty": "Emergency Medicine",
+        "recent_note_date": "2026-04-17"
+      }
+    ]
+  },
+  "expected": {
+    "shouldFlag": false,
+    "forbiddenCategories": ["medication-safety"],
+    "mustMentionInPrompt": [
+      "NKDA",
+      "Iohexol"
+    ]
+  }
+}
