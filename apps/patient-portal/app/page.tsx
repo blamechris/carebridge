@@ -48,7 +48,7 @@ function PatientDashboard() {
   }
 
   return (
-    <main>
+    <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
         <div>
           <h2 style={{ fontSize: "1.25rem", margin: 0 }}>
@@ -234,7 +234,7 @@ function PatientDashboard() {
           </button>
         </Card>
       </div>
-    </main>
+    </div>
   );
 }
 
@@ -250,11 +250,11 @@ export default function PatientHome() {
 
   if (!hydrated || !isAuthenticated) {
     return (
-      <main>
+      <div>
         <p style={{ color: "#999" }}>
           {hydrated ? "Redirecting to login..." : "Loading..."}
         </p>
-      </main>
+      </div>
     );
   }
 
