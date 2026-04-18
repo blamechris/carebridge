@@ -326,7 +326,7 @@ describe("checkCriticalValues — lab heuristic fallback", () => {
     );
     expect(flags).toHaveLength(1);
     expect(flags[0]!.severity).toBe("info");
-    expect(flags[0]!.rule_id).toBe("WARNING-LAB-UNEVALUATED-OBSCURE_MARKER_X");
+    expect(flags[0]!.rule_id).toBe("INFO-LAB-UNEVALUATED-OBSCURE_MARKER_X");
   });
 });
 
@@ -537,6 +537,71 @@ describe("CRITICAL_LAB_THRESHOLDS — structure validation", () => {
   });
 });
 
+// ─── Rule ID / severity prefix harmonization (issue #836) ───────
+// Prior to this harmonization, the explicit-threshold path hard-coded a
+// `CRITICAL-LAB-*` prefix regardless of the threshold's actual severity
+// (e.g. Troponin I 0.04–0.4 ng/mL was a "warning" severity but emitted
+// `CRITICAL-LAB-TROPONIN_I`). The heuristic fallback path already varied
+// the prefix by severity. Downstream consumers that filter on rule_id
+// prefix saw inconsistent semantics. These tests lock in the harmonized
+// mapping: severity="critical" → CRITICAL-LAB-*, "warning" → WARNING-LAB-*.
+describe("checkCriticalValues — severity-matched rule_id prefix (issue #836)", () => {
+  it("uses CRITICAL-LAB-* prefix when explicit threshold resolves to critical", () => {
+    // Troponin I > 0.4 ng/mL → severity="critical".
+    const flags = checkCriticalValues(
+      makeLabEvent([{ test_name: "Troponin I", value: 1.2, unit: "ng/mL" }]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("critical");
+    expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-TROPONIN_I");
+  });
+
+  it("uses WARNING-LAB-* prefix when explicit threshold resolves to warning", () => {
+    // Troponin I in (0.04, 0.4] ng/mL → severity="warning". Before #836 this
+    // path emitted `CRITICAL-LAB-TROPONIN_I` despite warning severity.
+    const flags = checkCriticalValues(
+      makeLabEvent([{ test_name: "Troponin I", value: 0.1, unit: "ng/mL" }]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("warning");
+    expect(flags[0]!.rule_id).toBe("WARNING-LAB-TROPONIN_I");
+  });
+
+  it("uses WARNING-LAB-* prefix for heuristic-fallback warnings (H/L flags)", () => {
+    // Heuristic fallback path for an unknown analyte with `flag: "H"` →
+    // severity="warning". Rule-id prefix must match.
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Novel Biomarker",
+          value: 42,
+          unit: "pg/mL",
+          flag: "H",
+        },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("warning");
+    expect(flags[0]!.rule_id).toBe("WARNING-LAB-NOVEL_BIOMARKER");
+  });
+
+  it("uses CRITICAL-LAB-* prefix for heuristic-fallback critical flags", () => {
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Obscure Marker X",
+          value: 999,
+          unit: "U/L",
+          flag: "critical",
+        },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("critical");
+    expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-OBSCURE_MARKER_X");
+  });
+});
+
 // ─── Direction inference for critical flag (issue #833) ──────────
 // Regression guard for the half-bounded reference-range case. Prior to the
 // fix, `direction` defaulted to "high" whenever `reference_low` was missing,
@@ -658,7 +723,8 @@ describe("checkCriticalValues — unrecognized flag handling (issues #834, #837)
     );
     expect(mockWarn).toHaveBeenCalled();
     const call = mockWarn.mock.calls.find(
-      ([msg]) => typeof msg === "string" && msg.includes("unrecognized_lab_flag"),
+      // Issue #851: event name must match the metric field (`_total` suffix).
+      ([msg]) => msg === "unrecognized_lab_flag_total",
     );
     expect(call).toBeDefined();
   });
@@ -676,7 +742,8 @@ describe("checkCriticalValues — unrecognized flag handling (issues #834, #837)
     );
     expect(mockWarn).toHaveBeenCalled();
     const call = mockWarn.mock.calls.find(
-      ([msg]) => typeof msg === "string" && msg.includes("unrecognized_lab_flag"),
+      // Issue #851: event name must match the metric field (`_total` suffix).
+      ([msg]) => msg === "unrecognized_lab_flag_total",
     );
     expect(call).toBeDefined();
     // Meta payload should capture the offending flag value (no PHI).
@@ -713,11 +780,36 @@ describe("checkCriticalValues — unrecognized flag handling (issues #834, #837)
         },
       ]),
     );
-    // None of these should trigger unrecognized_lab_flag warnings.
+    // None of these should trigger unrecognized_lab_flag_total warnings.
     const unrecognizedCalls = mockWarn.mock.calls.filter(
-      ([msg]) => typeof msg === "string" && msg.includes("unrecognized_lab_flag"),
+      // Issue #851: event name must match the metric field (`_total` suffix).
+      ([msg]) => msg === "unrecognized_lab_flag_total",
     );
     expect(unrecognizedCalls).toHaveLength(0);
+  });
+
+  it("uses event name matching the metric field with _total suffix (issue #851)", () => {
+    // Pin the harmonized convention: logger.warn's event name string must
+    // equal the `metric` field. Before #851 the event name was
+    // "unrecognized_lab_flag" (no `_total`), producing log-vs-metric
+    // aggregation drift against the convention in
+    // `utils/validate-event-timestamp.ts`.
+    checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Obscure Marker X",
+          value: 5,
+          unit: "U/L",
+          flag: "abnormal",
+        },
+      ]),
+    );
+    const call = mockWarn.mock.calls.find(
+      ([msg]) => msg === "unrecognized_lab_flag_total",
+    );
+    expect(call).toBeDefined();
+    const meta = call![1] as Record<string, unknown>;
+    expect(meta.metric).toBe("unrecognized_lab_flag_total");
   });
 
   it("maps HL7v2 'HH' (panic high) to a critical flag with direction='high' (issues #849, #853)", () => {
@@ -850,7 +942,7 @@ describe("checkCriticalValues — unrecognized flag handling (issues #834, #837)
 //
 // Fix: emit an info-severity "unable-to-evaluate" signal that gives the
 // downstream LLM review pipeline visibility into the result, and log a
-// structured `lab_unevaluated` warning so operators can quantify the gap.
+// structured `lab_unevaluated_total` warning so operators can quantify the gap.
 // Critical-severity is intentionally NOT used — we do not know whether the
 // value is abnormal. The info-severity flag exists specifically to surface
 // the result for LLM context assembly rather than to fire a clinical alert.
@@ -874,13 +966,15 @@ describe("checkCriticalValues — no-flag/no-range gap (issue #835)", () => {
     expect(flags).toHaveLength(1);
     expect(flags[0]!.severity).toBe("info");
     expect(flags[0]!.category).toBe("critical-value");
-    expect(flags[0]!.rule_id).toBe("WARNING-LAB-UNEVALUATED-POTASSIUM_LEVEL");
+    expect(flags[0]!.rule_id).toBe("INFO-LAB-UNEVALUATED-POTASSIUM_LEVEL");
     // Summary should name the test so downstream LLM review has context.
     expect(flags[0]!.summary).toContain("Potassium Level");
     expect(flags[0]!.summary).toContain("8");
   });
 
-  it("also emits a structured logger.warn('lab_unevaluated') for observability", () => {
+  it("also emits a structured logger.warn('lab_unevaluated_total') for observability (issue #863)", () => {
+    // Issue #863: event name must match the metric field (`_total` suffix)
+    // so log-based aggregation and Prometheus counters stay in sync.
     checkCriticalValues(
       makeLabEvent([
         {
@@ -891,10 +985,11 @@ describe("checkCriticalValues — no-flag/no-range gap (issue #835)", () => {
       ]),
     );
     const call = mockWarn.mock.calls.find(
-      ([msg]) => typeof msg === "string" && msg.includes("lab_unevaluated"),
+      ([msg]) => msg === "lab_unevaluated_total",
     );
     expect(call).toBeDefined();
     const meta = call![1] as Record<string, unknown>;
+    expect(meta.metric).toBe("lab_unevaluated_total");
     expect(meta.test_name).toBe("Rare Obscure Analyte");
     expect(meta.value).toBe(42);
     expect(meta.unit).toBe("U/L");
@@ -971,5 +1066,127 @@ describe("checkCriticalValues — no-flag/no-range gap (issue #835)", () => {
       makeVitalEvent({ type: "heart_rate", value_primary: 75 }),
     );
     expect(flags).toHaveLength(0);
+  });
+});
+
+// ─── Numerically-extreme-value escalation (issue #867) ─────────────
+// PR #860 introduced the info-severity unevaluated fallback (issue #835)
+// for labs with no flag, no reference range, and no COMMON_LAB_TESTS
+// entry. The reviewer on that PR raised #867: when the value itself is
+// numerically extreme (e.g., 99999 or 0.001 for any analyte), info is
+// plausibly under-alerting — the magnitude is suggestive of abnormality
+// even though we cannot map the result to a threshold.
+//
+// Escalation window: values with abs() > 10000 or abs() < 0.01 (including
+// zero and negatives) escalate from info to warning. These are coarse
+// signal-over-noise hints to catch data-entry errors (misordered
+// magnitudes, decimal misplacement, sign-flipped values); they are NOT
+// clinical thresholds, and the rule does NOT escalate to critical
+// because no analyte-specific judgement is justified without a
+// reference.
+describe("checkCriticalValues — extreme-value escalation on unevaluated fallback (issue #867)", () => {
+  beforeEach(() => {
+    mockWarn.mockClear();
+  });
+
+  it("escalates to warning when an unevaluable lab has a very large positive value (>10000)", () => {
+    // Hypothetical scenario from issue #867: "Potassium Levl" (typo) with
+    // value 99999 slips past canonical matching. Today this emits info;
+    // issue #867 escalates to warning because 99999 is physiologically
+    // implausible for essentially any analyte.
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        { test_name: "Obscure Marker Y", value: 99999, unit: "U/L" },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("warning");
+    expect(flags[0]!.rule_id).toBe("WARNING-LAB-UNEVALUATED-OBSCURE_MARKER_Y");
+    expect(flags[0]!.summary).toContain("Obscure Marker Y");
+    expect(flags[0]!.summary).toContain("99999");
+  });
+
+  it("escalates to warning when an unevaluable lab has a very small positive value (<0.01)", () => {
+    // Decimal-misplacement scenario: 0.001 instead of 1.0. Escalates to
+    // warning so the result surfaces as clinician-review-worthy.
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        { test_name: "Obscure Marker Z", value: 0.001, unit: "U/L" },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("warning");
+    expect(flags[0]!.rule_id).toBe("WARNING-LAB-UNEVALUATED-OBSCURE_MARKER_Z");
+  });
+
+  it("escalates to warning when an unevaluable lab has a negative value", () => {
+    // Negative values are almost always data errors for concentration/
+    // count analytes. Escalate conservatively to warning (not critical —
+    // the signal is "this is bad data" not "this is a clinical emergency").
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        { test_name: "Obscure Marker N", value: -5, unit: "U/L" },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("warning");
+    expect(flags[0]!.rule_id).toBe("WARNING-LAB-UNEVALUATED-OBSCURE_MARKER_N");
+  });
+
+  it("stays info-severity when an unevaluable lab has an ordinary magnitude (in [0.01, 10000])", () => {
+    // Baseline case: value 10.5 is within the "any-analyte-plausible"
+    // window. We genuinely do not know if it is abnormal — stay info.
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        { test_name: "Obscure Marker M", value: 10.5, unit: "U/L" },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("info");
+    expect(flags[0]!.rule_id).toBe("INFO-LAB-UNEVALUATED-OBSCURE_MARKER_M");
+  });
+
+  it("preserves the lab_unevaluated_total logger warn and metric shape for escalated flags", () => {
+    // The escalation is additive — the structured observability event
+    // MUST still fire with the same event name and metric field so
+    // downstream aggregation stays consistent across info and warning
+    // escalations.
+    checkCriticalValues(
+      makeLabEvent([
+        { test_name: "Extreme Analyte", value: 50000, unit: "U/L" },
+      ]),
+    );
+    const call = mockWarn.mock.calls.find(
+      ([msg]) => msg === "lab_unevaluated_total",
+    );
+    expect(call).toBeDefined();
+    const meta = call![1] as Record<string, unknown>;
+    expect(meta.metric).toBe("lab_unevaluated_total");
+    expect(meta.test_name).toBe("Extreme Analyte");
+    expect(meta.value).toBe(50000);
+    expect(meta.unit).toBe("U/L");
+  });
+
+  it("keeps value exactly at 10000 as info (inclusive upper bound stays evaluable)", () => {
+    // Boundary: the escalation window is strictly outside [0.01, 10000].
+    // value === 10000 is the boundary and remains info.
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        { test_name: "Boundary Marker A", value: 10000, unit: "U/L" },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("info");
+  });
+
+  it("keeps value exactly at 0.01 as info (inclusive lower bound stays evaluable)", () => {
+    // Boundary: value === 0.01 remains info.
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        { test_name: "Boundary Marker B", value: 0.01, unit: "U/L" },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("info");
   });
 });

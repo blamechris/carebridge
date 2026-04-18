@@ -40,6 +40,7 @@ vi.mock("@carebridge/db-schema", () => ({
     created_at: "created_at",
     test_name: "test_name",
     value: "value",
+    unit: "unit",
   },
   reviewJobs: {},
 }));
@@ -95,7 +96,7 @@ describe("buildPatientContextForRules — recent_labs wiring", () => {
     primeSelectMocks();
   });
 
-  it("populates recent_labs from the joined lab_results query", async () => {
+  it("populates recent_labs from the joined lab_results query, including unit (#856)", async () => {
     diagnosesSelect.mockResolvedValue([
       { description: "Breast cancer", icd10_code: "C50.9", status: "active" },
     ]);
@@ -103,16 +104,16 @@ describe("buildPatientContextForRules — recent_labs wiring", () => {
       { name: "Cisplatin", status: "active" },
     ]);
     labsSelect.mockResolvedValue([
-      { test_name: "ANC", value: 800, created_at: nowIso },
-      { test_name: "WBC", value: 2.1, created_at: nowIso },
+      { test_name: "ANC", value: 800, unit: "cells/µL", created_at: nowIso },
+      { test_name: "WBC", value: 2.1, unit: "10^3/µL", created_at: nowIso },
     ]);
 
     const ctx = await buildPatientContextForRules("p-1", stubEvent);
 
     expect(ctx.recent_labs).toBeDefined();
     expect(ctx.recent_labs).toEqual([
-      { name: "ANC", value: 800 },
-      { name: "WBC", value: 2.1 },
+      { name: "ANC", value: 800, unit: "cells/µL" },
+      { name: "WBC", value: 2.1, unit: "10^3/µL" },
     ]);
     expect(ctx.event_timestamp).toBe(stubEvent.timestamp);
     expect(ctx.active_diagnoses).toContain("Breast cancer");
@@ -124,13 +125,29 @@ describe("buildPatientContextForRules — recent_labs wiring", () => {
     medicationsSelect.mockResolvedValue([]);
     // Ordered desc by created_at — first row wins.
     labsSelect.mockResolvedValue([
-      { test_name: "ANC", value: 500, created_at: nowIso },
-      { test_name: "ANC", value: 1800, created_at: "2026-04-05T00:00:00Z" },
+      { test_name: "ANC", value: 500, unit: "cells/µL", created_at: nowIso },
+      { test_name: "ANC", value: 1800, unit: "cells/µL", created_at: "2026-04-05T00:00:00Z" },
     ]);
 
     const ctx = await buildPatientContextForRules("p-1", stubEvent);
 
-    expect(ctx.recent_labs).toEqual([{ name: "ANC", value: 500 }]);
+    expect(ctx.recent_labs).toEqual([{ name: "ANC", value: 500, unit: "cells/µL" }]);
+  });
+
+  it("populates unit='' (empty string) when the lab row has null/missing unit, and logs a warn (#856)", async () => {
+    // Defensive: a lab row with null unit must not crash and must not be
+    // silently treated as if it had a canonical unit. The shape should
+    // carry an empty string, and downstream unit-aware helpers refuse to
+    // match it against a specific expected unit.
+    diagnosesSelect.mockResolvedValue([]);
+    medicationsSelect.mockResolvedValue([]);
+    labsSelect.mockResolvedValue([
+      { test_name: "Potassium", value: 3.2, unit: null, created_at: nowIso },
+    ]);
+
+    const ctx = await buildPatientContextForRules("p-1", stubEvent);
+
+    expect(ctx.recent_labs).toEqual([{ name: "Potassium", value: 3.2, unit: "" }]);
   });
 
   it("returns recent_labs as undefined when no recent lab rows exist", async () => {
@@ -242,14 +259,14 @@ describe("buildPatientContextForRules — recent_labs wiring", () => {
     medicationsSelect.mockResolvedValue([]);
     labsSelect.mockResolvedValue([
       // Future lab — must not "leak from the future" into the rule evaluation.
-      { test_name: "ANC", value: 900, created_at: "2026-04-16T15:00:00.000Z" },
+      { test_name: "ANC", value: 900, unit: "cells/µL", created_at: "2026-04-16T15:00:00.000Z" },
       // Lab reported before the event — included.
-      { test_name: "WBC", value: 2.1, created_at: "2026-04-16T10:00:00.000Z" },
+      { test_name: "WBC", value: 2.1, unit: "10^3/µL", created_at: "2026-04-16T10:00:00.000Z" },
     ]);
 
     const ctx = await buildPatientContextForRules("p-1", event);
 
-    expect(ctx.recent_labs).toEqual([{ name: "WBC", value: 2.1 }]);
+    expect(ctx.recent_labs).toEqual([{ name: "WBC", value: 2.1, unit: "10^3/µL" }]);
   });
 
   // ─── #513 — normalize ISO timestamp comparisons ────────────────────
@@ -414,12 +431,14 @@ describe("buildPatientContextForRules — recent_labs wiring", () => {
       {
         test_name: "ANC",
         value: 200,
+        unit: "cells/µL",
         created_at: "2026-04-16T08:00:00.000Z",
         flag: "entered_in_error",
       },
       {
         test_name: "WBC",
         value: 4.5,
+        unit: "10^3/µL",
         created_at: "2026-04-16T09:00:00.000Z",
       },
     ]);
@@ -427,7 +446,7 @@ describe("buildPatientContextForRules — recent_labs wiring", () => {
     const ctx = await buildPatientContextForRules("p-1", event);
 
     expect(ctx.recent_labs).toBeDefined();
-    expect(ctx.recent_labs).toEqual([{ name: "WBC", value: 4.5 }]);
+    expect(ctx.recent_labs).toEqual([{ name: "WBC", value: 4.5, unit: "10^3/µL" }]);
     const labNames = (ctx.recent_labs ?? []).map((l) => l.name);
     expect(labNames).not.toContain("ANC");
   });
@@ -442,12 +461,14 @@ describe("buildPatientContextForRules — recent_labs wiring", () => {
       {
         test_name: "ANC",
         value: 200,
+        unit: "cells/µL",
         created_at: "2026-04-16T08:00:00.000Z",
         flag: "entered_in_error",
       },
       {
         test_name: "Hemoglobin",
         value: 7.2,
+        unit: "g/dL",
         created_at: "2026-04-16T07:00:00.000Z",
         flag: "entered_in_error",
       },

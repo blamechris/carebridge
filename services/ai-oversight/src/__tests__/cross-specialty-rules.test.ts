@@ -19,7 +19,7 @@ describe("CHEMO-FEVER-001 / CHEMO-NEUTRO-FEVER-001 — ANC-aware rules", () => {
   });
 
   it("fires CHEMO-NEUTRO-FEVER-001 (critical) when ANC <= 500 — true febrile neutropenia", () => {
-    const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 200 }] });
+    const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 200, unit: "cells/µL" }] });
     const flags = checkCrossSpecialtyPatterns(ctx);
 
     const flag = flags.find((f) => f.rule_id === "CHEMO-NEUTRO-FEVER-001");
@@ -32,7 +32,7 @@ describe("CHEMO-FEVER-001 / CHEMO-NEUTRO-FEVER-001 — ANC-aware rules", () => {
   });
 
   it("fires CHEMO-NEUTRO-FEVER-001 (critical) at ANC = 500 boundary", () => {
-    const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 500 }] });
+    const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 500, unit: "cells/µL" }] });
     const flag = checkCrossSpecialtyPatterns(ctx).find(
       (f) => f.rule_id === "CHEMO-NEUTRO-FEVER-001",
     );
@@ -41,7 +41,7 @@ describe("CHEMO-FEVER-001 / CHEMO-NEUTRO-FEVER-001 — ANC-aware rules", () => {
   });
 
   it("fires CHEMO-NEUTRO-FEVER-001 (info) when ANC > 500 — likely non-neutropenic fever (issue #214)", () => {
-    const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 800 }] });
+    const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 800, unit: "cells/µL" }] });
     const flags = checkCrossSpecialtyPatterns(ctx);
 
     const flag = flags.find((f) => f.rule_id === "CHEMO-NEUTRO-FEVER-001");
@@ -53,7 +53,7 @@ describe("CHEMO-FEVER-001 / CHEMO-NEUTRO-FEVER-001 — ANC-aware rules", () => {
   });
 
   it("adds a severe-neutropenia addendum when ANC < 500", () => {
-    const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 200 }] });
+    const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 200, unit: "cells/µL" }] });
     const flag = checkCrossSpecialtyPatterns(ctx).find(
       (f) => f.rule_id === "CHEMO-NEUTRO-FEVER-001",
     );
@@ -63,7 +63,7 @@ describe("CHEMO-FEVER-001 / CHEMO-NEUTRO-FEVER-001 — ANC-aware rules", () => {
   });
 
   it("provides non-neutropenic fever guidance when ANC > 500 (issue #214)", () => {
-    const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 1200 }] });
+    const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 1200, unit: "cells/µL" }] });
     const flag = checkCrossSpecialtyPatterns(ctx).find(
       (f) => f.rule_id === "CHEMO-NEUTRO-FEVER-001",
     );
@@ -87,7 +87,7 @@ describe("CHEMO-FEVER-001 / CHEMO-NEUTRO-FEVER-001 — ANC-aware rules", () => {
   });
 
   it("fires neither rule when ANC is normal (>= 1500)", () => {
-    const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 3200 }] });
+    const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 3200, unit: "cells/µL" }] });
     const flags = checkCrossSpecialtyPatterns(ctx);
 
     expect(flags.find((f) => f.rule_id === "CHEMO-FEVER-001")).toBeUndefined();
@@ -97,7 +97,7 @@ describe("CHEMO-FEVER-001 / CHEMO-NEUTRO-FEVER-001 — ANC-aware rules", () => {
   });
 
   it("CHEMO-NEUTRO-FEVER-001 notifies emergency as well as oncology/infectious_disease", () => {
-    const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 800 }] });
+    const ctx = baseCtx({ recent_labs: [{ name: "ANC", value: 800, unit: "cells/µL" }] });
     const flag = checkCrossSpecialtyPatterns(ctx).find(
       (f) => f.rule_id === "CHEMO-NEUTRO-FEVER-001",
     );
@@ -110,7 +110,7 @@ describe("CHEMO-FEVER-001 / CHEMO-NEUTRO-FEVER-001 — ANC-aware rules", () => {
   it("does not fire either rule when patient is not on chemo", () => {
     const ctx = baseCtx({
       active_medications: ["Lisinopril"],
-      recent_labs: [{ name: "ANC", value: 800 }],
+      recent_labs: [{ name: "ANC", value: 800, unit: "cells/µL" }],
     });
     const flags = checkCrossSpecialtyPatterns(ctx);
     expect(flags.find((f) => f.rule_id === "CHEMO-FEVER-001")).toBeUndefined();
@@ -758,7 +758,7 @@ describe("ANTICOAG-BLEED-001 — severity stratification", () => {
     ["minor skin bleeding"],
   ])("does NOT fire for minor bleeding with normal INR: %s", (symptom) => {
     const flags = checkCrossSpecialtyPatterns(
-      anticoagCtx([symptom], { recent_labs: [{ name: "INR", value: 2.5 }] }),
+      anticoagCtx([symptom], { recent_labs: [{ name: "INR", value: 2.5, unit: "" }] }),
     );
     const flag = flags.find((f) => f.rule_id === "ANTICOAG-BLEED-001");
     expect(flag).toBeUndefined();
@@ -777,7 +777,7 @@ describe("ANTICOAG-BLEED-001 — severity stratification", () => {
   it("fires WARNING for minor bruising when INR > 5.0", () => {
     const flags = checkCrossSpecialtyPatterns(
       anticoagCtx(["bruising on forearm"], {
-        recent_labs: [{ name: "INR", value: 6.2 }],
+        recent_labs: [{ name: "INR", value: 6.2, unit: "" }],
       }),
     );
     const flag = flags.find((f) => f.rule_id === "ANTICOAG-BLEED-001");
@@ -788,7 +788,7 @@ describe("ANTICOAG-BLEED-001 — severity stratification", () => {
   it("fires WARNING for petechiae when INR > 5.0", () => {
     const flags = checkCrossSpecialtyPatterns(
       anticoagCtx(["petechiae on lower extremities"], {
-        recent_labs: [{ name: "INR", value: 7.0 }],
+        recent_labs: [{ name: "INR", value: 7.0, unit: "" }],
       }),
     );
     const flag = flags.find((f) => f.rule_id === "ANTICOAG-BLEED-001");
@@ -1279,6 +1279,7 @@ describe("CROSS-QT-HYPOK-001 — QT-prolonging drug + hypokalemia (torsades risk
     meds: string[],
     potassiumValue: number | null,
     overrides: Partial<PatientContext> = {},
+    unit = "mEq/L",
   ): PatientContext => ({
     active_diagnoses: ["Hypertension"],
     active_diagnosis_codes: ["I10"],
@@ -1288,7 +1289,7 @@ describe("CROSS-QT-HYPOK-001 — QT-prolonging drug + hypokalemia (torsades risk
     recent_labs:
       potassiumValue === null
         ? []
-        : [{ name: "Potassium", value: potassiumValue }],
+        : [{ name: "Potassium", value: potassiumValue, unit }],
     ...overrides,
   });
 
@@ -1347,7 +1348,7 @@ describe("CROSS-QT-HYPOK-001 — QT-prolonging drug + hypokalemia (torsades risk
   it("detects potassium by alternative lab name 'K+'", () => {
     const flags = checkCrossSpecialtyPatterns(
       qtHypoKCtx(["haloperidol 2mg"], null, {
-        recent_labs: [{ name: "K+", value: 3.1 }],
+        recent_labs: [{ name: "K+", value: 3.1, unit: "mEq/L" }],
       }),
     );
     const flag = flags.find((f) => f.rule_id === "CROSS-QT-HYPOK-001");
@@ -1357,7 +1358,7 @@ describe("CROSS-QT-HYPOK-001 — QT-prolonging drug + hypokalemia (torsades risk
   it("detects potassium by alternative lab name 'K'", () => {
     const flags = checkCrossSpecialtyPatterns(
       qtHypoKCtx(["methadone 10mg"], null, {
-        recent_labs: [{ name: "K", value: 3.0 }],
+        recent_labs: [{ name: "K", value: 3.0, unit: "mEq/L" }],
       }),
     );
     const flag = flags.find((f) => f.rule_id === "CROSS-QT-HYPOK-001");
@@ -1409,6 +1410,65 @@ describe("CROSS-QT-HYPOK-001 — QT-prolonging drug + hypokalemia (torsades risk
     );
     expect(flag).toBeUndefined();
   });
+
+  // ── Issue #856 — unit-aware potassium comparison ─────────────────────
+  //
+  // mEq/L and mmol/L are 1:1 numerically equivalent for monovalent ions
+  // like K+ (conservative alias list in find-recent-lab.ts). Non-equivalent
+  // units such as mg/dL or µmol/L must NOT match — otherwise the rule could
+  // silently fire on wrong-unit values.
+
+  it("fires for K+ 3.2 with canonical unit mEq/L", () => {
+    const ctx = qtHypoKCtx(["azithromycin 500mg"], 3.2, {}, "mEq/L");
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "CROSS-QT-HYPOK-001",
+    );
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("warning");
+  });
+
+  it("fires for K+ 3.2 with equivalent unit mmol/L (monovalent ion, 1:1)", () => {
+    const ctx = qtHypoKCtx(["azithromycin 500mg"], 3.2, {}, "mmol/L");
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "CROSS-QT-HYPOK-001",
+    );
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("warning");
+  });
+
+  it("does NOT fire when potassium unit is mg/dL (wrong-unit guard)", () => {
+    // 3.2 mg/dL of potassium is a nonsensical unit for K+, but an EHR
+    // import or data-entry error could produce it. The rule must refuse
+    // to compare against the 3.5 mEq/L threshold to avoid a silent false
+    // positive. Under unit-aware semantics, this lab is treated as unknown
+    // and the rule falls through as if no K+ were reported.
+    const ctx = qtHypoKCtx(["azithromycin 500mg"], 3.2, {}, "mg/dL");
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "CROSS-QT-HYPOK-001",
+    );
+    expect(flag).toBeUndefined();
+  });
+
+  it("does NOT fire when potassium unit is missing / empty string", () => {
+    // Missing unit is treated as unknown — fail closed rather than risk
+    // comparing wrong-unit values.
+    const ctx = qtHypoKCtx(["azithromycin 500mg"], 3.2, {}, "");
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "CROSS-QT-HYPOK-001",
+    );
+    expect(flag).toBeUndefined();
+  });
+
+  it("accepts case-insensitive and whitespace-tolerant unit strings", () => {
+    // "MEQ/L", " mmol/L ", "meq/l" should all be accepted as canonical K+ units.
+    for (const unit of ["MEQ/L", " mmol/L ", "meq/l"]) {
+      const ctx = qtHypoKCtx(["azithromycin 500mg"], 3.2, {}, unit);
+      const flag = checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-QT-HYPOK-001",
+      );
+      expect(flag, `unit=${unit}`).toBeDefined();
+    }
+  });
 });
 
 describe("CROSS-METFORMIN-GFR-001 — Metformin + eGFR < 30 (contraindicated, lactic acidosis risk)", () => {
@@ -1422,7 +1482,10 @@ describe("CROSS-METFORMIN-GFR-001 — Metformin + eGFR < 30 (contraindicated, la
     active_medications: meds,
     new_symptoms: [],
     care_team_specialties: [],
-    recent_labs: egfr === null ? [] : [{ name: "eGFR", value: egfr }],
+    recent_labs:
+      egfr === null
+        ? []
+        : [{ name: "eGFR", value: egfr, unit: "mL/min/1.73m²" }],
     ...overrides,
   });
 
@@ -1486,7 +1549,7 @@ describe("CROSS-METFORMIN-GFR-001 — Metformin + eGFR < 30 (contraindicated, la
   it("detects eGFR under the alternative lab name 'GFR'", () => {
     const flags = checkCrossSpecialtyPatterns(
       metforminCtx(["Metformin 500mg"], null, {
-        recent_labs: [{ name: "GFR", value: 20 }],
+        recent_labs: [{ name: "GFR", value: 20, unit: "mL/min/1.73m²" }],
       }),
     );
     const flag = flags.find((f) => f.rule_id === "CROSS-METFORMIN-GFR-001");
@@ -1496,7 +1559,7 @@ describe("CROSS-METFORMIN-GFR-001 — Metformin + eGFR < 30 (contraindicated, la
   it("detects eGFR under the alternative lab name 'Estimated GFR'", () => {
     const flags = checkCrossSpecialtyPatterns(
       metforminCtx(["Metformin 500mg"], null, {
-        recent_labs: [{ name: "Estimated GFR", value: 18 }],
+        recent_labs: [{ name: "Estimated GFR", value: 18, unit: "mL/min/1.73m²" }],
       }),
     );
     const flag = flags.find((f) => f.rule_id === "CROSS-METFORMIN-GFR-001");
@@ -1534,7 +1597,7 @@ describe("CROSS-THIAZIDE-HYPOK-001 — Thiazide diuretic + hypokalemia (electrol
     recent_labs:
       potassiumValue === null
         ? []
-        : [{ name: "Potassium", value: potassiumValue }],
+        : [{ name: "Potassium", value: potassiumValue, unit: "mEq/L" }],
     ...overrides,
   });
 
@@ -1630,7 +1693,7 @@ describe("CROSS-THIAZIDE-HYPOK-001 — Thiazide diuretic + hypokalemia (electrol
   it("recognises potassium under 'K+' alias", () => {
     const flags = checkCrossSpecialtyPatterns(
       thiazideCtx(["HCTZ 25mg"], null, {
-        recent_labs: [{ name: "K+", value: 3.1 }],
+        recent_labs: [{ name: "K+", value: 3.1, unit: "mEq/L" }],
       }),
     );
     const flag = flags.find((f) => f.rule_id === "CROSS-THIAZIDE-HYPOK-001");
