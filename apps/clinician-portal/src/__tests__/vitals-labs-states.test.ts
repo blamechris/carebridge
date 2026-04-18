@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { pickFreshest, mostRecentIso } from "../lib/freshest.js";
+import { STALE_THRESHOLD_MS } from "../lib/vitals-staleness.js";
 
 // ---------------------------------------------------------------------------
 // Issue #531 — VitalsTab / LabsTab empty, stale, and current state logic
@@ -11,9 +12,6 @@ import { pickFreshest, mostRecentIso } from "../lib/freshest.js";
 //   - `Date.now() - Date.parse(ts) > STALE_THRESHOLD_MS` to decide banner
 //   - Labs: `collected_at ?? created_at` for date selection
 // ---------------------------------------------------------------------------
-
-/** Mirrors STALE_THRESHOLD_MS in page.tsx */
-const STALE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Reproduce the vitals staleness check from VitalsTab */
 function vitalsIsStale(
