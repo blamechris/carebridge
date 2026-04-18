@@ -1,5 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+// Mock the @carebridge/logger module so we can assert against logger.warn()
+// calls (e.g. the null started_at fallback warning from #516).
+const { mockWarn } = vi.hoisted(() => ({ mockWarn: vi.fn() }));
+vi.mock("@carebridge/logger", () => ({
+  createLogger: () => ({
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: mockWarn,
+    error: vi.fn(),
+  }),
+}));
+
 // Mock db-schema BEFORE importing the module under test.
 //
 // buildPatientContext issues eight parallel reads (patient, diagnoses,
@@ -73,6 +85,8 @@ describe("buildPatientContext — event-time snapshot (LLM path)", () => {
     labResultsSelect.mockReset();
     usersSelect.mockReset();
     patientFindFirst.mockReset();
+
+    mockWarn.mockClear();
 
     // Sensible defaults — tests override as needed.
     patientFindFirst.mockResolvedValue({
@@ -465,6 +479,64 @@ describe("buildPatientContext — event-time snapshot (LLM path)", () => {
     // labs to show) rather than an empty array — the LLM prompt omits
     // the section entirely.
     expect(ctx.recent_labs).toBeUndefined();
+  });
+
+  // ─── #516 — warn when started_at is null and created_at is used ────
+  it("emits a structured warning when medication started_at is null and created_at is used as fallback", async () => {
+    medicationsSelect.mockResolvedValue([
+      {
+        name: "Dexamethasone",
+        status: "active",
+        started_at: null,
+        ended_at: null,
+        created_at: "2026-04-10T08:00:00.000Z",
+        dose_amount: "4",
+        dose_unit: "mg",
+        route: "PO",
+        frequency: "Daily",
+      },
+    ]);
+
+    const ctx = await buildPatientContext("p-1", baseEvent);
+
+    // The medication should still be included (warn-and-include, not fail-closed).
+    expect(ctx.active_medications.map((m) => m.name)).toContain("Dexamethasone");
+
+    // A structured warning must have been emitted with the expected metadata.
+    expect(mockWarn).toHaveBeenCalledWith(
+      "medication_started_at_null_fallback",
+      expect.objectContaining({
+        metric: "medication_started_at_null_fallback",
+        patient_id_prefix: "p-1".slice(0, 8),
+        medication_name: "Dexamethasone",
+        created_at_used: "2026-04-10T08:00:00.000Z",
+        caller: "context-builder:buildPatientContext",
+      }),
+    );
+  });
+
+  it("does not warn when medication started_at is present", async () => {
+    medicationsSelect.mockResolvedValue([
+      {
+        name: "Apixaban",
+        status: "active",
+        started_at: "2026-04-01T00:00:00.000Z",
+        ended_at: null,
+        created_at: "2026-04-01T00:00:00.000Z",
+        dose_amount: "5",
+        dose_unit: "mg",
+        route: "PO",
+        frequency: "BID",
+      },
+    ]);
+
+    await buildPatientContext("p-1", baseEvent);
+
+    // No null-fallback warning should fire.
+    const fallbackCalls = mockWarn.mock.calls.filter(
+      ([msg]: [string]) => msg === "medication_started_at_null_fallback",
+    );
+    expect(fallbackCalls).toHaveLength(0);
   });
 
   // ─── #515 — exclude logical retractions ────────────────────────────
