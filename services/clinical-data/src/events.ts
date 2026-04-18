@@ -3,7 +3,7 @@ import {
   getRedisConnection,
   CLINICAL_EVENTS_JOB_OPTIONS,
 } from "@carebridge/redis-config";
-import { getDb, failedClinicalEvents } from "@carebridge/db-schema";
+import { writeOutboxEntry } from "@carebridge/outbox";
 import type { ClinicalEvent } from "@carebridge/shared-types";
 
 export type { ClinicalEvent };
@@ -21,18 +21,10 @@ export async function emitClinicalEvent(event: ClinicalEvent): Promise<void> {
   } catch (queueError) {
     // Redis/BullMQ unavailable — persist to DB outbox for later retry
     try {
-      const db = getDb();
-      await db.insert(failedClinicalEvents).values({
-        id: crypto.randomUUID(),
-        event_type: event.type,
-        patient_id: event.patient_id,
-        event_payload: event,
-        error_message: queueError instanceof Error ? queueError.message : String(queueError),
-        status: "pending",
-        retry_count: 0,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      });
+      await writeOutboxEntry(
+        event,
+        queueError instanceof Error ? queueError : String(queueError),
+      );
     } catch (dbError) {
       // Both Redis and DB fallback failed — log critical error as last resort
       console.error(
