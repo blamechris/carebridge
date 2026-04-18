@@ -132,7 +132,7 @@ describe("patient read per-user rate limit", () => {
     const reply = makeReply();
     const req = makeReq("/trpc/patients.getSummary");
     // Remove user
-    (req as unknown as Record<string, unknown>).user = undefined;
+    req.user = undefined;
 
     await hook(req, reply);
     expect(redis.incr).not.toHaveBeenCalled();
