@@ -3,13 +3,19 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import type { QueryClient } from "@tanstack/react-query";
+import type { UserRole } from "@carebridge/shared-types";
 import { getApiBaseUrl } from "./trpc";
 
 export interface User {
   id: string;
   email: string;
   name: string;
-  role: string;
+  /**
+   * Narrowed to the `UserRole` literal union from `@carebridge/shared-types`
+   * so consumers get exhaustiveness checking on role-based switches and the
+   * compiler rejects typos (e.g. "doctor" vs "physician"). See issue #829.
+   */
+  role: UserRole;
   /**
    * Clinical specialty for physicians/specialists (e.g. "Hematology/Oncology",
    * "Interventional Radiology"). Populated by the auth service when the user

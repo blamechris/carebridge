@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { User } from "@carebridge/shared-types";
-import { handleAuthMe } from "../handlers/auth-me.js";
+import { handleAuthMe, type AuthMeReply } from "../handlers/auth-me.js";
 
 /**
  * Tests for the GET /auth/me endpoint behaviour.
@@ -13,9 +13,15 @@ import { handleAuthMe } from "../handlers/auth-me.js";
  *
  *   - 401 when `request.user` is falsy
  *   - User profile payload when `request.user` is present
+ *
+ * MockReply extends AuthMeReply so the reply contract stays in lockstep with
+ * the handler: any future change to AuthMeReply will force this mock (and its
+ * consumers) to follow. The mock only adds two assertion-only fields the real
+ * Fastify reply does not expose on our interface — `statusCode` and `body` —
+ * which capture what `code()` / `send()` received for test inspection.
  */
 
-interface MockReply {
+interface MockReply extends AuthMeReply {
   statusCode: number;
   body: unknown;
   code(c: number): MockReply;

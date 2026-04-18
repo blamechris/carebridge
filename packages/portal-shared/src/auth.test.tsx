@@ -3,6 +3,7 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { QueryClient } from "@tanstack/react-query";
 import { AuthProvider, useAuth } from "./auth";
 import type { User } from "./auth";
+import type { UserRole } from "@carebridge/shared-types";
 import type { ReactNode } from "react";
 
 // ---------------------------------------------------------------------------
@@ -206,6 +207,54 @@ describe("AuthProvider /auth/me hydration", () => {
 
     expect(clearSpy).toHaveBeenCalled();
     expect(result.current.isAuthenticated).toBe(false);
+  });
+
+  it("pins User.role to the UserRole literal union (issue #829)", () => {
+    // This test is deliberately compile-time driven: if someone widens
+    // `User.role` back to `string`, the `UserRole` assignment below will
+    // fail `tsc`. If someone narrows it further (e.g. drops a role), the
+    // exhaustive switch loses its `never` fallthrough and also fails `tsc`.
+    const user: User = {
+      id: "role-check",
+      email: "r@carebridge.dev",
+      name: "Role Check",
+      role: "physician",
+    };
+
+    // 1. Direct assignability: `user.role` must flow into `UserRole` with
+    //    no cast. This fails if `role: string` is reintroduced.
+    const narrowed: UserRole = user.role;
+    expect(narrowed).toBe("physician");
+
+    // 2. Exhaustive switch: omitting any member of the union makes
+    //    `_exhaustive` a non-`never` value and fails compilation.
+    function describeRole(role: UserRole): string {
+      switch (role) {
+        case "patient":
+          return "patient";
+        case "nurse":
+          return "nurse";
+        case "physician":
+          return "physician";
+        case "specialist":
+          return "specialist";
+        case "admin":
+          return "admin";
+        default: {
+          const _exhaustive: never = role;
+          return _exhaustive;
+        }
+      }
+    }
+
+    expect(describeRole(user.role)).toBe("physician");
+
+    // 3. Runtime typo guard: assigning a string not in the union should
+    //    be a compile-time error. We express that with a `@ts-expect-error`
+    //    so the test file itself breaks if the type ever re-widens.
+    // @ts-expect-error "doctor" is not a member of UserRole
+    const _typo: User = { ...user, role: "doctor" };
+    void _typo;
   });
 
   // Regression tests for issue #821: the User type must expose specialty,
