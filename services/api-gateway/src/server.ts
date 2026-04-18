@@ -13,6 +13,7 @@ import { makeAcceptInviteRateLimitHook } from "./middleware/accept-invite-rate-l
 import { makePatientReadRateLimitHook } from "./middleware/patient-read-rate-limit.js";
 import { makeFhirExportRateLimitHook } from "./middleware/fhir-export-rate-limit.js";
 import { registerNotificationSSE } from "./routes/notifications-sse.js";
+import { handleAuthMe } from "./handlers/auth-me.js";
 import { redactUrlIds } from "@carebridge/phi-sanitizer";
 import { startBackgroundWorkers } from "./workers.js";
 import { startCareTeamInvalidationSubscriber } from "./middleware/rbac-invalidation-subscriber.js";
@@ -220,20 +221,10 @@ async function main() {
   // middleware (JWT verification + DB lookup).  Clients call this on mount
   // to validate the identity stored in localStorage and to detect stale or
   // tampered sessions before rendering any PHI.
-  server.get("/auth/me", async (request, reply) => {
-    if (!request.user) {
-      return reply.code(401).send({ error: "Not authenticated" });
-    }
-    return {
-      id: request.user.id,
-      email: request.user.email,
-      name: request.user.name,
-      role: request.user.role,
-      specialty: request.user.specialty,
-      department: request.user.department,
-      patient_id: request.user.patient_id,
-    };
-  });
+  //
+  // The handler body lives in ./handlers/auth-me.ts so it can be unit-tested
+  // without bootstrapping Fastify (issue #820).
+  server.get("/auth/me", (request, reply) => handleAuthMe(request, reply));
 
   // --- SSE notification stream ---
   registerNotificationSSE(server);
