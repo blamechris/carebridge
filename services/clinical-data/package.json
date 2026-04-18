@@ -30,6 +30,7 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@carebridge/test-utils": "workspace:*",
     "typescript": "^5.7.0",
     "@types/node": "^22.0.0",
     "vitest": "^3.0.0"

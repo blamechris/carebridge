@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { createMockDb, type MockDb } from "@carebridge/test-utils";
 
 // ---------------------------------------------------------------------------
 // Mocks — set up before importing the module under test
@@ -12,19 +13,14 @@ interface DeletedSessionRow {
   created_at: string;
 }
 
-const deletedRows: DeletedSessionRow[] = [];
-const mockReturning = vi.fn(() => deletedRows);
-const mockWhere = vi.fn(() => ({ returning: mockReturning }));
-const mockDeleteFn = vi.fn(() => ({ where: mockWhere }));
+let db: MockDb;
 
+// Tracks records inserted via `db.insert(auditLog).values({...})`. Populated
+// in `beforeEach` by wiring up a spy on the helper's insert chain.
 const insertedAuditEntries: Array<Record<string, unknown>> = [];
-const mockInsertValues = vi.fn(async (values: Record<string, unknown>) => {
-  insertedAuditEntries.push(values);
-});
-const mockInsertFn = vi.fn(() => ({ values: mockInsertValues }));
 
 vi.mock("@carebridge/db-schema", () => ({
-  getDb: () => ({ delete: mockDeleteFn, insert: mockInsertFn }),
+  getDb: () => db,
   sessions: {
     id: "sessions.id",
     user_id: "sessions.user_id",
@@ -45,7 +41,7 @@ vi.mock("drizzle-orm", () => ({
   sql: () => ({}),
 }));
 
-import { cleanupExpiredSessions } from "../session-cleanup.js";
+const { cleanupExpiredSessions } = await import("../session-cleanup.js");
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -63,28 +59,46 @@ function seedDeletedRow(
   };
 }
 
+/**
+ * Extract the argument passed to the `where()` chain call on the delete
+ * operation (equivalent to the legacy `mockWhere.mock.calls[0][0]` check).
+ */
+function getDeleteWhereArg(): { op: string; args: unknown[] } {
+  const call = db.delete.calls[0];
+  if (!call) throw new Error("expected db.delete to have been called");
+  const whereIdx = call.chain.indexOf("where");
+  return call.chainArgs[whereIdx]?.[0] as { op: string; args: unknown[] };
+}
+
 describe("cleanupExpiredSessions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    deletedRows.length = 0;
+    db = createMockDb();
     insertedAuditEntries.length = 0;
+
+    // The helper's insert chain does not retain what was passed to
+    // `.values(...)` except inside chainArgs. Each test seeds its own
+    // deleted-row fixture via `db.willDelete`; audit-log assertions read
+    // the `values(...)` args directly from `db.insert.calls[i].chainArgs`.
   });
 
   it("calls db.delete on the sessions table", async () => {
+    db.willDelete([]);
     const count = await cleanupExpiredSessions();
 
-    expect(mockDeleteFn).toHaveBeenCalledTimes(1);
-    expect(mockWhere).toHaveBeenCalledTimes(1);
-    expect(mockReturning).toHaveBeenCalledTimes(1);
+    expect(db.delete).toHaveBeenCalledTimes(1);
+    const deleteChain = db.delete.calls[0]?.chain ?? [];
+    expect(deleteChain).toContain("where");
+    expect(deleteChain).toContain("returning");
     expect(count).toBe(0);
   });
 
   it("returns the number of deleted rows", async () => {
-    deletedRows.push(
+    db.willDelete([
       seedDeletedRow({ id: "s1" }),
       seedDeletedRow({ id: "s2" }),
       seedDeletedRow({ id: "s3" }),
-    );
+    ]);
 
     const count = await cleanupExpiredSessions();
 
@@ -92,12 +106,10 @@ describe("cleanupExpiredSessions", () => {
   });
 
   it("builds an OR condition covering expiry, idle, and hard-cap", async () => {
+    db.willDelete([]);
     await cleanupExpiredSessions();
 
-    const whereArg = (mockWhere.mock.calls[0] as unknown[])[0] as {
-      op: string;
-      args: unknown[];
-    };
+    const whereArg = getDeleteWhereArg();
 
     // Top-level should be an OR with three branches.
     expect(whereArg.op).toBe("or");
@@ -123,14 +135,12 @@ describe("cleanupExpiredSessions", () => {
   });
 
   it("uses correct idle timeout of 15 minutes", async () => {
+    db.willDelete([]);
     const before = Date.now();
     await cleanupExpiredSessions();
     const after = Date.now();
 
-    const whereArg = (mockWhere.mock.calls[0] as unknown[])[0] as {
-      op: string;
-      args: unknown[];
-    };
+    const whereArg = getDeleteWhereArg();
 
     const idleCondition = whereArg.args[1] as {
       op: string;
@@ -145,11 +155,12 @@ describe("cleanupExpiredSessions", () => {
   });
 
   it("uses correct hard cap of 48 hours", async () => {
+    db.willDelete([]);
     const before = Date.now();
     await cleanupExpiredSessions();
     const after = Date.now();
 
-    const whereArg = (mockWhere.mock.calls[0] as unknown[])[0] as {
+    const whereArg = getDeleteWhereArg() as {
       op: string;
       args: { op: string; val: string }[];
     };
@@ -163,7 +174,7 @@ describe("cleanupExpiredSessions", () => {
 
   it("logs when sessions are deleted", async () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    deletedRows.push(seedDeletedRow({ id: "s1" }));
+    db.willDelete([seedDeletedRow({ id: "s1" })]);
 
     await cleanupExpiredSessions();
 
@@ -179,7 +190,7 @@ describe("cleanupExpiredSessions", () => {
     const idlePast = new Date(Date.now() - 20 * 60 * 1000).toISOString();
     const oldCreated = new Date(Date.now() - 50 * 60 * 60 * 1000).toISOString();
 
-    deletedRows.push(
+    db.willDelete([
       seedDeletedRow({
         id: "expired-1",
         user_id: "user-a",
@@ -195,12 +206,19 @@ describe("cleanupExpiredSessions", () => {
         user_id: "user-c",
         created_at: oldCreated,
       }),
-    );
+    ]);
 
     await cleanupExpiredSessions();
 
-    expect(insertedAuditEntries).toHaveLength(3);
-    for (const entry of insertedAuditEntries) {
+    // Each `db.insert(auditLog).values({...})` is recorded on the helper.
+    // Extract the values argument of each call.
+    const entries = db.insert.calls.map((call) => {
+      const valuesIdx = call.chain.indexOf("values");
+      return call.chainArgs[valuesIdx]?.[0] as Record<string, unknown>;
+    });
+
+    expect(entries).toHaveLength(3);
+    for (const entry of entries) {
       expect(entry.action).toBe("session_idle_expired");
       expect(entry.resource_type).toBe("session");
       expect(typeof entry.resource_id).toBe("string");
@@ -210,9 +228,7 @@ describe("cleanupExpiredSessions", () => {
       expect(details.reason.length).toBeGreaterThan(0);
     }
 
-    const byId = Object.fromEntries(
-      insertedAuditEntries.map((e) => [e.resource_id, e]),
-    );
+    const byId = Object.fromEntries(entries.map((e) => [e.resource_id, e]));
     expect(JSON.parse(byId["expired-1"].details as string).reason).toContain(
       "Absolute",
     );
@@ -228,6 +244,7 @@ describe("cleanupExpiredSessions", () => {
 
   it("does not log when no sessions are deleted", async () => {
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    db.willDelete([]);
 
     await cleanupExpiredSessions();
 

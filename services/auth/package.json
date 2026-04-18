@@ -36,6 +36,7 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@carebridge/test-utils": "workspace:*",
     "@types/node": "^22.0.0",
     "@types/qrcode": "^1.5.6",
     "typescript": "^5.7.0",

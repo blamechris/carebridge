@@ -1,38 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createMockDb, type MockDb } from "@carebridge/test-utils";
 
 // ── Mock DB ──────────────────────────────────────────────────────
-const insertValuesMock = vi.fn().mockResolvedValue(undefined);
-const insertMock = vi.fn(() => ({ values: insertValuesMock }));
-
-const updateReturningMock = vi.fn();
-const updateSetWhereMock = vi.fn(() => ({ returning: updateReturningMock }));
-const updateSetMock = vi.fn(() => ({ where: updateSetWhereMock }));
-const updateMock = vi.fn(() => ({ set: updateSetMock }));
-
-const selectFromWhereLimitMock = vi.fn();
-/** Where mock returns a thenable with .limit() support.
- * Allergy queries await where() directly; other queries chain .limit(). */
-let allergyResults: unknown[] = [];
-const selectFromWhereMock = vi.fn(() => {
-  const obj = {
-    limit: selectFromWhereLimitMock,
-    then: (resolve: (v: unknown) => void, reject?: (e: unknown) => void) =>
-      Promise.resolve(allergyResults).then(resolve, reject),
-  };
-  return obj;
-});
-const selectFromMock = vi.fn(() => ({
-  where: selectFromWhereMock,
-  orderBy: vi.fn().mockReturnValue({ where: selectFromWhereMock }),
-}));
-const selectMock = vi.fn(() => ({ from: selectFromMock }));
+let db: MockDb;
 
 vi.mock("@carebridge/db-schema", () => ({
-  getDb: () => ({
-    insert: insertMock,
-    select: selectMock,
-    update: updateMock,
-  }),
+  getDb: () => db,
   medications: {
     id: "id",
     patient_id: "patient_id",
@@ -71,14 +44,18 @@ const sampleMedInput = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  db = createMockDb();
 });
 
 describe("createMedication", () => {
   it("inserts a medication and returns it with all fields", async () => {
+    // createMedication first selects allergies — return none so the insert path runs.
+    db.willSelect([]);
+
     const result = await createMedication(sampleMedInput);
 
-    expect(insertMock).toHaveBeenCalledOnce();
-    expect(insertValuesMock).toHaveBeenCalledOnce();
+    expect(db.insert).toHaveBeenCalledOnce();
+    expect(db.insert.calls[0]?.chain).toContain("values");
 
     expect(result).toMatchObject({
       patient_id: PATIENT_ID,
@@ -95,6 +72,8 @@ describe("createMedication", () => {
   });
 
   it("emits medication.created event", async () => {
+    db.willSelect([]); // no allergy conflicts
+
     const result = await createMedication(sampleMedInput);
 
     expect(emitClinicalEvent).toHaveBeenCalledOnce();
@@ -135,12 +114,12 @@ describe("updateMedication", () => {
       updated_at: "2026-03-15T10:00:00.000Z",
     };
 
-    // First select: find existing record
-    selectFromWhereLimitMock.mockResolvedValueOnce([existingRow]);
-    // Update returning: row was updated
-    updateReturningMock.mockResolvedValueOnce([{ id: MED_ID }]);
-    // Second select: re-fetch updated record
-    selectFromWhereLimitMock.mockResolvedValueOnce([
+    // First select: find existing record.
+    db.willSelect([existingRow]);
+    // Update returning: row was updated.
+    db.willUpdate([{ id: MED_ID }]);
+    // Second select: re-fetch updated record.
+    db.willSelect([
       { ...existingRow, status: "discontinued", updated_at: "2026-03-16T10:00:00.000Z" },
     ]);
 
@@ -161,7 +140,7 @@ describe("updateMedication", () => {
   });
 
   it("throws when medication is not found", async () => {
-    selectFromWhereLimitMock.mockResolvedValueOnce([]);
+    db.willSelect([]);
 
     await expect(updateMedication("nonexistent", { status: "discontinued" }))
       .rejects.toThrow("Medication nonexistent not found");
@@ -190,9 +169,9 @@ describe("updateMedication", () => {
       updated_at: "2026-03-15T10:00:00.000Z",
     };
 
-    selectFromWhereLimitMock.mockResolvedValueOnce([existingRow]);
-    updateReturningMock.mockResolvedValueOnce([{ id: MED_ID }]);
-    selectFromWhereLimitMock.mockResolvedValueOnce([
+    db.willSelect([existingRow]);
+    db.willUpdate([{ id: MED_ID }]);
+    db.willSelect([
       { ...existingRow, status: "discontinued", updated_at: "2026-03-16T10:00:00.000Z" },
     ]);
 
@@ -202,7 +181,9 @@ describe("updateMedication", () => {
     });
 
     expect(result.status).toBe("discontinued");
-    expect(updateSetWhereMock).toHaveBeenCalledOnce();
+    expect(db.update).toHaveBeenCalledOnce();
+    expect(db.update.calls[0]?.chain).toContain("set");
+    expect(db.update.calls[0]?.chain).toContain("where");
   });
 
   it("throws ConflictError when expectedUpdatedAt does not match (concurrent modification)", async () => {
@@ -228,9 +209,9 @@ describe("updateMedication", () => {
       updated_at: "2026-03-16T12:00:00.000Z", // already modified by another user
     };
 
-    selectFromWhereLimitMock.mockResolvedValueOnce([existingRow]);
-    // Update returns 0 rows because updated_at doesn't match
-    updateReturningMock.mockResolvedValueOnce([]);
+    db.willSelect([existingRow]);
+    // Update returns 0 rows because updated_at doesn't match.
+    db.willUpdate([]);
 
     const error = await updateMedication(MED_ID, {
       status: "discontinued",
@@ -268,9 +249,9 @@ describe("updateMedication", () => {
       updated_at: "2026-03-15T10:00:00.000Z",
     };
 
-    selectFromWhereLimitMock.mockResolvedValueOnce([existingRow]);
-    updateReturningMock.mockResolvedValueOnce([{ id: MED_ID }]);
-    selectFromWhereLimitMock.mockResolvedValueOnce([
+    db.willSelect([existingRow]);
+    db.willUpdate([{ id: MED_ID }]);
+    db.willSelect([
       { ...existingRow, status: "held", updated_at: "2026-03-16T10:00:00.000Z" },
     ]);
 
@@ -314,9 +295,9 @@ describe("updateMedication", () => {
       updated_at: "2026-03-15T10:00:00.000Z",
     };
 
-    selectFromWhereLimitMock.mockResolvedValueOnce([existingRow]);
-    updateReturningMock.mockResolvedValueOnce([{ id: MED_ID }]);
-    selectFromWhereLimitMock.mockResolvedValueOnce([
+    db.willSelect([existingRow]);
+    db.willUpdate([{ id: MED_ID }]);
+    db.willSelect([
       { ...existingRow, frequency: "TID", updated_at: "2026-03-16T10:00:00.000Z" },
     ]);
 
@@ -328,7 +309,7 @@ describe("updateMedication", () => {
 
 describe("allergy safety check", () => {
   it("blocks medication that directly matches a patient allergy", async () => {
-    allergyResults = [
+    db.willSelect([
       {
         id: "allergy-1",
         patient_id: PATIENT_ID,
@@ -339,18 +320,18 @@ describe("allergy safety check", () => {
         snomed_code: null,
         created_at: "2026-01-01T00:00:00.000Z",
       },
-    ];
+    ]);
 
     await expect(
       createMedication({ ...sampleMedInput, name: "Penicillin V" }),
     ).rejects.toThrow(/ALLERGY_CONFLICT.*Penicillin/);
 
     // Must NOT have inserted into the database
-    expect(insertMock).not.toHaveBeenCalled();
+    expect(db.insert).not.toHaveBeenCalled();
   });
 
   it("blocks medication that cross-reacts with a patient allergy (penicillin → amoxicillin)", async () => {
-    allergyResults = [
+    db.willSelect([
       {
         id: "allergy-2",
         patient_id: PATIENT_ID,
@@ -361,17 +342,17 @@ describe("allergy safety check", () => {
         snomed_code: null,
         created_at: "2026-01-01T00:00:00.000Z",
       },
-    ];
+    ]);
 
     await expect(
       createMedication({ ...sampleMedInput, name: "Amoxicillin 500mg" }),
     ).rejects.toThrow(/ALLERGY_CONFLICT.*Amoxicillin.*Penicillin.*penicillin/);
 
-    expect(insertMock).not.toHaveBeenCalled();
+    expect(db.insert).not.toHaveBeenCalled();
   });
 
   it("allows medication when no allergy conflicts exist", async () => {
-    allergyResults = [
+    db.willSelect([
       {
         id: "allergy-3",
         patient_id: PATIENT_ID,
@@ -382,20 +363,20 @@ describe("allergy safety check", () => {
         snomed_code: null,
         created_at: "2026-01-01T00:00:00.000Z",
       },
-    ];
+    ]);
 
     const result = await createMedication(sampleMedInput); // Enoxaparin — no penicillin cross-reactivity
 
     expect(result.name).toBe("Enoxaparin");
-    expect(insertMock).toHaveBeenCalledOnce();
+    expect(db.insert).toHaveBeenCalledOnce();
   });
 
   it("allows medication when patient has no allergies", async () => {
-    allergyResults = [];
+    db.willSelect([]);
 
     const result = await createMedication(sampleMedInput);
 
     expect(result.name).toBe("Enoxaparin");
-    expect(insertMock).toHaveBeenCalledOnce();
+    expect(db.insert).toHaveBeenCalledOnce();
   });
 });

@@ -1,17 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { createMockDb, type MockDb } from "@carebridge/test-utils";
 
 // ── Mock DB ──────────────────────────────────────────────────────
-const insertValuesMock = vi.fn().mockResolvedValue(undefined);
-const insertMock = vi.fn(() => ({ values: insertValuesMock }));
-
-const selectFromWhereMock = vi.fn().mockResolvedValue([]);
-const selectFromMock = vi.fn(() => ({
-  where: selectFromWhereMock,
-  orderBy: vi.fn().mockReturnValue({
-    where: selectFromWhereMock,
-  }),
-}));
-const selectMock = vi.fn(() => ({ from: selectFromMock }));
+// Non-transactional operations (select, insert) flow through the shared
+// MockDb helper. The `transaction` hook is kept as a standalone mock
+// because the helper does not model Drizzle's transactional callback API.
+let db: MockDb;
 
 const txInsertValuesMock = vi.fn().mockResolvedValue(undefined);
 const txInsertMock = vi.fn(() => ({ values: txInsertValuesMock }));
@@ -21,8 +15,8 @@ const transactionMock = vi.fn(async (cb: (tx: unknown) => Promise<void>) => {
 
 vi.mock("@carebridge/db-schema", () => ({
   getDb: () => ({
-    insert: insertMock,
-    select: selectMock,
+    select: db.select,
+    insert: db.insert,
     transaction: transactionMock,
   }),
   labPanels: { patient_id: "patient_id", collected_at: "collected_at" },
@@ -67,6 +61,7 @@ const sampleLabInput = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  db = createMockDb();
 });
 
 describe("createLabPanel", () => {
@@ -225,18 +220,10 @@ describe("getLabPanelsByPatient", () => {
       created_at: "2026-03-15T08:00:00.000Z",
     };
 
-    // First call: select panels (with orderBy)
-    selectFromMock.mockReturnValueOnce({
-      where: vi.fn().mockReturnValue({
-        orderBy: vi.fn().mockResolvedValue([mockPanelRow]),
-      }),
-      orderBy: vi.fn(),
-    });
-    // Second call: select results for panel-1
-    selectFromMock.mockReturnValueOnce({
-      where: vi.fn().mockResolvedValue([mockResultRow]),
-      orderBy: vi.fn(),
-    });
+    // First call: select panels (with orderBy).
+    db.willSelect([mockPanelRow]);
+    // Second call: select results for panel-1.
+    db.willSelect([mockResultRow]);
 
     const results = await getLabPanelsByPatient(PATIENT_ID);
 
