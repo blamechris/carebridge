@@ -10,6 +10,7 @@
 import type { FlagSeverity, FlagCategory, ClinicalEvent, RuleFlag } from "@carebridge/shared-types";
 import { QTC_PATTERN } from "./drug-interactions.js";
 import { METFORMIN_PATTERN } from "./shared-drug-patterns.js";
+import { getRecentPotassium, getRecentEGFR } from "./lab-units.js";
 
 export interface PatientAllergy {
   allergen: string;
@@ -55,8 +56,15 @@ export interface PatientContext {
   allergies?: PatientAllergy[];
   /** The triggering clinical event, used by medication-status rules. */
   trigger_event?: ClinicalEvent;
-  /** Recent lab values, used by ANC-aware rules. */
-  recent_labs?: Array<{ name: string; value: number }>;
+  /**
+   * Recent lab values, used by ANC-aware rules and other threshold
+   * comparisons. Each entry carries a `unit` string (issue #856) so rules
+   * that compare against analyte-specific thresholds can verify the value
+   * is in the expected unit before firing. An empty `unit` means the
+   * source record had no recorded unit — downstream unit-aware helpers
+   * treat this as unknown and fail closed.
+   */
+  recent_labs?: Array<{ name: string; value: number; unit: string }>;
   /**
    * ISO 8601 event timestamp. Time-sensitive rules (e.g. VTE recency gate)
    * use this instead of wall-clock time so the evaluation is anchored to the
@@ -302,45 +310,6 @@ function classifyBleedingSeverity(symptoms: string[]): "critical" | "warning" | 
 /** Matches any bleeding-related symptom across all severity tiers. */
 const ANTICOAG_BLEED_ANY_PATTERN =
   /hemorrhage|haemorrhage|hematemesis|melena|hematochezia|hemoptysis|intracranial bleed|gi bleed|gastrointestinal bleed|retroperitoneal|blood in stool|hematuria|blood in urine|epistaxis|nosebleed|post.?procedural bleeding|bleeding|bruis|petechiae|ecchymosis/i;
-
-/**
- * Lab-name pattern for serum potassium. Matches "potassium", "K", "K+" with
- * optional surrounding whitespace. Shared by CROSS-QT-HYPOK-001 and
- * CROSS-THIAZIDE-HYPOK-001 so the set of accepted aliases evolves in lockstep.
- */
-const POTASSIUM_LAB_NAME_PATTERN = /^(potassium|k\+?)$/i;
-
-/**
- * Look up the most recent serum potassium value in mEq/L from the patient's
- * `recent_labs` context. Returns undefined when the lab is absent. K+ in mEq/L
- * and mmol/L are numerically equivalent so no unit conversion is performed.
- *
- * Extracted per issue #855 to keep CROSS-QT-HYPOK-001's check / buildSeverity /
- * buildSuggestedAction paths aligned, and re-used by CROSS-THIAZIDE-HYPOK-001.
- */
-export function getRecentPotassium(ctx: PatientContext): number | undefined {
-  return ctx.recent_labs?.find((l) => POTASSIUM_LAB_NAME_PATTERN.test(l.name.trim()))
-    ?.value;
-}
-
-/**
- * Lab-name pattern for estimated glomerular filtration rate (eGFR), reported
- * in mL/min/1.73m². Accepts "eGFR", "GFR", and "Estimated GFR" (case-
- * insensitive, tolerant of surrounding whitespace).
- */
-const EGFR_LAB_NAME_PATTERN = /^(e?gfr|estimated\s*gfr)$/i;
-
-/**
- * Look up the most recent eGFR value in mL/min/1.73m² from the patient's
- * `recent_labs` context. Returns undefined when the lab is absent.
- *
- * Used by CROSS-METFORMIN-GFR-001 to detect metformin contraindication
- * territory (eGFR < 30).
- */
-export function getRecentEGFR(ctx: PatientContext): number | undefined {
-  return ctx.recent_labs?.find((l) => EGFR_LAB_NAME_PATTERN.test(l.name.trim()))
-    ?.value;
-}
 
 /**
  * Thiazide diuretic name pattern. Distinct from LOOP_THIAZIDE_DIURETIC_PATTERN
@@ -903,12 +872,16 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
     check: (ctx: PatientContext) => {
       const onQTDrug = ctx.active_medications.some((m) => QTC_PATTERN.test(m));
       if (!onQTDrug) return false;
-      const k = getRecentPotassium(ctx);
+      // Unit-aware potassium lookup (#856). Refuses to match labs whose
+      // unit is not numerically equivalent to mEq/L (i.e. mmol/L). A K+
+      // value recorded in mg/dL or with no unit would cause the rule to
+      // skip rather than silently compare against the 3.5 mEq/L threshold.
+      const k = getRecentPotassium(ctx)?.value;
       if (k === undefined) return false;
       return k < 3.5;
     },
     buildSeverity: (ctx: PatientContext) => {
-      const k = getRecentPotassium(ctx);
+      const k = getRecentPotassium(ctx)?.value;
       // Severe hypokalemia (K+ < 3.0) compounds torsades risk and is
       // independently critical per critical-values.ts. Escalate accordingly.
       if (k !== undefined && k < 3.0) return "critical";
@@ -929,7 +902,7 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
     // suggested_action is intentionally omitted — buildSuggestedAction always
     // wins when present, so a static property would be dead code (issue #866).
     buildSuggestedAction: (ctx: PatientContext) => {
-      const k = getRecentPotassium(ctx);
+      const k = getRecentPotassium(ctx)?.value;
       const base =
         "Replete potassium to > 4.0 mEq/L. Check magnesium concurrently and repeat if low (hypomagnesemia " +
         "impairs potassium correction and independently prolongs QT). Obtain baseline ECG and calculate " +
@@ -966,7 +939,11 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
         METFORMIN_PATTERN.test(m),
       );
       if (!onMetformin) return false;
-      const egfr = getRecentEGFR(ctx);
+      // Unit-aware eGFR lookup (#856). Refuses to match labs whose unit
+      // is not numerically equivalent to mL/min/1.73m². An eGFR with an
+      // unrecognized unit fails closed rather than silently comparing
+      // against the 30 mL/min/1.73m² FDA threshold.
+      const egfr = getRecentEGFR(ctx)?.value;
       if (egfr === undefined) return false;
       return egfr < 30;
     },
@@ -1010,12 +987,16 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
         THIAZIDE_PATTERN.test(m),
       );
       if (!onThiazide) return false;
-      const k = getRecentPotassium(ctx);
+      // Unit-aware potassium lookup (#856). Fails closed if the recorded
+      // K+ unit is not numerically equivalent to mEq/L, rather than
+      // silently comparing a wrong-unit value against the 3.5 mEq/L
+      // threshold.
+      const k = getRecentPotassium(ctx)?.value;
       if (k === undefined) return false;
       return k < 3.5;
     },
     buildSeverity: (ctx: PatientContext) => {
-      const k = getRecentPotassium(ctx);
+      const k = getRecentPotassium(ctx)?.value;
       // Severe hypokalemia (K+ < 3.0) is independently critical per
       // critical-values.ts and mirrors the escalation pattern used by
       // CROSS-QT-HYPOK-001.
@@ -1036,7 +1017,7 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
     // suggested_action is intentionally omitted — buildSuggestedAction always
     // wins when present, so a static property would be dead code (issue #866).
     buildSuggestedAction: (ctx: PatientContext) => {
-      const k = getRecentPotassium(ctx);
+      const k = getRecentPotassium(ctx)?.value;
       const base =
         "Replete potassium toward > 4.0 mEq/L. Consider holding the thiazide until K+ is corrected, or " +
         "switching to a potassium-sparing regimen (ACE-I/ARB + aldosterone antagonist, or adding amiloride). " +
