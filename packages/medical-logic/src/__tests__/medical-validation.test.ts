@@ -12,6 +12,8 @@ import {
   ageInYearsFromDOB,
   getVitalRangeForAge,
   CREATININE_UMOL_TO_MGDL,
+  getPulsePressureThresholds,
+  PEDIATRIC_PP_THRESHOLDS,
 } from "../medical-validation.js";
 
 // ─── validateVital ──────────────────────────────────────────────
@@ -154,6 +156,121 @@ describe("validateVital", () => {
   it("warns on critically high temperature (fever)", () => {
     const result = validateVital("temperature", 105);
     expect(result.warnings.length).toBeGreaterThan(0);
+  });
+
+  // ─── Pediatric pulse pressure thresholds (issue #518) ──────────
+
+  describe("pediatric pulse pressure (age-aware)", () => {
+    // neonate/infant: narrowCritical=10, narrowWarning=15, wideWarning=25, wideCritical=35
+    it("warns on narrow PP for neonate (PP=12, between 10 and 15)", () => {
+      // SBP 72, DBP 60 → PP=12
+      const result = validateVital("blood_pressure", 72, 60, 0.01);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("narrow pulse pressure"))).toBe(true);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("critically narrow"))).toBe(false);
+    });
+
+    it("critically warns on very narrow PP for neonate (PP=8)", () => {
+      // SBP 68, DBP 60 → PP=8
+      const result = validateVital("blood_pressure", 68, 60, 0.01);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("critically narrow"))).toBe(true);
+    });
+
+    it("warns on wide PP for neonate (PP=30, between 25 and 35)", () => {
+      // SBP 90, DBP 60 → PP=30
+      const result = validateVital("blood_pressure", 90, 60, 0.01);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("wide pulse pressure"))).toBe(true);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("critically wide"))).toBe(false);
+    });
+
+    it("critically warns on very wide PP for neonate (PP=40)", () => {
+      // SBP 100, DBP 60 → PP=40
+      const result = validateVital("blood_pressure", 100, 60, 0.01);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("critically wide"))).toBe(true);
+    });
+
+    it("does not warn on normal neonate PP=20", () => {
+      // SBP 80, DBP 60 → PP=20
+      const result = validateVital("blood_pressure", 80, 60, 0.01);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("pulse pressure"))).toBe(false);
+    });
+
+    // infant (age 0.5): same thresholds as neonate
+    it("warns on narrow PP for infant (PP=13)", () => {
+      // SBP 73, DBP 60 → PP=13
+      const result = validateVital("blood_pressure", 73, 60, 0.5);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("narrow pulse pressure"))).toBe(true);
+    });
+
+    // child (1-5): narrowCritical=10, narrowWarning=15, wideWarning=30, wideCritical=45
+    it("warns on wide PP for child age 3 (PP=35, between 30 and 45)", () => {
+      // SBP 95, DBP 60 → PP=35
+      const result = validateVital("blood_pressure", 95, 60, 3);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("wide pulse pressure"))).toBe(true);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("critically wide"))).toBe(false);
+    });
+
+    it("critically warns on very wide PP for child age 3 (PP=50)", () => {
+      // SBP 110, DBP 60 → PP=50
+      const result = validateVital("blood_pressure", 110, 60, 3);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("critically wide"))).toBe(true);
+    });
+
+    it("does not warn on normal child PP=25", () => {
+      // SBP 85, DBP 60 → PP=25
+      const result = validateVital("blood_pressure", 85, 60, 3);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("pulse pressure"))).toBe(false);
+    });
+
+    // school_age (5-12): narrowCritical=15, narrowWarning=20, wideWarning=40, wideCritical=60
+    it("warns on narrow PP for school-age child (PP=18, between 15 and 20)", () => {
+      // SBP 78, DBP 60 → PP=18
+      const result = validateVital("blood_pressure", 78, 60, 8);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("narrow pulse pressure"))).toBe(true);
+    });
+
+    it("warns on wide PP for school-age child (PP=50, between 40 and 60)", () => {
+      // SBP 110, DBP 60 → PP=50
+      const result = validateVital("blood_pressure", 110, 60, 8);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("wide pulse pressure"))).toBe(true);
+    });
+
+    it("critically warns on very wide PP for school-age child (PP=65)", () => {
+      // SBP 125, DBP 60 → PP=65
+      const result = validateVital("blood_pressure", 125, 60, 8);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("critically wide"))).toBe(true);
+    });
+
+    // adolescent (12-18): narrowCritical=15, narrowWarning=20, wideWarning=50, wideCritical=80
+    it("warns on wide PP for adolescent (PP=55, between 50 and 80)", () => {
+      // SBP 115, DBP 60 → PP=55
+      const result = validateVital("blood_pressure", 115, 60, 15);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("wide pulse pressure"))).toBe(true);
+    });
+
+    it("does not warn on adolescent PP=45 (normal)", () => {
+      // SBP 105, DBP 60 → PP=45
+      const result = validateVital("blood_pressure", 105, 60, 15);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("pulse pressure"))).toBe(false);
+    });
+
+    it("critically warns on very wide PP for adolescent (PP=85)", () => {
+      // SBP 145, DBP 60 → PP=85
+      const result = validateVital("blood_pressure", 145, 60, 15);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("critically wide"))).toBe(true);
+    });
+
+    // adult (18+): uses default thresholds (same as no-age tests above)
+    it("uses adult PP thresholds for age 30", () => {
+      // PP=40 is normal for adult — no warnings
+      const result = validateVital("blood_pressure", 120, 80, 30);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("pulse pressure"))).toBe(false);
+    });
+
+    it("uses adult PP thresholds when age is not provided", () => {
+      // PP=40 is normal for adult — no warnings (backward compat)
+      const result = validateVital("blood_pressure", 120, 80);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("pulse pressure"))).toBe(false);
+    });
   });
 });
 
@@ -630,6 +747,47 @@ describe("getVitalRangeForAge", () => {
   it("returns adult range for age 20", () => {
     const range = getVitalRangeForAge("heart_rate", 20);
     expect(range).toEqual(VITAL_DANGER_ZONES.heart_rate);
+  });
+});
+
+// ─── getPulsePressureThresholds ────────────────────────────────
+
+describe("getPulsePressureThresholds", () => {
+  it("returns adult thresholds when age is undefined", () => {
+    const pp = getPulsePressureThresholds();
+    expect(pp.narrowCritical).toBe(15);
+    expect(pp.wideCritical).toBe(100);
+  });
+
+  it("returns neonate thresholds for age 0.01", () => {
+    const pp = getPulsePressureThresholds(0.01);
+    expect(pp).toEqual(PEDIATRIC_PP_THRESHOLDS.neonate);
+  });
+
+  it("returns infant thresholds for age 0.5", () => {
+    const pp = getPulsePressureThresholds(0.5);
+    expect(pp).toEqual(PEDIATRIC_PP_THRESHOLDS.infant);
+  });
+
+  it("returns child thresholds for age 3", () => {
+    const pp = getPulsePressureThresholds(3);
+    expect(pp).toEqual(PEDIATRIC_PP_THRESHOLDS.child);
+  });
+
+  it("returns school_age thresholds for age 8", () => {
+    const pp = getPulsePressureThresholds(8);
+    expect(pp).toEqual(PEDIATRIC_PP_THRESHOLDS.school_age);
+  });
+
+  it("returns adolescent thresholds for age 15", () => {
+    const pp = getPulsePressureThresholds(15);
+    expect(pp).toEqual(PEDIATRIC_PP_THRESHOLDS.adolescent);
+  });
+
+  it("returns adult thresholds for age 30", () => {
+    const pp = getPulsePressureThresholds(30);
+    expect(pp.narrowCritical).toBe(15);
+    expect(pp.wideCritical).toBe(100);
   });
 });
 

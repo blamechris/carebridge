@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@carebridge/logger": "workspace:*",
+    "@carebridge/outbox": "workspace:*",
     "@carebridge/redis-config": "workspace:*",
     "@carebridge/shared-types": "workspace:*",
     "@carebridge/notifications": "workspace:*",
