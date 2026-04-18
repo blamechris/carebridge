@@ -9,6 +9,7 @@
 
 import type { FlagSeverity, FlagCategory, ClinicalEvent, RuleFlag } from "@carebridge/shared-types";
 import { QTC_PATTERN } from "./drug-interactions.js";
+import { METFORMIN_PATTERN } from "./shared-drug-patterns.js";
 import { getRecentPotassium, getRecentEGFR } from "./lab-units.js";
 
 export interface PatientAllergy {
@@ -320,15 +321,6 @@ const ANTICOAG_BLEED_ANY_PATTERN =
 const THIAZIDE_PATTERN =
   /hydrochlorothiazide|hctz|chlorthalidone|thalitone|indapamide|lozol|metolazone|zaroxolyn|chlorothiazide|diuril/i;
 
-/**
- * Metformin name pattern (generic + brand combinations). Includes fixed-dose
- * combination brand names commonly prescribed in type 2 diabetes, so the rule
- * fires regardless of whether the EHR records "metformin" plainly or the
- * branded combo.
- */
-const METFORMIN_PATTERN =
-  /\bmetformin\b|glucophage|glumetza|fortamet|riomet|janumet|jentadueto|kombiglyze|synjardy|xigduo|invokamet|kazano|prandimet/i;
-
 interface CrossSpecialtyRule {
   id: string;
   name: string;
@@ -337,7 +329,13 @@ interface CrossSpecialtyRule {
   category: FlagCategory;
   summary: string;
   rationale: string;
-  suggested_action: string;
+  /**
+   * Static suggested action. Optional: rules that always compute a dynamic
+   * suggestion via `buildSuggestedAction` should omit it rather than carry a
+   * static string that can never be read (issue #866). Exactly one of
+   * `suggested_action` or `buildSuggestedAction` must be present.
+   */
+  suggested_action?: string;
   /** Optional dynamic builder that overrides suggested_action when present. */
   buildSuggestedAction?: (ctx: PatientContext) => string;
   /** Optional dynamic severity builder. */
@@ -901,11 +899,8 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       "of torsades de pointes, a polymorphic ventricular tachycardia that can degenerate to ventricular " +
       "fibrillation. Risk compounds further with hypomagnesemia, bradycardia, female sex, heart failure, " +
       "and hepatic/renal impairment.",
-    suggested_action:
-      "Replete potassium to > 4.0 mEq/L. Check magnesium concurrently and repeat if low (hypomagnesemia " +
-      "impairs potassium correction and independently prolongs QT). Obtain baseline ECG and calculate " +
-      "QTc — if > 500 ms or > 60 ms above baseline, hold the QT-prolonging agent and consult cardiology. " +
-      "Continuous telemetry until electrolytes corrected.",
+    // suggested_action is intentionally omitted — buildSuggestedAction always
+    // wins when present, so a static property would be dead code (issue #866).
     buildSuggestedAction: (ctx: PatientContext) => {
       const k = getRecentPotassium(ctx)?.value;
       const base =
@@ -1019,11 +1014,8 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       "exacerbates the deficit and raises the risk of ventricular arrhythmia, muscle weakness, leg cramps, " +
       "rhabdomyolysis, and worsened glucose tolerance. Risk compounds with concurrent QT-prolonging drugs, " +
       "heart failure, and hypomagnesemia.",
-    suggested_action:
-      "Replete potassium toward > 4.0 mEq/L. Consider holding the thiazide until K+ is corrected, or " +
-      "switching to a potassium-sparing regimen (ACE-I/ARB + aldosterone antagonist, or adding amiloride). " +
-      "Check serum magnesium concurrently and replete if low. Review other contributors (low dietary K+, " +
-      "concurrent corticosteroid, GI losses). Recheck electrolytes within 1–2 weeks.",
+    // suggested_action is intentionally omitted — buildSuggestedAction always
+    // wins when present, so a static property would be dead code (issue #866).
     buildSuggestedAction: (ctx: PatientContext) => {
       const k = getRecentPotassium(ctx)?.value;
       const base =
@@ -1052,14 +1044,22 @@ export function checkCrossSpecialtyPatterns(
 
   for (const rule of CROSS_SPECIALTY_RULES) {
     if (rule.check(patientContext)) {
+      // Rule authors must supply either a static `suggested_action` or a
+      // `buildSuggestedAction` builder (issue #866). The builder always wins.
+      const suggestedAction = rule.buildSuggestedAction
+        ? rule.buildSuggestedAction(patientContext)
+        : rule.suggested_action;
+      if (suggestedAction === undefined) {
+        throw new Error(
+          `Cross-specialty rule ${rule.id} is missing both suggested_action and buildSuggestedAction`,
+        );
+      }
       flags.push({
         severity: rule.buildSeverity ? rule.buildSeverity(patientContext) : rule.severity,
         category: rule.category,
         summary: rule.summary,
         rationale: rule.rationale,
-        suggested_action: rule.buildSuggestedAction
-          ? rule.buildSuggestedAction(patientContext)
-          : rule.suggested_action,
+        suggested_action: suggestedAction,
         notify_specialties: rule.notify_specialties,
         rule_id: rule.id,
       });

@@ -1581,6 +1581,78 @@ describe("CROSS-METFORMIN-GFR-001 — Metformin + eGFR < 30 (contraindicated, la
     const flag = flags.find((f) => f.rule_id === "CROSS-METFORMIN-GFR-001");
     expect(flag).toBeDefined();
   });
+
+  // Issue #873 — eGFR lab-name regex boundary cases. The pattern must accept
+  // the canonical aliases ("GFR", "eGFR", "Estimated GFR", case-insensitive
+  // with optional whitespace) while rejecting distinct labs that merely
+  // embed "GFR" as a substring (e.g. "Pre-GFR Calc", "GFR Calculator").
+  describe("eGFR lab-name alias matching (issue #873 boundary cases)", () => {
+    it("matches lowercase 'egfr'", () => {
+      const flags = checkCrossSpecialtyPatterns(
+        metforminCtx(["Metformin 500mg"], null, {
+          recent_labs: [{ name: "egfr", value: 20, unit: "mL/min/1.73m²" }],
+        }),
+      );
+      expect(
+        flags.find((f) => f.rule_id === "CROSS-METFORMIN-GFR-001"),
+      ).toBeDefined();
+    });
+
+    it("matches 'Estimated  GFR' with extra whitespace between words", () => {
+      const flags = checkCrossSpecialtyPatterns(
+        metforminCtx(["Metformin 500mg"], null, {
+          recent_labs: [{ name: "Estimated  GFR", value: 20, unit: "mL/min/1.73m²" }],
+        }),
+      );
+      expect(
+        flags.find((f) => f.rule_id === "CROSS-METFORMIN-GFR-001"),
+      ).toBeDefined();
+    });
+
+    it("tolerates surrounding whitespace on the lab name", () => {
+      const flags = checkCrossSpecialtyPatterns(
+        metforminCtx(["Metformin 500mg"], null, {
+          recent_labs: [{ name: "  eGFR  ", value: 20, unit: "mL/min/1.73m²" }],
+        }),
+      );
+      expect(
+        flags.find((f) => f.rule_id === "CROSS-METFORMIN-GFR-001"),
+      ).toBeDefined();
+    });
+
+    it("does NOT match 'Pre-GFR Calc' (distinct lab that merely contains GFR)", () => {
+      const flags = checkCrossSpecialtyPatterns(
+        metforminCtx(["Metformin 500mg"], null, {
+          recent_labs: [{ name: "Pre-GFR Calc", value: 20, unit: "mL/min/1.73m²" }],
+        }),
+      );
+      expect(
+        flags.find((f) => f.rule_id === "CROSS-METFORMIN-GFR-001"),
+      ).toBeUndefined();
+    });
+
+    it("does NOT match 'GFR Calculator'", () => {
+      const flags = checkCrossSpecialtyPatterns(
+        metforminCtx(["Metformin 500mg"], null, {
+          recent_labs: [{ name: "GFR Calculator", value: 20, unit: "mL/min/1.73m²" }],
+        }),
+      );
+      expect(
+        flags.find((f) => f.rule_id === "CROSS-METFORMIN-GFR-001"),
+      ).toBeUndefined();
+    });
+
+    it("does NOT match 'Pre-GFR'", () => {
+      const flags = checkCrossSpecialtyPatterns(
+        metforminCtx(["Metformin 500mg"], null, {
+          recent_labs: [{ name: "Pre-GFR", value: 20, unit: "mL/min/1.73m²" }],
+        }),
+      );
+      expect(
+        flags.find((f) => f.rule_id === "CROSS-METFORMIN-GFR-001"),
+      ).toBeUndefined();
+    });
+  });
 });
 
 describe("CROSS-THIAZIDE-HYPOK-001 — Thiazide diuretic + hypokalemia (electrolyte worsening)", () => {
