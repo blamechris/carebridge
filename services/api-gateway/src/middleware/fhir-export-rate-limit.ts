@@ -28,6 +28,12 @@ export interface FhirExportAuditEvent {
   userId: string;
   procedureName: string;
   ip: string;
+  /**
+   * Current request count for this user in the active window. Included so
+   * downstream trend analysis can distinguish borderline exceedances
+   * (e.g. 6/5) from aggressive scraping patterns (e.g. 50/5).
+   */
+  count: number;
 }
 
 export interface FhirExportRateLimitOptions {
@@ -52,6 +58,9 @@ async function defaultAuditEmitter(event: FhirExportAuditEvent): Promise<void> {
     resource_id: "",
     procedure_name: event.procedureName,
     patient_id: null,
+    // Persist the current request count so trend analysis can distinguish
+    // borderline exceedances (e.g. 6/5) from scraping patterns (e.g. 50/5).
+    details: JSON.stringify({ count: event.count }),
     ip_address: event.ip,
     http_status_code: 429,
     success: false,
@@ -103,6 +112,7 @@ export function makeFhirExportRateLimitHook(
         userId: user.id,
         procedureName: "fhir.exportPatient",
         ip: req.ip,
+        count,
       }).catch((err: unknown) => {
         req.log?.warn?.({ err }, "Failed to write FHIR export rate-limit audit event");
       });
