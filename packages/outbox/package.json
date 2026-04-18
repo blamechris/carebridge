@@ -19,7 +19,9 @@
   },
   "dependencies": {
     "@carebridge/db-schema": "workspace:*",
+    "@carebridge/redis-config": "workspace:*",
     "@carebridge/shared-types": "workspace:*",
+    "bullmq": "^5.30.0",
     "drizzle-orm": "^0.38.0"
   },
   "devDependencies": {
