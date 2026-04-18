@@ -6,7 +6,8 @@ const insertMock = vi.fn(() => ({ values: insertValuesMock }));
 
 const updateReturningMock = vi.fn();
 const updateSetWhereMock = vi.fn(() => ({ returning: updateReturningMock }));
-const updateSetMock = vi.fn(() => ({ where: updateSetWhereMock }));
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const updateSetMock = vi.fn<(arg: any) => any>(() => ({ where: updateSetWhereMock }));
 const updateMock = vi.fn(() => ({ set: updateSetMock }));
 
 const selectOrderByMock = vi.fn();
