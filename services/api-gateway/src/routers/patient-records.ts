@@ -53,6 +53,16 @@ const protectedProcedure = t.procedure.use(isAuthenticated);
 /**
  * Enforce HIPAA minimum-necessary access for a given user / patientId pair.
  * Throws TRPCError(FORBIDDEN) on denial.
+ *
+ * Role semantics:
+ *  - admin: unrestricted
+ *  - patient: own record only (user.patient_id === patientId; user.id fallback
+ *    preserved for test fixtures that do not set patient_id)
+ *  - family_caregiver: must have an active family_relationships row linking
+ *    the caller's user.id to a user whose users.patient_id matches the
+ *    requested patient record id. Caregivers never satisfy the clinician
+ *    care-team check, so they must be resolved via this path.
+ *  - clinicians (physician, specialist, nurse): active care-team assignment
  */
 async function enforcePatientAccess(
   user: NonNullable<Context["user"]>,
@@ -61,10 +71,23 @@ async function enforcePatientAccess(
   if (user.role === "admin") return;
 
   if (user.role === "patient") {
-    if (user.id !== patientId) {
+    const ownRecord = user.patient_id ?? user.id;
+    if (ownRecord !== patientId) {
       throw new TRPCError({
         code: "FORBIDDEN",
         message: "Access denied: patients may only access their own records",
+      });
+    }
+    return;
+  }
+
+  if (user.role === "family_caregiver") {
+    const hasLink = await hasActiveFamilyLink(user.id, patientId);
+    if (!hasLink) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message:
+          "Access denied: no active family relationship grants access to this patient",
       });
     }
     return;
@@ -78,6 +101,35 @@ async function enforcePatientAccess(
       message: "Access denied: no active care-team assignment for this patient",
     });
   }
+}
+
+/**
+ * Resolve whether a family caregiver user currently has an active
+ * family_relationships row granting them read access to the given patient
+ * record id.
+ *
+ * family_relationships.patient_id references users.id (the patient's user
+ * account), but requests identify the subject by patients.id, so the query
+ * joins through users to close the mapping.
+ */
+async function hasActiveFamilyLink(
+  caregiverUserId: string,
+  patientRecordId: string,
+): Promise<boolean> {
+  const db = getDb();
+  const [row] = await db
+    .select({ id: familyRelationships.id })
+    .from(familyRelationships)
+    .innerJoin(users, eq(users.id, familyRelationships.patient_id))
+    .where(
+      and(
+        eq(familyRelationships.caregiver_id, caregiverUserId),
+        eq(users.patient_id, patientRecordId),
+        eq(familyRelationships.status, "active"),
+      ),
+    )
+    .limit(1);
+  return !!row;
 }
 
 /**
@@ -199,6 +251,97 @@ export const patientRecordsRbacRouter = t.router({
         .where(eq(patients.id, input.id));
       return patient ?? null;
     }),
+
+  /**
+   * Patients the current user is authorised to view in the patient portal.
+   *
+   * Returns a minimum-necessary summary (id, name, mrn, relationship) used
+   * to power the "which patient am I viewing" UI. Client-side code persists
+   * a selection in localStorage, but every downstream read still runs through
+   * enforcePatientAccess, so this endpoint is a UX helper — not the
+   * authorisation boundary.
+   *
+   * Role semantics:
+   *  - patient: returns exactly one entry (themselves), relationship "self".
+   *  - family_caregiver: returns every patient linked via an active
+   *    family_relationships row, keyed by patients.id. The relationship_type
+   *    (spouse/parent/child/sibling/...) is included so the UI can render
+   *    "Viewing as spouse for Jane Doe".
+   *  - clinicians (physician, specialist, nurse) and admins: returns an
+   *    empty list. The patient portal is not a clinician surface — these
+   *    roles use the clinician portal's dedicated patient selector.
+   */
+  getMyPatients: protectedProcedure.query(async ({ ctx }) => {
+    const db = getDb();
+
+    if (ctx.user.role === "patient") {
+      if (!ctx.user.patient_id) return [];
+      const [row] = await db
+        .select({ id: patients.id, name: patients.name, mrn: patients.mrn })
+        .from(patients)
+        .where(eq(patients.id, ctx.user.patient_id));
+      if (!row) return [];
+      return [{ ...row, relationship: "self" as const }];
+    }
+
+    if (ctx.user.role === "family_caregiver") {
+      const rels = await db
+        .select({
+          patient_user_id: familyRelationships.patient_id,
+          relationship_type: familyRelationships.relationship_type,
+        })
+        .from(familyRelationships)
+        .where(
+          and(
+            eq(familyRelationships.caregiver_id, ctx.user.id),
+            eq(familyRelationships.status, "active"),
+          ),
+        );
+      if (rels.length === 0) return [];
+
+      const userRows = await db
+        .select({ id: users.id, patient_id: users.patient_id })
+        .from(users)
+        .where(
+          and(
+            inArray(
+              users.id,
+              rels.map((r) => r.patient_user_id),
+            ),
+            isNotNull(users.patient_id),
+          ),
+        );
+      const patientIds = userRows
+        .map((u) => u.patient_id)
+        .filter((id): id is string => Boolean(id));
+      if (patientIds.length === 0) return [];
+
+      const patientRows = await db
+        .select({ id: patients.id, name: patients.name, mrn: patients.mrn })
+        .from(patients)
+        .where(inArray(patients.id, patientIds));
+
+      // Re-join in memory so the relationship_type travels with each row.
+      const patientIdByUserId = new Map<string, string>();
+      for (const u of userRows) {
+        if (u.patient_id) patientIdByUserId.set(u.id, u.patient_id);
+      }
+      const relationshipByPatientId = new Map<string, string>();
+      for (const r of rels) {
+        const pid = patientIdByUserId.get(r.patient_user_id);
+        if (pid) relationshipByPatientId.set(pid, r.relationship_type);
+      }
+      return patientRows.map((p) => ({
+        id: p.id,
+        name: p.name,
+        mrn: p.mrn,
+        relationship: relationshipByPatientId.get(p.id) ?? "caregiver",
+      }));
+    }
+
+    // Clinicians and admins use the clinician portal.
+    return [];
+  }),
 
   // HIPAA minimum-necessary: filter patient list by role.
   //   - patient: only their own record
@@ -445,6 +588,19 @@ export const patientRecordsRbacRouter = t.router({
         }),
       )
       .mutation(async ({ ctx, input }) => {
+        // Patient-reported observations are an act of first-person self-report.
+        // Family caregivers can *view* the symptom journal (via getByPatient +
+        // enforcePatientAccess) but must never submit entries on the patient's
+        // behalf — the clinical value of this feed depends on the patient
+        // being the author. Enforce server-side so a tampered client can't
+        // bypass the read-only UI.
+        if (ctx.user.role === "family_caregiver") {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message:
+              "Family caregivers cannot submit symptom observations on behalf of a patient",
+          });
+        }
         await enforcePatientAccess(ctx.user, input.patientId);
         return createObservation(input);
       }),

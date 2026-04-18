@@ -4,6 +4,8 @@ import type { Metadata } from "next";
 import "@carebridge/ui-tokens/tokens.css";
 import "./globals.css";
 import { Providers } from "./providers";
+import { CaregiverIndicator } from "@/components/caregiver-indicator";
+import { PatientSelector } from "@/components/patient-selector";
 
 export const metadata: Metadata = {
   title: "CareBridge — Patient Portal",
@@ -32,6 +34,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <h1 style={{ margin: 0, fontSize: "1.5rem" }}>CareBridge</h1>
             <p style={{ margin: "0.25rem 0 0", color: "#999", fontSize: "0.875rem" }}>Patient Portal</p>
           </header>
+          <CaregiverIndicator />
+          <PatientSelector />
           <main id="main-content" tabIndex={-1}>
             {children}
           </main>

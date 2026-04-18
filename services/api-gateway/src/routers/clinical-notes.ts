@@ -9,9 +9,12 @@
  */
 import { z } from "zod";
 import { TRPCError, initTRPC } from "@trpc/server";
+import crypto from "node:crypto";
 import {
   createNoteSchema,
   updateNoteSchema,
+  cosignNoteSchema,
+  amendNoteSchema,
   noteTemplateTypeSchema,
 } from "@carebridge/validators";
 import type { NoteTemplateType } from "@carebridge/shared-types";
@@ -20,7 +23,7 @@ import {
   createSOAPTemplate,
   createProgressTemplate,
 } from "@carebridge/clinical-notes";
-import { getDb, clinicalNotes } from "@carebridge/db-schema";
+import { getDb, clinicalNotes, auditLog } from "@carebridge/db-schema";
 import { eq } from "drizzle-orm";
 import type { Context } from "../context.js";
 import { assertCareTeamAccess } from "../middleware/rbac.js";
@@ -141,6 +144,161 @@ export const clinicalNotesRbacRouter = t.router({
       // ignored at the gateway boundary so signature spoofing is impossible
       // even for permitted roles.
       return noteService.signNote(input.noteId, ctx.user.id);
+    }),
+
+  cosign: protectedProcedure
+    .input(cosignNoteSchema)
+    .mutation(async ({ ctx, input }) => {
+      // Cosign requires the same clinical authority as signing — nurses
+      // and patients must not cosign. Apply the role gate explicitly in
+      // the gateway boundary (matching the sign procedure above) rather
+      // than relying on a per-service check.
+      if (!["physician", "specialist", "admin"].includes(ctx.user.role)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Access denied: role not permitted to cosign clinical notes",
+        });
+      }
+
+      const db = getDb();
+      const [existing] = await db
+        .select({ patient_id: clinicalNotes.patient_id })
+        .from(clinicalNotes)
+        .where(eq(clinicalNotes.id, input.noteId))
+        .limit(1);
+
+      if (!existing) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: `Note ${input.noteId} not found`,
+        });
+      }
+
+      await enforcePatientAccess(ctx.user, existing.patient_id);
+
+      let result;
+      try {
+        result = await noteService.cosignNote(input.noteId, ctx.user.id);
+      } catch (err) {
+        if (err instanceof Error && err.name === "NoteStateError") {
+          throw new TRPCError({ code: "CONFLICT", message: err.message });
+        }
+        throw err;
+      }
+
+      // Domain-level audit entry. The Fastify onResponse audit hook also
+      // records the tRPC call generically; this explicit row carries the
+      // cosigner / subject pair as structured details for HIPAA review.
+      try {
+        await db.insert(auditLog).values({
+          id: crypto.randomUUID(),
+          user_id: ctx.user.id,
+          action: "cosign",
+          resource_type: "clinical_note",
+          resource_id: input.noteId,
+          patient_id: existing.patient_id,
+          procedure_name: "clinicalNotes.cosign",
+          details: JSON.stringify({ cosigned_by: ctx.user.id }),
+          ip_address: "",
+          success: true,
+          timestamp: new Date().toISOString(),
+        });
+      } catch {
+        // Audit write must never fail the mutation — the Fastify hook
+        // still captures the base record for this request.
+      }
+
+      return result;
+    }),
+
+  amend: protectedProcedure
+    .input(amendNoteSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!["physician", "specialist", "admin"].includes(ctx.user.role)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Access denied: role not permitted to amend clinical notes",
+        });
+      }
+
+      const db = getDb();
+      const [existing] = await db
+        .select({ patient_id: clinicalNotes.patient_id })
+        .from(clinicalNotes)
+        .where(eq(clinicalNotes.id, input.noteId))
+        .limit(1);
+
+      if (!existing) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: `Note ${input.noteId} not found`,
+        });
+      }
+
+      await enforcePatientAccess(ctx.user, existing.patient_id);
+
+      let result;
+      try {
+        result = await noteService.amendNote(
+          input.noteId,
+          ctx.user.id,
+          input.sections,
+          input.reason,
+        );
+      } catch (err) {
+        if (err instanceof Error && err.name === "NoteStateError") {
+          throw new TRPCError({ code: "CONFLICT", message: err.message });
+        }
+        throw err;
+      }
+
+      // Record the amendment reason explicitly — HIPAA amendment audit
+      // requires the reason be retrievable alongside the actor/subject.
+      try {
+        await db.insert(auditLog).values({
+          id: crypto.randomUUID(),
+          user_id: ctx.user.id,
+          action: "amend",
+          resource_type: "clinical_note",
+          resource_id: input.noteId,
+          patient_id: existing.patient_id,
+          procedure_name: "clinicalNotes.amend",
+          details: JSON.stringify({
+            amended_by: ctx.user.id,
+            reason: input.reason,
+            new_version: result.version,
+          }),
+          ip_address: "",
+          success: true,
+          timestamp: new Date().toISOString(),
+        });
+      } catch {
+        // See cosign above — audit failures are never surfaced.
+      }
+
+      return result;
+    }),
+
+  getVersionHistory: protectedProcedure
+    .input(z.object({ noteId: z.string().uuid() }))
+    .query(async ({ ctx, input }) => {
+      const db = getDb();
+      const [existing] = await db
+        .select({ patient_id: clinicalNotes.patient_id })
+        .from(clinicalNotes)
+        .where(eq(clinicalNotes.id, input.noteId))
+        .limit(1);
+
+      if (!existing) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: `Note ${input.noteId} not found`,
+        });
+      }
+
+      await enforcePatientAccess(ctx.user, existing.patient_id);
+
+      return noteService.getVersionHistory(input.noteId);
     }),
 
   getByPatient: protectedProcedure

@@ -120,6 +120,8 @@ export type ClinicalEventType =
   | "medication.administered"
   | "note.saved"
   | "note.signed"
+  | "note.cosigned"
+  | "note.amended"
   | "procedure.completed"
   | "diagnosis.added"
   | "diagnosis.updated"

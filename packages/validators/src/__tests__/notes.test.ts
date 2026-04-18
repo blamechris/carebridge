@@ -6,6 +6,8 @@ import {
   createNoteSchema,
   updateNoteSchema,
   signNoteSchema,
+  cosignNoteSchema,
+  amendNoteSchema,
 } from "../notes.js";
 
 const UUID = "f47ac10b-58cc-4372-a567-0e02b2c3d479";
@@ -247,6 +249,64 @@ describe("signNoteSchema", () => {
 
   it("rejects missing signed_by", () => {
     const result = signNoteSchema.safeParse({});
+    expect(result.success).toBe(false);
+  });
+});
+
+// ─── Cosign Note ───────────────────────────────────────────────
+
+describe("cosignNoteSchema", () => {
+  it("accepts valid UUID for noteId", () => {
+    const result = cosignNoteSchema.safeParse({ noteId: UUID });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects non-UUID noteId", () => {
+    const result = cosignNoteSchema.safeParse({ noteId: "not-a-uuid" });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects missing noteId", () => {
+    expect(cosignNoteSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+// ─── Amend Note ────────────────────────────────────────────────
+
+describe("amendNoteSchema", () => {
+  const validAmend = {
+    noteId: UUID,
+    sections: [validSection],
+    reason: "Correcting medication dose recorded in error.",
+  };
+
+  it("accepts valid amendment with reason and sections", () => {
+    const result = amendNoteSchema.safeParse(validAmend);
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects empty reason", () => {
+    const result = amendNoteSchema.safeParse({ ...validAmend, reason: "" });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects whitespace-only reason", () => {
+    const result = amendNoteSchema.safeParse({ ...validAmend, reason: "   " });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects reason longer than 2000 characters", () => {
+    const result = amendNoteSchema.safeParse({ ...validAmend, reason: "A".repeat(2001) });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects empty sections", () => {
+    const result = amendNoteSchema.safeParse({ ...validAmend, sections: [] });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects non-UUID noteId", () => {
+    const result = amendNoteSchema.safeParse({ ...validAmend, noteId: "not-a-uuid" });
     expect(result.success).toBe(false);
   });
 });

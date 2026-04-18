@@ -24,8 +24,20 @@ function makeSelectChain() {
   return chain;
 }
 
+// Mock insert chain used by the explicit audit write in cosign/amend. The
+// production path awaits db.insert(auditLog).values(...), so we return a
+// thenable that resolves to `undefined` no matter how long the chain is.
+function makeInsertChain() {
+  const chain: Record<string, unknown> = {};
+  chain.values = vi.fn(() => chain);
+  chain.then = (onFulfilled?: (v: unknown) => unknown) =>
+    Promise.resolve(undefined).then(onFulfilled);
+  return chain;
+}
+
 const mockDb = {
   select: vi.fn(() => makeSelectChain()),
+  insert: vi.fn(() => makeInsertChain()),
 };
 
 vi.mock("@carebridge/db-schema", () => ({
@@ -34,6 +46,7 @@ vi.mock("@carebridge/db-schema", () => ({
     id: "clinical_notes.id",
     patient_id: "clinical_notes.patient_id",
   },
+  auditLog: { id: "audit_log.id" },
 }));
 
 vi.mock("drizzle-orm", () => ({
@@ -55,6 +68,22 @@ vi.mock("@carebridge/clinical-notes", () => ({
       signed_by: signedBy,
       signed_at: new Date().toISOString(),
     })),
+    cosignNote: vi.fn(async (noteId: string, cosignedBy: string) => ({
+      id: noteId,
+      status: "cosigned",
+      cosigned_by: cosignedBy,
+      cosigned_at: new Date().toISOString(),
+      version: 1,
+    })),
+    amendNote: vi.fn(async (noteId: string, amendedBy: string, sections: unknown[], reason: string) => ({
+      id: noteId,
+      status: "amended",
+      version: 2,
+      sections,
+      _reason: reason,
+      _amendedBy: amendedBy,
+    })),
+    getVersionHistory: vi.fn(async () => []),
     getNotesByPatient: vi.fn(),
     getNoteById: vi.fn(),
   },
@@ -67,6 +96,9 @@ import { clinicalNotesRbacRouter } from "../routers/clinical-notes.js";
 import type { Context } from "../context.js";
 
 const signNoteMock = vi.mocked(noteService.signNote);
+const cosignNoteMock = vi.mocked(noteService.cosignNote);
+const amendNoteMock = vi.mocked(noteService.amendNote);
+const getVersionHistoryMock = vi.mocked(noteService.getVersionHistory);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -179,5 +211,165 @@ describe("clinicalNotesRbacRouter.sign — role enforcement", () => {
       }),
     ).resolves.toBeDefined();
     expect(signNoteMock).toHaveBeenCalledWith(NOTE_ID, physicianA.id);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// cosign
+// ---------------------------------------------------------------------------
+
+describe("clinicalNotesRbacRouter.cosign — role enforcement", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    cosignNoteMock.mockClear();
+  });
+
+  const cosignInput = { noteId: NOTE_ID };
+
+  it("rejects a nurse attempting to cosign (FORBIDDEN)", async () => {
+    const caller = callerFor(makeUser("nurse"));
+    await expect(caller.cosign(cosignInput)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(cosignNoteMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a patient attempting to cosign (FORBIDDEN)", async () => {
+    const caller = callerFor(makeUser("patient", PATIENT_ID));
+    await expect(caller.cosign(cosignInput)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(cosignNoteMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unauthenticated caller (UNAUTHORIZED)", async () => {
+    const caller = callerFor(null);
+    await expect(caller.cosign(cosignInput)).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(cosignNoteMock).not.toHaveBeenCalled();
+  });
+
+  it("allows a physician to cosign (cosigner = ctx.user.id)", async () => {
+    const physician = makeUser("physician");
+    const caller = callerFor(physician);
+    await expect(caller.cosign(cosignInput)).resolves.toBeDefined();
+    expect(cosignNoteMock).toHaveBeenCalledWith(NOTE_ID, physician.id);
+  });
+
+  it("allows a specialist to cosign", async () => {
+    const specialist = makeUser("specialist");
+    const caller = callerFor(specialist);
+    await expect(caller.cosign(cosignInput)).resolves.toBeDefined();
+    expect(cosignNoteMock).toHaveBeenCalledWith(NOTE_ID, specialist.id);
+  });
+
+  it("surfaces NoteStateError from the service as a CONFLICT", async () => {
+    cosignNoteMock.mockImplementationOnce(async () => {
+      const e = new Error("Cannot cosign note in status \"draft\"");
+      e.name = "NoteStateError";
+      throw e;
+    });
+
+    const caller = callerFor(makeUser("physician"));
+    await expect(caller.cosign(cosignInput)).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// amend
+// ---------------------------------------------------------------------------
+
+const sampleSection = {
+  key: "subjective",
+  label: "Subjective",
+  fields: [],
+  free_text: "Amended text",
+};
+
+describe("clinicalNotesRbacRouter.amend — role enforcement", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    amendNoteMock.mockClear();
+  });
+
+  const amendInput = {
+    noteId: NOTE_ID,
+    sections: [sampleSection],
+    reason: "Dose was miscoded on signing — correcting to 5mg.",
+  };
+
+  it("rejects a nurse attempting to amend (FORBIDDEN)", async () => {
+    const caller = callerFor(makeUser("nurse"));
+    await expect(caller.amend(amendInput)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(amendNoteMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a patient attempting to amend (FORBIDDEN)", async () => {
+    const caller = callerFor(makeUser("patient", PATIENT_ID));
+    await expect(caller.amend(amendInput)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(amendNoteMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an unauthenticated caller (UNAUTHORIZED)", async () => {
+    const caller = callerFor(null);
+    await expect(caller.amend(amendInput)).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(amendNoteMock).not.toHaveBeenCalled();
+  });
+
+  it("allows a physician to amend with a valid reason", async () => {
+    const physician = makeUser("physician");
+    const caller = callerFor(physician);
+    await expect(caller.amend(amendInput)).resolves.toBeDefined();
+    expect(amendNoteMock).toHaveBeenCalledWith(
+      NOTE_ID,
+      physician.id,
+      amendInput.sections,
+      amendInput.reason,
+    );
+  });
+
+  it("rejects an empty reason at the schema layer", async () => {
+    const caller = callerFor(makeUser("physician"));
+    await expect(
+      caller.amend({ ...amendInput, reason: "" }),
+    ).rejects.toBeDefined();
+    expect(amendNoteMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces NoteStateError from the service as a CONFLICT", async () => {
+    amendNoteMock.mockImplementationOnce(async () => {
+      const e = new Error("Cannot amend a draft note");
+      e.name = "NoteStateError";
+      throw e;
+    });
+
+    const caller = callerFor(makeUser("physician"));
+    await expect(caller.amend(amendInput)).rejects.toMatchObject({ code: "CONFLICT" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getVersionHistory
+// ---------------------------------------------------------------------------
+
+describe("clinicalNotesRbacRouter.getVersionHistory — access control", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getVersionHistoryMock.mockClear();
+  });
+
+  const input = { noteId: NOTE_ID };
+
+  it("rejects an unauthenticated caller", async () => {
+    const caller = callerFor(null);
+    await expect(caller.getVersionHistory(input)).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(getVersionHistoryMock).not.toHaveBeenCalled();
+  });
+
+  it("allows a clinician on the care team", async () => {
+    const caller = callerFor(makeUser("physician"));
+    await expect(caller.getVersionHistory(input)).resolves.toEqual([]);
+    expect(getVersionHistoryMock).toHaveBeenCalledWith(NOTE_ID);
+  });
+
+  it("allows a nurse on the care team (read permission)", async () => {
+    const caller = callerFor(makeUser("nurse"));
+    await expect(caller.getVersionHistory(input)).resolves.toEqual([]);
+    expect(getVersionHistoryMock).toHaveBeenCalledWith(NOTE_ID);
   });
 });
