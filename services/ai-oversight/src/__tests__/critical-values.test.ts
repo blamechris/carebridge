@@ -311,6 +311,119 @@ describe("checkCriticalValues — lab heuristic fallback", () => {
   });
 });
 
+// ─── Lab-provided flag precedence (issue #244) ───────────────────
+describe("checkCriticalValues — lab-provided flag precedence", () => {
+  it("flags unknown lab as critical when the lab reports flag='critical' and no reference range is supplied", () => {
+    // Regression: previously this silently slipped through because the lab
+    // was not in COMMON_LAB_TESTS and had no reference range. An analyzing
+    // laboratory explicitly flagging the value as critical is authoritative.
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Obscure Marker X",
+          value: 999,
+          unit: "U/L",
+          flag: "critical",
+        },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("critical");
+    expect(flags[0]!.rule_id).toBe("CRITICAL-LAB-OBSCURE_MARKER_X");
+  });
+
+  it("emits warning flag when lab reports flag='H' without a reference range", () => {
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Novel Biomarker",
+          value: 42,
+          unit: "pg/mL",
+          flag: "H",
+        },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("warning");
+    expect(flags[0]!.summary).toContain("High");
+  });
+
+  it("emits warning flag when lab reports flag='L' without a reference range", () => {
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Novel Biomarker",
+          value: 0.1,
+          unit: "pg/mL",
+          flag: "L",
+        },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("warning");
+    expect(flags[0]!.summary).toContain("Low");
+  });
+
+  it("honors lab flag even when value is within COMMON_LAB_TESTS typical range", () => {
+    // A lab flagging a result as critical overrides typical-range fallback
+    // even when the value itself would otherwise look benign. The laboratory
+    // has more context (patient baseline, critical-value policy) than we do.
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Hemoglobin",
+          value: 13.5, // within typical 12.0–17.5
+          unit: "g/dL",
+          flag: "critical",
+        },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("critical");
+  });
+
+  it("prefers per-result reference_low/reference_high over COMMON_LAB_TESTS", () => {
+    // Scenario: lab reports Potassium with a patient-specific reference range
+    // (e.g. 3.0–5.5 for a CKD patient on K-binders). A value of 5.4 would be
+    // "high" by COMMON_LAB_TESTS (typical_high=5.0) but within the per-result
+    // range. The per-result range must win; this result should NOT be flagged
+    // by the heuristic fallback (POTASSIUM explicit threshold is separate).
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Nonstandard Metabolite",
+          value: 10,
+          unit: "mg/dL",
+          reference_low: 5,
+          reference_high: 15,
+        },
+      ]),
+    );
+    // 10 is mid-range, no flag expected.
+    expect(flags).toHaveLength(0);
+  });
+
+  it("uses per-result reference range to detect far-outside when COMMON_LAB_TESTS disagrees", () => {
+    // Per-result reference range: 3.5–5.0 (range=1.5). Value 8.5 is far above
+    // (> 5.0 + 1.5 = 6.5) so should flag critical regardless of COMMON_LAB_TESTS.
+    const flags = checkCriticalValues(
+      makeLabEvent([
+        {
+          test_name: "Rare Analyte Y",
+          value: 8.5,
+          unit: "mmol/L",
+          reference_low: 3.5,
+          reference_high: 5.0,
+        },
+      ]),
+    );
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.severity).toBe("critical");
+    expect(flags[0]!.rationale).toContain("3.5");
+    expect(flags[0]!.rationale).toContain("5");
+  });
+});
+
 // ─── Multiple Lab Results in One Event ───────────────────────────
 describe("checkCriticalValues — multiple lab results", () => {
   it("flags multiple critical results in a single lab panel", () => {
