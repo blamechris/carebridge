@@ -13,7 +13,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit -p tsconfig.check.json",
     "test": "vitest run",
     "eval": "vitest run --config vitest.config.ts golden-eval",
     "clean": "rm -rf dist"

@@ -76,6 +76,13 @@ async function main() {
     },
   });
 
+  // --- Request decorators ---
+  // Register custom properties so Fastify knows about them at startup and
+  // TypeScript can access them without double-casting via the augmentation
+  // in ./fastify.d.ts.
+  server.decorateRequest("user", undefined);
+  server.decorateRequest("sessionId", undefined);
+
   // --- Plugins ---
   // Security headers. This is a JSON API, not an HTML app, so CSP and COEP
   // are disabled — they only make sense for browser-rendered documents.
