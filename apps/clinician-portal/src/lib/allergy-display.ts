@@ -21,11 +21,13 @@
  */
 
 import type { AllergyStatus } from "@carebridge/shared-types";
+import { patientAllergyStatusSchema } from "@carebridge/validators";
 
 export type { AllergyStatus };
 
-const VALID_ALLERGY_STATUSES: readonly AllergyStatus[] = ["nkda", "unknown", "has_allergies"];
-const statusSet: ReadonlySet<string> = new Set(VALID_ALLERGY_STATUSES);
+const VALID_ALLERGY_STATUSES =
+  patientAllergyStatusSchema.options satisfies readonly AllergyStatus[];
+const statusSet: ReadonlySet<AllergyStatus> = new Set(VALID_ALLERGY_STATUSES);
 
 /**
  * Runtime guard for allergy_status values coming from the DB or API.
@@ -35,7 +37,7 @@ const statusSet: ReadonlySet<string> = new Set(VALID_ALLERGY_STATUSES);
 export function parseAllergyStatus(
   value: unknown,
 ): AllergyStatus | null {
-  if (typeof value === "string" && statusSet.has(value)) {
+  if (typeof value === "string" && statusSet.has(value as AllergyStatus)) {
     return value as AllergyStatus;
   }
   if (value !== null && value !== undefined) {
