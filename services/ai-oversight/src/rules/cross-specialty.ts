@@ -87,6 +87,12 @@ export interface PatientMedication {
   /** Optional PRN / hard-cap dose count per 24 h (not yet stored in DB). */
   max_doses_per_day?: number | null;
   rxnorm_code: string | null;
+  /**
+   * ISO 8601 prescription start date. Populated from `medications.started_at`
+   * when available. Absent when the writer never recorded a start date —
+   * rules should fail-open (don't rely on duration) in that case.
+   */
+  started_at?: string | null;
 }
 
 export interface PatientContext {
@@ -1143,6 +1149,33 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
             ) ?? perDoseEquiv;
 
           if (dailyEquiv < 20) return false;
+        }
+
+        // Duration gate (#940). IDSA/ATS require prednisone-equivalent
+        // >= 20 mg/day for >= 4 weeks before PCP prophylaxis is indicated.
+        // Short bursts (5–7 day tapers for asthma exacerbation, poison ivy,
+        // acute gout, COPD flare, etc.) routinely use 40–60 mg prednisone
+        // and would otherwise trip this rule with no real prophylaxis
+        // indication. Suppress fire when started_at is known and shows the
+        // course started < 28 days ago; fail-open (keep firing) when the
+        // writer didn't record a start date, so chronic steroid courses
+        // without start-date metadata still surface.
+        //
+        // Anchor to `ctx.event_timestamp` (not wall-clock) so replayed /
+        // backfilled / late-processed events evaluate deterministically —
+        // same pattern as the ONCO-VTE recency gate above. A start date in
+        // the future relative to the event (data-entry typo) is treated as
+        // unknown and falls through to fire (fail-open).
+        const startedAt = systemicSteroidDetail.started_at;
+        if (startedAt) {
+          const startedMs = Date.parse(startedAt);
+          const refMs = ctx.event_timestamp
+            ? Date.parse(ctx.event_timestamp)
+            : Date.now();
+          if (Number.isFinite(startedMs) && Number.isFinite(refMs)) {
+            const daysSinceStart = (refMs - startedMs) / 86_400_000;
+            if (daysSinceStart >= 0 && daysSinceStart < 28) return false;
+          }
         }
       }
 
