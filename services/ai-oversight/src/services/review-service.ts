@@ -39,12 +39,14 @@ import {
   validateLLMResponse,
 } from "@carebridge/phi-sanitizer";
 import { createLogger } from "@carebridge/logger";
+import { ageInYearsFromDOB } from "@carebridge/medical-logic";
 
 const logger = createLogger("ai-oversight");
 
 import { checkCriticalValues } from "../rules/critical-values.js";
 import { checkCrossSpecialtyPatterns } from "../rules/cross-specialty.js";
 import type { PatientContext } from "../rules/cross-specialty.js";
+import { checkAgeStratifiedRules } from "../rules/age-stratified.js";
 import { checkDrugInteractions } from "../rules/drug-interactions.js";
 import { screenPatientMessage } from "../rules/message-screening.js";
 import { screenPatientObservation } from "../rules/observation-screening.js";
@@ -199,6 +201,15 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
     if (crossSpecialtyFlags.length > 0) {
       rulesFired.push("cross-specialty");
       allRuleFlags.push(...crossSpecialtyFlags);
+    }
+
+    // 2b-bis. Age-stratified rules (Beers Criteria in elderly, pediatric
+    // contraindications — issue #236). Shares the PatientContext built above.
+    rulesEvaluated.push("age-stratified");
+    const ageStratifiedFlags = checkAgeStratifiedRules(patientContext);
+    if (ageStratifiedFlags.length > 0) {
+      rulesFired.push("age-stratified");
+      allRuleFlags.push(...ageStratifiedFlags);
     }
 
     // 2c. Drug interactions
@@ -762,6 +773,37 @@ export async function buildPatientContextForRules(
     recentLabs.push({ name: row.test_name, value: row.value, unit });
   }
 
+  // Fetch the patient's date_of_birth so age-gated rules (Beers Criteria in
+  // elderly, pediatric contraindications — issue #236) can evaluate. Done
+  // defensively so older tests that only stub `db.select()` continue to
+  // work — if `db.query.patients.findFirst` is unavailable in the stubbed
+  // db, we treat age as unknown and age-gated rules fail closed. Issue #236.
+  let patientAgeYears: number | null = null;
+  try {
+    const patientRow = await db.query?.patients?.findFirst?.({
+      where: eq(patients.id, patientId),
+    });
+    if (patientRow?.date_of_birth) {
+      const age = ageInYearsFromDOB(patientRow.date_of_birth, new Date(eventAt));
+      patientAgeYears = age ?? null;
+    }
+    if (patientAgeYears === null) {
+      logger.warn("patient_age_unknown", {
+        metric: "patient_age_unknown",
+        patient_id_prefix: patientId.slice(0, 8),
+        caller: "review-service:buildPatientContextForRules",
+      });
+    }
+  } catch (err) {
+    logger.warn("patient_age_lookup_failed", {
+      metric: "patient_age_lookup_failed",
+      patient_id_prefix: patientId.slice(0, 8),
+      error_message: err instanceof Error ? err.message : String(err),
+      caller: "review-service:buildPatientContextForRules",
+    });
+    patientAgeYears = null;
+  }
+
   // A medication was "active at event time" if it had started (started_at
   // present and <= event time) and had not yet ended (ended_at null or
   // strictly after event time). Falls back to created_at when started_at
@@ -831,6 +873,7 @@ export async function buildPatientContextForRules(
     trigger_event: event,
     recent_labs: recentLabs.length > 0 ? recentLabs : undefined,
     event_timestamp: eventAt,
+    age_years: patientAgeYears,
   };
 }
 

@@ -93,6 +93,7 @@ vi.mock("@carebridge/db-schema", () => ({
     patient_id: "family_relationships.patient_id",
     relationship_type: "family_relationships.relationship_type",
     status: "family_relationships.status",
+    access_scopes: "family_relationships.access_scopes",
   },
   users: {
     id: "users.id",
@@ -203,7 +204,9 @@ describe("enforcePatientAccess — family_caregiver", () => {
     // limit() for the family_relationships join => row found
     // then createObservation / list runs without another DB call we care about
     mocks.setQueue([
-      [{ id: "rel-1" }], // family link lookup
+      // view_and_message is the superset — grants every read including
+      // observations (view_summary-tier).
+      [{ id: "rel-1", access_scopes: ["view_and_message"] }],
     ]);
     const caregiver = makeUser("family_caregiver", CAREGIVER_USER_ID);
     const caller = callerFor(caregiver);
@@ -275,6 +278,9 @@ describe("patients.getMyPatients", () => {
         name: "Jane Doe",
         mrn: "MRN001",
         relationship: "self",
+        // Patients viewing their own record hold the superset scope so the
+        // UI can render every section — scopes gate DELEGATED access only.
+        scopes: ["view_and_message"],
       },
     ]);
   });
@@ -286,14 +292,15 @@ describe("patients.getMyPatients", () => {
     expect(result).toEqual([]);
   });
 
-  it("returns linked patients with relationship_type for a caregiver", async () => {
+  it("returns linked patients with relationship_type and scopes for a caregiver", async () => {
     const caregiver = makeUser("family_caregiver", CAREGIVER_USER_ID);
     mocks.setQueue([
-      // 1) family_relationships rows
+      // 1) family_relationships rows (now includes access_scopes)
       [
         {
           patient_user_id: LINKED_PATIENT_USER_ID,
           relationship_type: "spouse",
+          access_scopes: ["view_summary", "view_appointments"],
         },
       ],
       // 2) users rows with patient_id
@@ -317,8 +324,28 @@ describe("patients.getMyPatients", () => {
         name: "Jane Doe",
         mrn: "MRN001",
         relationship: "spouse",
+        scopes: ["view_summary", "view_appointments"],
       },
     ]);
+  });
+
+  it("falls back to read_only for getMyPatients when access_scopes is null", async () => {
+    const caregiver = makeUser("family_caregiver", CAREGIVER_USER_ID);
+    mocks.setQueue([
+      [
+        {
+          patient_user_id: LINKED_PATIENT_USER_ID,
+          relationship_type: "spouse",
+          access_scopes: null,
+        },
+      ],
+      [{ id: LINKED_PATIENT_USER_ID, patient_id: LINKED_PATIENT_RECORD_ID }],
+      [{ id: LINKED_PATIENT_RECORD_ID, name: "Jane", mrn: "MRN001" }],
+    ]);
+
+    const caller = callerFor(caregiver);
+    const result = await caller.getMyPatients();
+    expect(result[0]).toMatchObject({ scopes: ["read_only"] });
   });
 
   it("returns multiple rows when a caregiver represents multiple patients", async () => {
@@ -330,10 +357,12 @@ describe("patients.getMyPatients", () => {
         {
           patient_user_id: LINKED_PATIENT_USER_ID,
           relationship_type: "parent",
+          access_scopes: ["view_and_message"],
         },
         {
           patient_user_id: SECOND_PATIENT_USER_ID,
           relationship_type: "child",
+          access_scopes: ["view_summary", "view_labs"],
         },
       ],
       [
@@ -355,10 +384,12 @@ describe("patients.getMyPatients", () => {
         expect.objectContaining({
           id: LINKED_PATIENT_RECORD_ID,
           relationship: "parent",
+          scopes: ["view_and_message"],
         }),
         expect.objectContaining({
           id: OTHER_PATIENT_RECORD_ID,
           relationship: "child",
+          scopes: ["view_summary", "view_labs"],
         }),
       ]),
     );

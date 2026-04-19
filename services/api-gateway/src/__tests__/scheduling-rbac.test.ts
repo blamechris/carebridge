@@ -136,6 +136,7 @@ vi.mock("@carebridge/db-schema", () => ({
     patient_id: "family_relationships.patient_id",
     caregiver_id: "family_relationships.caregiver_id",
     status: "family_relationships.status",
+    access_scopes: "family_relationships.access_scopes",
   },
   users: {
     id: "users.id",

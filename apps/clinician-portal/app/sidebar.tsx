@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth";
 import { trpcVanilla } from "@/lib/trpc";
 
@@ -16,6 +16,15 @@ const navItems = [
   { href: "/settings", label: "Settings", icon: "\u2699" },
 ];
 
+const FOCUSABLE_SELECTOR = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  '[tabindex]:not([tabindex="-1"])',
+].join(",");
+
 function getInitials(name: string): string {
   return name
     .split(" ")
@@ -26,11 +35,101 @@ function getInitials(name: string): string {
     .toUpperCase();
 }
 
+/**
+ * Focus management for the sidebar drawer (WCAG 2.1.2 / 2.4.3 / 2.4.7):
+ *   - On open: saves the previously-focused element and moves focus into
+ *     the drawer.
+ *   - While open: traps Tab / Shift+Tab within focusable descendants and
+ *     closes the drawer on Escape.
+ *   - On close: restores focus to the element that opened the drawer
+ *     (usually the hamburger toggle).
+ */
+function useSidebarFocusTrap(
+  isOpen: boolean,
+  containerRef: React.RefObject<HTMLElement | null>,
+  onClose: () => void,
+) {
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const container = containerRef.current;
+    if (!container) return;
+
+    previousFocusRef.current =
+      (document.activeElement as HTMLElement | null) ?? null;
+
+    const focusables = Array.from(
+      container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+    );
+    const firstFocusable = focusables[0];
+    if (firstFocusable) {
+      firstFocusable.focus();
+    } else {
+      container.focus();
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const current = containerRef.current;
+      if (!current) return;
+      const items = Array.from(
+        current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+      );
+      if (items.length === 0) {
+        event.preventDefault();
+        current.focus();
+        return;
+      }
+      const first = items[0]!;
+      const last = items[items.length - 1]!;
+      const active = document.activeElement as HTMLElement | null;
+
+      if (event.shiftKey) {
+        if (active === first || !current.contains(active)) {
+          event.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (active === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen, containerRef, onClose]);
+
+  useEffect(() => {
+    if (isOpen) return;
+    const previous = previousFocusRef.current;
+    if (previous && typeof previous.focus === "function") {
+      previous.focus();
+    }
+    previousFocusRef.current = null;
+  }, [isOpen]);
+}
+
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { user, clearSession, isAuthenticated, hydrated } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
+  const asideRef = useRef<HTMLElement | null>(null);
+
+  const closeDrawer = () => setIsOpen(false);
+  useSidebarFocusTrap(isOpen, asideRef, closeDrawer);
 
   async function handleLogout() {
     try {
@@ -64,14 +163,16 @@ export function Sidebar() {
       {isOpen && (
         <div
           className="sidebar-backdrop"
-          onClick={() => setIsOpen(false)}
+          onClick={closeDrawer}
           aria-hidden="true"
         />
       )}
 
       <aside
+        ref={asideRef}
         className={`sidebar ${isOpen ? "sidebar-open" : ""}`}
         aria-label="Primary sidebar"
+        tabIndex={-1}
       >
         <div className="sidebar-header">
           <div className="sidebar-logo">
@@ -83,7 +184,7 @@ export function Sidebar() {
         <nav
           className="sidebar-nav"
           aria-label="Primary navigation"
-          onClick={() => setIsOpen(false)}
+          onClick={closeDrawer}
         >
           {navItems.map((item) => {
             const isActive =

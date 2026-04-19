@@ -173,7 +173,7 @@ function DashboardContent() {
             <tbody>
               {patientsQuery.data.slice(0, 5).map((patient) => (
                 <tr key={patient.id}>
-                  <td>
+                  <td data-label="Patient Name">
                     <a
                       href={`/patients/${patient.id}`}
                       className="table-link"
@@ -182,6 +182,7 @@ function DashboardContent() {
                     </a>
                   </td>
                   <td
+                    data-label="MRN"
                     style={{
                       color: "var(--text-secondary)",
                       fontFamily: "monospace",
@@ -190,10 +191,13 @@ function DashboardContent() {
                   >
                     {patient.mrn}
                   </td>
-                  <td style={{ color: "var(--text-secondary)" }}>
+                  <td
+                    data-label="Date of Birth"
+                    style={{ color: "var(--text-secondary)" }}
+                  >
                     {patient.date_of_birth}
                   </td>
-                  <td>
+                  <td data-label="Actions">
                     <a
                       href={`/patients/${patient.id}`}
                       className="btn btn-ghost btn-sm"

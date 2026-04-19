@@ -137,3 +137,90 @@ export function hasPermission(user: User, permission: string): boolean {
   if (!grants) return false;
   return (grants as readonly string[]).includes(permission);
 }
+
+// ---------- Family-caregiver access scopes ----------
+
+/**
+ * Permitted access-scope tokens for a `family_relationships.access_scopes`
+ * entry. Mirrors `FAMILY_ACCESS_SCOPES` in
+ * `packages/db-schema/src/schema/family-access.ts` — that file owns the
+ * database-level CHECK, this file owns the API-boundary type.
+ *
+ * Scope semantics (see issue #896):
+ *  - `read_only`         — blanket "summary-equivalent" permit. Treated as a
+ *                          synonym for `view_summary` in scope checks.
+ *  - `view_summary`      — patient demographics, diagnoses, allergies,
+ *                          observations. Minimum useful read set.
+ *  - `view_appointments` — appointments list for the patient.
+ *  - `view_medications`  — medication list + administration history.
+ *  - `view_labs`         — lab panels + result history.
+ *  - `view_notes`        — clinical notes + version history.
+ *  - `view_and_message`  — SUPERSET. Grants every read scope above plus
+ *                          messaging participation. Any scope check with a
+ *                          `view_and_message` present always passes.
+ *
+ * IMPORTANT: when expanding this list, keep the `FAMILY_ACCESS_SCOPES`
+ * literal in db-schema in sync — both are the source of truth for different
+ * layers (DB vs API boundary) and a drift between them is a latent bug.
+ */
+export const SCOPE_TOKENS = [
+  "read_only",
+  "view_summary",
+  "view_appointments",
+  "view_medications",
+  "view_labs",
+  "view_notes",
+  "view_and_message",
+] as const;
+
+export type ScopeToken = (typeof SCOPE_TOKENS)[number];
+
+/**
+ * Default scope set applied when a family_relationships row has `null` or
+ * an empty `access_scopes` array. `read_only` is the safest backstop
+ * (summary-equivalent read) and matches the value the API treats as
+ * "no granular scopes selected".
+ */
+export const DEFAULT_CAREGIVER_SCOPES: readonly ScopeToken[] = ["read_only"];
+
+/**
+ * Check whether a caregiver's scope set grants the given required scope.
+ *
+ * Superset rules:
+ *  - `view_and_message` grants every other read scope.
+ *  - `read_only` is equivalent to `view_summary` (blanket summary permit).
+ *
+ * Called from `enforcePatientAccess` when the caller is a family caregiver
+ * and the procedure declares a `requiredScope`. Never throws — returns a
+ * plain boolean so the caller controls the error surface (and the error
+ * message can name the missing scope without leaking PHI).
+ */
+export function hasScope(
+  scopes: readonly ScopeToken[] | null | undefined,
+  required: ScopeToken,
+): boolean {
+  const set = scopes && scopes.length > 0 ? scopes : DEFAULT_CAREGIVER_SCOPES;
+
+  // view_and_message is a superset — always grants read access.
+  if (set.includes("view_and_message")) return true;
+
+  // read_only is the blanket summary permit.
+  if (required === "view_summary" && set.includes("read_only")) return true;
+  if (required === "read_only" && set.includes("view_summary")) return true;
+
+  return set.includes(required);
+}
+
+/**
+ * Normalise an `access_scopes` column value to a non-empty scope array.
+ * Treats `null`, `undefined`, or `[]` as the default (`["read_only"]`),
+ * so old rows that predate the column never accidentally fall through
+ * to a deny-everything state AND never accidentally grant more than a
+ * baseline summary permit.
+ */
+export function normaliseScopes(
+  scopes: readonly ScopeToken[] | null | undefined,
+): readonly ScopeToken[] {
+  if (!scopes || scopes.length === 0) return DEFAULT_CAREGIVER_SCOPES;
+  return scopes;
+}
