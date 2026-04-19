@@ -52,12 +52,19 @@ export interface MedicationDoseLimit {
  */
 export const MEDICATION_MAX_DAILY_DOSES: Record<string, MedicationDoseLimit> = {
   // ── NSAIDs / analgesics ─────────────────────────────────────────
+  // Acetaminophen daily ceiling is 4000 mg/day, matching the FDA prescription
+  // label for adults. Note McNeil voluntarily reduced the OTC Tylenol Extra
+  // Strength label to 3000 mg/day in 2011 as a safety margin for consumers
+  // self-medicating. CareBridge is a prescribing-safety tool — the clinician
+  // ceiling is 4000; the 3000 mg/day OTC figure is not applied here. If a
+  // future policy decision prefers the conservative OTC ceiling, drop this
+  // to 3000 and update the source string accordingly.
   acetaminophen: {
     displayName: "Acetaminophen",
     maxSingleDoseMg: 1000,
     warnSingleDoseMg: 650,
     maxDailyDoseMg: 4000,
-    source: "FDA label (McNeil, 2011 max-daily reduction)",
+    source: "FDA prescription label (adult acetaminophen, 4000 mg/day)",
   },
   ibuprofen: {
     displayName: "Ibuprofen",
