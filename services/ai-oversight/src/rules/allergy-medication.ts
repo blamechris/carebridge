@@ -113,7 +113,12 @@ export const CROSS_REACTIVITY_MAP: Array<{
     // hard critical flag on routine imaging orders.
     allergenPattern: /\b(iodine|betadine|povidone[-\s]?iodine)\b/i,
     medicationPattern: /contrast|iodinated|iohexol|iopamidol|iodixanol|ioversol|optiray|omnipaque|visipaque/i,
-    class: "iodine-contrast-advisory",
+    // Human-readable class label — appears verbatim in the flag's
+    // summary/rationale/suggested_action text shown to clinicians. Keep
+    // free of internal slugs. The canonical-name mapping in the
+    // cross-reactivity-sync test collapses this back to "iodinated-contrast"
+    // for LLM⇔rule symmetry.
+    class: "iodine contrast advisory",
     severityOverride: "warning",
   },
   {

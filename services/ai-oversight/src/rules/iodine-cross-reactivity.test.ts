@@ -52,7 +52,7 @@ describe("iodine vs iodinated-contrast disambiguation (#934)", () => {
     const ctx = ctxWithAllergyAndMed("Iodine", "Iohexol 350 mg/mL IV", "severe");
     const flags = checkAllergyMedication(ctx);
     const advisoryFlag = flags.find((f) =>
-      f.rule_id.includes("iodine-contrast-advisory"),
+      f.rule_id.includes("iodine contrast advisory"),
     );
     expect(advisoryFlag).toBeDefined();
     expect(advisoryFlag!.severity).toBe("warning");
@@ -62,7 +62,7 @@ describe("iodine vs iodinated-contrast disambiguation (#934)", () => {
     const ctx = ctxWithAllergyAndMed("Betadine", "Iohexol 350 mg/mL IV", "severe");
     const flags = checkAllergyMedication(ctx);
     const advisoryFlag = flags.find((f) =>
-      f.rule_id.includes("iodine-contrast-advisory"),
+      f.rule_id.includes("iodine contrast advisory"),
     );
     expect(advisoryFlag).toBeDefined();
     expect(advisoryFlag!.severity).toBe("warning");
@@ -76,7 +76,7 @@ describe("iodine vs iodinated-contrast disambiguation (#934)", () => {
     );
     const flags = checkAllergyMedication(ctx);
     const advisoryFlag = flags.find((f) =>
-      f.rule_id.includes("iodine-contrast-advisory"),
+      f.rule_id.includes("iodine contrast advisory"),
     );
     expect(advisoryFlag).toBeDefined();
     expect(advisoryFlag!.severity).toBe("warning");
@@ -87,8 +87,8 @@ describe("iodine vs iodinated-contrast disambiguation (#934)", () => {
     const flags = checkAllergyMedication(ctx);
     const contrastFlag = flags.find(
       (f) =>
-        f.rule_id.includes("iodinated-contrast") ||
-        f.rule_id.includes("iodine-contrast-advisory"),
+        f.rule_id.includes("iodinated contrast") ||
+        f.rule_id.includes("iodine contrast advisory"),
     );
     expect(contrastFlag).toBeUndefined();
   });
