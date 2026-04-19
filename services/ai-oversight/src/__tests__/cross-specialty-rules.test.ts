@@ -97,6 +97,74 @@ describe("CROSS-STEROID-PCP-001 — chronic corticosteroid without PCP prophylax
       ),
     ).toBeDefined();
   });
+
+  it("prednisone 10 mg BID (20 mg/day) fires — per-dose × frequency gives the daily load", () => {
+    // Pre-fix, the rule compared per-dose dose_amount against the 20 mg/day
+    // threshold and silently under-flagged scheduled BID regimens.
+    const ctx = emptyCtx({
+      active_medications: ["Prednisone 10mg BID"],
+      active_medications_detail: [
+        {
+          id: "m1",
+          name: "Prednisone",
+          dose_amount: 10,
+          dose_unit: "mg",
+          route: "oral",
+          frequency: "bid",
+          rxnorm_code: null,
+        },
+      ],
+    });
+    expect(
+      checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-STEROID-PCP-001",
+      ),
+    ).toBeDefined();
+  });
+
+  it("topical hydrocortisone cream does NOT fire (systemic-exposure guard)", () => {
+    const ctx = emptyCtx({
+      active_medications: ["Hydrocortisone cream 2.5%"],
+      active_medications_detail: [
+        {
+          id: "m1",
+          name: "Hydrocortisone",
+          dose_amount: 25,
+          dose_unit: "mg",
+          route: "topical",
+          frequency: "bid",
+          rxnorm_code: null,
+        },
+      ],
+    });
+    expect(
+      checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-STEROID-PCP-001",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("triamcinolone intranasal spray does NOT fire (topical in the name too)", () => {
+    const ctx = emptyCtx({
+      active_medications: ["Triamcinolone intranasal 55mcg"],
+      active_medications_detail: [
+        {
+          id: "m1",
+          name: "Triamcinolone intranasal",
+          dose_amount: 55,
+          dose_unit: "mcg",
+          route: "intranasal",
+          frequency: "daily",
+          rxnorm_code: null,
+        },
+      ],
+    });
+    expect(
+      checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-STEROID-PCP-001",
+      ),
+    ).toBeUndefined();
+  });
 });
 
 describe("CROSS-ANTICOAG-NSAID-GIBLEED-001 — triple bleed risk (#263)", () => {
@@ -174,7 +242,7 @@ describe("CROSS-IMMUNOSUPPRESSED-FEVER-001 — non-chemo immunosuppression + fev
     ).toBeDefined();
   });
 
-  it("does NOT fire when on chemo (CHEMO-FEVER rules cover that)", () => {
+  it("does NOT fire when on chemo for a cancer patient (CHEMO-FEVER rules cover that)", () => {
     const ctx = emptyCtx({
       active_diagnoses: ["Breast cancer"],
       active_medications: ["Mycophenolate 500mg BID", "Cisplatin"],
@@ -185,6 +253,22 @@ describe("CROSS-IMMUNOSUPPRESSED-FEVER-001 — non-chemo immunosuppression + fev
         (f) => f.rule_id === "CROSS-IMMUNOSUPPRESSED-FEVER-001",
       ),
     ).toBeUndefined();
+  });
+
+  it("FIRES on methotrexate + fever when patient has RA (non-oncology use)", () => {
+    // Methotrexate is in both CHEMO_MED_PATTERN and IMMUNOSUPPRESSANT_PATTERN.
+    // Without the cancer-diagnosis gate, an RA patient on weekly MTX would
+    // be wrongly excluded from the fever workup prompt.
+    const ctx = emptyCtx({
+      active_diagnoses: ["Rheumatoid arthritis"],
+      active_medications: ["Methotrexate 15mg weekly"],
+      new_symptoms: ["fever 100.8"],
+    });
+    expect(
+      checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-IMMUNOSUPPRESSED-FEVER-001",
+      ),
+    ).toBeDefined();
   });
 
   it("does NOT fire on immunosuppressant alone without fever", () => {

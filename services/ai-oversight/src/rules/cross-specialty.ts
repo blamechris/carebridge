@@ -8,6 +8,7 @@
  */
 
 import type { FlagSeverity, FlagCategory, ClinicalEvent, RuleFlag } from "@carebridge/shared-types";
+import { parseFrequencyText, estimateDailyDose } from "@carebridge/medical-logic";
 import { QTC_PATTERN } from "./drug-interactions.js";
 import { METFORMIN_PATTERN, NSAID_PATTERN } from "./shared-drug-patterns.js";
 import { getRecentPotassium, getRecentEGFR } from "./lab-units.js";
@@ -1074,8 +1075,14 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
     id: "CROSS-STEROID-PCP-001",
     name: "Chronic high-dose corticosteroid without PCP prophylaxis",
     check: (ctx: PatientContext) => {
+      // Only systemic corticosteroids drive the CD4+ T-cell suppression
+      // that raises PCP risk. Creams, eye drops, and intranasal sprays
+      // with hydrocortisone / triamcinolone / betamethasone have minimal
+      // systemic exposure and should not trigger prophylaxis warnings.
       const CORTICOSTEROID_PATTERN =
         /prednisone|prednisolone|methylprednisolone|medrol|solu-medrol|dexamethasone|decadron|hydrocortisone|solu-cortef|betamethasone|triamcinolone/i;
+      const TOPICAL_ROUTE_PATTERN =
+        /topical|ophthalmic|otic|intranasal|inhaled|inhalation|cream|ointment|gel|drops|spray/i;
       const PCP_PROPHYLAXIS_PATTERN =
         /trimethoprim.?sulfamethoxazole|bactrim|septra|tmp.?smx|dapsone|atovaquone|mepron|pentamidine|nebupent/i;
 
@@ -1084,22 +1091,58 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       );
       if (!steroidMed) return false;
 
-      // If structured dose detail is available (issue #235), require
-      // prednisone-equivalent >= 20 mg/day to fire. Without detail, we
-      // permissively match name only to avoid missing high-risk cases.
+      // Prefer structured detail (#235) so we can (a) filter topical /
+      // inhaled / intranasal formulations out of the systemic-exposure
+      // cohort and (b) compute an implied daily prednisone-equivalent
+      // by multiplying dose_amount × parsed frequency (a scheduled
+      // 10 mg BID prescription is 20 mg/day, meeting the threshold).
       if (ctx.active_medications_detail) {
-        const detail = ctx.active_medications_detail.find(
-          (m) => CORTICOSTEROID_PATTERN.test(m.name),
+        const systemicSteroidDetail = ctx.active_medications_detail.find(
+          (m) => {
+            if (!CORTICOSTEROID_PATTERN.test(m.name)) return false;
+            const route = m.route?.toLowerCase() ?? "";
+            if (TOPICAL_ROUTE_PATTERN.test(route)) return false;
+            // Inhaled/nasal/topical strings sometimes appear in name not
+            // route — e.g., "Flonase (triamcinolone intranasal)". Drop
+            // those too.
+            if (TOPICAL_ROUTE_PATTERN.test(m.name)) return false;
+            return true;
+          },
         );
-        // Rough prednisone-equivalent conversion. Methylprednisolone × 1.25,
-        // dexamethasone × 6.67, hydrocortisone × 0.25. Kept conservative so
-        // borderline low-dose tapers don't trip the prophylaxis warning.
-        if (detail && detail.dose_amount != null && detail.dose_unit?.toLowerCase() === "mg") {
-          let prednisoneEq = detail.dose_amount;
-          if (/methylprednisolone|medrol/i.test(detail.name)) prednisoneEq *= 1.25;
-          else if (/dexamethasone|decadron/i.test(detail.name)) prednisoneEq *= 6.67;
-          else if (/hydrocortisone|solu-cortef/i.test(detail.name)) prednisoneEq *= 0.25;
-          if (prednisoneEq < 20) return false;
+        if (!systemicSteroidDetail) return false;
+
+        if (
+          systemicSteroidDetail.dose_amount != null &&
+          systemicSteroidDetail.dose_unit?.toLowerCase() === "mg"
+        ) {
+          // Prednisone-equivalent potency factors (Lexicomp / UpToDate):
+          // methylprednisolone 1.25, dexamethasone 6.67, hydrocortisone
+          // 0.25, betamethasone 6.67, triamcinolone 1.25.
+          let perDoseEquiv = systemicSteroidDetail.dose_amount;
+          const nameLower = systemicSteroidDetail.name.toLowerCase();
+          if (/methylprednisolone|medrol|triamcinolone/.test(nameLower)) {
+            perDoseEquiv *= 1.25;
+          } else if (/dexamethasone|decadron|betamethasone/.test(nameLower)) {
+            perDoseEquiv *= 6.67;
+          } else if (/hydrocortisone|solu-cortef/.test(nameLower)) {
+            perDoseEquiv *= 0.25;
+          }
+
+          // dose_amount is per-dose; multiply by doses-per-day from the
+          // parsed frequency to get the daily load. Unparseable or
+          // PRN-only prescriptions keep the old behaviour (treat the
+          // per-dose amount as the daily estimate) so chronic-suppressed
+          // PRN tapers still flag, but tight interpretation would miss
+          // "prednisone 10 mg BID" today.
+          const freq = parseFrequencyText(systemicSteroidDetail.frequency);
+          const dailyEquiv =
+            estimateDailyDose(
+              perDoseEquiv,
+              freq,
+              systemicSteroidDetail.max_doses_per_day ?? null,
+            ) ?? perDoseEquiv;
+
+          if (dailyEquiv < 20) return false;
         }
       }
 
@@ -1122,7 +1165,7 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       "anticipated, start PCP prophylaxis: TMP-SMX single-strength daily is first-line. Alternatives for " +
       "sulfa-intolerant patients include dapsone 100 mg daily (check G6PD first), atovaquone 1500 mg daily " +
       "with food, or aerosolised pentamidine 300 mg monthly.",
-    notify_specialties: ["infectious-disease", "pharmacy"],
+    notify_specialties: ["infectious_disease", "pharmacy"],
   },
 
   {
@@ -1200,9 +1243,18 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       if (!onImmunosuppressant) return false;
       // Only treat non-chemo immunosuppression here. The CHEMO-* rules
       // already cover chemo-induced neutropenic fever with more specific
-      // workup guidance.
+      // workup guidance. Gated on BOTH an active cancer diagnosis AND
+      // a chemo medication — methotrexate is in both CHEMO_MED_PATTERN
+      // and IMMUNOSUPPRESSANT_PATTERN because it's used in oncology and
+      // rheumatology; a non-oncology RA patient on methotrexate would
+      // incorrectly be excluded if we looked only at the drug list.
+      const CANCER_DIAGNOSIS_PATTERN =
+        /cancer|malignant|carcinoma|lymphoma|leukemia|tumor|neoplasm|sarcoma|myeloma/i;
+      const hasCancerDx = ctx.active_diagnoses.some((d) =>
+        CANCER_DIAGNOSIS_PATTERN.test(d),
+      );
       const onChemo = ctx.active_medications.some((m) => CHEMO_MED_PATTERN.test(m));
-      if (onChemo) return false;
+      if (hasCancerDx && onChemo) return false;
       return ctx.new_symptoms.some((s) => FEVER_SYMPTOM_PATTERN.test(s));
     },
     severity: "warning" as const,
@@ -1224,7 +1276,7 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       "consider interferon-gamma release assay. Hold the immunosuppressant until a source is " +
       "identified unless actively treating a rheumatological flare. Consult infectious disease for " +
       "any patient who remains febrile beyond 24 h or appears unwell.",
-    notify_specialties: ["infectious-disease", "rheumatology"],
+    notify_specialties: ["infectious_disease", "rheumatology"],
   },
 ];
 
