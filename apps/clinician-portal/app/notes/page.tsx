@@ -109,7 +109,7 @@ function NotesContent() {
                   const patient = patientsById.get(note.patient_id);
                   return (
                     <tr key={note.id}>
-                      <td>
+                      <td data-label="Patient">
                         <Link href={`/patients/${note.patient_id}`}>
                           {patient?.name ?? note.patient_id}
                         </Link>
@@ -119,19 +119,25 @@ function NotesContent() {
                           </div>
                         )}
                       </td>
-                      <td style={{ textTransform: "uppercase", fontSize: 12 }}>
+                      <td
+                        data-label="Type"
+                        style={{ textTransform: "uppercase", fontSize: 12 }}
+                      >
                         {note.template_type}
                       </td>
-                      <td>
+                      <td data-label="Status">
                         <span className={statusBadgeClass(note.status)}>
                           {note.status.toUpperCase()}
                         </span>
                       </td>
-                      <td>v{note.version}</td>
-                      <td style={{ color: "var(--text-secondary)" }}>
+                      <td data-label="Version">v{note.version}</td>
+                      <td
+                        data-label="Created"
+                        style={{ color: "var(--text-secondary)" }}
+                      >
                         {formatDate(note.created_at)}
                       </td>
-                      <td>
+                      <td data-label="Actions">
                         <Link href={`/notes/${note.id}`} className="btn btn-ghost btn-sm">
                           Open
                         </Link>
