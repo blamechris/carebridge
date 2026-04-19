@@ -34,6 +34,11 @@ const CANONICAL_NAME: Record<string, string> = {
   benzodiazepine: "benzodiazepine",
   "iodinated contrast": "iodinated-contrast",
   latex: "latex",
+  // Iodine-to-contrast advisory (warning-severity cross-reactivity for
+  // charted bare "iodine" / Betadine) — same canonical class as true
+  // iodinated contrast, just a separate rule entry with a severity
+  // override. See #934 for the split rationale.
+  "iodine-contrast-advisory": "iodinated-contrast",
   // Shared (both maps use these directly)
   "ace-inhibitor": "ace-inhibitor",
   "iodinated-contrast": "iodinated-contrast",

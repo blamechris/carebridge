@@ -26,6 +26,14 @@ export const CROSS_REACTIVITY_MAP: Array<{
   allergenPattern: RegExp;
   medicationPattern: RegExp;
   class: string;
+  /**
+   * Optional severity override. When present, the cross-reactivity flag is
+   * emitted at this severity regardless of the charted allergy severity.
+   * Used for ambiguous cross-reactivities (e.g. charted "iodine" → IV
+   * contrast) where a hard critical flag would over-escalate the common
+   * case (topical Betadine irritation).
+   */
+  severityOverride?: FlagSeverity;
 }> = [
   {
     allergenPattern: /penicillin|amoxicillin|ampicillin/i,
@@ -89,9 +97,24 @@ export const CROSS_REACTIVITY_MAP: Array<{
     class: "benzodiazepine",
   },
   {
-    allergenPattern: /contrast|iodine|iodinated/i,
-    medicationPattern: /contrast|iodinated|iohexol|iopamidol|iodixanol|ioversol/i,
+    // True iodinated-contrast allergy (IV radiocontrast) — keeps the
+    // default severity path (critical for severe/moderate charted
+    // allergies). Bare "iodine" is handled by the next entry at warning
+    // severity to avoid over-escalating topical-Betadine charts.
+    allergenPattern: /contrast|iodinated|iohexol|iopamidol|iodixanol|ioversol|optiray|omnipaque|visipaque/i,
+    medicationPattern: /contrast|iodinated|iohexol|iopamidol|iodixanol|ioversol|optiray|omnipaque|visipaque/i,
     class: "iodinated contrast",
+  },
+  {
+    // Charted "iodine" / Betadine / povidone-iodine — usually a topical
+    // skin-prep reaction or the shellfish-iodine folk belief, not a true
+    // IV contrast allergy. Still surface the combination but at warning
+    // severity so the clinician confirms intent rather than getting a
+    // hard critical flag on routine imaging orders.
+    allergenPattern: /\b(iodine|betadine|povidone[-\s]?iodine)\b/i,
+    medicationPattern: /contrast|iodinated|iohexol|iopamidol|iodixanol|ioversol|optiray|omnipaque|visipaque/i,
+    class: "iodine-contrast-advisory",
+    severityOverride: "warning",
   },
   {
     allergenPattern: /latex/i,
@@ -261,7 +284,9 @@ export function checkAllergyMedication(context: PatientContext): RuleFlag[] {
             break; // Already cleared — no flag for this cross-reactivity pair.
           }
           flags.push({
-            severity: mapAllergyToFlagSeverity(allergy.severity),
+            severity:
+              mapping.severityOverride ??
+              mapAllergyToFlagSeverity(allergy.severity),
             category: "medication-safety" as FlagCategory,
             summary: `Medication "${med}" may cross-react with allergy to "${allergy.allergen}" (${mapping.class} class)`,
             rationale:
