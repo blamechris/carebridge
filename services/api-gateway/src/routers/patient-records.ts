@@ -34,6 +34,11 @@ import {
   createAllergySchema,
   updateAllergySchema,
 } from "@carebridge/validators";
+import {
+  hasScope,
+  normaliseScopes,
+  type ScopeToken,
+} from "@carebridge/shared-types";
 import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import crypto from "node:crypto";
 import type { Context } from "../context.js";
@@ -55,18 +60,32 @@ const protectedProcedure = t.procedure.use(isAuthenticated);
  * Throws TRPCError(FORBIDDEN) on denial.
  *
  * Role semantics:
- *  - admin: unrestricted
+ *  - admin: unrestricted, scope-bypass
  *  - patient: own record only (user.patient_id === patientId; user.id fallback
- *    preserved for test fixtures that do not set patient_id)
+ *    preserved for test fixtures that do not set patient_id). Scope-bypass —
+ *    patients viewing their own record are not subject to caregiver scopes.
  *  - family_caregiver: must have an active family_relationships row linking
  *    the caller's user.id to a user whose users.patient_id matches the
  *    requested patient record id. Caregivers never satisfy the clinician
- *    care-team check, so they must be resolved via this path.
- *  - clinicians (physician, specialist, nurse): active care-team assignment
+ *    care-team check, so they must be resolved via this path. When
+ *    `requiredScope` is provided, the relationship's `access_scopes` array
+ *    is checked via `hasScope` — see @carebridge/shared-types#auth for the
+ *    superset rules. `null` / empty scope arrays fall back to
+ *    `DEFAULT_CAREGIVER_SCOPES` (`["read_only"]`) for backward compat with
+ *    rows that predate the column.
+ *  - clinicians (physician, specialist, nurse): active care-team assignment.
+ *    Scope-bypass — care-team membership is the clinical-minimum-necessary
+ *    gate; scopes are caregiver-only.
+ *
+ * The `requiredScope` parameter is optional — callers that do not pass it
+ * get the legacy role-check behaviour. This lets mixed call sites (e.g. a
+ * clinician-only mutation that blocks caregiver roles before the access
+ * check) skip the scope path without changing existing semantics.
  */
 async function enforcePatientAccess(
   user: NonNullable<Context["user"]>,
   patientId: string,
+  requiredScope?: ScopeToken,
 ): Promise<void> {
   if (user.role === "admin") return;
 
@@ -82,13 +101,25 @@ async function enforcePatientAccess(
   }
 
   if (user.role === "family_caregiver") {
-    const hasLink = await hasActiveFamilyLink(user.id, patientId);
-    if (!hasLink) {
+    const relationship = await findActiveFamilyRelationship(user.id, patientId);
+    if (!relationship) {
       throw new TRPCError({
         code: "FORBIDDEN",
         message:
           "Access denied: no active family relationship grants access to this patient",
       });
+    }
+    if (requiredScope !== undefined) {
+      // normaliseScopes is safety-critical: an existing row with a null /
+      // empty access_scopes column must NOT be treated as "all scopes" —
+      // treat it as the minimum safe default and deny anything above
+      // view_summary. See DEFAULT_CAREGIVER_SCOPES.
+      if (!hasScope(normaliseScopes(relationship.access_scopes), requiredScope)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: `Access denied: caregiver lacks ${requiredScope} scope`,
+        });
+      }
     }
     return;
   }
@@ -104,21 +135,24 @@ async function enforcePatientAccess(
 }
 
 /**
- * Resolve whether a family caregiver user currently has an active
- * family_relationships row granting them read access to the given patient
- * record id.
+ * Resolve the active family_relationships row linking the caregiver to the
+ * given patient record, including its `access_scopes` array. Returns null
+ * when no active relationship exists.
  *
  * family_relationships.patient_id references users.id (the patient's user
  * account), but requests identify the subject by patients.id, so the query
  * joins through users to close the mapping.
  */
-async function hasActiveFamilyLink(
+async function findActiveFamilyRelationship(
   caregiverUserId: string,
   patientRecordId: string,
-): Promise<boolean> {
+): Promise<{ id: string; access_scopes: ScopeToken[] | null } | null> {
   const db = getDb();
   const [row] = await db
-    .select({ id: familyRelationships.id })
+    .select({
+      id: familyRelationships.id,
+      access_scopes: familyRelationships.access_scopes,
+    })
     .from(familyRelationships)
     .innerJoin(users, eq(users.id, familyRelationships.patient_id))
     .where(
@@ -129,7 +163,11 @@ async function hasActiveFamilyLink(
       ),
     )
     .limit(1);
-  return !!row;
+  if (!row) return null;
+  return {
+    id: row.id,
+    access_scopes: (row.access_scopes ?? null) as ScopeToken[] | null,
+  };
 }
 
 /**
@@ -207,7 +245,9 @@ export const patientRecordsRbacRouter = t.router({
   getById: protectedProcedure
     .input(z.object({ id: z.string() }))
     .query(async ({ ctx, input }) => {
-      await enforcePatientAccess(ctx.user, input.id);
+      // view_summary: patient record projection falls under the blanket
+      // "summary" permit — see resource→scope mapping in #896.
+      await enforcePatientAccess(ctx.user, input.id, "view_summary");
       const db = getDb();
       const [patient] = await db
         .select({
@@ -239,7 +279,7 @@ export const patientRecordsRbacRouter = t.router({
   getSummary: protectedProcedure
     .input(z.object({ id: z.string() }))
     .query(async ({ ctx, input }) => {
-      await enforcePatientAccess(ctx.user, input.id);
+      await enforcePatientAccess(ctx.user, input.id, "view_summary");
       const db = getDb();
       const [patient] = await db
         .select({
@@ -281,14 +321,27 @@ export const patientRecordsRbacRouter = t.router({
         .from(patients)
         .where(eq(patients.id, ctx.user.patient_id));
       if (!row) return [];
-      return [{ ...row, relationship: "self" as const }];
+      // Patients viewing their own record implicitly hold every scope —
+      // the scope system exists to gate DELEGATED caregiver access, not
+      // first-person access. Returning the full token set here keeps the
+      // UI uniform (it can read `scopes` regardless of role).
+      return [
+        {
+          ...row,
+          relationship: "self" as const,
+          scopes: ["view_and_message"] as ScopeToken[],
+        },
+      ];
     }
 
     if (ctx.user.role === "family_caregiver") {
+      // Select the scope set along with the relationship_type so the UI can
+      // grey out sections the caregiver lacks access to (see #896).
       const rels = await db
         .select({
           patient_user_id: familyRelationships.patient_id,
           relationship_type: familyRelationships.relationship_type,
+          access_scopes: familyRelationships.access_scopes,
         })
         .from(familyRelationships)
         .where(
@@ -321,21 +374,32 @@ export const patientRecordsRbacRouter = t.router({
         .from(patients)
         .where(inArray(patients.id, patientIds));
 
-      // Re-join in memory so the relationship_type travels with each row.
+      // Re-join in memory so the relationship_type and scopes travel with
+      // each row.
       const patientIdByUserId = new Map<string, string>();
       for (const u of userRows) {
         if (u.patient_id) patientIdByUserId.set(u.id, u.patient_id);
       }
       const relationshipByPatientId = new Map<string, string>();
+      const scopesByPatientId = new Map<string, ScopeToken[]>();
       for (const r of rels) {
         const pid = patientIdByUserId.get(r.patient_user_id);
-        if (pid) relationshipByPatientId.set(pid, r.relationship_type);
+        if (pid) {
+          relationshipByPatientId.set(pid, r.relationship_type);
+          // Apply the same empty-column fallback the access check uses so
+          // the UI sees exactly the scopes the server will enforce.
+          scopesByPatientId.set(
+            pid,
+            [...normaliseScopes((r.access_scopes ?? null) as ScopeToken[] | null)] as ScopeToken[],
+          );
+        }
       }
       return patientRows.map((p) => ({
         id: p.id,
         name: p.name,
         mrn: p.mrn,
         relationship: relationshipByPatientId.get(p.id) ?? "caregiver",
+        scopes: scopesByPatientId.get(p.id) ?? [],
       }));
     }
 
@@ -437,7 +501,8 @@ export const patientRecordsRbacRouter = t.router({
     getByPatient: protectedProcedure
       .input(z.object({ patientId: z.string() }))
       .query(async ({ ctx, input }) => {
-        await enforcePatientAccess(ctx.user, input.patientId);
+        // view_summary gates the summary-tier read (diagnoses/allergies/obs).
+        await enforcePatientAccess(ctx.user, input.patientId, "view_summary");
         const db = getDb();
         return db
           .select()
@@ -487,7 +552,7 @@ export const patientRecordsRbacRouter = t.router({
     getByPatient: protectedProcedure
       .input(z.object({ patientId: z.string() }))
       .query(async ({ ctx, input }) => {
-        await enforcePatientAccess(ctx.user, input.patientId);
+        await enforcePatientAccess(ctx.user, input.patientId, "view_summary");
         const db = getDb();
         return db
           .select()
@@ -536,7 +601,9 @@ export const patientRecordsRbacRouter = t.router({
     getByPatient: protectedProcedure
       .input(z.object({ patientId: z.string() }))
       .query(async ({ ctx, input }) => {
-        await enforcePatientAccess(ctx.user, input.patientId);
+        // Care-team roster is part of the summary-tier read — a caregiver
+        // who can see demographics can see who the patient's providers are.
+        await enforcePatientAccess(ctx.user, input.patientId, "view_summary");
         const db = getDb();
         return db
           .select()
@@ -554,7 +621,7 @@ export const patientRecordsRbacRouter = t.router({
         }),
       )
       .query(async ({ ctx, input }) => {
-        await enforcePatientAccess(ctx.user, input.patientId);
+        await enforcePatientAccess(ctx.user, input.patientId, "view_summary");
         return listObservationsByPatient(input.patientId, input.limit);
       }),
 

@@ -28,6 +28,11 @@ import {
 } from "@carebridge/db-schema";
 import { eq, and, gte, lte, desc, ne } from "drizzle-orm";
 import crypto from "node:crypto";
+import {
+  hasScope,
+  normaliseScopes,
+  type ScopeToken,
+} from "@carebridge/shared-types";
 import type { Context } from "../context.js";
 import { assertCareTeamAccess } from "../middleware/rbac.js";
 
@@ -43,21 +48,20 @@ const isAuthenticated = t.middleware(({ ctx, next }) => {
 const protectedProcedure = t.procedure.use(isAuthenticated);
 
 /**
- * Resolve whether a family caregiver user currently has an active
- * family_relationships row granting them access to the given patient
- * record id.
- *
- * family_relationships.patient_id references users.id (the patient's
- * user account), but appointments.patient_id references patients.id,
- * so the query joins through users to close the mapping.
+ * Resolve the active family_relationships row linking the caregiver to the
+ * given patient record, returning its `access_scopes` set for downstream
+ * scope enforcement. Null when no active relationship exists.
  */
-async function hasActiveFamilyLink(
+async function findActiveFamilyRelationship(
   caregiverUserId: string,
   patientRecordId: string,
-): Promise<boolean> {
+): Promise<{ id: string; access_scopes: ScopeToken[] | null } | null> {
   const db = getDb();
   const [row] = await db
-    .select({ id: familyRelationships.id })
+    .select({
+      id: familyRelationships.id,
+      access_scopes: familyRelationships.access_scopes,
+    })
     .from(familyRelationships)
     .innerJoin(users, eq(users.id, familyRelationships.patient_id))
     .where(
@@ -68,20 +72,25 @@ async function hasActiveFamilyLink(
       ),
     )
     .limit(1);
-  return !!row;
+  if (!row) return null;
+  return {
+    id: row.id,
+    access_scopes: (row.access_scopes ?? null) as ScopeToken[] | null,
+  };
 }
 
 /**
  * Enforce HIPAA minimum-necessary access for a given user / patientId pair
- * on scheduling mutations. Throws TRPCError(FORBIDDEN) on denial.
+ * on scheduling procedures. Throws TRPCError(FORBIDDEN) on denial.
  *
- * Role semantics mirror patient-records.enforcePatientAccess so a caller
- * who can read a patient's appointments can also mutate them through the
- * same authorisation boundary.
+ * Role semantics mirror patient-records.enforcePatientAccess. The optional
+ * `requiredScope` is used for caregiver read procedures — appointments
+ * require `view_appointments` per the resource→scope mapping in #896.
  */
 async function enforcePatientAccess(
   user: NonNullable<Context["user"]>,
   patientId: string,
+  requiredScope?: ScopeToken,
 ): Promise<void> {
   if (user.role === "admin") return;
 
@@ -99,13 +108,22 @@ async function enforcePatientAccess(
   }
 
   if (user.role === "family_caregiver") {
-    const hasLink = await hasActiveFamilyLink(user.id, patientId);
-    if (!hasLink) {
+    const relationship = await findActiveFamilyRelationship(user.id, patientId);
+    if (!relationship) {
       throw new TRPCError({
         code: "FORBIDDEN",
         message:
           "Access denied: no active family relationship grants access to this patient",
       });
+    }
+    if (requiredScope !== undefined) {
+      const scopes = normaliseScopes(relationship.access_scopes);
+      if (!hasScope(scopes, requiredScope)) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: `Access denied: caregiver lacks ${requiredScope} scope`,
+        });
+      }
     }
     return;
   }
@@ -125,7 +143,8 @@ export const schedulingRbacRouter = t.router({
     listByPatient: protectedProcedure
       .input(z.object({ patientId: z.string() }))
       .query(async ({ ctx, input }) => {
-        await enforcePatientAccess(ctx.user, input.patientId);
+        // Appointments are gated by view_appointments (see #896).
+        await enforcePatientAccess(ctx.user, input.patientId, "view_appointments");
         const db = getDb();
         return db.select().from(appointments)
           .where(eq(appointments.patient_id, input.patientId))

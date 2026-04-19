@@ -23,8 +23,19 @@ import {
   createSOAPTemplate,
   createProgressTemplate,
 } from "@carebridge/clinical-notes";
-import { getDb, clinicalNotes, auditLog } from "@carebridge/db-schema";
-import { eq } from "drizzle-orm";
+import {
+  getDb,
+  clinicalNotes,
+  auditLog,
+  familyRelationships,
+  users,
+} from "@carebridge/db-schema";
+import { and, eq } from "drizzle-orm";
+import {
+  hasScope,
+  normaliseScopes,
+  type ScopeToken,
+} from "@carebridge/shared-types";
 import type { Context } from "../context.js";
 import { assertCareTeamAccess } from "../middleware/rbac.js";
 
@@ -42,18 +53,83 @@ const protectedProcedure = t.procedure.use(isAuthenticated);
 /**
  * Enforce HIPAA minimum-necessary access for a given user / patientId pair.
  * Throws TRPCError(FORBIDDEN) on denial.
+ *
+ * Role semantics (kept aligned with patient-records.enforcePatientAccess):
+ *  - admin: unrestricted
+ *  - patient: own record only
+ *  - family_caregiver: active family_relationships row. When `requiredScope`
+ *    is provided, the scope set on that row must include it (`hasScope`
+ *    superset rules). Notes read procedures pass `"view_notes"`.
+ *  - clinicians: active care-team assignment
+ *
+ * Caregiver branch added for issue #896 (previous notes enforce was
+ * clinician-only — caregivers would fall through to the care-team check
+ * and get a FORBIDDEN with no route to notes at all).
  */
 async function enforcePatientAccess(
   user: NonNullable<Context["user"]>,
   patientId: string,
+  requiredScope?: ScopeToken,
 ): Promise<void> {
   if (user.role === "admin") return;
 
   if (user.role === "patient") {
-    if (user.id !== patientId) {
+    // Note: clinical-notes historically used user.id === patientId because
+    // some older test fixtures equate the two. Support both the canonical
+    // user.patient_id mapping (production) and the fixture fallback so
+    // this branch matches the other routers without breaking tests.
+    const ownRecord = user.patient_id ?? user.id;
+    if (ownRecord !== patientId && user.id !== patientId) {
       throw new TRPCError({
         code: "FORBIDDEN",
         message: "Access denied: patients may only access their own records",
+      });
+    }
+    return;
+  }
+
+  if (user.role === "family_caregiver") {
+    // Default-deny: notes mutations (create/update/sign/cosign/amend) all
+    // call enforcePatientAccess without a requiredScope. An undefined
+    // scope here means "not a read procedure" — caregivers never write
+    // clinical notes. Explicit block matches the per-procedure role
+    // checks below and the issue #908 defense-in-depth posture.
+    if (requiredScope === undefined) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "Caregivers cannot perform this operation",
+      });
+    }
+    const db = getDb();
+    const [row] = await db
+      .select({
+        id: familyRelationships.id,
+        access_scopes: familyRelationships.access_scopes,
+      })
+      .from(familyRelationships)
+      .innerJoin(users, eq(users.id, familyRelationships.patient_id))
+      .where(
+        and(
+          eq(familyRelationships.caregiver_id, user.id),
+          eq(users.patient_id, patientId),
+          eq(familyRelationships.status, "active"),
+        ),
+      )
+      .limit(1);
+    if (!row) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message:
+          "Access denied: no active family relationship grants access to this patient",
+      });
+    }
+    const scopes = normaliseScopes(
+      (row.access_scopes ?? null) as ScopeToken[] | null,
+    );
+    if (!hasScope(scopes, requiredScope)) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: `Access denied: caregiver lacks ${requiredScope} scope`,
       });
     }
     return;
@@ -84,6 +160,18 @@ export const clinicalNotesRbacRouter = t.router({
   create: protectedProcedure
     .input(createNoteSchema)
     .mutation(async ({ ctx, input }) => {
+      // Issue #908: caregivers are read-only — they must never author a
+      // clinical note. sign/cosign/amend below already gate on
+      // physician/specialist/admin, but create and update had no explicit
+      // role gate and previously relied on enforcePatientAccess to reject
+      // caregivers at the care-team fallback. The caregiver branch added
+      // in #896 broke that assumption, so block here explicitly.
+      if (ctx.user.role === "family_caregiver") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Caregivers cannot create clinical notes",
+        });
+      }
       await enforcePatientAccess(ctx.user, input.patient_id);
       return noteService.createNote(input);
     }),
@@ -91,6 +179,12 @@ export const clinicalNotesRbacRouter = t.router({
   update: protectedProcedure
     .input(z.object({ id: z.string().uuid() }).merge(updateNoteSchema))
     .mutation(async ({ ctx, input }) => {
+      if (ctx.user.role === "family_caregiver") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Caregivers cannot update clinical notes",
+        });
+      }
       const db = getDb();
       const [existing] = await db
         .select({ patient_id: clinicalNotes.patient_id })
@@ -296,7 +390,7 @@ export const clinicalNotesRbacRouter = t.router({
         });
       }
 
-      await enforcePatientAccess(ctx.user, existing.patient_id);
+      await enforcePatientAccess(ctx.user, existing.patient_id, "view_notes");
 
       return noteService.getVersionHistory(input.noteId);
     }),
@@ -304,7 +398,7 @@ export const clinicalNotesRbacRouter = t.router({
   getByPatient: protectedProcedure
     .input(z.object({ patientId: z.string().uuid() }))
     .query(async ({ ctx, input }) => {
-      await enforcePatientAccess(ctx.user, input.patientId);
+      await enforcePatientAccess(ctx.user, input.patientId, "view_notes");
       return noteService.getNotesByPatient(input.patientId);
     }),
 
@@ -317,7 +411,7 @@ export const clinicalNotesRbacRouter = t.router({
         return null;
       }
 
-      await enforcePatientAccess(ctx.user, result.note.patient_id);
+      await enforcePatientAccess(ctx.user, result.note.patient_id, "view_notes");
 
       return result;
     }),
