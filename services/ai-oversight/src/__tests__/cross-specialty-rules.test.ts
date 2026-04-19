@@ -215,6 +215,42 @@ describe("CROSS-ANTICOAG-NSAID-GIBLEED-001 — triple bleed risk (#263)", () => 
       ),
     ).toBeDefined();
   });
+
+  it("does NOT fire on 'Lower GI series' imaging history (#943 false positive)", () => {
+    const ctx = emptyCtx({
+      active_diagnoses: ["Lower GI series 2023, normal"],
+      active_medications: ["Warfarin 5mg daily", "Ibuprofen 400mg PRN"],
+    });
+    expect(
+      checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-ANTICOAG-NSAID-GIBLEED-001",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("does NOT fire on 'Upper GI endoscopy normal' (#943 false positive)", () => {
+    const ctx = emptyCtx({
+      active_diagnoses: ["Upper GI endoscopy, normal"],
+      active_medications: ["Apixaban 5mg BID", "Naproxen 500mg BID"],
+    });
+    expect(
+      checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-ANTICOAG-NSAID-GIBLEED-001",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("still fires on 'Lower GI hemorrhage' (actual bleed phrasing)", () => {
+    const ctx = emptyCtx({
+      active_diagnoses: ["Lower GI hemorrhage, 2021"],
+      active_medications: ["Warfarin 5mg daily", "Aspirin 81mg daily"],
+    });
+    expect(
+      checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-ANTICOAG-NSAID-GIBLEED-001",
+      ),
+    ).toBeDefined();
+  });
 });
 
 describe("CROSS-IMMUNOSUPPRESSED-FEVER-001 — non-chemo immunosuppression + fever (#263)", () => {

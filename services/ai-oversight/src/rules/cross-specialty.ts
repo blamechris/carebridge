@@ -1178,8 +1178,14 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
     id: "CROSS-ANTICOAG-NSAID-GIBLEED-001",
     name: "Anticoagulant + NSAID with prior GI bleed history",
     check: (ctx: PatientContext) => {
+      // Require bleed/hemorrhage/hematochezia context for "upper gi" / "lower
+      // gi" mentions so imaging studies ("Lower GI series, normal 2023") and
+      // generic symptom blurbs ("upper GI symptoms") don't trigger a
+      // critical flag. Specific entities (peptic ulcer, variceal,
+      // angiodysplasia) stay bare because the diagnosis itself implies
+      // bleed risk in this clinical context.
       const GI_BLEED_HISTORY_PATTERN =
-        /gi bleed|gastrointestinal bleed|peptic ulcer|hematemesis|melena|upper gi|lower gi|diverticular bleed|angiodysplasia|variceal/i;
+        /gi bleed|gastrointestinal bleed|peptic ulcer|hematemesis|melena|hematochezia|(?:upper|lower)\s+gi\s+(?:bleed|hemorrhage|haemorrhage|hematemesis|melena|hematochezia)|diverticular bleed|angiodysplasia|variceal/i;
       // Deliberately include aspirin here (not part of NSAID_PATTERN because
       // other NSAID rules care about prostaglandin / renal-profile risks
       // where aspirin kinetics differ). For GI-bleed risk in
