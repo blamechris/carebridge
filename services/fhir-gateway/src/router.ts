@@ -458,15 +458,25 @@ export const fhirGatewayRouter = t.router({
         }
 
         if (providerIds.size > 0) {
+          // Project only the columns toFhirPractitioner needs. A bare
+          // select() on users pulls password_hash, mfa_secret, and
+          // recovery_codes into memory for zero downstream use and risks
+          // surfacing them via heap dumps or incidental logging.
           const providerRows = await db
-            .select()
+            .select({
+              id: users.id,
+              name: users.name,
+              role: users.role,
+              specialty: users.specialty,
+              email: users.email,
+            })
             .from(users)
             .where(inArray(users.id, Array.from(providerIds)));
           for (const row of providerRows) {
             if (!isClinicalRole(row.role)) continue;
             entry.push({
               fullUrl: `urn:uuid:${row.id}`,
-              resource: toFhirPractitioner(row),
+              resource: toFhirPractitioner(row as unknown as Parameters<typeof toFhirPractitioner>[0]),
             });
           }
         }
