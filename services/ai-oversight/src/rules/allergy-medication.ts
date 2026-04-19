@@ -10,6 +10,7 @@
  */
 
 import type { FlagSeverity, FlagCategory, RuleFlag } from "@carebridge/shared-types";
+import { expandAllergenAliases } from "@carebridge/medical-logic";
 import type {
   PatientContext,
   PatientAllergy,
@@ -198,14 +199,29 @@ export function checkAllergyMedication(context: PatientContext): RuleFlag[] {
   if (!context.allergies || context.allergies.length === 0) return flags;
 
   for (const allergy of context.allergies) {
-    const allergenLower = allergy.allergen.toLowerCase();
+    // Expand shorthand / brand-name allergen strings to their canonical
+    // generic / class (issue #232). Without this, "PCN" never hit the
+    // penicillin cross-reactivity rule and "Lovenox" never hit the
+    // heparin rule.
+    const allergenAliases = expandAllergenAliases(allergy.allergen);
 
     for (let i = 0; i < context.active_medications.length; i++) {
       const med = context.active_medications[i];
       const medLower = med.toLowerCase();
 
-      // Strategy 1: Direct name match (allergen name appears in medication name)
-      if (medLower.includes(allergenLower) || allergenLower.includes(medLower.split(" ")[0])) {
+      // Strategy 1: Direct name match across ANY alias of the allergen.
+      // A prescription for "penicillin VK" and an allergy recorded as
+      // "PCN" must match — which they do once we expand PCN to
+      // [penicillin, pcn, amoxicillin, …].
+      const directMatch = allergenAliases.some((alias) => {
+        if (medLower.includes(alias)) return true;
+        // Also check the first token of the medication against the alias,
+        // e.g. "amoxicillin 500mg PO" split → first token "amoxicillin"
+        // in the allergen-aliases of an allergy recorded as "PCN".
+        const firstMedToken = medLower.split(" ")[0] ?? "";
+        return alias.includes(firstMedToken) && firstMedToken.length > 3;
+      });
+      if (directMatch) {
         if (isAllergyMedPairOverridden(allergy, med, context.resolved_overrides)) {
           break; // Already cleared — no flag for this medication.
         }
@@ -226,9 +242,12 @@ export function checkAllergyMedication(context: PatientContext): RuleFlag[] {
         break; // Don't double-flag same medication
       }
 
-      // Strategy 2: Cross-reactivity class matching
+      // Strategy 2: Cross-reactivity class matching, expanded. The
+      // allergenPattern regex runs against each alias so "PCN" reaches
+      // the penicillin class rule, "Lovenox" reaches the heparin rule.
+      const allergenBlob = allergenAliases.join(" ");
       for (const mapping of CROSS_REACTIVITY_MAP) {
-        if (mapping.allergenPattern.test(allergy.allergen) && mapping.medicationPattern.test(med)) {
+        if (mapping.allergenPattern.test(allergenBlob) && mapping.medicationPattern.test(med)) {
           if (isAllergyMedPairOverridden(allergy, med, context.resolved_overrides)) {
             break; // Already cleared — no flag for this cross-reactivity pair.
           }
