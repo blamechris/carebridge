@@ -14,6 +14,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
+    "test": "node --test --import tsx src/__tests__/*.test.ts",
     "generate": "drizzle-kit generate",
     "migrate": "tsx src/migrate.ts",
     "clean": "rm -rf dist"
