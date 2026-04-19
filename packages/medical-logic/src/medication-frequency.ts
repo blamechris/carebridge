@@ -41,12 +41,13 @@ export type MedFrequency =
  * here — PRN prescriptions must carry an explicit `max_doses_per_day`
  * for daily-sum estimation; otherwise the rule cannot bound the dose.
  *
- * `once` uses a very small fraction so a stat order doesn't blow up the
- * daily sum. Weekly/monthly are fractional so rules that aggregate over
- * shorter windows don't trigger false positives.
+ * `once` maps to 0 — a stat order is not a recurring daily load, so
+ * `estimateDailyDose` returns null for it (same semantics as an
+ * unboundable PRN). Weekly/monthly are fractional so rules that
+ * aggregate over shorter windows don't trigger false positives.
  */
 export const FREQUENCY_DOSES_PER_DAY: Record<MedFrequency, number> = {
-  once: 0, // a stat dose contributes nothing to a recurring daily total
+  once: 0, // stat / one-time — estimateDailyDose returns null
   daily: 1,
   bid: 2,
   tid: 3,
@@ -86,10 +87,27 @@ export function parseFrequencyText(
 
   if (!s) return null;
 
+  // Every-N-days patterns run BEFORE every-N-hours so "q 7 d" / "q 30 d"
+  // aren't swallowed by the hours branch when it tolerates a missing
+  // hour token. Handles q7d, q14d, q30d plus the longhand "every 7 days".
+  const qD =
+    s.match(/\bq\s*(\d+)\s*d(?:ay|ays)?\b/) ??
+    s.match(/\bevery\s+(\d+)\s*(d|day|days)\b/);
+  if (qD) {
+    const n = Number(qD[1]);
+    if (n === 7 || n === 14) return "weekly";
+    if (n >= 28 && n <= 31) return "monthly";
+    // Non-canonical intervals (q10d etc.) — fail open rather than
+    // inventing a daily fraction.
+    return null;
+  }
+
   // Every-N-hours patterns: q2h, q2hr, q2hrs, q 2 h, q2, every 2 hours.
-  // Try this first so "q24h" resolves to `daily` rather than `once`.
+  // Hour unit is required here (unit regex is non-optional) because an
+  // unqualified "q 7" is ambiguous — days vs hours vs generic — so we
+  // require the `h/hr/hrs/hour/hours` marker to commit to hours.
   const qH =
-    s.match(/\bq\s*(\d+)\s*(h|hr|hrs|hour|hours)?\b/) ??
+    s.match(/\bq\s*(\d+)\s*(h|hr|hrs|hour|hours)\b/) ??
     s.match(/\bevery\s+(\d+)\s*(h|hr|hrs|hour|hours)\b/);
   if (qH) {
     const n = Number(qH[1]);

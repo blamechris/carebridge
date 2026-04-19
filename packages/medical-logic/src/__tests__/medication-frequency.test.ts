@@ -42,10 +42,18 @@ describe("parseFrequencyText (#235)", () => {
     ["once", "once"],
     ["one-time", "once"],
     ["x1", "once"],
-    // weekly / monthly
+    // weekly / monthly, spaced + longhand variants (every N days → weekly/monthly)
     ["weekly", "weekly"],
     ["q7d", "weekly"],
+    ["q 7 d", "weekly"],
+    ["q 7 day", "weekly"],
+    ["q14d", "weekly"],
+    ["every 7 days", "weekly"],
     ["monthly", "monthly"],
+    ["q30d", "monthly"],
+    ["q 30 d", "monthly"],
+    ["every 28 days", "monthly"],
+    ["q10d", null], // non-canonical day interval — fail open
     // uninterpretable
     ["when sleepy", null],
     ["", null],

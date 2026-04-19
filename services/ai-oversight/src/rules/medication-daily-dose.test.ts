@@ -77,8 +77,10 @@ describe("checkMedicationDailyDose (#235)", () => {
       expect(daily).toBeUndefined();
     });
 
-    it("10 mg Q4H (no PRN cap) → flag warning (60 mg/day between 1× and 1.5×)", () => {
-      // 60 mg/day isn't over 90 mg/day cap → should NOT flag daily
+    it("10 mg Q4H (60 mg/day) stays within the 90 mg cap → no daily flag", () => {
+      // 60 mg morphine/day is under the 90 mg cap (1× threshold), so the
+      // daily-over rule must NOT fire. Locks the lower-edge behaviour so a
+      // future severity tweak doesn't silently start warning here.
       const flags = checkMedicationDailyDose(
         makeCtx(makeMed({ name: "Morphine", dose_amount: 10, frequency: "q4h" })),
       );

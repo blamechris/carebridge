@@ -117,26 +117,26 @@ export function checkMedicationDailyDose(context: PatientContext): RuleFlag[] {
     med.max_doses_per_day ?? null,
   );
 
-  const isOpioid = limit.mme_factor !== undefined;
-  const slug = slugForRuleId(limit.display_name);
+  const isOpioid = limit.mmeFactor !== undefined;
+  const slug = slugForRuleId(limit.displayName);
 
   // ── Per-dose over-max check ───────────────────────────────────
   // validateMedicationDose covers this when the writer supplies drugName;
   // mirror the check here so the AI layer catches the case even when the
   // writer didn't thread drugName through (most callers today).
   if (
-    limit.max_single_dose_mg !== undefined &&
-    med.dose_amount > limit.max_single_dose_mg
+    limit.maxSingleDoseMg !== undefined &&
+    med.dose_amount > limit.maxSingleDoseMg
   ) {
     flags.push({
       severity: "critical",
       category: "medication-safety" as FlagCategory,
       summary:
         `"${med.name}" ${med.dose_amount} ${med.dose_unit ?? ""} single dose ` +
-        `exceeds the ${limit.max_single_dose_mg} mg maximum for ${limit.display_name}`,
+        `exceeds the ${limit.maxSingleDoseMg} mg maximum for ${limit.displayName}`,
       rationale:
-        `Per ${limit.source}, the maximum single oral dose of ${limit.display_name} ` +
-        `is ${limit.max_single_dose_mg} mg. The prescribed single dose of ` +
+        `Per ${limit.source}, the maximum single oral dose of ${limit.displayName} ` +
+        `is ${limit.maxSingleDoseMg} mg. The prescribed single dose of ` +
         `${med.dose_amount} ${med.dose_unit ?? ""} exceeds this ceiling` +
         (isOpioid
           ? ". For opioids this raises the risk of respiratory depression."
@@ -144,7 +144,7 @@ export function checkMedicationDailyDose(context: PatientContext): RuleFlag[] {
       suggested_action:
         `Verify the prescribed dose. If the order is intentional (e.g. titrated ` +
         `for opioid-tolerant patient), document the justification. Otherwise ` +
-        `reduce to ${limit.max_single_dose_mg} mg or below.`,
+        `reduce to ${limit.maxSingleDoseMg} mg or below.`,
       notify_specialties: ["pharmacy"],
       rule_id: `MED-SINGLE-OVER-${slug.toUpperCase()}`,
     });
@@ -153,23 +153,23 @@ export function checkMedicationDailyDose(context: PatientContext): RuleFlag[] {
   // ── Daily-cumulative over-max check ───────────────────────────
   if (
     daily !== null &&
-    limit.max_daily_dose_mg !== undefined &&
-    daily > limit.max_daily_dose_mg
+    limit.maxDailyDoseMg !== undefined &&
+    daily > limit.maxDailyDoseMg
   ) {
-    const ratio = daily / limit.max_daily_dose_mg;
+    const ratio = daily / limit.maxDailyDoseMg;
     const severity = severityForDailyOver(ratio, isOpioid);
     const mmeNote = isOpioid
-      ? ` (implied ${Math.round(daily * (limit.mme_factor ?? 1))} MME/day; CDC elevated-risk threshold is 90 MME/day)`
+      ? ` (implied ${Math.round(daily * (limit.mmeFactor ?? 1))} MME/day; CDC elevated-risk threshold is 90 MME/day)`
       : "";
     flags.push({
       severity,
       category: "medication-safety" as FlagCategory,
       summary:
         `"${med.name}" at ${med.dose_amount} ${med.dose_unit ?? ""} ${med.frequency ?? ""} ` +
-        `implies ~${Math.round(daily)} mg/day — exceeds ${limit.display_name} max ` +
-        `(${limit.max_daily_dose_mg} mg/day)${mmeNote}`,
+        `implies ~${Math.round(daily)} mg/day — exceeds ${limit.displayName} max ` +
+        `(${limit.maxDailyDoseMg} mg/day)${mmeNote}`,
       rationale:
-        `${limit.display_name} daily cap is ${limit.max_daily_dose_mg} mg ` +
+        `${limit.displayName} daily cap is ${limit.maxDailyDoseMg} mg ` +
         `(${limit.source}). The prescribed ${med.dose_amount} ${med.dose_unit ?? ""} ` +
         `${med.frequency ?? ""} translates to approximately ${Math.round(daily)} mg/day, ` +
         `which is ${ratio.toFixed(1)}× the ceiling. ` +
@@ -182,7 +182,7 @@ export function checkMedicationDailyDose(context: PatientContext): RuleFlag[] {
         `Review frequency and dose. Typical options: reduce per-dose amount, ` +
         `widen dosing interval (e.g. q6h → q8h), or impose a PRN cap ` +
         `(max_doses_per_day) that bounds the daily total below ` +
-        `${limit.max_daily_dose_mg} mg.`,
+        `${limit.maxDailyDoseMg} mg.`,
       notify_specialties: isOpioid ? ["pharmacy", "pain"] : ["pharmacy"],
       rule_id: `MED-DAILY-OVER-${slug.toUpperCase()}`,
     });
