@@ -13,8 +13,9 @@ import {
   allergies,
   encounters,
   procedures,
+  users,
 } from "@carebridge/db-schema";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, inArray } from "drizzle-orm";
 import { createLogger } from "@carebridge/logger";
 import crypto from "node:crypto";
 import type { Vital, LabResult, User } from "@carebridge/shared-types";
@@ -27,6 +28,9 @@ import {
   toFhirAllergyIntolerance,
   toFhirEncounter,
   toFhirProcedure,
+  toFhirPractitioner,
+  isClinicalRole,
+  toFhirMedicationRequest,
 } from "./generators/index.js";
 import { fhirBundleSchema } from "./schemas/bundle.js";
 import { sanitizeFreeText } from "@carebridge/phi-sanitizer";
@@ -418,6 +422,63 @@ export const fhirGatewayRouter = t.router({
             fullUrl: `urn:uuid:${procedure.id}`,
             resource: toFhirProcedure(procedure, patientId),
           });
+        }
+
+        // Epic-compatible MedicationRequest resources for active/ordered
+        // medications (#388). MedicationStatement above remains for the
+        // recorded/historical view; both formats are emitted so bundles
+        // round-trip cleanly in either direction.
+        for (const med of patientMedications) {
+          // urn:uuid: values must be real UUIDs per RFC 4122; the earlier
+          // `urn:uuid:request-${id}` form is rejected by strict FHIR
+          // consumers. Generate a fresh UUID for the bundle-entry fullUrl;
+          // `resource.id` keeps `med.id` so cross-resource references
+          // (MedicationRequest.subject → Patient/{patientId}) stay stable.
+          entry.push({
+            fullUrl: `urn:uuid:${crypto.randomUUID()}`,
+            resource: toFhirMedicationRequest(med, patientId),
+          });
+        }
+
+        // Practitioner resources — one per unique clinician referenced by
+        // any resource in the bundle (Encounter.participant,
+        // Procedure.performer, MedicationRequest.requester, or the
+        // medication-statement informationSource). Deduplicated by id.
+        const providerIds = new Set<string>();
+        for (const enc of patientEncounters) {
+          if (enc.provider_id) providerIds.add(enc.provider_id);
+        }
+        for (const proc of patientProcedures) {
+          if (proc.performed_by) providerIds.add(proc.performed_by);
+          if (proc.provider_id) providerIds.add(proc.provider_id);
+        }
+        for (const med of patientMedications) {
+          if (med.ordering_provider_id) providerIds.add(med.ordering_provider_id);
+          if (med.prescribed_by) providerIds.add(med.prescribed_by);
+        }
+
+        if (providerIds.size > 0) {
+          // Project only the columns toFhirPractitioner needs. A bare
+          // select() on users pulls password_hash, mfa_secret, and
+          // recovery_codes into memory for zero downstream use and risks
+          // surfacing them via heap dumps or incidental logging.
+          const providerRows = await db
+            .select({
+              id: users.id,
+              name: users.name,
+              role: users.role,
+              specialty: users.specialty,
+              email: users.email,
+            })
+            .from(users)
+            .where(inArray(users.id, Array.from(providerIds)));
+          for (const row of providerRows) {
+            if (!isClinicalRole(row.role)) continue;
+            entry.push({
+              fullUrl: `urn:uuid:${row.id}`,
+              resource: toFhirPractitioner(row as unknown as Parameters<typeof toFhirPractitioner>[0]),
+            });
+          }
         }
 
         // HIPAA § 164.312(b): record the successful PHI egress AFTER the

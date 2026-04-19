@@ -27,6 +27,7 @@ const diagnosesTable = { __name: "diagnoses" };
 const allergiesTable = { __name: "allergies" };
 const encountersTable = { __name: "encounters" };
 const proceduresTable = { __name: "procedures" };
+const usersTable = { __name: "users" };
 const fhirResourcesTable = { __name: "fhir_resources" };
 const auditLogTable = { __name: "audit_log" };
 
@@ -73,14 +74,16 @@ vi.mock("@carebridge/db-schema", () => ({
   allergies: allergiesTable,
   encounters: encountersTable,
   procedures: proceduresTable,
+  users: usersTable,
 }));
 
-// drizzle-orm's `eq` is only used to build where-clauses; our select mock
-// ignores the predicate and returns rows based solely on the table, so
-// stub `eq` to a no-op sentinel.
+// drizzle-orm's `eq` / `inArray` are only used to build where-clauses; our
+// select mock ignores the predicate and returns rows based solely on the
+// table, so stub them to no-op sentinels.
 vi.mock("drizzle-orm", () => ({
   eq: (_col: unknown, _val: unknown) => ({ __eq: true }),
   and: (..._args: unknown[]) => ({ __and: true }),
+  inArray: (_col: unknown, _values: unknown[]) => ({ __inArray: true }),
   sql: Object.assign(
     (_strings: TemplateStringsArray, ..._values: unknown[]) => ({ __sql: true }),
     { raw: (s: string) => ({ __raw: s }) },
@@ -107,6 +110,10 @@ vi.mock("../generators/index.js", () => ({
   toFhirAllergyIntolerance: () => ({ resourceType: "AllergyIntolerance" }),
   toFhirEncounter: () => ({ resourceType: "Encounter" }),
   toFhirProcedure: () => ({ resourceType: "Procedure" }),
+  toFhirPractitioner: () => ({ resourceType: "Practitioner" }),
+  toFhirMedicationRequest: () => ({ resourceType: "MedicationRequest" }),
+  isClinicalRole: (role: string) =>
+    ["physician", "specialist", "nurse"].includes(role),
 }));
 
 // PHI sanitizer pass-through.
