@@ -69,6 +69,25 @@ export interface PatientDiagnosis {
   resolved_date: string | null;
 }
 
+/**
+ * Structured medication row consumed by dose/frequency-aware rules
+ * (issue #235). Carries the fields needed to compute an implied daily
+ * cumulative dose: id for cross-referencing `trigger_event.data.resourceId`,
+ * dose_amount + dose_unit + frequency for the estimate, and route so
+ * future route-specific caps can fold in.
+ */
+export interface PatientMedication {
+  id: string;
+  name: string;
+  dose_amount: number | null;
+  dose_unit: string | null;
+  route: string | null;
+  frequency: string | null;
+  /** Optional PRN / hard-cap dose count per 24 h (not yet stored in DB). */
+  max_doses_per_day?: number | null;
+  rxnorm_code: string | null;
+}
+
 export interface PatientContext {
   active_diagnoses: string[];
   /** ICD-10 codes for active diagnoses (parallel to active_diagnoses). */
@@ -83,6 +102,15 @@ export interface PatientContext {
   active_medications: string[];
   /** RxNorm codes for active medications (parallel to active_medications). */
   active_medication_rxnorm_codes?: (string | null)[];
+  /**
+   * Optional structured medication list (#235). Populated by
+   * `buildPatientContextForRules` with dose_amount / dose_unit / frequency so
+   * rules can compute implied daily cumulative doses and compare against
+   * per-drug caps (see `medication-daily-dose.ts`). Parallel to
+   * `active_medications` — the flat name array remains the canonical input
+   * for older rules that only need name matching.
+   */
+  active_medications_detail?: PatientMedication[];
   new_symptoms: string[];
   care_team_specialties: string[];
   /** Patient allergies for cross-checking against medications. */

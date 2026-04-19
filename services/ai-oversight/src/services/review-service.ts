@@ -52,6 +52,7 @@ import { checkDrugInteractions } from "../rules/drug-interactions.js";
 import { screenPatientMessage } from "../rules/message-screening.js";
 import { screenPatientObservation } from "../rules/observation-screening.js";
 import { checkAllergyMedication } from "../rules/allergy-medication.js";
+import { checkMedicationDailyDose } from "../rules/medication-daily-dose.js";
 import {
   isoBefore,
   isoLTE,
@@ -238,6 +239,18 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
     if (allergyFlags.length > 0) {
       rulesFired.push("allergy-medication");
       allRuleFlags.push(...allergyFlags);
+    }
+
+    // 2d-bis. Medication daily-cumulative dose (issue #235). Parses the
+    // newly-prescribed medication's frequency string into a doses-per-24h
+    // count, multiplies by dose_amount, and compares to the per-drug cap
+    // from MEDICATION_MAX_DAILY_DOSES (#238). Catches Q2H PRN opioid
+    // over-prescription that per-dose validation would miss.
+    rulesEvaluated.push("medication-daily-dose");
+    const dailyDoseFlags = checkMedicationDailyDose(patientContext);
+    if (dailyDoseFlags.length > 0) {
+      rulesFired.push("medication-daily-dose");
+      allRuleFlags.push(...dailyDoseFlags);
     }
 
     // 2e. Patient message screening (only for message.received events)
@@ -867,6 +880,19 @@ export async function buildPatientContextForRules(
     })),
     active_medications: activeMedsList.map((m) => m.name),
     active_medication_rxnorm_codes: activeMedsList.map((m) => m.rxnorm_code),
+    // Structured shape for dose/frequency-aware rules (#235). Keep the
+    // flat name array above unchanged so existing rules that only match
+    // on name don't need to migrate.
+    active_medications_detail: activeMedsList.map((m) => ({
+      id: m.id,
+      name: m.name,
+      dose_amount: m.dose_amount ?? null,
+      dose_unit: m.dose_unit ?? null,
+      route: m.route ?? null,
+      frequency: m.frequency ?? null,
+      max_doses_per_day: null,
+      rxnorm_code: m.rxnorm_code ?? null,
+    })),
     new_symptoms: newSymptoms,
     care_team_specialties: [], // Not needed for current rules, but available for future
     allergies: patientAllergies.map((a) => ({
