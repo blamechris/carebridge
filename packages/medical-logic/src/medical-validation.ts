@@ -5,6 +5,7 @@
 
 import type { VitalType } from "@carebridge/shared-types";
 import { COMMON_LAB_TESTS } from "@carebridge/shared-types";
+import { getMedicationDoseLimit } from "./medication-max-doses.js";
 
 export interface VitalRange {
   min: number;
@@ -270,9 +271,22 @@ export function validateVital(
   return { valid: errors.length === 0, warnings, errors };
 }
 
+/**
+ * Validate a single medication dose against drug-specific ceilings when a
+ * drug name is supplied, falling back to generic unit-based ceilings for
+ * unknown drugs.
+ *
+ * Issue #238: the prior generic 10,000-mg fall-through was 10–100× above
+ * real safe limits. When `drugName` matches {@link MEDICATION_MAX_DAILY_DOSES}
+ * (directly or via brand alias), the per-drug `max_single_dose_mg` is the
+ * authoritative ceiling. The generic 10,000 / 5,000-mg / 1,000-mcg / 500-mL
+ * checks remain as defence-in-depth for unknown drugs and gross
+ * decimal-point errors (e.g. "prednisone 10000 mg" typed instead of "10").
+ */
 export function validateMedicationDose(
   doseAmount: number | undefined,
-  doseUnit: string | undefined
+  doseUnit: string | undefined,
+  drugName?: string,
 ): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -285,12 +299,51 @@ export function validateMedicationDose(
   }
 
   if (doseAmount <= 0) errors.push("Dose must be a positive number");
-  if (doseAmount > 10000) errors.push("Dose exceeds 10,000 — verify this is correct");
 
   const unit = doseUnit?.toLowerCase();
-  if (unit === "mg" && doseAmount > 5000) warnings.push(`${doseAmount} mg is unusually high — verify`);
-  if (unit === "mcg" && doseAmount > 1000) warnings.push(`${doseAmount} mcg is unusually high — verify`);
-  if (unit === "ml" && doseAmount > 500) warnings.push(`${doseAmount} mL is unusually high — verify`);
+  const limit = drugName ? getMedicationDoseLimit(drugName) : undefined;
+
+  // Per-drug ceilings (issue #238). Only apply when the unit is mg — the
+  // table's limits are expressed in milligrams; cross-unit comparisons
+  // (mg vs mcg vs mL) can't be made safely without drug-specific density
+  // or concentration data, which is out of scope here.
+  if (limit && unit === "mg") {
+    if (
+      limit.max_single_dose_mg !== undefined &&
+      doseAmount > limit.max_single_dose_mg
+    ) {
+      errors.push(
+        `${doseAmount} mg exceeds ${limit.display_name} max single dose of ` +
+          `${limit.max_single_dose_mg} mg (${limit.source}) — verify prescription`,
+      );
+    } else if (
+      limit.warn_single_dose_mg !== undefined &&
+      doseAmount > limit.warn_single_dose_mg
+    ) {
+      warnings.push(
+        `${doseAmount} mg of ${limit.display_name} is above the typical ` +
+          `single-dose threshold (${limit.warn_single_dose_mg} mg); hard max ` +
+          `${limit.max_single_dose_mg ?? "unspecified"} mg`,
+      );
+    }
+  }
+
+  // Generic ceilings — defence-in-depth for unknown drugs, typos, and
+  // cross-unit sanity. These stay active even when a drug limit matched,
+  // so a grossly wrong number still trips a guard even if the drug's own
+  // hard max is higher than 10,000 mg (no such drug today, but future-proof).
+  if (doseAmount > 10000) {
+    errors.push("Dose exceeds 10,000 — verify this is correct");
+  }
+  if (unit === "mg" && doseAmount > 5000 && !limit) {
+    warnings.push(`${doseAmount} mg is unusually high — verify`);
+  }
+  if (unit === "mcg" && doseAmount > 1000) {
+    warnings.push(`${doseAmount} mcg is unusually high — verify`);
+  }
+  if (unit === "ml" && doseAmount > 500) {
+    warnings.push(`${doseAmount} mL is unusually high — verify`);
+  }
 
   return { valid: errors.length === 0, warnings, errors };
 }

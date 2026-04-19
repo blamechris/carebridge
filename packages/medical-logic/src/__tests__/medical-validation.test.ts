@@ -15,6 +15,10 @@ import {
   getPulsePressureThresholds,
   PEDIATRIC_PP_THRESHOLDS,
 } from "../medical-validation.js";
+import {
+  MEDICATION_MAX_DAILY_DOSES,
+  getMedicationDoseLimit,
+} from "../medication-max-doses.js";
 
 // ─── validateVital ──────────────────────────────────────────────
 
@@ -322,6 +326,158 @@ describe("validateMedicationDose", () => {
   it("errors on NaN dose", () => {
     const result = validateMedicationDose(NaN, "mg");
     expect(result.valid).toBe(false);
+  });
+});
+
+// ─── validateMedicationDose — per-drug limits (issue #238) ──────
+
+describe("validateMedicationDose — per-drug ceilings (#238)", () => {
+  it("accepts an acetaminophen 650 mg single dose", () => {
+    const result = validateMedicationDose(650, "mg", "acetaminophen");
+    expect(result.valid).toBe(true);
+    // 650 is not above warn threshold (650), so no warning either.
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it("warns on acetaminophen 975 mg (above warn, below hard max)", () => {
+    const result = validateMedicationDose(975, "mg", "acetaminophen");
+    expect(result.valid).toBe(true);
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result.warnings[0]).toMatch(/Acetaminophen/);
+  });
+
+  it("errors on acetaminophen 1500 mg single dose (> 1000 mg max)", () => {
+    const result = validateMedicationDose(1500, "mg", "acetaminophen");
+    expect(result.valid).toBe(false);
+    expect(result.errors[0]).toMatch(/Acetaminophen max single dose/);
+    expect(result.errors[0]).toMatch(/1000 mg/);
+  });
+
+  it("errors on ibuprofen 1000 mg single dose (> 800 mg max)", () => {
+    const result = validateMedicationDose(1000, "mg", "ibuprofen");
+    expect(result.valid).toBe(false);
+    expect(result.errors[0]).toMatch(/Ibuprofen/);
+  });
+
+  it("errors on oxycodone 40 mg single dose (> 20 mg max)", () => {
+    const result = validateMedicationDose(40, "mg", "oxycodone");
+    expect(result.valid).toBe(false);
+    expect(result.errors[0]).toMatch(/Oxycodone/);
+  });
+
+  it("resolves brand alias Tylenol → acetaminophen ceiling", () => {
+    const result = validateMedicationDose(1500, "mg", "Tylenol");
+    expect(result.valid).toBe(false);
+    expect(result.errors[0]).toMatch(/Acetaminophen/);
+  });
+
+  it("resolves combo brand Percocet → oxycodone (stricter component)", () => {
+    // 30 mg oxycodone is above the 20 mg single-dose ceiling even though
+    // a 30 mg Percocet dose would be gross overdosing of APAP too.
+    const result = validateMedicationDose(30, "mg", "Percocet");
+    expect(result.valid).toBe(false);
+    expect(result.errors[0]).toMatch(/Oxycodone/);
+  });
+
+  it("is case-insensitive and trims whitespace in drug name", () => {
+    const result = validateMedicationDose(1500, "mg", "  ACETAMINOPHEN  ");
+    expect(result.valid).toBe(false);
+  });
+
+  it("falls back to generic 10,000-mg ceiling for unknown drugs", () => {
+    const result = validateMedicationDose(15000, "mg", "zolpidopride");
+    expect(result.valid).toBe(false);
+    expect(result.errors.some((e) => e.includes("exceeds 10,000"))).toBe(true);
+  });
+
+  it("suppresses the generic 'unusually high mg' warning when a drug limit matched", () => {
+    // Acetaminophen hard max is 1000; 900 mg is above warn but below hard max.
+    // The legacy generic "mg > 5000" warning path must not fire here because
+    // the drug-specific warn is the authoritative signal.
+    const result = validateMedicationDose(900, "mg", "acetaminophen");
+    expect(result.valid).toBe(true);
+    expect(
+      result.warnings.filter((w) => w.includes("unusually high")),
+    ).toHaveLength(0);
+  });
+
+  it("errors on ibuprofen with no drugName falls back to generic", () => {
+    // Without drugName, 6000 mg triggers the generic mg>5000 warn, not an
+    // ibuprofen-specific error. Backward compat for legacy callers.
+    const result = validateMedicationDose(6000, "mg");
+    expect(result.valid).toBe(true);
+    expect(result.warnings[0]).toMatch(/unusually high/);
+  });
+
+  it("skips per-drug error when unit is not mg (mg table isn't comparable)", () => {
+    const result = validateMedicationDose(100, "mcg", "acetaminophen");
+    expect(result.valid).toBe(true);
+    // No "exceeds Acetaminophen max" since unit isn't mg.
+    expect(result.errors).toHaveLength(0);
+  });
+});
+
+// ─── MEDICATION_MAX_DAILY_DOSES data sanity ─────────────────────
+
+describe("MEDICATION_MAX_DAILY_DOSES reference data (#238)", () => {
+  it("covers acetaminophen, ibuprofen, naproxen, aspirin", () => {
+    for (const name of ["acetaminophen", "ibuprofen", "naproxen", "aspirin"]) {
+      expect(MEDICATION_MAX_DAILY_DOSES[name]).toBeDefined();
+      expect(MEDICATION_MAX_DAILY_DOSES[name].max_daily_dose_mg).toBeGreaterThan(0);
+    }
+  });
+
+  it("covers the major oral opioids with MME factors", () => {
+    for (const opioid of ["morphine", "oxycodone", "hydrocodone", "codeine", "tramadol"]) {
+      const limit = MEDICATION_MAX_DAILY_DOSES[opioid];
+      expect(limit).toBeDefined();
+      expect(limit.mme_factor).toBeGreaterThan(0);
+    }
+  });
+
+  it("every limit has a non-empty source", () => {
+    for (const [drug, limit] of Object.entries(MEDICATION_MAX_DAILY_DOSES)) {
+      expect(limit.source, `drug=${drug}`).toMatch(/\S/);
+    }
+  });
+
+  it("every limit's max_single_dose_mg <= max_daily_dose_mg (internal consistency)", () => {
+    for (const [drug, limit] of Object.entries(MEDICATION_MAX_DAILY_DOSES)) {
+      if (
+        limit.max_single_dose_mg !== undefined &&
+        limit.max_daily_dose_mg !== undefined
+      ) {
+        expect(
+          limit.max_single_dose_mg,
+          `drug=${drug} single=${limit.max_single_dose_mg} daily=${limit.max_daily_dose_mg}`,
+        ).toBeLessThanOrEqual(limit.max_daily_dose_mg);
+      }
+    }
+  });
+
+  it("every warn threshold is below its hard-max counterpart", () => {
+    for (const [drug, limit] of Object.entries(MEDICATION_MAX_DAILY_DOSES)) {
+      if (
+        limit.warn_single_dose_mg !== undefined &&
+        limit.max_single_dose_mg !== undefined
+      ) {
+        expect(
+          limit.warn_single_dose_mg,
+          `drug=${drug} warn=${limit.warn_single_dose_mg} max=${limit.max_single_dose_mg}`,
+        ).toBeLessThanOrEqual(limit.max_single_dose_mg);
+      }
+    }
+  });
+
+  it("getMedicationDoseLimit resolves aliases", () => {
+    expect(getMedicationDoseLimit("tylenol")?.display_name).toMatch(/Acetaminophen/);
+    expect(getMedicationDoseLimit("Advil")?.display_name).toMatch(/Ibuprofen/);
+    expect(getMedicationDoseLimit("OxyContin")?.display_name).toMatch(/Oxycodone/);
+    expect(getMedicationDoseLimit("norco")?.display_name).toMatch(/Hydrocodone/);
+  });
+
+  it("getMedicationDoseLimit returns undefined for unknown drugs", () => {
+    expect(getMedicationDoseLimit("unobtanium")).toBeUndefined();
   });
 });
 
