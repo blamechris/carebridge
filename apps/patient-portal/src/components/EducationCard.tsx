@@ -17,6 +17,10 @@ interface EducationCardProps {
  * slots into existing pages without a separate design system.
  */
 export function EducationCard({ content, anchor }: EducationCardProps) {
+  // Derive the heading id once so `aria-labelledby` and the `h4 id`
+  // can't drift apart if the slugging logic is ever tweaked.
+  const headingId = `edu-${content.title.replace(/\s+/g, "-").toLowerCase()}`;
+
   return (
     <article
       style={{
@@ -26,13 +30,10 @@ export function EducationCard({ content, anchor }: EducationCardProps) {
         padding: "1rem",
         marginBottom: "0.75rem",
       }}
-      aria-labelledby={`edu-${content.title.replace(/\s+/g, "-").toLowerCase()}`}
+      aria-labelledby={headingId}
     >
       <header>
-        <h4
-          id={`edu-${content.title.replace(/\s+/g, "-").toLowerCase()}`}
-          style={{ margin: 0, fontSize: "1rem" }}
-        >
+        <h4 id={headingId} style={{ margin: 0, fontSize: "1rem" }}>
           {content.title}
         </h4>
         {anchor && (

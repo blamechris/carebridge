@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { trpc } from "@/lib/trpc";
@@ -36,10 +37,14 @@ export default function HealthInfoPage() {
     { enabled: !!myRecord },
   );
 
-  if (!user) {
-    router.push("/login");
-    return null;
-  }
+  // Redirect to /login from an effect, not inline during render, so Next
+  // doesn't warn about state updates while rendering and so the redirect
+  // doesn't fire twice on Strict-Mode double-renders.
+  useEffect(() => {
+    if (!user) router.replace("/login");
+  }, [user, router]);
+
+  if (!user) return null;
 
   const diagnoses = diagnosesQuery.data ?? [];
   const medications = medicationsQuery.data ?? [];
@@ -53,12 +58,21 @@ export default function HealthInfoPage() {
 
   // Build a deduplicated list of education cards keyed on the content
   // title so a patient with two hypertension ICD-10 codes only sees one
-  // High-Blood-Pressure card.
+  // High-Blood-Pressure card. React `key` is derived from the content
+  // title too (not the originating dx/med row id) so adding or
+  // reordering duplicate diagnosis rows doesn't force React to unmount
+  // and remount the surviving card.
+  const titleKey = (title: string) =>
+    title.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
   const diagnosisEntries: Entry[] = [];
   for (const dx of activeDiagnoses) {
     const content = getDiagnosisEducation(dx.icd10_code, dx.description);
     if (content) {
-      diagnosisEntries.push({ key: `dx-${dx.id}`, anchor: dx.description, content });
+      diagnosisEntries.push({
+        key: `dx-${titleKey(content.title)}`,
+        anchor: dx.description,
+        content,
+      });
     }
   }
   const diagnosisByTitle = new Map<string, Entry>();
@@ -72,7 +86,11 @@ export default function HealthInfoPage() {
   for (const med of activeMeds) {
     const content = getMedicationEducation(med.name);
     if (content) {
-      medicationEntries.push({ key: `med-${med.id}`, anchor: med.name, content });
+      medicationEntries.push({
+        key: `med-${titleKey(content.title)}`,
+        anchor: med.name,
+        content,
+      });
     }
   }
   const medicationByTitle = new Map<string, Entry>();

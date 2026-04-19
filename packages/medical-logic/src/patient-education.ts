@@ -407,8 +407,10 @@ export function getDiagnosisEducation(
 ): EducationContent | null {
   if (icd10Code) {
     const trimmed = icd10Code.trim().toUpperCase();
-    // Try exact → shorter prefixes. ICD-10 codes are at most 7 chars, so
-    // iterate from the full code down to the 3-char chapter code.
+    // Try exact → shorter prefixes. ICD-10 codes are up to 7 characters
+    // plus the dot (e.g. S52.521A is 8 chars), so we iterate from the
+    // trimmed input's length down to the 3-char chapter code rather than
+    // relying on a hard-coded max.
     for (let len = trimmed.length; len >= 3; len--) {
       const prefix = trimmed.slice(0, len);
       if (DIAGNOSIS_CONTENT[prefix]) return DIAGNOSIS_CONTENT[prefix];
@@ -416,23 +418,46 @@ export function getDiagnosisEducation(
   }
   if (description) {
     const lower = description.toLowerCase();
-    // Description-keyword fallback for rows without an ICD-10 code. Kept
-    // intentionally narrow so random text doesn't map to an unrelated card.
-    if (/diabetes.*type\s*1|type\s*1\s*diabetes|dm\s*type\s*1/.test(lower)) return DIAGNOSIS_CONTENT.E10!;
-    if (/diabetes|dm\b|type\s*2|t2dm/.test(lower)) return DIAGNOSIS_CONTENT.E11!;
-    if (/hypertension|high blood pressure|htn\b/.test(lower)) return DIAGNOSIS_CONTENT.I10!;
-    if (/atrial fibrillation|afib|a.?fib/.test(lower)) return DIAGNOSIS_CONTENT.I48!;
-    if (/heart failure|chf\b/.test(lower)) return DIAGNOSIS_CONTENT.I50!;
-    if (/pulmonary embolism|pe\b/.test(lower)) return DIAGNOSIS_CONTENT.I26!;
-    if (/deep vein thrombosis|dvt\b/.test(lower)) return DIAGNOSIS_CONTENT.I80!;
-    if (/asthma/.test(lower)) return DIAGNOSIS_CONTENT.J45!;
-    if (/copd|chronic obstructive/.test(lower)) return DIAGNOSIS_CONTENT.J44!;
-    if (/depression|major depressive/.test(lower)) return DIAGNOSIS_CONTENT.F32!;
-    if (/anxiety/.test(lower)) return DIAGNOSIS_CONTENT.F41!;
-    if (/chronic kidney|ckd/.test(lower)) return DIAGNOSIS_CONTENT.N18!;
+    // Description-keyword fallback for rows without an ICD-10 code. Every
+    // abbreviation is wrapped in `\b ... \b` on BOTH sides — "pe" inside
+    // "cope" / "scope" / "recipe" would otherwise silently route to the
+    // pulmonary-embolism card. Word boundaries keep false positives rare.
+    if (/diabetes.*type\s*1|type\s*1\s*diabetes|\bdm\s*type\s*1\b/.test(lower)) return DIAGNOSIS_CONTENT.E10!;
+    if (/\bdiabetes\b|\bdm\b|\btype\s*2\b|\bt2dm\b/.test(lower)) return DIAGNOSIS_CONTENT.E11!;
+    if (/\bhypertension\b|\bhigh blood pressure\b|\bhtn\b/.test(lower)) return DIAGNOSIS_CONTENT.I10!;
+    if (/\batrial fibrillation\b|\bafib\b|\ba.?fib\b/.test(lower)) return DIAGNOSIS_CONTENT.I48!;
+    if (/\bheart failure\b|\bchf\b/.test(lower)) return DIAGNOSIS_CONTENT.I50!;
+    if (/\bpulmonary embolism\b|\bpe\b/.test(lower)) return DIAGNOSIS_CONTENT.I26!;
+    if (/\bdeep vein thrombosis\b|\bdvt\b/.test(lower)) return DIAGNOSIS_CONTENT.I80!;
+    if (/\basthma\b/.test(lower)) return DIAGNOSIS_CONTENT.J45!;
+    if (/\bcopd\b|\bchronic obstructive\b/.test(lower)) return DIAGNOSIS_CONTENT.J44!;
+    if (/\bdepression\b|\bmajor depressive\b/.test(lower)) return DIAGNOSIS_CONTENT.F32!;
+    if (/\banxiety\b/.test(lower)) return DIAGNOSIS_CONTENT.F41!;
+    if (/\bchronic kidney\b|\bckd\b/.test(lower)) return DIAGNOSIS_CONTENT.N18!;
   }
   return null;
 }
+
+/**
+ * Brand-name → generic aliases for the medication-education lookup. Kept
+ * local (rather than reusing the allergen table) because this list is
+ * specifically about patient education and may diverge — e.g. we're
+ * happy to key Tylenol to a specific acetaminophen article eventually,
+ * but the allergen table aliases Tylenol into the acetaminophen
+ * cross-reactivity canonical.
+ */
+const MEDICATION_EDUCATION_ALIASES: Record<string, string> = {
+  coumadin: "warfarin",
+  jantoven: "warfarin",
+  eliquis: "apixaban",
+  lipitor: "atorvastatin",
+  zoloft: "sertraline",
+  prilosec: "omeprazole",
+  synthroid: "levothyroxine",
+  proair: "albuterol",
+  ventolin: "albuterol",
+  "proair hfa": "albuterol",
+};
 
 /**
  * Look up patient-facing education for a medication by generic or
@@ -448,29 +473,13 @@ export function getMedicationEducation(
 
   if (MEDICATION_CONTENT[key]) return MEDICATION_CONTENT[key];
 
-  // Brand-name aliases. Kept local here (rather than reusing the allergen
-  // table) because this list is specifically about patient education and
-  // may diverge — e.g. we're happy to key Tylenol to a specific acetaminophen
-  // article eventually, but the allergen table aliases Tylenol into the
-  // acetaminophen cross-reactivity canonical.
-  const ALIAS: Record<string, string> = {
-    coumadin: "warfarin",
-    jantoven: "warfarin",
-    eliquis: "apixaban",
-    lipitor: "atorvastatin",
-    zoloft: "sertraline",
-    prilosec: "omeprazole",
-    synthroid: "levothyroxine",
-    proair: "albuterol",
-    ventolin: "albuterol",
-    "proair hfa": "albuterol",
-  };
-
   // Multi-word drug names often carry strength info ("lisinopril 10mg");
   // try the first token as a best-effort lookup.
   const firstToken = key.split(/\s+/)[0] ?? key;
   if (MEDICATION_CONTENT[firstToken]) return MEDICATION_CONTENT[firstToken];
-  const aliased = ALIAS[firstToken] ?? ALIAS[key];
+  const aliased =
+    MEDICATION_EDUCATION_ALIASES[firstToken] ??
+    MEDICATION_EDUCATION_ALIASES[key];
   if (aliased) return MEDICATION_CONTENT[aliased] ?? null;
 
   return null;
