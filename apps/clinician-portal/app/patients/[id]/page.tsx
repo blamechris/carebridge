@@ -491,8 +491,9 @@ function LabsTab({ patientId }: { patientId: string }) {
 
                   return (
                     <tr key={ri}>
-                      <td>{r.test_name}</td>
+                      <td data-label="Test">{r.test_name}</td>
                       <td
+                        data-label="Result"
                         style={{
                           fontWeight: 600,
                           color: valueColor,
@@ -500,13 +501,19 @@ function LabsTab({ patientId }: { patientId: string }) {
                       >
                         {r.value}
                       </td>
-                      <td style={{ color: "var(--text-secondary)" }}>
+                      <td
+                        data-label="Unit"
+                        style={{ color: "var(--text-secondary)" }}
+                      >
                         {r.unit}
                       </td>
-                      <td style={{ color: "var(--text-secondary)" }}>
+                      <td
+                        data-label="Reference Range"
+                        style={{ color: "var(--text-secondary)" }}
+                      >
                         {referenceRange}
                       </td>
-                      <td>
+                      <td data-label="Flag">
                         {flag ? (
                           <span
                             className={`badge ${
@@ -599,15 +606,22 @@ function MedicationStatusSection({
         <tbody>
           {medications.map((med) => (
             <tr key={med.id}>
-              <td style={{ fontWeight: 500, color: titleColor ?? undefined }}>
+              <td
+                data-label="Medication"
+                style={{ fontWeight: 500, color: titleColor ?? undefined }}
+              >
                 {med.name}
               </td>
-              <td style={{ color: textColor }}>
+              <td data-label="Dose" style={{ color: textColor }}>
                 {med.dose_amount} {med.dose_unit}
               </td>
-              <td style={{ color: textColor }}>{med.route}</td>
-              <td style={{ color: textColor }}>{med.frequency}</td>
-              <td>
+              <td data-label="Route" style={{ color: textColor }}>
+                {med.route}
+              </td>
+              <td data-label="Frequency" style={{ color: textColor }}>
+                {med.frequency}
+              </td>
+              <td data-label="Status">
                 <span className={badge.className} title={badge.title}>
                   {badge.label}
                 </span>

@@ -84,7 +84,7 @@ function PatientsContent() {
               ) : (
                 filtered.map((patient) => (
                   <tr key={patient.id}>
-                    <td>
+                    <td data-label="Patient Name">
                       <Link
                         href={`/patients/${patient.id}`}
                         className="table-link"
@@ -93,6 +93,7 @@ function PatientsContent() {
                       </Link>
                     </td>
                     <td
+                      data-label="MRN"
                       style={{
                         color: "var(--text-secondary)",
                         fontFamily: "monospace",
@@ -101,13 +102,19 @@ function PatientsContent() {
                     >
                       {patient.mrn}
                     </td>
-                    <td style={{ color: "var(--text-secondary)" }}>
+                    <td
+                      data-label="Date of Birth"
+                      style={{ color: "var(--text-secondary)" }}
+                    >
                       {patient.date_of_birth}
                     </td>
-                    <td style={{ color: "var(--text-secondary)" }}>
+                    <td
+                      data-label="Sex"
+                      style={{ color: "var(--text-secondary)" }}
+                    >
                       {patient.biological_sex}
                     </td>
-                    <td>
+                    <td data-label="Actions">
                       <Link
                         href={`/patients/${patient.id}`}
                         className="btn btn-ghost btn-sm"
