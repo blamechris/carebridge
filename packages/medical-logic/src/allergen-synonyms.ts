@@ -113,9 +113,13 @@ export const ALLERGEN_SYNONYMS: Record<string, string[]> = {
   //
   // Why: aspirin-exacerbated respiratory disease (AERD, Samter's triad)
   // means a documented aspirin allergy usually implies cross-reactivity
-  // to all non-selective NSAIDs. The safest default for a clinical-safety
-  // layer is to treat "allergic to aspirin" as "allergic to the NSAID
-  // class" rather than silently allow ibuprofen/naproxen/etc.
+  // to the NSAID class (classically non-selective NSAIDs; COX-2 agents
+  // like celecoxib are often tolerated in AERD but not reliably so).
+  // The safest default for a clinical-safety layer is to treat
+  // "allergic to aspirin" as "allergic to the NSAID class" — including
+  // celecoxib — rather than silently allow ibuprofen/naproxen/celecoxib/
+  // etc. Narrower COX-2 tolerance is a clinician-reviewed decision, not
+  // a synonym-layer default.
   //
   // Tradeoff: patients with true isolated aspirin hypersensitivity (not
   // AERD, not NSAID-class cross-reactive) will be over-flagged on other
