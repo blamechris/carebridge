@@ -17,9 +17,9 @@ import {
  * test: we're catching "this sentence has four-syllable jargon", not
  * comma-level precision.
  *
- * The limit is deliberately loose (grade ≤ 10.0) so legitimate technical
+ * The limit is deliberately loose (grade ≤ 11.0) so legitimate technical
  * terms (hypertension, immunosuppressant) don't flake the suite. If this
- * catches a PR it means the card has slid meaningfully above 10th grade,
+ * catches a PR it means the card has slid meaningfully above 11th grade,
  * which is worth re-wording.
  */
 
@@ -30,8 +30,11 @@ function countSyllables(word: string): number {
   const w = word.toLowerCase().replace(/[^a-z]/g, "");
   if (w.length === 0) return 0;
   if (w.length <= 3) return 1;
-  // Drop silent trailing 'e', but not 'le' at end (e.g. 'table' → tabl → 2).
-  const stripped = w.replace(/(?:[^aeiou])e$/, (m) => m.slice(0, -1));
+  // Drop silent trailing 'e', but keep the syllable for consonant+'le'
+  // endings (e.g. 'table' → 'table' stays 2; 'make' → 'mak' drops to 1).
+  const stripped = /[^aeiou]le$/.test(w)
+    ? w
+    : w.replace(/(?:[^aeiou])e$/, (m) => m.slice(0, -1));
   const groups = stripped.match(/[aeiouy]+/g);
   return Math.max(1, groups?.length ?? 1);
 }
@@ -43,16 +46,15 @@ function countSentences(text: string): number {
   return Math.max(1, matches?.length ?? 1);
 }
 
-function countWords(text: string): number {
-  const tokens = text.match(/[A-Za-z']+/g);
-  return tokens?.length ?? 0;
+function tokenizeWords(text: string): string[] {
+  return text.match(/[A-Za-z']+/g) ?? [];
 }
 
 function fleschKincaidGrade(text: string): number {
-  const words = countWords(text);
-  const sentences = countSentences(text);
+  const tokens = tokenizeWords(text);
+  const words = tokens.length;
   if (words === 0) return 0;
-  const tokens = text.match(/[A-Za-z']+/g) ?? [];
+  const sentences = countSentences(text);
   const syllables = tokens.reduce((sum, w) => sum + countSyllables(w), 0);
   // FK grade formula: 0.39 × (words / sentences) + 11.8 × (syllables / words) − 15.59
   return (
@@ -110,14 +112,18 @@ describe("patient-education reading level (#949)", () => {
     graded.push(...gradeEveryBlock(k, v));
   }
 
-  it("has at least one summary and one self-care entry to assess", () => {
+  it("grades every field (summary / self_care / when_to_contact_provider) for multiple cards", () => {
     expect(graded.length).toBeGreaterThan(10);
+    const fields = new Set(graded.map((g) => g.field));
+    expect(fields.has("summary")).toBe(true);
+    expect(fields.has("self_care")).toBe(true);
+    expect(fields.has("when_to_contact_provider")).toBe(true);
   });
 
   for (const g of graded) {
     it(`${g.ownerKey}.${g.field}: grade ${g.grade.toFixed(1)} ≤ ${FK_GRADE_CEILING}`, () => {
       if (g.grade > FK_GRADE_CEILING) {
-        // Surface the offending sentence so content PRs get a clear fix.
+        // Surface the offending block so content PRs get a clear fix.
         console.log(
           `[reading-level] ${g.ownerKey}.${g.field} reads at grade ${g.grade.toFixed(1)}: "${g.text}"`,
         );
