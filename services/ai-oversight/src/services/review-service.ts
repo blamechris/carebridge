@@ -890,7 +890,10 @@ export async function buildPatientContextForRules(
       dose_unit: m.dose_unit ?? null,
       route: m.route ?? null,
       frequency: m.frequency ?? null,
-      max_doses_per_day: null,
+      // Populate from the persisted column (#935). Null when the writer
+      // didn't record a cap — PRN prescriptions stay unboundable and the
+      // rule fails open by design.
+      max_doses_per_day: m.max_doses_per_day ?? null,
       rxnorm_code: m.rxnorm_code ?? null,
       // Expose prescription start date for duration-aware rules (#940).
       // Null when the writer never recorded a start — rules must fail-open.
