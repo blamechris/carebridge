@@ -28,6 +28,9 @@ function makeUser(role: User["role"]): User {
 // Mock the db-schema module so we never hit a real database.
 const careTeamSelectMock = vi.fn();
 const emergencySelectMock = vi.fn();
+// Captures every `.insert(table).values(row)` call so tests can assert on
+// the emergency_access_used audit row's shape (ip_address propagation etc).
+const auditInsertMock = vi.fn();
 vi.mock("@carebridge/db-schema", () => {
   const careTeamFromMock = vi.fn((_table?: unknown) => ({ where: vi.fn(() => ({ limit: careTeamSelectMock })) }));
   const emergencyFromMock = vi.fn((_table?: unknown) => ({ where: vi.fn(() => ({ limit: emergencySelectMock })) }));
@@ -64,7 +67,14 @@ vi.mock("@carebridge/db-schema", () => {
   return {
     getDb: () => ({
       select: selectFn,
-      insert: () => ({ values: () => Promise.resolve() }),
+      insert: (_table: unknown) => ({
+        values: (row: Record<string, unknown>) => {
+          auditInsertMock(row);
+          // Mirror drizzle's then-able return so `.catch()` on the fire-and-
+          // forget audit write in assertCareTeamAccess still resolves.
+          return Promise.resolve();
+        },
+      }),
     }),
     careTeamAssignments: {
       id: "id",
@@ -218,6 +228,73 @@ describe("emergency access fallback", () => {
 
     expect(result).toBe(true);
     expect(emergencySelectMock).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Audit ip_address propagation (issue #907)
+// ---------------------------------------------------------------------------
+
+describe("assertCareTeamAccess — emergency_access_used audit ip_address", () => {
+  beforeEach(() => {
+    clearCareTeamCache();
+    careTeamSelectMock.mockReset();
+    emergencySelectMock.mockReset();
+    auditInsertMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("forwards the caller-supplied clientIp into the audit row", async () => {
+    careTeamSelectMock.mockResolvedValueOnce([]); // no care-team
+    emergencySelectMock.mockResolvedValueOnce([{ id: "ea-1" }]); // emergency grant
+
+    await assertCareTeamAccess("user-ip-1", "patient-1", "198.51.100.7");
+    // Audit write is fire-and-forget — flush the microtask queue.
+    await Promise.resolve();
+
+    expect(auditInsertMock).toHaveBeenCalledTimes(1);
+    const row = auditInsertMock.mock.calls[0]![0];
+    expect(row.action).toBe("emergency_access_used");
+    expect(row.ip_address).toBe("198.51.100.7");
+    expect(row.user_id).toBe("user-ip-1");
+    expect(row.resource_id).toBe("patient-1");
+  });
+
+  it("falls back to an empty string when clientIp is omitted", async () => {
+    careTeamSelectMock.mockResolvedValueOnce([]);
+    emergencySelectMock.mockResolvedValueOnce([{ id: "ea-2" }]);
+
+    await assertCareTeamAccess("user-ip-2", "patient-2");
+    await Promise.resolve();
+
+    expect(auditInsertMock).toHaveBeenCalledTimes(1);
+    const row = auditInsertMock.mock.calls[0]![0];
+    expect(row.ip_address).toBe("");
+  });
+
+  it("falls back to an empty string when clientIp is null", async () => {
+    careTeamSelectMock.mockResolvedValueOnce([]);
+    emergencySelectMock.mockResolvedValueOnce([{ id: "ea-3" }]);
+
+    await assertCareTeamAccess("user-ip-3", "patient-3", null);
+    await Promise.resolve();
+
+    expect(auditInsertMock).toHaveBeenCalledTimes(1);
+    expect(auditInsertMock.mock.calls[0]![0].ip_address).toBe("");
+  });
+
+  it("writes no audit row on the non-emergency (care-team) path", async () => {
+    careTeamSelectMock.mockResolvedValueOnce([{ id: "ct-1" }]);
+
+    await assertCareTeamAccess("user-ip-4", "patient-4", "203.0.113.5");
+    await Promise.resolve();
+
+    // emergency_access_used is the only audit row this function writes — the
+    // direct care-team path must not generate a spurious "emergency" row.
+    expect(auditInsertMock).not.toHaveBeenCalled();
   });
 });
 

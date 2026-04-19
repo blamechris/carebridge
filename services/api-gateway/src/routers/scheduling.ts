@@ -95,6 +95,7 @@ async function enforcePatientAccess(
   user: NonNullable<Context["user"]>,
   patientId: string,
   requiredScope?: ScopeToken,
+  clientIp?: string | null,
 ): Promise<void> {
   if (user.role === "admin") return;
 
@@ -133,7 +134,9 @@ async function enforcePatientAccess(
   }
 
   // Clinicians (physician, specialist, nurse) must be on the care team.
-  const hasAccess = await assertCareTeamAccess(user.id, patientId);
+  // clientIp flows through to the emergency_access_used audit row for
+  // HIPAA § 164.312(b) completeness.
+  const hasAccess = await assertCareTeamAccess(user.id, patientId, clientIp);
   if (!hasAccess) {
     throw new TRPCError({
       code: "FORBIDDEN",
@@ -148,7 +151,7 @@ export const schedulingRbacRouter = t.router({
       .input(z.object({ patientId: z.string() }))
       .query(async ({ ctx, input }) => {
         // Appointments are gated by view_appointments (see #896).
-        await enforcePatientAccess(ctx.user, input.patientId, "view_appointments");
+        await enforcePatientAccess(ctx.user, input.patientId, "view_appointments", ctx.clientIp);
         const db = getDb();
         return db.select().from(appointments)
           .where(eq(appointments.patient_id, input.patientId))
@@ -214,7 +217,7 @@ export const schedulingRbacRouter = t.router({
           patientId = input.patientId;
         }
 
-        await enforcePatientAccess(ctx.user, patientId);
+        await enforcePatientAccess(ctx.user, patientId, undefined, ctx.clientIp);
 
         const db = getDb();
         const now = new Date().toISOString();
@@ -278,7 +281,7 @@ export const schedulingRbacRouter = t.router({
           });
         }
 
-        await enforcePatientAccess(ctx.user, existing.patient_id);
+        await enforcePatientAccess(ctx.user, existing.patient_id, undefined, ctx.clientIp);
 
         const now = new Date().toISOString();
         await db.update(appointments)

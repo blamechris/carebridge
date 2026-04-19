@@ -44,6 +44,7 @@ const protectedProcedure = t.procedure.use(isAuthenticated);
 async function enforcePatientAccess(
   user: NonNullable<Context["user"]>,
   patientId: string,
+  clientIp?: string | null,
 ): Promise<void> {
   if (user.role === "admin") return;
 
@@ -58,7 +59,9 @@ async function enforcePatientAccess(
   }
 
   // Clinicians (physician, specialist, nurse) must be on the care team.
-  const hasAccess = await assertCareTeamAccess(user.id, patientId);
+  // clientIp flows through to the emergency_access_used audit row for
+  // HIPAA § 164.312(b) completeness.
+  const hasAccess = await assertCareTeamAccess(user.id, patientId, clientIp);
   if (!hasAccess) {
     throw new TRPCError({
       code: "FORBIDDEN",
@@ -77,14 +80,14 @@ export const aiOversightRbacRouter = t.router({
         }),
       )
       .query(async ({ ctx, input }) => {
-        await enforcePatientAccess(ctx.user, input.patientId);
+        await enforcePatientAccess(ctx.user, input.patientId, ctx.clientIp);
         return flagService.getFlagsByPatient(input.patientId, input.status);
       }),
 
     getOpenCount: protectedProcedure
       .input(z.object({ patientId: z.string().uuid() }))
       .query(async ({ ctx, input }) => {
-        await enforcePatientAccess(ctx.user, input.patientId);
+        await enforcePatientAccess(ctx.user, input.patientId, ctx.clientIp);
         const count = await flagService.getOpenFlagCount(input.patientId);
         return { count };
       }),
@@ -107,7 +110,7 @@ export const aiOversightRbacRouter = t.router({
         if (!flag) {
           throw new TRPCError({ code: "NOT_FOUND", message: "Flag not found" });
         }
-        await enforcePatientAccess(ctx.user, flag.patient_id);
+        await enforcePatientAccess(ctx.user, flag.patient_id, ctx.clientIp);
         await flagService.acknowledgeFlag(input.flagId, ctx.user.id);
         return { success: true };
       }),
@@ -124,7 +127,7 @@ export const aiOversightRbacRouter = t.router({
         if (!flag) {
           throw new TRPCError({ code: "NOT_FOUND", message: "Flag not found" });
         }
-        await enforcePatientAccess(ctx.user, flag.patient_id);
+        await enforcePatientAccess(ctx.user, flag.patient_id, ctx.clientIp);
         await flagService.resolveFlag(
           input.flagId,
           ctx.user.id,
@@ -145,7 +148,7 @@ export const aiOversightRbacRouter = t.router({
         if (!flag) {
           throw new TRPCError({ code: "NOT_FOUND", message: "Flag not found" });
         }
-        await enforcePatientAccess(ctx.user, flag.patient_id);
+        await enforcePatientAccess(ctx.user, flag.patient_id, ctx.clientIp);
         await flagService.dismissFlag(
           input.flagId,
           ctx.user.id,
@@ -159,7 +162,7 @@ export const aiOversightRbacRouter = t.router({
     getByPatient: protectedProcedure
       .input(z.object({ patientId: z.string().uuid() }))
       .query(async ({ ctx, input }) => {
-        await enforcePatientAccess(ctx.user, input.patientId);
+        await enforcePatientAccess(ctx.user, input.patientId, ctx.clientIp);
         return getReviewJobsByPatient(input.patientId);
       }),
   }),

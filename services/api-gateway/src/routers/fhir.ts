@@ -27,6 +27,7 @@ const protectedProcedure = t.procedure.use(isAuthenticated);
 async function enforcePatientAccess(
   user: NonNullable<Context["user"]>,
   patientId: string,
+  clientIp?: string | null,
 ): Promise<void> {
   if (user.role === "admin") return;
 
@@ -40,7 +41,9 @@ async function enforcePatientAccess(
     return;
   }
 
-  const hasAccess = await assertCareTeamAccess(user.id, patientId);
+  // clientIp flows through to the emergency_access_used audit row for
+  // HIPAA § 164.312(b) completeness.
+  const hasAccess = await assertCareTeamAccess(user.id, patientId, clientIp);
   if (!hasAccess) {
     throw new TRPCError({
       code: "FORBIDDEN",
@@ -57,7 +60,7 @@ export const fhirRbacRouter = t.router({
   exportPatient: protectedProcedure
     .input(z.object({ patientId: z.string() }))
     .query(async ({ ctx, input }) => {
-      await enforcePatientAccess(ctx.user, input.patientId);
+      await enforcePatientAccess(ctx.user, input.patientId, ctx.clientIp);
       const caller = fhirGatewayRouter.createCaller({
         user: ctx.user,
         rbacVerified: true,
@@ -69,7 +72,7 @@ export const fhirRbacRouter = t.router({
   getByPatient: protectedProcedure
     .input(z.object({ patientId: z.string(), resourceType: z.string().optional() }))
     .query(async ({ ctx, input }) => {
-      await enforcePatientAccess(ctx.user, input.patientId);
+      await enforcePatientAccess(ctx.user, input.patientId, ctx.clientIp);
       const caller = fhirGatewayRouter.createCaller({ user: ctx.user, rbacVerified: true });
       return caller.getByPatient(input);
     }),

@@ -90,6 +90,7 @@ async function enforcePatientAccess(
   user: NonNullable<Context["user"]>,
   patientId: string,
   requiredScope?: ScopeToken,
+  clientIp?: string | null,
 ): Promise<void> {
   if (user.role === "admin") return;
 
@@ -129,7 +130,9 @@ async function enforcePatientAccess(
   }
 
   // Clinicians (physician, specialist, nurse) must be on the care team.
-  const hasAccess = await assertCareTeamAccess(user.id, patientId);
+  // clientIp is forwarded so the emergency_access_used audit row written
+  // inside assertCareTeamAccess captures the originating IP (HIPAA § 164.312(b)).
+  const hasAccess = await assertCareTeamAccess(user.id, patientId, clientIp);
   if (!hasAccess) {
     throw new TRPCError({
       code: "FORBIDDEN",
@@ -225,7 +228,7 @@ export const patientRecordsRbacRouter = t.router({
   update: protectedProcedure
     .input(z.object({ id: z.string().uuid() }).merge(updatePatientSchema))
     .mutation(async ({ ctx, input }) => {
-      await enforcePatientAccess(ctx.user, input.id);
+      await enforcePatientAccess(ctx.user, input.id, undefined, ctx.clientIp);
       const { id, ...data } = input;
       const db = getDb();
       const mrn_hmac =
@@ -251,7 +254,7 @@ export const patientRecordsRbacRouter = t.router({
     .query(async ({ ctx, input }) => {
       // view_summary: patient record projection falls under the blanket
       // "summary" permit — see resource→scope mapping in #896.
-      await enforcePatientAccess(ctx.user, input.id, "view_summary");
+      await enforcePatientAccess(ctx.user, input.id, "view_summary", ctx.clientIp);
       const db = getDb();
       const [patient] = await db
         .select({
@@ -283,7 +286,7 @@ export const patientRecordsRbacRouter = t.router({
   getSummary: protectedProcedure
     .input(z.object({ id: z.string() }))
     .query(async ({ ctx, input }) => {
-      await enforcePatientAccess(ctx.user, input.id, "view_summary");
+      await enforcePatientAccess(ctx.user, input.id, "view_summary", ctx.clientIp);
       const db = getDb();
       const [patient] = await db
         .select({
@@ -506,7 +509,7 @@ export const patientRecordsRbacRouter = t.router({
       .input(z.object({ patientId: z.string() }))
       .query(async ({ ctx, input }) => {
         // view_summary gates the summary-tier read (diagnoses/allergies/obs).
-        await enforcePatientAccess(ctx.user, input.patientId, "view_summary");
+        await enforcePatientAccess(ctx.user, input.patientId, "view_summary", ctx.clientIp);
         const db = getDb();
         return db
           .select()
@@ -523,7 +526,7 @@ export const patientRecordsRbacRouter = t.router({
             message: "Patients cannot create clinical diagnoses",
           });
         }
-        await enforcePatientAccess(ctx.user, input.patient_id);
+        await enforcePatientAccess(ctx.user, input.patient_id, undefined, ctx.clientIp);
         return createDiagnosis(input);
       }),
 
@@ -547,7 +550,7 @@ export const patientRecordsRbacRouter = t.router({
         if (!existing) {
           throw new TRPCError({ code: "NOT_FOUND", message: `Diagnosis ${id} not found` });
         }
-        await enforcePatientAccess(ctx.user, existing.patient_id);
+        await enforcePatientAccess(ctx.user, existing.patient_id, undefined, ctx.clientIp);
         return updateDiagnosis(id, data);
       }),
   }),
@@ -556,7 +559,7 @@ export const patientRecordsRbacRouter = t.router({
     getByPatient: protectedProcedure
       .input(z.object({ patientId: z.string() }))
       .query(async ({ ctx, input }) => {
-        await enforcePatientAccess(ctx.user, input.patientId, "view_summary");
+        await enforcePatientAccess(ctx.user, input.patientId, "view_summary", ctx.clientIp);
         const db = getDb();
         return db
           .select()
@@ -573,7 +576,7 @@ export const patientRecordsRbacRouter = t.router({
             message: "Patients cannot create clinical allergies",
           });
         }
-        await enforcePatientAccess(ctx.user, input.patient_id);
+        await enforcePatientAccess(ctx.user, input.patient_id, undefined, ctx.clientIp);
         return createAllergy(input);
       }),
 
@@ -596,7 +599,7 @@ export const patientRecordsRbacRouter = t.router({
         if (!existing) {
           throw new TRPCError({ code: "NOT_FOUND", message: `Allergy ${id} not found` });
         }
-        await enforcePatientAccess(ctx.user, existing.patient_id);
+        await enforcePatientAccess(ctx.user, existing.patient_id, undefined, ctx.clientIp);
         return updateAllergy(id, data);
       }),
 
@@ -651,7 +654,7 @@ export const patientRecordsRbacRouter = t.router({
           });
         }
 
-        await enforcePatientAccess(ctx.user, flag.patient_id);
+        await enforcePatientAccess(ctx.user, flag.patient_id, undefined, ctx.clientIp);
 
         // If an allergy_id is supplied, verify it belongs to the SAME
         // patient as the flag. This blocks cross-patient override bleed
@@ -726,7 +729,7 @@ export const patientRecordsRbacRouter = t.router({
               override_reason: input.override_reason,
               clinical_justification: input.clinical_justification,
             }),
-            ip_address: "",
+            ip_address: ctx.clientIp ?? "",
             timestamp: now,
           });
         });
@@ -750,7 +753,7 @@ export const patientRecordsRbacRouter = t.router({
       .query(async ({ ctx, input }) => {
         // Care-team roster is part of the summary-tier read — a caregiver
         // who can see demographics can see who the patient's providers are.
-        await enforcePatientAccess(ctx.user, input.patientId, "view_summary");
+        await enforcePatientAccess(ctx.user, input.patientId, "view_summary", ctx.clientIp);
         const db = getDb();
         return db
           .select()
@@ -768,7 +771,7 @@ export const patientRecordsRbacRouter = t.router({
         }),
       )
       .query(async ({ ctx, input }) => {
-        await enforcePatientAccess(ctx.user, input.patientId, "view_summary");
+        await enforcePatientAccess(ctx.user, input.patientId, "view_summary", ctx.clientIp);
         return listObservationsByPatient(input.patientId, input.limit);
       }),
 
@@ -815,7 +818,7 @@ export const patientRecordsRbacRouter = t.router({
               "Family caregivers cannot submit symptom observations on behalf of a patient",
           });
         }
-        await enforcePatientAccess(ctx.user, input.patientId);
+        await enforcePatientAccess(ctx.user, input.patientId, undefined, ctx.clientIp);
         return createObservation(input);
       }),
   }),

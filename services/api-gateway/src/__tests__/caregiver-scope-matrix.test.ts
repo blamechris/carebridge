@@ -376,6 +376,7 @@ function ctxFor(user: User | null): Context {
     user,
     sessionId: "session-1",
     requestId: "req-1",
+    clientIp: null,
   };
 }
 

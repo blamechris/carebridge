@@ -46,6 +46,7 @@ const logger = createLogger("ai-oversight");
 import { checkCriticalValues } from "../rules/critical-values.js";
 import { checkCrossSpecialtyPatterns } from "../rules/cross-specialty.js";
 import type { PatientContext } from "../rules/cross-specialty.js";
+import { checkContraindications } from "../rules/contraindications.js";
 import { checkAgeStratifiedRules } from "../rules/age-stratified.js";
 import { checkDrugInteractions } from "../rules/drug-interactions.js";
 import { screenPatientMessage } from "../rules/message-screening.js";
@@ -212,6 +213,17 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
       allRuleFlags.push(...ageStratifiedFlags);
     }
 
+    // 2b-ter. Contraindication rules (single-drug + condition interactions
+    // like NSAID+CHF, statin+severe-hepatic, ACE/ARB+pregnancy, metformin+
+    // eGFR<30 — issue #904). Conceptually distinct from the multi-drug
+    // cross-specialty patterns above; shares the same PatientContext.
+    rulesEvaluated.push("contraindications");
+    const contraindicationFlags = checkContraindications(patientContext);
+    if (contraindicationFlags.length > 0) {
+      rulesFired.push("contraindications");
+      allRuleFlags.push(...contraindicationFlags);
+    }
+
     // 2c. Drug interactions
     rulesEvaluated.push("drug-interactions");
     const drugFlags = checkDrugInteractions(patientContext.active_medications);
@@ -276,13 +288,14 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
       }
     }
 
-    // Step 2z: Consolidate rule flags (#854)
+    // Step 2z: Consolidate rule flags (#854, #878)
     //
-    // Narrow dedup: when CRITICAL-LAB-POTASSIUM and CROSS-QT-HYPOK-001 both
-    // fire for the same patient+review, suppress the critical-value flag in
-    // favor of the cross-specialty flag. Both describe the same underlying
-    // signal (severe hypokalemia → arrhythmia risk); the cross-specialty flag
-    // is strictly more actionable because it names the QT-prolonging drug.
+    // Narrow dedup: when CRITICAL-LAB-POTASSIUM co-fires with either
+    // CROSS-QT-HYPOK-001 or CROSS-THIAZIDE-HYPOK-001, suppress the
+    // critical-value flag in favor of the more actionable cross-specialty
+    // flag(s). All describe the same underlying signal (severe hypokalemia
+    // → arrhythmia / electrolyte risk); the cross-specialty rules name the
+    // offending medication class.
     // `allRuleFlags` is replaced with the consolidated list so downstream
     // persistence, audit, and LLM-dedup all operate on the deduped set.
     const consolidatedRuleFlags = consolidateRuleFlags(allRuleFlags);
@@ -1033,29 +1046,41 @@ function summaryOverlap(a: string, b: string): number {
  * clinically-motivated suppressions for flag pairs that describe the same
  * underlying signal.
  *
- * Current policy (issue #854):
- *   - If both `CRITICAL-LAB-POTASSIUM` and `CROSS-QT-HYPOK-001` fire in the
- *     same pass, drop `CRITICAL-LAB-POTASSIUM`. The cross-specialty flag is
- *     strictly more actionable because it names the QT-prolonging drug, and
- *     both flags point clinicians at the same physiologic concern (severe
- *     hypokalemia → torsades / arrhythmia risk). Severity on the surviving
- *     flag is preserved as-is — CROSS-QT-HYPOK-001 already escalates to
- *     `critical` when K+ < 3.0 (see cross-specialty.ts), so no info is lost.
+ * Current policy:
+ *   - If `CRITICAL-LAB-POTASSIUM` co-fires with either `CROSS-QT-HYPOK-001`
+ *     (issue #854) OR `CROSS-THIAZIDE-HYPOK-001` (issue #878), drop
+ *     `CRITICAL-LAB-POTASSIUM`. The cross-specialty flags are strictly more
+ *     actionable because they name the offending medication class, and all
+ *     three flags point clinicians at the same physiologic concern (severe
+ *     hypokalemia → arrhythmia / electrolyte risk). Severity on the
+ *     surviving flag(s) is preserved as-is — both cross-specialty rules
+ *     already escalate to `critical` when K+ < 3.0 (see cross-specialty.ts),
+ *     so no information is lost.
+ *   - When both CROSS-QT-HYPOK-001 and CROSS-THIAZIDE-HYPOK-001 fire
+ *     simultaneously (QT drug + thiazide + low K+), both are preserved —
+ *     they describe different mechanisms (torsades vs. electrolyte
+ *     worsening) and drive different actions. Only the generic lab-level
+ *     critical flag is suppressed.
  *
  * Safety posture:
  *   - The dedup is keyed on rule_id pairs — no generic severity/category
  *     suppression. This is deliberate: under-alerting on a critical lab is
  *     far worse than minor UI duplication.
- *   - When QT-HYPOK does NOT fire, CRITICAL-LAB-POTASSIUM passes through
- *     unchanged (including hyperkalemia which never co-fires with QT-HYPOK).
+ *   - When neither cross-specialty hypoK rule fires, CRITICAL-LAB-POTASSIUM
+ *     passes through unchanged (including hyperkalemia, which never
+ *     co-fires with either hypoK rule).
  *   - Unrelated flags in the same batch are untouched.
  *   - Input is not mutated.
  *
  * Exported for unit testing.
  */
 export function consolidateRuleFlags(flags: readonly RuleFlag[]): RuleFlag[] {
-  const hasQtHypoK = flags.some((f) => f.rule_id === "CROSS-QT-HYPOK-001");
-  if (!hasQtHypoK) {
+  const hasCrossSpecialtyHypoK = flags.some(
+    (f) =>
+      f.rule_id === "CROSS-QT-HYPOK-001" ||
+      f.rule_id === "CROSS-THIAZIDE-HYPOK-001",
+  );
+  if (!hasCrossSpecialtyHypoK) {
     // No dedup needed — shallow-copy so the caller cannot assume identity
     // with the input reference.
     return [...flags];

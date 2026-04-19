@@ -212,6 +212,7 @@ function getUser(request: FastifyRequest): User | undefined {
 export async function assertCareTeamAccess(
   userId: string,
   patientId: string,
+  clientIp?: string | null,
 ): Promise<boolean> {
   const key = cacheKey(userId, patientId);
 
@@ -253,6 +254,9 @@ export async function assertCareTeamAccess(
 
   if (emergencyRows.length > 0) {
     // Log emergency access usage distinctly in audit trail (fire-and-forget).
+    // IP is threaded through as an optional arg so existing callers remain
+    // backward-compatible; callers that have it (routers with ctx.clientIp)
+    // should pass it so HIPAA § 164.312(b) audit rows are complete.
     db.insert(auditLog)
       .values({
         id: crypto.randomUUID(),
@@ -264,7 +268,7 @@ export async function assertCareTeamAccess(
           emergency_access_id: emergencyRows[0].id,
           type: "emergency_access",
         }),
-        ip_address: "",
+        ip_address: clientIp ?? "",
         timestamp: now,
       })
       .catch(() => {
@@ -325,7 +329,9 @@ export async function assertPatientAccess(
   }
 
   // Clinicians (physician, specialist, nurse) must be on the care team.
-  const hasAccess = await assertCareTeamAccess(user.id, patientId);
+  // Pass request.ip so the emergency_access_used audit row written inside
+  // assertCareTeamAccess captures the originating IP (HIPAA § 164.312(b)).
+  const hasAccess = await assertCareTeamAccess(user.id, patientId, request.ip);
   if (!hasAccess) {
     await logAccessDenial(request, user.id, "care_team_not_assigned", {
       requested_patient_id: patientId,

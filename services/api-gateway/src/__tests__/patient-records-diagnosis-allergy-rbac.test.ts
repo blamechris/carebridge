@@ -151,6 +151,7 @@ function makeContext(user: User | null): Context {
     user,
     sessionId: "session-1",
     requestId: "req-1",
+    clientIp: null,
   };
 }
 
@@ -344,6 +345,7 @@ describe("patientRecordsRbacRouter — care-team enforcement (diagnoses)", () =>
     expect(mocks.assertCareTeamAccess).toHaveBeenCalledWith(
       ROLE_IDS.physician,
       PATIENT_ID,
+      null,
     );
     expect(mocks.updateDiagnosis).toHaveBeenCalled();
   });
@@ -439,6 +441,7 @@ describe("patientRecordsRbacRouter — care-team enforcement (allergies)", () =>
     expect(mocks.assertCareTeamAccess).toHaveBeenCalledWith(
       ROLE_IDS.nurse,
       PATIENT_ID,
+      null,
     );
     expect(mocks.updateAllergy).toHaveBeenCalled();
   });

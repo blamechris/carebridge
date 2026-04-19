@@ -157,12 +157,13 @@ function makeUser(role: User["role"], id = ROLE_IDS[role]!): User {
   };
 }
 
-function callerFor(user: User | null) {
+function callerFor(user: User | null, clientIp: string | null = null) {
   const ctx: Context = {
     db: mocks.mockDb as unknown as Context["db"],
     user,
     sessionId: "s",
     requestId: "r",
+    clientIp,
   };
   return patientRecordsRbacRouter.createCaller(ctx);
 }
@@ -363,5 +364,37 @@ describe("allergies.override — flag / allergy lookups", () => {
       code: "UNAUTHORIZED",
     });
     expect(overrideRows()).toHaveLength(0);
+  });
+});
+
+describe("allergies.override — audit ip_address capture (issue #907)", () => {
+  function seedFlagAndAllergy() {
+    mocks.state.selectQueue.push([
+      { id: FLAG_ID, patient_id: PATIENT_ID, status: "open" },
+    ]);
+    mocks.state.selectQueue.push([
+      { id: ALLERGY_ID, patient_id: PATIENT_ID, allergen: "Penicillin" },
+    ]);
+  }
+
+  it("propagates ctx.clientIp into the audit_log row", async () => {
+    seedFlagAndAllergy();
+    const caller = callerFor(makeUser("physician"), "203.0.113.42");
+    await caller.allergies.override(overrideInput);
+
+    expect(auditRows()).toHaveLength(1);
+    expect(auditRows()[0]!.row.ip_address).toBe("203.0.113.42");
+  });
+
+  it("falls back to empty string when ctx.clientIp is null", async () => {
+    seedFlagAndAllergy();
+    const caller = callerFor(makeUser("physician"), null);
+    await caller.allergies.override(overrideInput);
+
+    expect(auditRows()).toHaveLength(1);
+    // Preserves the historical empty-string fallback so existing audit
+    // filters that match "" continue to work when the transport can't
+    // resolve an IP (should be rare in HTTP-land, guarded defensively).
+    expect(auditRows()[0]!.row.ip_address).toBe("");
   });
 });

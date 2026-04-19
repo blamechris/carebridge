@@ -66,6 +66,7 @@ async function enforcePatientAccess(
   user: NonNullable<Context["user"]>,
   patientId: string,
   requiredScope?: ScopeToken,
+  clientIp?: string | null,
 ): Promise<void> {
   if (user.role === "admin") return;
 
@@ -129,7 +130,9 @@ async function enforcePatientAccess(
   }
 
   // Clinicians (physician, specialist, nurse) must be on the care team.
-  const hasAccess = await assertCareTeamAccess(user.id, patientId);
+  // clientIp flows through to the emergency_access_used audit row for
+  // HIPAA § 164.312(b) completeness.
+  const hasAccess = await assertCareTeamAccess(user.id, patientId, clientIp);
   if (!hasAccess) {
     throw new TRPCError({
       code: "FORBIDDEN",
@@ -156,7 +159,7 @@ const vitalsRouter = t.router({
         });
       }
       // Mutations remain role-blocked elsewhere; no scope check on writes.
-      await enforcePatientAccess(ctx.user, input.patient_id);
+      await enforcePatientAccess(ctx.user, input.patient_id, undefined, ctx.clientIp);
       return vitalRepo.createVital(input);
     }),
 
@@ -164,14 +167,14 @@ const vitalsRouter = t.router({
     .input(z.object({ patientId: z.string().uuid(), type: vitalTypeSchema.optional() }))
     .query(async ({ ctx, input }) => {
       // Vitals belong to the summary tier (like observations/diagnoses).
-      await enforcePatientAccess(ctx.user, input.patientId, "view_summary");
+      await enforcePatientAccess(ctx.user, input.patientId, "view_summary", ctx.clientIp);
       return vitalRepo.getVitalsByPatient(input.patientId, input.type);
     }),
 
   getLatest: protectedProcedure
     .input(z.object({ patientId: z.string().uuid() }))
     .query(async ({ ctx, input }) => {
-      await enforcePatientAccess(ctx.user, input.patientId, "view_summary");
+      await enforcePatientAccess(ctx.user, input.patientId, "view_summary", ctx.clientIp);
       return vitalRepo.getLatestVitals(input.patientId);
     }),
 });
@@ -188,21 +191,21 @@ const labsRouter = t.router({
           message: "Caregivers cannot create lab panels",
         });
       }
-      await enforcePatientAccess(ctx.user, input.patient_id);
+      await enforcePatientAccess(ctx.user, input.patient_id, undefined, ctx.clientIp);
       return labRepo.createLabPanel(input);
     }),
 
   getByPatient: protectedProcedure
     .input(z.object({ patientId: z.string().uuid() }))
     .query(async ({ ctx, input }) => {
-      await enforcePatientAccess(ctx.user, input.patientId, "view_labs");
+      await enforcePatientAccess(ctx.user, input.patientId, "view_labs", ctx.clientIp);
       return labRepo.getLabPanelsByPatient(input.patientId);
     }),
 
   getHistory: protectedProcedure
     .input(z.object({ patientId: z.string().uuid(), testName: z.string().min(1) }))
     .query(async ({ ctx, input }) => {
-      await enforcePatientAccess(ctx.user, input.patientId, "view_labs");
+      await enforcePatientAccess(ctx.user, input.patientId, "view_labs", ctx.clientIp);
       return labRepo.getLabResultHistory(input.patientId, input.testName);
     }),
 });
@@ -219,7 +222,7 @@ const medicationsRouter = t.router({
           message: "Caregivers cannot create medications",
         });
       }
-      await enforcePatientAccess(ctx.user, input.patient_id);
+      await enforcePatientAccess(ctx.user, input.patient_id, undefined, ctx.clientIp);
       return medicationRepo.createMedication(input);
     }),
 
@@ -244,7 +247,7 @@ const medicationsRouter = t.router({
         throw new TRPCError({ code: "NOT_FOUND", message: `Medication ${input.id} not found` });
       }
 
-      await enforcePatientAccess(ctx.user, existing.patient_id);
+      await enforcePatientAccess(ctx.user, existing.patient_id, undefined, ctx.clientIp);
 
       const { id, ...rest } = input;
       try {
@@ -260,7 +263,7 @@ const medicationsRouter = t.router({
   getByPatient: protectedProcedure
     .input(z.object({ patientId: z.string().uuid(), status: medStatusSchema.optional() }))
     .query(async ({ ctx, input }) => {
-      await enforcePatientAccess(ctx.user, input.patientId, "view_medications");
+      await enforcePatientAccess(ctx.user, input.patientId, "view_medications", ctx.clientIp);
       return medicationRepo.getMedicationsByPatient(input.patientId, input.status);
     }),
 
@@ -296,7 +299,7 @@ const medicationsRouter = t.router({
         });
       }
 
-      await enforcePatientAccess(ctx.user, existing.patient_id);
+      await enforcePatientAccess(ctx.user, existing.patient_id, undefined, ctx.clientIp);
 
       return medicationRepo.logAdministration(
         input.medicationId,
@@ -320,7 +323,7 @@ const proceduresRouter = t.router({
           message: "Caregivers cannot create procedures",
         });
       }
-      await enforcePatientAccess(ctx.user, input.patient_id);
+      await enforcePatientAccess(ctx.user, input.patient_id, undefined, ctx.clientIp);
       return procedureRepo.createProcedure(input);
     }),
 
@@ -328,7 +331,7 @@ const proceduresRouter = t.router({
     .input(z.object({ patientId: z.string().uuid() }))
     .query(async ({ ctx, input }) => {
       // Procedures are summary-tier — part of the patient's clinical snapshot.
-      await enforcePatientAccess(ctx.user, input.patientId, "view_summary");
+      await enforcePatientAccess(ctx.user, input.patientId, "view_summary", ctx.clientIp);
       return procedureRepo.getProceduresByPatient(input.patientId);
     }),
 });

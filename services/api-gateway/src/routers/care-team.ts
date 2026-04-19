@@ -66,6 +66,7 @@ function assertCanManageCareTeam(user: NonNullable<Context["user"]>): void {
 async function enforcePatientAccess(
   user: NonNullable<Context["user"]>,
   patientId: string,
+  clientIp?: string | null,
 ): Promise<void> {
   if (user.role === "admin") return;
 
@@ -79,7 +80,9 @@ async function enforcePatientAccess(
     return;
   }
 
-  const hasAccess = await assertCareTeamAccess(user.id, patientId);
+  // clientIp flows through to the emergency_access_used audit row for
+  // HIPAA § 164.312(b) completeness.
+  const hasAccess = await assertCareTeamAccess(user.id, patientId, clientIp);
   if (!hasAccess) {
     throw new TRPCError({
       code: "FORBIDDEN",
@@ -105,6 +108,7 @@ function buildAuditRow(params: {
   old_value?: Record<string, unknown>;
   new_value?: Record<string, unknown>;
   procedure_name: string;
+  client_ip?: string | null;
 }) {
   return {
     id: crypto.randomUUID(),
@@ -119,7 +123,7 @@ function buildAuditRow(params: {
       old_value: params.old_value,
       new_value: params.new_value,
     }),
-    ip_address: "",
+    ip_address: params.client_ip ?? "",
     timestamp: new Date().toISOString(),
   };
 }
@@ -134,7 +138,7 @@ export const careTeamRbacRouter = t.router({
     .input(addCareTeamMemberSchema)
     .mutation(async ({ ctx, input }) => {
       assertCanManageCareTeam(ctx.user);
-      await enforcePatientAccess(ctx.user, input.patient_id);
+      await enforcePatientAccess(ctx.user, input.patient_id, ctx.clientIp);
       const db = getDb();
       const now = new Date().toISOString();
       const memberId = crypto.randomUUID();
@@ -179,6 +183,7 @@ export const careTeamRbacRouter = t.router({
               assignment_role: input.assignment_role,
             },
             procedure_name: "careTeam.addMember",
+            client_ip: ctx.clientIp,
           }),
         );
       });
@@ -208,7 +213,7 @@ export const careTeamRbacRouter = t.router({
       // Patient is resolved from the member row — mirrors the pattern used in
       // clinical-data.medications.update where the resource id is the only
       // input and patient_id is looked up before the access check.
-      await enforcePatientAccess(ctx.user, existing.patient_id as string);
+      await enforcePatientAccess(ctx.user, existing.patient_id as string, ctx.clientIp);
 
       const now = new Date().toISOString();
       await db.transaction(async (tx) => {
@@ -232,6 +237,7 @@ export const careTeamRbacRouter = t.router({
             },
             new_value: { is_active: false, ended_at: now },
             procedure_name: "careTeam.removeMember",
+            client_ip: ctx.clientIp,
           }),
         );
       });
@@ -257,7 +263,7 @@ export const careTeamRbacRouter = t.router({
         });
       }
 
-      await enforcePatientAccess(ctx.user, existing.patient_id as string);
+      await enforcePatientAccess(ctx.user, existing.patient_id as string, ctx.clientIp);
 
       const patch: Record<string, unknown> = { role: input.role };
       if (input.specialty !== undefined) patch.specialty = input.specialty;
@@ -285,6 +291,7 @@ export const careTeamRbacRouter = t.router({
               specialty: input.specialty ?? existing.specialty,
             },
             procedure_name: "careTeam.updateRole",
+            client_ip: ctx.clientIp,
           }),
         );
       });
@@ -303,7 +310,7 @@ export const careTeamRbacRouter = t.router({
       .input(grantCareTeamAssignmentSchema)
       .mutation(async ({ ctx, input }) => {
         assertCanManageCareTeam(ctx.user);
-        await enforcePatientAccess(ctx.user, input.patient_id);
+        await enforcePatientAccess(ctx.user, input.patient_id, ctx.clientIp);
         const db = getDb();
         const now = new Date().toISOString();
         const assignmentId = crypto.randomUUID();
@@ -328,6 +335,7 @@ export const careTeamRbacRouter = t.router({
               target_user_id: input.user_id,
               new_value: { role: input.role },
               procedure_name: "careTeamAssignments.grant",
+              client_ip: ctx.clientIp,
             }),
           );
         });
@@ -357,7 +365,7 @@ export const careTeamRbacRouter = t.router({
           });
         }
 
-        await enforcePatientAccess(ctx.user, existing.patient_id as string);
+        await enforcePatientAccess(ctx.user, existing.patient_id as string, ctx.clientIp);
 
         const now = new Date().toISOString();
         await db.transaction(async (tx) => {
@@ -377,6 +385,7 @@ export const careTeamRbacRouter = t.router({
               old_value: { role: existing.role, removed_at: null },
               new_value: { removed_at: now },
               procedure_name: "careTeamAssignments.revoke",
+              client_ip: ctx.clientIp,
             }),
           );
         });
