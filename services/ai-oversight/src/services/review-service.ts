@@ -17,6 +17,8 @@ import {
   medications,
   patients,
   allergies,
+  allergyOverrides,
+  clinicalFlags,
   messages,
   patientObservations,
   labPanels,
@@ -625,7 +627,13 @@ export async function buildPatientContextForRules(
   // platform emits (ISO-8601 `YYYY-MM-DDTHH:MM:SS.sssZ`). Offset-form
   // and bare-date edge cases are caught by the in-memory filters below
   // which remain as a correctness backstop.
-  const [allDiagnoses, allMeds, allAllergies, recentLabRows] = await Promise.all([
+  const [
+    allDiagnoses,
+    allMeds,
+    allAllergies,
+    recentLabRows,
+    overrideRows,
+  ] = await Promise.all([
     db
       .select()
       .from(diagnoses)
@@ -693,6 +701,32 @@ export async function buildPatientContextForRules(
         ),
       )
       .orderBy(desc(labResults.created_at)),
+    // Allergy overrides (issue #233) — join to clinicalFlags so we can
+    // recover the medication the override was granted against (stored in
+    // the flag's summary) without a second round-trip. Only overrides
+    // granted at or before the event are returned; TOCTOU-safe with the
+    // rest of the snapshot. Left-joining the flag keeps overrides whose
+    // triggering flag has been garbage-collected (defensive — shouldn't
+    // happen because flags are never deleted, but the rule layer
+    // degrades gracefully if it does).
+    db
+      .select({
+        allergy_id: allergyOverrides.allergy_id,
+        override_reason: allergyOverrides.override_reason,
+        overridden_at: allergyOverrides.overridden_at,
+        flag_summary: clinicalFlags.summary,
+      })
+      .from(allergyOverrides)
+      .leftJoin(
+        clinicalFlags,
+        eq(allergyOverrides.flag_id, clinicalFlags.id),
+      )
+      .where(
+        and(
+          eq(allergyOverrides.patient_id, patientId),
+          lte(allergyOverrides.overridden_at, eventAt),
+        ),
+      ),
   ]);
 
   // Extract new symptoms from the event data
@@ -832,16 +866,58 @@ export async function buildPatientContextForRules(
     new_symptoms: newSymptoms,
     care_team_specialties: [], // Not needed for current rules, but available for future
     allergies: patientAllergies.map((a) => ({
+      id: a.id,
       allergen: a.allergen,
       rxnorm_code: a.rxnorm_code,
       severity: a.severity,
       reaction: a.reaction,
+    })),
+    resolved_overrides: overrideRows.map((o) => ({
+      allergy_id: o.allergy_id ?? null,
+      // Recover allergen + medication strings from the overridden flag's
+      // summary. We parse loosely (empty values are fine) so the fallback
+      // matcher in `checkAllergyMedication` can still match on allergen
+      // alone when the override references an allergy_id.
+      allergen: extractAllergenFromFlagSummary(o.flag_summary),
+      medication: extractMedicationFromFlagSummary(o.flag_summary),
+      override_reason: o.override_reason,
+      overridden_at: o.overridden_at,
     })),
     trigger_event: event,
     recent_labs: recentLabs.length > 0 ? recentLabs : undefined,
     event_timestamp: eventAt,
     age_years: patientAgeYears,
   };
+}
+
+/**
+ * Extract the medication name from an allergy-medication flag's summary.
+ *
+ * The canonical summary formats from `checkAllergyMedication` are:
+ *   "Medication \"<med>\" matches patient allergy to \"<allergen>\""
+ *   "Medication \"<med>\" may cross-react with allergy to \"<allergen>\" ..."
+ *
+ * Returns null on parse failure so the rule-layer suppression falls back
+ * to allergen-only matching rather than throwing.
+ */
+function extractMedicationFromFlagSummary(
+  summary: string | null | undefined,
+): string | null {
+  if (!summary) return null;
+  const m = summary.match(/^Medication "([^"]+)"/);
+  return m ? m[1]! : null;
+}
+
+/**
+ * Extract the allergen name from an allergy-medication flag's summary.
+ * See `extractMedicationFromFlagSummary` for the expected format.
+ */
+function extractAllergenFromFlagSummary(
+  summary: string | null | undefined,
+): string | null {
+  if (!summary) return null;
+  const m = summary.match(/allergy to "([^"]+)"/);
+  return m ? m[1]! : null;
 }
 
 /**

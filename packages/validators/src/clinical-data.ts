@@ -146,6 +146,61 @@ export const updateAllergySchema = z.object({
 export type CreateAllergyInput = z.infer<typeof createAllergySchema>;
 export type UpdateAllergyInput = z.infer<typeof updateAllergySchema>;
 
+// ─── Allergy overrides (issue #233) ──────────────────────────────
+//
+// Structured overrides for allergy and contraindication warnings. The
+// enum values mirror the DB CHECK constraint in migration 0037 — keep the
+// two in sync if you add a new reason.
+//
+// Reason taxonomy:
+//   mild_reaction_ok            — original reaction was mild (rash, not
+//                                  anaphylaxis); drug judged safe to use.
+//   patient_tolerated_previously — patient has taken this med class
+//                                  without reaction after the allergy was
+//                                  documented.
+//   benefit_exceeds_risk        — acute necessity (e.g. oncology where
+//                                  no alternative is clinically viable).
+//   desensitized                — patient completed a desensitization
+//                                  protocol and now tolerates the agent.
+//   misdiagnosed_allergy        — historical "allergy" was actually an
+//                                  intolerance or expected side-effect.
+//   other                       — free-form, requires detailed
+//                                  justification (the validator still
+//                                  enforces justification length).
+export const allergyOverrideReasonSchema = z.enum([
+  "mild_reaction_ok",
+  "patient_tolerated_previously",
+  "benefit_exceeds_risk",
+  "desensitized",
+  "misdiagnosed_allergy",
+  "other",
+]);
+
+/**
+ * Input schema for the `allergies.override` tRPC mutation.
+ *
+ * `clinical_justification` is REQUIRED (not optional like `dismiss_reason`)
+ * and must be a substantive free-form narrative — the trim + min(10) check
+ * rejects whitespace-only strings and fragments like "ok" or "fine".
+ * Paired with the `override_reason` enum this gives quality reviewers a
+ * stable category *and* a human-readable rationale for every override.
+ */
+export const overrideAllergyFlagSchema = z.object({
+  flag_id: z.string().uuid(),
+  allergy_id: z.string().uuid().optional(),
+  override_reason: allergyOverrideReasonSchema,
+  clinical_justification: z
+    .string()
+    .trim()
+    .min(10, "clinical justification must be at least 10 characters")
+    .max(2000),
+});
+
+export type AllergyOverrideReason = z.infer<typeof allergyOverrideReasonSchema>;
+export type OverrideAllergyFlagInput = z.infer<
+  typeof overrideAllergyFlagSchema
+>;
+
 // ─── Procedures ──────────────────────────────────────────────────
 
 export const procedureStatusSchema = z.enum(["scheduled", "in_progress", "completed", "cancelled"]);
