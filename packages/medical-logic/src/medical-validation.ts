@@ -309,21 +309,21 @@ export function validateMedicationDose(
   // or concentration data, which is out of scope here.
   if (limit && unit === "mg") {
     if (
-      limit.max_single_dose_mg !== undefined &&
-      doseAmount > limit.max_single_dose_mg
+      limit.maxSingleDoseMg !== undefined &&
+      doseAmount > limit.maxSingleDoseMg
     ) {
       errors.push(
-        `${doseAmount} mg exceeds ${limit.display_name} max single dose of ` +
-          `${limit.max_single_dose_mg} mg (${limit.source}) — verify prescription`,
+        `${doseAmount} mg exceeds ${limit.displayName} max single dose of ` +
+          `${limit.maxSingleDoseMg} mg (${limit.source}) — verify prescription`,
       );
     } else if (
-      limit.warn_single_dose_mg !== undefined &&
-      doseAmount > limit.warn_single_dose_mg
+      limit.warnSingleDoseMg !== undefined &&
+      doseAmount > limit.warnSingleDoseMg
     ) {
       warnings.push(
-        `${doseAmount} mg of ${limit.display_name} is above the typical ` +
-          `single-dose threshold (${limit.warn_single_dose_mg} mg); hard max ` +
-          `${limit.max_single_dose_mg ?? "unspecified"} mg`,
+        `${doseAmount} mg of ${limit.displayName} is above the typical ` +
+          `single-dose threshold (${limit.warnSingleDoseMg} mg); hard max ` +
+          `${limit.maxSingleDoseMg ?? "unspecified"} mg`,
       );
     }
   }

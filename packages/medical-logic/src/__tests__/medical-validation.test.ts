@@ -401,9 +401,10 @@ describe("validateMedicationDose — per-drug ceilings (#238)", () => {
     ).toHaveLength(0);
   });
 
-  it("errors on ibuprofen with no drugName falls back to generic", () => {
-    // Without drugName, 6000 mg triggers the generic mg>5000 warn, not an
-    // ibuprofen-specific error. Backward compat for legacy callers.
+  it("warns via the generic mg>5000 ceiling when drugName is omitted (backward compat)", () => {
+    // Without drugName the drug-specific branch is skipped, so 6000 mg
+    // triggers only the generic "unusually high" warning — no error and
+    // no drug-specific citation. Preserves behavior for pre-#238 callers.
     const result = validateMedicationDose(6000, "mg");
     expect(result.valid).toBe(true);
     expect(result.warnings[0]).toMatch(/unusually high/);
@@ -423,7 +424,7 @@ describe("MEDICATION_MAX_DAILY_DOSES reference data (#238)", () => {
   it("covers acetaminophen, ibuprofen, naproxen, aspirin", () => {
     for (const name of ["acetaminophen", "ibuprofen", "naproxen", "aspirin"]) {
       expect(MEDICATION_MAX_DAILY_DOSES[name]).toBeDefined();
-      expect(MEDICATION_MAX_DAILY_DOSES[name].max_daily_dose_mg).toBeGreaterThan(0);
+      expect(MEDICATION_MAX_DAILY_DOSES[name]!.maxDailyDoseMg).toBeGreaterThan(0);
     }
   });
 
@@ -431,7 +432,7 @@ describe("MEDICATION_MAX_DAILY_DOSES reference data (#238)", () => {
     for (const opioid of ["morphine", "oxycodone", "hydrocodone", "codeine", "tramadol"]) {
       const limit = MEDICATION_MAX_DAILY_DOSES[opioid];
       expect(limit).toBeDefined();
-      expect(limit.mme_factor).toBeGreaterThan(0);
+      expect(limit!.mmeFactor).toBeGreaterThan(0);
     }
   });
 
@@ -441,16 +442,16 @@ describe("MEDICATION_MAX_DAILY_DOSES reference data (#238)", () => {
     }
   });
 
-  it("every limit's max_single_dose_mg <= max_daily_dose_mg (internal consistency)", () => {
+  it("every limit's maxSingleDoseMg <= maxDailyDoseMg (internal consistency)", () => {
     for (const [drug, limit] of Object.entries(MEDICATION_MAX_DAILY_DOSES)) {
       if (
-        limit.max_single_dose_mg !== undefined &&
-        limit.max_daily_dose_mg !== undefined
+        limit.maxSingleDoseMg !== undefined &&
+        limit.maxDailyDoseMg !== undefined
       ) {
         expect(
-          limit.max_single_dose_mg,
-          `drug=${drug} single=${limit.max_single_dose_mg} daily=${limit.max_daily_dose_mg}`,
-        ).toBeLessThanOrEqual(limit.max_daily_dose_mg);
+          limit.maxSingleDoseMg,
+          `drug=${drug} single=${limit.maxSingleDoseMg} daily=${limit.maxDailyDoseMg}`,
+        ).toBeLessThanOrEqual(limit.maxDailyDoseMg);
       }
     }
   });
@@ -458,22 +459,34 @@ describe("MEDICATION_MAX_DAILY_DOSES reference data (#238)", () => {
   it("every warn threshold is below its hard-max counterpart", () => {
     for (const [drug, limit] of Object.entries(MEDICATION_MAX_DAILY_DOSES)) {
       if (
-        limit.warn_single_dose_mg !== undefined &&
-        limit.max_single_dose_mg !== undefined
+        limit.warnSingleDoseMg !== undefined &&
+        limit.maxSingleDoseMg !== undefined
       ) {
         expect(
-          limit.warn_single_dose_mg,
-          `drug=${drug} warn=${limit.warn_single_dose_mg} max=${limit.max_single_dose_mg}`,
-        ).toBeLessThanOrEqual(limit.max_single_dose_mg);
+          limit.warnSingleDoseMg,
+          `drug=${drug} warn=${limit.warnSingleDoseMg} max=${limit.maxSingleDoseMg}`,
+        ).toBeLessThanOrEqual(limit.maxSingleDoseMg);
       }
     }
   });
 
   it("getMedicationDoseLimit resolves aliases", () => {
-    expect(getMedicationDoseLimit("tylenol")?.display_name).toMatch(/Acetaminophen/);
-    expect(getMedicationDoseLimit("Advil")?.display_name).toMatch(/Ibuprofen/);
-    expect(getMedicationDoseLimit("OxyContin")?.display_name).toMatch(/Oxycodone/);
-    expect(getMedicationDoseLimit("norco")?.display_name).toMatch(/Hydrocodone/);
+    expect(getMedicationDoseLimit("tylenol")?.displayName).toMatch(/Acetaminophen/);
+    expect(getMedicationDoseLimit("Advil")?.displayName).toMatch(/Ibuprofen/);
+    expect(getMedicationDoseLimit("OxyContin")?.displayName).toMatch(/Oxycodone/);
+    expect(getMedicationDoseLimit("norco")?.displayName).toMatch(/Hydrocodone/);
+  });
+
+  it("getMedicationDoseLimit strips trailing strength/frequency tokens", () => {
+    expect(
+      getMedicationDoseLimit("Ibuprofen 600mg TID")?.displayName,
+    ).toMatch(/Ibuprofen/);
+    expect(
+      getMedicationDoseLimit("Acetaminophen 500mg PO q6h")?.displayName,
+    ).toMatch(/Acetaminophen/);
+    expect(
+      getMedicationDoseLimit("Morphine 10 mg q4h PRN")?.displayName,
+    ).toMatch(/Morphine/);
   });
 
   it("getMedicationDoseLimit returns undefined for unknown drugs", () => {
