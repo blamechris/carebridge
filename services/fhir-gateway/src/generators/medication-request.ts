@@ -18,6 +18,7 @@ import type {
   Coding,
   DosageInstruction,
 } from "../types/fhir-r4.js";
+import { toDoseQuantity } from "./ucum.js";
 
 type Medication = typeof medications.$inferSelect;
 
@@ -157,12 +158,10 @@ export function toFhirMedicationRequest(
   if (medication.dose_amount != null && medication.dose_unit) {
     dosage.doseAndRate = [
       {
-        doseQuantity: {
-          value: medication.dose_amount,
-          unit: medication.dose_unit,
-          system: "http://unitsofmeasure.org",
-          code: medication.dose_unit,
-        },
+        doseQuantity: toDoseQuantity(
+          medication.dose_amount,
+          medication.dose_unit,
+        ),
       },
     ];
     hasDosage = true;
