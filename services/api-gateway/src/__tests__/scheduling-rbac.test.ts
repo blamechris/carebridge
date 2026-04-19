@@ -266,6 +266,7 @@ describe("schedulingRbacRouter.appointments.create — patient-ownership enforce
     expect(mocks.assertCareTeamAccess).toHaveBeenCalledWith(
       PROVIDER_ID,
       PATIENT_RECORD_ID,
+      null,
     );
   });
 
@@ -430,6 +431,7 @@ describe("schedulingRbacRouter.appointments.cancel — patient-ownership enforce
     expect(mocks.assertCareTeamAccess).toHaveBeenCalledWith(
       PROVIDER_ID,
       PATIENT_RECORD_ID,
+      null,
     );
   });
 

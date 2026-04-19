@@ -126,6 +126,7 @@ describe("aiOversightRbacRouter — issue #270 IDOR regression", () => {
     expect(mocks.assertCareTeamAccess).toHaveBeenCalledWith(
       physician.id,
       patientBId,
+      null,
     );
     expect(mocks.getFlagsByPatient).not.toHaveBeenCalled();
   });
@@ -222,6 +223,7 @@ describe("aiOversightRbacRouter — issue #272 flag-mutation patient-access", ()
     expect(mocks.assertCareTeamAccess).toHaveBeenCalledWith(
       physician.id,
       patientBId,
+      null,
     );
     expect(mocks.resolveFlag).not.toHaveBeenCalled();
   });

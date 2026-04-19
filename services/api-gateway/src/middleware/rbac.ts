@@ -329,7 +329,9 @@ export async function assertPatientAccess(
   }
 
   // Clinicians (physician, specialist, nurse) must be on the care team.
-  const hasAccess = await assertCareTeamAccess(user.id, patientId);
+  // Pass request.ip so the emergency_access_used audit row written inside
+  // assertCareTeamAccess captures the originating IP (HIPAA § 164.312(b)).
+  const hasAccess = await assertCareTeamAccess(user.id, patientId, request.ip);
   if (!hasAccess) {
     await logAccessDenial(request, user.id, "care_team_not_assigned", {
       requested_patient_id: patientId,

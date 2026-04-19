@@ -345,6 +345,7 @@ describe("patientRecordsRbacRouter — care-team enforcement (diagnoses)", () =>
     expect(mocks.assertCareTeamAccess).toHaveBeenCalledWith(
       ROLE_IDS.physician,
       PATIENT_ID,
+      null,
     );
     expect(mocks.updateDiagnosis).toHaveBeenCalled();
   });
@@ -440,6 +441,7 @@ describe("patientRecordsRbacRouter — care-team enforcement (allergies)", () =>
     expect(mocks.assertCareTeamAccess).toHaveBeenCalledWith(
       ROLE_IDS.nurse,
       PATIENT_ID,
+      null,
     );
     expect(mocks.updateAllergy).toHaveBeenCalled();
   });

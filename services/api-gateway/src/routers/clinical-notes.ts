@@ -70,6 +70,7 @@ async function enforcePatientAccess(
   user: NonNullable<Context["user"]>,
   patientId: string,
   requiredScope?: ScopeToken,
+  clientIp?: string | null,
 ): Promise<void> {
   if (user.role === "admin") return;
 
@@ -136,7 +137,9 @@ async function enforcePatientAccess(
   }
 
   // Clinicians (physician, specialist, nurse) must be on the care team.
-  const hasAccess = await assertCareTeamAccess(user.id, patientId);
+  // clientIp flows through to the emergency_access_used audit row for
+  // HIPAA § 164.312(b) completeness.
+  const hasAccess = await assertCareTeamAccess(user.id, patientId, clientIp);
   if (!hasAccess) {
     throw new TRPCError({
       code: "FORBIDDEN",
@@ -172,7 +175,7 @@ export const clinicalNotesRbacRouter = t.router({
           message: "Caregivers cannot create clinical notes",
         });
       }
-      await enforcePatientAccess(ctx.user, input.patient_id);
+      await enforcePatientAccess(ctx.user, input.patient_id, undefined, ctx.clientIp);
       return noteService.createNote(input);
     }),
 
@@ -196,7 +199,7 @@ export const clinicalNotesRbacRouter = t.router({
         throw new TRPCError({ code: "NOT_FOUND", message: `Note ${input.id} not found` });
       }
 
-      await enforcePatientAccess(ctx.user, existing.patient_id);
+      await enforcePatientAccess(ctx.user, existing.patient_id, undefined, ctx.clientIp);
 
       const { id, ...rest } = input;
       return noteService.updateNote(id, rest);
@@ -231,7 +234,7 @@ export const clinicalNotesRbacRouter = t.router({
         throw new TRPCError({ code: "NOT_FOUND", message: `Note ${input.noteId} not found` });
       }
 
-      await enforcePatientAccess(ctx.user, existing.patient_id);
+      await enforcePatientAccess(ctx.user, existing.patient_id, undefined, ctx.clientIp);
 
       // Signer is always the authenticated caller — never a client-supplied
       // value. The signNoteSchema's `signed_by` field is intentionally
@@ -268,7 +271,7 @@ export const clinicalNotesRbacRouter = t.router({
         });
       }
 
-      await enforcePatientAccess(ctx.user, existing.patient_id);
+      await enforcePatientAccess(ctx.user, existing.patient_id, undefined, ctx.clientIp);
 
       let result;
       try {
@@ -329,7 +332,7 @@ export const clinicalNotesRbacRouter = t.router({
         });
       }
 
-      await enforcePatientAccess(ctx.user, existing.patient_id);
+      await enforcePatientAccess(ctx.user, existing.patient_id, undefined, ctx.clientIp);
 
       let result;
       try {
@@ -390,7 +393,7 @@ export const clinicalNotesRbacRouter = t.router({
         });
       }
 
-      await enforcePatientAccess(ctx.user, existing.patient_id, "view_notes");
+      await enforcePatientAccess(ctx.user, existing.patient_id, "view_notes", ctx.clientIp);
 
       return noteService.getVersionHistory(input.noteId);
     }),
@@ -398,7 +401,7 @@ export const clinicalNotesRbacRouter = t.router({
   getByPatient: protectedProcedure
     .input(z.object({ patientId: z.string().uuid() }))
     .query(async ({ ctx, input }) => {
-      await enforcePatientAccess(ctx.user, input.patientId, "view_notes");
+      await enforcePatientAccess(ctx.user, input.patientId, "view_notes", ctx.clientIp);
       return noteService.getNotesByPatient(input.patientId);
     }),
 
@@ -411,7 +414,7 @@ export const clinicalNotesRbacRouter = t.router({
         return null;
       }
 
-      await enforcePatientAccess(ctx.user, result.note.patient_id, "view_notes");
+      await enforcePatientAccess(ctx.user, result.note.patient_id, "view_notes", ctx.clientIp);
 
       return result;
     }),
