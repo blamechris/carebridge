@@ -42,7 +42,9 @@ describe("toFhirPractitioner (#388)", () => {
     const p = toFhirPractitioner(makeUser({ id: "prov-123" }));
     expect(p.resourceType).toBe("Practitioner");
     expect(p.id).toBe("prov-123");
-    expect(p.identifier?.[0]?.system).toBe("urn:carebridge:users");
+    expect(p.identifier?.[0]?.system).toBe(
+      "https://carebridge.dev/fhir/sid/user-id",
+    );
     expect(p.identifier?.[0]?.value).toBe("prov-123");
   });
 
