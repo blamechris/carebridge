@@ -34,6 +34,7 @@ import type {
   RuleFlag,
 } from "@carebridge/shared-types";
 import type { PatientContext } from "./cross-specialty.js";
+import { NSAID_PATTERN } from "./shared-drug-patterns.js";
 
 // ─── Drug patterns ──────────────────────────────────────────────────
 
@@ -56,16 +57,6 @@ const BENZODIAZEPINE_PATTERN =
  */
 const FIRST_GEN_ANTIHISTAMINE_PATTERN =
   /\b(diphenhydramine|benadryl|chlorpheniramine|chlor.?trimeton|hydroxyzine|atarax|vistaril|promethazine|phenergan|doxylamine|unisom|meclizine|antivert|cyproheptadine|periactin|brompheniramine|dimenhydrinate|dramamine)\b/i;
-
-/**
- * NSAIDs. Reuses the same chemical-class list as the renal/triple-whammy
- * rules in cross-specialty.ts. Duplicated here (rather than exported from
- * the cross-specialty module) to keep age-stratified rules self-contained;
- * adding an NSAID must update both lists, which is enforced by the test
- * fixture that asserts parity with the renal pattern.
- */
-const NSAID_PATTERN =
-  /\b(ibuprofen|advil|motrin|naproxen|aleve|diclofenac|voltaren|celecoxib|celebrex|indomethacin|ketorolac|toradol|meloxicam|piroxicam|nabumetone|etodolac|sulindac|ketoprofen)\b/i;
 
 /**
  * Anticholinergic drugs on the Beers avoid-in-dementia list. These worsen
@@ -91,8 +82,11 @@ const FLUOROQUINOLONE_PATTERN =
  * aspirin (acetylsalicylic acid) specifically; acetaminophen is the safer
  * antipyretic in pediatric viral illness. Low-dose aspirin for Kawasaki
  * disease is a specialty indication that should be prescribed by cardiology
- * with explicit awareness of the risk — the rule still fires for Kawasaki
- * to surface the documentation expectation.
+ * with explicit awareness of the risk. PEDI-ASPIRIN-VIRAL-001 requires
+ * concurrent viral-illness evidence to fire; Kawasaki-only (without a
+ * viral code or description) intentionally does NOT trigger the rule —
+ * aspirin is the standard of care for Kawasaki and alerting in that
+ * scenario would produce false positives.
  */
 const ASPIRIN_PATTERN =
   /\b(aspirin|asa|acetylsalicylic acid|bayer|bufferin|ecotrin|st\.?\s*joseph)\b/i;
