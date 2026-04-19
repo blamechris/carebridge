@@ -86,11 +86,16 @@ export const FREQUENCY_DOSES_PER_DAY: Record<MedFrequency, number> = {
 };
 
 /**
- * Parse a free-text frequency string into a {@link MedFrequency}.
+ * Parse a free-text frequency string into a {@link ParsedFrequency}.
  *
  * Handles: q2h / q 2 h / q2hr / q2hrs / every 2 hours / every 2h, bid, tid,
  * qid, qd / once daily / daily / once a day, weekly / q7d, monthly, stat /
- * once / one-time, prn / as needed.
+ * once / one-time, prn / as needed. Canonical every-N-hours strings in
+ * {q2,q3,q4,q6,q8,q12} map to a {@link MedFrequency}; q24 collapses to
+ * `daily`; any other integer N in [1,24] returns a structured
+ * {@link QNHoursFrequency} (`{ kind: "qNh", n }`) so `estimateDailyDose`
+ * can compute `24/n` rather than silently fail-open on renal-dosing
+ * intervals like q5h / q10h.
  *
  * Intentionally lenient on whitespace and punctuation. Returns null for
  * strings it cannot classify — callers treat that as "unknown, don't flag".
@@ -209,9 +214,14 @@ export function estimateDailyDose(
   if (typeof frequency === "string") {
     dosesPerDay = FREQUENCY_DOSES_PER_DAY[frequency];
   } else {
-    // QNHoursFrequency — compute 24/n dynamically. Parser guarantees
-    // n in [1, 24], so dosesPerDay is in [1, 24].
-    dosesPerDay = 24 / frequency.n;
+    // QNHoursFrequency — compute 24/n dynamically. The parser guarantees
+    // n in [1, 24], but QNHoursFrequency is exported and could be built
+    // by non-parser callers or deserialized from a queue payload, so
+    // defend against 0 / NaN / non-integer / out-of-range n rather than
+    // returning Infinity or NaN daily doses.
+    const n = frequency.n;
+    if (!Number.isInteger(n) || n < 1 || n > 24) return null;
+    dosesPerDay = 24 / n;
   }
 
   // PRN-only prescriptions must have an explicit cap to be boundable.

@@ -197,4 +197,17 @@ describe("estimateDailyDose with non-canonical qNh (#933)", () => {
     // q5h ≈ 4.8/day; cap of 3 overrides → 3 × 10.
     expect(estimateDailyDose(10, f, 3)).toBe(30);
   });
+
+  it("returns null for hand-constructed QNHoursFrequency with invalid n", () => {
+    // QNHoursFrequency is exported; defend against non-parser callers or
+    // deserialized payloads that bypass parseFrequencyText's range guard.
+    expect(estimateDailyDose(10, { kind: "qNh", n: 0 })).toBeNull();
+    expect(estimateDailyDose(10, { kind: "qNh", n: 25 })).toBeNull();
+    expect(estimateDailyDose(10, { kind: "qNh", n: -3 })).toBeNull();
+    expect(estimateDailyDose(10, { kind: "qNh", n: Number.NaN })).toBeNull();
+    expect(estimateDailyDose(10, { kind: "qNh", n: 4.5 })).toBeNull();
+    expect(
+      estimateDailyDose(10, { kind: "qNh", n: Number.POSITIVE_INFINITY }),
+    ).toBeNull();
+  });
 });
