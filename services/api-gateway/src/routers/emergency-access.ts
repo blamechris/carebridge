@@ -65,7 +65,7 @@ export const emergencyAccessRbacRouter = t.router({
         resource_id: input.patientId,
         patient_id: input.patientId,
         procedure_name: "emergencyAccess.request",
-        ip_address: "",
+        ip_address: ctx.clientIp ?? "",
         timestamp: now.toISOString(),
       });
 

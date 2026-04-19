@@ -187,6 +187,7 @@ function makeContext(user: User | null): Context {
     user,
     sessionId: "session-1",
     requestId: "req-1",
+    clientIp: null,
   };
 }
 
@@ -265,6 +266,7 @@ describe("schedulingRbacRouter.appointments.create — patient-ownership enforce
     expect(mocks.assertCareTeamAccess).toHaveBeenCalledWith(
       PROVIDER_ID,
       PATIENT_RECORD_ID,
+      null,
     );
   });
 
@@ -429,6 +431,7 @@ describe("schedulingRbacRouter.appointments.cancel — patient-ownership enforce
     expect(mocks.assertCareTeamAccess).toHaveBeenCalledWith(
       PROVIDER_ID,
       PATIENT_RECORD_ID,
+      null,
     );
   });
 
