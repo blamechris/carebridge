@@ -1055,6 +1055,177 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
     },
     notify_specialties: ["nephrology", "cardiology"],
   },
+
+  // ── #263: Additional high-risk cross-specialty patterns ─────────
+
+  {
+    // CROSS-STEROID-PCP-001 — Chronic high-dose corticosteroid therapy
+    // without Pneumocystis jirovecii prophylaxis. Clinical consensus
+    // (IDSA, ATS) recommends PCP prophylaxis for prednisone ≥ 20 mg/day
+    // for ≥ 4 weeks; without it, PCP mortality in a first episode is
+    // 20–40%. This rule fires when a patient's active medication list
+    // contains a chronic systemic corticosteroid but no prophylaxis
+    // agent (TMP-SMX, dapsone, atovaquone, or aerosolised pentamidine).
+    //
+    // Fail-open posture: we use `active_medications_detail` when
+    // available (issue #235) so the rule can check dose_amount against
+    // the 20 mg/day threshold; without dose detail we fall back to a
+    // weaker name-only match and note the uncertainty in the rationale.
+    id: "CROSS-STEROID-PCP-001",
+    name: "Chronic high-dose corticosteroid without PCP prophylaxis",
+    check: (ctx: PatientContext) => {
+      const CORTICOSTEROID_PATTERN =
+        /prednisone|prednisolone|methylprednisolone|medrol|solu-medrol|dexamethasone|decadron|hydrocortisone|solu-cortef|betamethasone|triamcinolone/i;
+      const PCP_PROPHYLAXIS_PATTERN =
+        /trimethoprim.?sulfamethoxazole|bactrim|septra|tmp.?smx|dapsone|atovaquone|mepron|pentamidine|nebupent/i;
+
+      const steroidMed = ctx.active_medications.find((m) =>
+        CORTICOSTEROID_PATTERN.test(m),
+      );
+      if (!steroidMed) return false;
+
+      // If structured dose detail is available (issue #235), require
+      // prednisone-equivalent >= 20 mg/day to fire. Without detail, we
+      // permissively match name only to avoid missing high-risk cases.
+      if (ctx.active_medications_detail) {
+        const detail = ctx.active_medications_detail.find(
+          (m) => CORTICOSTEROID_PATTERN.test(m.name),
+        );
+        // Rough prednisone-equivalent conversion. Methylprednisolone × 1.25,
+        // dexamethasone × 6.67, hydrocortisone × 0.25. Kept conservative so
+        // borderline low-dose tapers don't trip the prophylaxis warning.
+        if (detail && detail.dose_amount != null && detail.dose_unit?.toLowerCase() === "mg") {
+          let prednisoneEq = detail.dose_amount;
+          if (/methylprednisolone|medrol/i.test(detail.name)) prednisoneEq *= 1.25;
+          else if (/dexamethasone|decadron/i.test(detail.name)) prednisoneEq *= 6.67;
+          else if (/hydrocortisone|solu-cortef/i.test(detail.name)) prednisoneEq *= 0.25;
+          if (prednisoneEq < 20) return false;
+        }
+      }
+
+      const onProphylaxis = ctx.active_medications.some((m) =>
+        PCP_PROPHYLAXIS_PATTERN.test(m),
+      );
+      return !onProphylaxis;
+    },
+    severity: "warning" as const,
+    category: "cross-specialty" as const,
+    summary:
+      "Patient on chronic corticosteroid without documented PCP (Pneumocystis jirovecii) prophylaxis",
+    rationale:
+      "Sustained corticosteroid exposure at prednisone-equivalent doses >= 20 mg/day for >= 4 weeks " +
+      "causes CD4+ T-cell-mediated immunosuppression that raises PCP risk 20-fold over baseline. " +
+      "First-episode PCP in a previously healthy steroid-exposed patient carries 20–40% mortality; " +
+      "first-line prophylaxis (TMP-SMX 80/400 mg daily or 160/800 mg MWF) reduces incidence by ~85%.",
+    suggested_action:
+      "Confirm steroid duration and daily dose. If prednisone-equivalent >= 20 mg/day for >= 4 weeks is " +
+      "anticipated, start PCP prophylaxis: TMP-SMX single-strength daily is first-line. Alternatives for " +
+      "sulfa-intolerant patients include dapsone 100 mg daily (check G6PD first), atovaquone 1500 mg daily " +
+      "with food, or aerosolised pentamidine 300 mg monthly.",
+    notify_specialties: ["infectious-disease", "pharmacy"],
+  },
+
+  {
+    // CROSS-ANTICOAG-NSAID-GIBLEED-001 — Anticoagulant + NSAID in a
+    // patient with a documented prior GI bleed is the highest-risk
+    // combination for recurrent upper-GI haemorrhage (HR 5–10 vs.
+    // anticoagulant alone). Aspirin counts as an NSAID here despite
+    // common cardiac-prophylaxis dosing — low-dose aspirin still raises
+    // GI bleed risk in warfarin/DOAC-treated patients.
+    id: "CROSS-ANTICOAG-NSAID-GIBLEED-001",
+    name: "Anticoagulant + NSAID with prior GI bleed history",
+    check: (ctx: PatientContext) => {
+      const GI_BLEED_HISTORY_PATTERN =
+        /gi bleed|gastrointestinal bleed|peptic ulcer|hematemesis|melena|upper gi|lower gi|diverticular bleed|angiodysplasia|variceal/i;
+      // Deliberately include aspirin here (not part of NSAID_PATTERN because
+      // other NSAID rules care about prostaglandin / renal-profile risks
+      // where aspirin kinetics differ). For GI-bleed risk in
+      // anticoagulated patients, low-dose aspirin still carries the
+      // synergistic bleed-risk of an NSAID.
+      const NSAID_OR_ASPIRIN =
+        /aspirin|bayer|ecotrin|bufferin|acetylsalicylic|ibuprofen|advil|motrin|naproxen|aleve|diclofenac|voltaren|celecoxib|celebrex|indomethacin|ketorolac|toradol|meloxicam|piroxicam|nabumetone|etodolac|sulindac|ketoprofen/i;
+      const onAnticoag = ctx.active_medications.some((m) =>
+        ANTICOAGULANT_PATTERN.test(m),
+      );
+      if (!onAnticoag) return false;
+      const onNSAID = ctx.active_medications.some((m) =>
+        NSAID_OR_ASPIRIN.test(m),
+      );
+      if (!onNSAID) return false;
+      const hasGIBleedHistory = ctx.active_diagnoses.some((d) =>
+        GI_BLEED_HISTORY_PATTERN.test(d),
+      );
+      return hasGIBleedHistory;
+    },
+    severity: "critical" as const,
+    category: "cross-specialty" as const,
+    summary:
+      "Anticoagulant + NSAID in a patient with prior GI bleed — very high rebleed risk",
+    rationale:
+      "The combination of systemic anticoagulation and NSAID / aspirin doubles the absolute risk of " +
+      "upper-GI bleeding compared to either agent alone, and in a patient with a documented prior GI " +
+      "bleed the annual recurrence risk approaches 10–15%. NSAIDs impair mucosal prostaglandin " +
+      "synthesis while anticoagulants prevent haemostasis once bleeding begins, so the mechanisms are " +
+      "synergistic rather than additive.",
+    suggested_action:
+      "Discontinue the NSAID / aspirin wherever possible. If continued NSAID therapy is clinically " +
+      "required (rheumatological indication without alternatives), add a proton-pump inhibitor (e.g. " +
+      "omeprazole 20 mg daily), confirm H. pylori status and treat if positive, and reassess the " +
+      "anticoagulation indication. For cardiovascular secondary prevention, consider whether clopidogrel " +
+      "alone (no NSAID) or warfarin alone (no antiplatelet) achieves the target risk reduction.",
+    notify_specialties: ["gastroenterology", "pharmacy", "cardiology"],
+  },
+
+  {
+    // CROSS-IMMUNOSUPPRESSED-FEVER-001 — Patient on systemic
+    // immunosuppression presenting with a febrile symptom. Because the
+    // usual inflammatory response is blunted, the threshold for a septic
+    // workup is far lower than in immunocompetent patients — febrile
+    // neutropenia is an oncology emergency, and a TNF-α-treated patient
+    // with a low-grade fever may be harbouring an atypical infection
+    // (TB reactivation, invasive fungal, disseminated herpes).
+    //
+    // Overlap note: CHEMO-NEUTRO-FEVER-001 and CHEMO-FEVER-001 cover the
+    // chemotherapy case specifically. This rule covers the *other*
+    // immunosuppressants (biologics, DMARDs, calcineurin inhibitors,
+    // mycophenolate, high-dose steroid) that those rules don't reach.
+    id: "CROSS-IMMUNOSUPPRESSED-FEVER-001",
+    name: "Immunosuppressant + fever symptom (non-chemo)",
+    check: (ctx: PatientContext) => {
+      const IMMUNOSUPPRESSANT_PATTERN =
+        /methotrexate|trexall|otrexup|azathioprine|imuran|mycophenolate|cellcept|myfortic|cyclosporine|sandimmune|neoral|tacrolimus|prograf|sirolimus|rapamune|everolimus|afinitor|adalimumab|humira|infliximab|remicade|etanercept|enbrel|certolizumab|cimzia|golimumab|simponi|rituximab|rituxan|tocilizumab|actemra|abatacept|orencia|ustekinumab|stelara|secukinumab|cosentyx|vedolizumab|entyvio|natalizumab|tysabri/i;
+      const onImmunosuppressant = ctx.active_medications.some((m) =>
+        IMMUNOSUPPRESSANT_PATTERN.test(m),
+      );
+      if (!onImmunosuppressant) return false;
+      // Only treat non-chemo immunosuppression here. The CHEMO-* rules
+      // already cover chemo-induced neutropenic fever with more specific
+      // workup guidance.
+      const onChemo = ctx.active_medications.some((m) => CHEMO_MED_PATTERN.test(m));
+      if (onChemo) return false;
+      return ctx.new_symptoms.some((s) => FEVER_SYMPTOM_PATTERN.test(s));
+    },
+    severity: "warning" as const,
+    category: "cross-specialty" as const,
+    summary:
+      "Patient on systemic immunosuppressant presenting with fever — atypical infection workup indicated",
+    rationale:
+      "Biologics (TNF-α blockers, IL-6 inhibitors, B-cell depleters), calcineurin inhibitors, " +
+      "mycophenolate, and high-dose DMARDs blunt the usual febrile response to infection. A fever " +
+      "in this population can represent latent TB reactivation, invasive fungal disease (aspergillus, " +
+      "cryptococcus, histoplasmosis in endemic regions), opportunistic CMV / HSV, or an early " +
+      "bacterial bloodstream infection that would be afebrile in a healthy host. The threshold for " +
+      "cultures, chest imaging, and empirical antimicrobials is therefore much lower than in " +
+      "immunocompetent patients.",
+    suggested_action:
+      "Send blood cultures × 2, urinalysis with culture, CBC with differential, CRP / procalcitonin, " +
+      "LDH, and lactate. Image the chest (CXR, consider CT if a biologic is involved — atypical " +
+      "presentations are common). In patients on TNF-α blockers, review TB screening history and " +
+      "consider interferon-gamma release assay. Hold the immunosuppressant until a source is " +
+      "identified unless actively treating a rheumatological flare. Consult infectious disease for " +
+      "any patient who remains febrile beyond 24 h or appears unwell.",
+    notify_specialties: ["infectious-disease", "rheumatology"],
+  },
 ];
 
 export function checkCrossSpecialtyPatterns(

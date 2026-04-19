@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 
 // No external dependencies to mock for cross-specialty rules —
 // they are pure functions that only need PatientContext.
@@ -7,6 +7,198 @@ import {
   checkCrossSpecialtyPatterns,
   type PatientContext,
 } from "../rules/cross-specialty.js";
+
+// ── Helpers shared across the #263 additions ────────────────────
+function emptyCtx(overrides: Partial<PatientContext> = {}): PatientContext {
+  return {
+    active_diagnoses: [],
+    active_diagnosis_codes: [],
+    active_medications: [],
+    new_symptoms: [],
+    care_team_specialties: [],
+    ...overrides,
+  };
+}
+
+describe("CROSS-STEROID-PCP-001 — chronic corticosteroid without PCP prophylaxis (#263)", () => {
+  it("fires on prednisone with no prophylaxis listed", () => {
+    const ctx = emptyCtx({ active_medications: ["Prednisone 40mg daily"] });
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "CROSS-STEROID-PCP-001",
+    );
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("warning");
+  });
+
+  it("does NOT fire when TMP-SMX prophylaxis is on the med list", () => {
+    const ctx = emptyCtx({
+      active_medications: ["Prednisone 40mg daily", "TMP-SMX 80/400 daily"],
+    });
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "CROSS-STEROID-PCP-001",
+    );
+    expect(flag).toBeUndefined();
+  });
+
+  it("does NOT fire when atovaquone prophylaxis is on the med list", () => {
+    const ctx = emptyCtx({
+      active_medications: ["Methylprednisolone 32mg daily", "Atovaquone 1500mg daily"],
+    });
+    expect(
+      checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-STEROID-PCP-001",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("respects dose detail when provided: 10 mg prednisone does not fire", () => {
+    // Structured dose detail (#235) below the 20 mg/day threshold — rule
+    // should NOT fire. Without detail the name-only match would trip.
+    const ctx = emptyCtx({
+      active_medications: ["Prednisone 10mg daily"],
+      active_medications_detail: [
+        {
+          id: "m1",
+          name: "Prednisone",
+          dose_amount: 10,
+          dose_unit: "mg",
+          route: "oral",
+          frequency: "daily",
+          rxnorm_code: null,
+        },
+      ],
+    });
+    expect(
+      checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-STEROID-PCP-001",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("respects dose detail: dexamethasone 4mg counts as ~27mg prednisone-equivalent → fires", () => {
+    // 4 mg dexamethasone × 6.67 ≈ 26.7 mg prednisone-eq, above threshold.
+    const ctx = emptyCtx({
+      active_medications: ["Dexamethasone 4mg daily"],
+      active_medications_detail: [
+        {
+          id: "m1",
+          name: "Dexamethasone",
+          dose_amount: 4,
+          dose_unit: "mg",
+          route: "oral",
+          frequency: "daily",
+          rxnorm_code: null,
+        },
+      ],
+    });
+    expect(
+      checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-STEROID-PCP-001",
+      ),
+    ).toBeDefined();
+  });
+});
+
+describe("CROSS-ANTICOAG-NSAID-GIBLEED-001 — triple bleed risk (#263)", () => {
+  it("fires critical when anticoag + NSAID + GI bleed history all present", () => {
+    const ctx = emptyCtx({
+      active_diagnoses: ["History of peptic ulcer with GI bleed, 2022"],
+      active_medications: ["Warfarin 5mg daily", "Ibuprofen 400mg PRN"],
+    });
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "CROSS-ANTICOAG-NSAID-GIBLEED-001",
+    );
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("critical");
+  });
+
+  it("does NOT fire without GI bleed history", () => {
+    const ctx = emptyCtx({
+      active_diagnoses: ["Atrial fibrillation"],
+      active_medications: ["Warfarin 5mg daily", "Ibuprofen 400mg PRN"],
+    });
+    expect(
+      checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-ANTICOAG-NSAID-GIBLEED-001",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("does NOT fire without an NSAID", () => {
+    const ctx = emptyCtx({
+      active_diagnoses: ["Prior GI bleed, 2021"],
+      active_medications: ["Apixaban 5mg BID"],
+    });
+    expect(
+      checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-ANTICOAG-NSAID-GIBLEED-001",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("aspirin counts as NSAID for this rule", () => {
+    const ctx = emptyCtx({
+      active_diagnoses: ["Upper GI bleed — resolved"],
+      active_medications: ["Apixaban 5mg BID", "Aspirin 81mg daily"],
+    });
+    expect(
+      checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-ANTICOAG-NSAID-GIBLEED-001",
+      ),
+    ).toBeDefined();
+  });
+});
+
+describe("CROSS-IMMUNOSUPPRESSED-FEVER-001 — non-chemo immunosuppression + fever (#263)", () => {
+  it("fires on TNF-α blocker + fever symptom", () => {
+    const ctx = emptyCtx({
+      active_medications: ["Adalimumab 40mg q2weeks"],
+      new_symptoms: ["fever 101.5"],
+    });
+    const flag = checkCrossSpecialtyPatterns(ctx).find(
+      (f) => f.rule_id === "CROSS-IMMUNOSUPPRESSED-FEVER-001",
+    );
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("warning");
+  });
+
+  it("fires on mycophenolate + febrile symptom", () => {
+    const ctx = emptyCtx({
+      active_medications: ["Mycophenolate 500mg BID", "Tacrolimus 1mg BID"],
+      new_symptoms: ["chills and low-grade fever"],
+    });
+    expect(
+      checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-IMMUNOSUPPRESSED-FEVER-001",
+      ),
+    ).toBeDefined();
+  });
+
+  it("does NOT fire when on chemo (CHEMO-FEVER rules cover that)", () => {
+    const ctx = emptyCtx({
+      active_diagnoses: ["Breast cancer"],
+      active_medications: ["Mycophenolate 500mg BID", "Cisplatin"],
+      new_symptoms: ["fever"],
+    });
+    expect(
+      checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-IMMUNOSUPPRESSED-FEVER-001",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("does NOT fire on immunosuppressant alone without fever", () => {
+    const ctx = emptyCtx({
+      active_medications: ["Adalimumab 40mg q2weeks"],
+      new_symptoms: ["joint pain"],
+    });
+    expect(
+      checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-IMMUNOSUPPRESSED-FEVER-001",
+      ),
+    ).toBeUndefined();
+  });
+});
 
 describe("CHEMO-FEVER-001 / CHEMO-NEUTRO-FEVER-001 — ANC-aware rules", () => {
   const baseCtx = (overrides: Partial<PatientContext> = {}): PatientContext => ({
