@@ -11,6 +11,8 @@ import {
   medications,
   diagnoses,
   allergies,
+  encounters,
+  procedures,
 } from "@carebridge/db-schema";
 import { eq, and, sql } from "drizzle-orm";
 import { createLogger } from "@carebridge/logger";
@@ -23,6 +25,8 @@ import {
   toFhirCondition,
   toFhirMedicationStatement,
   toFhirAllergyIntolerance,
+  toFhirEncounter,
+  toFhirProcedure,
 } from "./generators/index.js";
 import { fhirBundleSchema } from "./schemas/bundle.js";
 import { sanitizeFreeText } from "@carebridge/phi-sanitizer";
@@ -334,12 +338,16 @@ export const fhirGatewayRouter = t.router({
           patientMedications,
           patientDiagnoses,
           patientAllergies,
+          patientEncounters,
+          patientProcedures,
         ] = await Promise.all([
           db.select().from(vitals).where(eq(vitals.patient_id, patientId)),
           db.select().from(labPanels).where(eq(labPanels.patient_id, patientId)),
           db.select().from(medications).where(eq(medications.patient_id, patientId)),
           db.select().from(diagnoses).where(eq(diagnoses.patient_id, patientId)),
           db.select().from(allergies).where(eq(allergies.patient_id, patientId)),
+          db.select().from(encounters).where(eq(encounters.patient_id, patientId)),
+          db.select().from(procedures).where(eq(procedures.patient_id, patientId)),
         ]);
 
         // Fetch lab results for all panels
@@ -395,6 +403,20 @@ export const fhirGatewayRouter = t.router({
           entry.push({
             fullUrl: `urn:uuid:${allergy.id}`,
             resource: toFhirAllergyIntolerance(allergy, patientId),
+          });
+        }
+
+        for (const encounter of patientEncounters) {
+          entry.push({
+            fullUrl: `urn:uuid:${encounter.id}`,
+            resource: toFhirEncounter(encounter, patientId),
+          });
+        }
+
+        for (const procedure of patientProcedures) {
+          entry.push({
+            fullUrl: `urn:uuid:${procedure.id}`,
+            resource: toFhirProcedure(procedure, patientId),
           });
         }
 
