@@ -1784,3 +1784,266 @@ describe("CROSS-THIAZIDE-HYPOK-001 — Thiazide diuretic + hypokalemia (electrol
     expect(qt).toBeDefined();
   });
 });
+
+// ─── CROSS-NSAID-CHF-001 — NSAID + congestive heart failure (#237) ───
+
+describe("CROSS-NSAID-CHF-001 — NSAID in heart failure", () => {
+  const chfCtx = (
+    meds: string[],
+    diagnoses: string[] = ["Congestive heart failure"],
+    codes: string[] = ["I50.9"],
+  ): PatientContext => ({
+    active_diagnoses: diagnoses,
+    active_diagnosis_codes: codes,
+    active_medications: meds,
+    new_symptoms: [],
+    care_team_specialties: ["cardiology"],
+  });
+
+  it("fires (warning) for NSAID in patient with CHF by ICD-10", () => {
+    const flags = checkCrossSpecialtyPatterns(chfCtx(["Ibuprofen 400mg TID"]));
+    const flag = flags.find((f) => f.rule_id === "CROSS-NSAID-CHF-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("warning");
+    expect(flag!.category).toBe("cross-specialty");
+    expect(flag!.notify_specialties).toContain("cardiology");
+    expect(flag!.suggested_action).toMatch(/acetaminophen/i);
+  });
+
+  it("fires (warning) for NSAID in patient with CHF by description alone", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      chfCtx(["Naproxen 500mg BID"], ["Heart failure, unspecified"], [""]),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-NSAID-CHF-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("warning");
+  });
+
+  it("fires for various NSAID brand names", () => {
+    const meds = [
+      "Advil 200mg",
+      "Motrin 600mg",
+      "Aleve 220mg",
+      "Voltaren gel",
+      "Celebrex 200mg",
+      "Ketorolac IV",
+      "Meloxicam 15mg",
+    ];
+    for (const med of meds) {
+      const flags = checkCrossSpecialtyPatterns(chfCtx([med]));
+      const flag = flags.find((f) => f.rule_id === "CROSS-NSAID-CHF-001");
+      expect(flag, `expected fire for ${med}`).toBeDefined();
+    }
+  });
+
+  it("escalates to critical when CHF description is NYHA class III or IV", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      chfCtx(
+        ["Ibuprofen 400mg"],
+        ["Heart failure, NYHA class III, decompensated"],
+        ["I50.9"],
+      ),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-NSAID-CHF-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("critical");
+    expect(flag!.suggested_action).toMatch(/Advanced \/ decompensated HF/i);
+  });
+
+  it("escalates to critical when diagnosis mentions EF <30%", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      chfCtx(
+        ["Ibuprofen 400mg"],
+        ["Systolic heart failure with ejection fraction of 22%"],
+        ["I50.22"],
+      ),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-NSAID-CHF-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("critical");
+  });
+
+  it("does NOT fire without an NSAID", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      chfCtx(["Lisinopril 10mg", "Metoprolol 50mg"]),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-NSAID-CHF-001");
+    expect(flag).toBeUndefined();
+  });
+
+  it("does NOT fire without a CHF diagnosis", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      chfCtx(["Ibuprofen 400mg"], ["Osteoarthritis"], ["M19.90"]),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-NSAID-CHF-001");
+    expect(flag).toBeUndefined();
+  });
+
+  it("does NOT fire for aspirin — not in NSAID_PATTERN match set", () => {
+    // Low-dose aspirin is cardioprotective and not an NSAID per this rule's
+    // pattern; should not misfire as a CHF contraindication.
+    const flags = checkCrossSpecialtyPatterns(
+      chfCtx(["Aspirin 81mg daily"]),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-NSAID-CHF-001");
+    expect(flag).toBeUndefined();
+  });
+
+  it("matches CHF via I11.0 hypertensive heart disease code", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      chfCtx(
+        ["Ibuprofen 400mg"],
+        ["Hypertensive heart disease with heart failure"],
+        ["I11.0"],
+      ),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-NSAID-CHF-001");
+    expect(flag).toBeDefined();
+  });
+
+  it("boundary: warning (not critical) for compensated CHF without severity cues", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      chfCtx(
+        ["Ibuprofen 400mg"],
+        ["Chronic systolic heart failure, stable"],
+        ["I50.22"],
+      ),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-NSAID-CHF-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("warning");
+  });
+});
+
+// ─── CROSS-STATIN-HEPATIC-001 — statin + severe hepatic impairment (#237) ──
+
+describe("CROSS-STATIN-HEPATIC-001 — statin in severe hepatic impairment", () => {
+  const hepCtx = (
+    meds: string[],
+    diagnoses: string[],
+    codes: string[] = [],
+  ): PatientContext => ({
+    active_diagnoses: diagnoses,
+    active_diagnosis_codes: codes,
+    active_medications: meds,
+    new_symptoms: [],
+    care_team_specialties: ["hepatology"],
+  });
+
+  it("fires for any-dose statin + hepatic failure (ICD-10 K72)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      hepCtx(["Atorvastatin 10mg"], ["Acute hepatic failure"], ["K72.00"]),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-STATIN-HEPATIC-001");
+    expect(flag).toBeDefined();
+    expect(flag!.severity).toBe("warning");
+    expect(flag!.category).toBe("cross-specialty");
+    expect(flag!.notify_specialties).toContain("hepatology");
+  });
+
+  it("fires for statin + decompensated cirrhosis by description", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      hepCtx(
+        ["Rosuvastatin 5mg"],
+        ["Decompensated cirrhosis with ascites"],
+        [""],
+      ),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-STATIN-HEPATIC-001");
+    expect(flag).toBeDefined();
+  });
+
+  it("fires for statin + Child-Pugh C cirrhosis description", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      hepCtx(["Simvastatin 20mg"], ["Child-Pugh C cirrhosis"], [""]),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-STATIN-HEPATIC-001");
+    expect(flag).toBeDefined();
+  });
+
+  it("fires for statin + AST >3x ULN description (transaminase elevation)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      hepCtx(
+        ["Pravastatin 40mg"],
+        ["Drug-induced hepatitis, AST >3x ULN"],
+        [""],
+      ),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-STATIN-HEPATIC-001");
+    expect(flag).toBeDefined();
+  });
+
+  it("fires for various statin names (low dose)", () => {
+    const statins = [
+      "Lipitor 10mg",
+      "Crestor 5mg",
+      "Zocor 10mg",
+      "Pravachol 20mg",
+      "Lovastatin 20mg",
+      "Pitavastatin 1mg",
+    ];
+    for (const statin of statins) {
+      const flags = checkCrossSpecialtyPatterns(
+        hepCtx([statin], ["Acute liver failure"], ["K72.00"]),
+      );
+      const flag = flags.find((f) => f.rule_id === "CROSS-STATIN-HEPATIC-001");
+      expect(flag, `expected fire for ${statin}`).toBeDefined();
+    }
+  });
+
+  it("does NOT fire for statin + mild chronic hepatitis (no severe cues)", () => {
+    // Baseline chronic hepatitis without explicit severe descriptors — a
+    // stable chronic-hepatitis-B carrier on a low-dose statin should not
+    // trip this particular rule (a broader HEPATIC-HEPATOTOXIN-001 would
+    // catch high-dose statins in that scenario; see cross-specialty.ts).
+    const flags = checkCrossSpecialtyPatterns(
+      hepCtx(["Atorvastatin 10mg"], ["Chronic hepatitis B"], ["B18.1"]),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-STATIN-HEPATIC-001");
+    expect(flag).toBeUndefined();
+  });
+
+  it("does NOT fire for statin + healthy patient (no hepatic diagnosis)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      hepCtx(["Atorvastatin 80mg"], ["Hyperlipidemia"], ["E78.5"]),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-STATIN-HEPATIC-001");
+    expect(flag).toBeUndefined();
+  });
+
+  it("does NOT fire without a statin (severe hepatic disease alone is not enough)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      hepCtx(
+        ["Lactulose", "Rifaximin"],
+        ["Decompensated cirrhosis"],
+        [""],
+      ),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-STATIN-HEPATIC-001");
+    expect(flag).toBeUndefined();
+  });
+
+  it("suggested action names non-hepatic alternatives (bile acid sequestrant, ezetimibe)", () => {
+    const flags = checkCrossSpecialtyPatterns(
+      hepCtx(["Atorvastatin 10mg"], ["Acute hepatic failure"], ["K72.00"]),
+    );
+    const flag = flags.find((f) => f.rule_id === "CROSS-STATIN-HEPATIC-001");
+    expect(flag).toBeDefined();
+    expect(flag!.suggested_action).toMatch(/ezetimibe|bile.?acid/i);
+  });
+
+  it("fires alongside HEPATIC-HEPATOTOXIN-001 for high-dose statin + severe hepatic disease", () => {
+    // Both rules have legitimate, non-duplicative messaging: hepatotoxin rule
+    // explains the broad hepatotoxin category; statin-hepatic rule gives the
+    // any-dose-severe specialised guidance. Reviewer sees both.
+    const flags = checkCrossSpecialtyPatterns(
+      hepCtx(["Atorvastatin 80mg"], ["Acute hepatic failure"], ["K72.00"]),
+    );
+    expect(
+      flags.find((f) => f.rule_id === "CROSS-STATIN-HEPATIC-001"),
+    ).toBeDefined();
+    expect(
+      flags.find((f) => f.rule_id === "HEPATIC-HEPATOTOXIN-001"),
+    ).toBeDefined();
+  });
+});
