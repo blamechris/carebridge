@@ -429,8 +429,13 @@ export const fhirGatewayRouter = t.router({
         // recorded/historical view; both formats are emitted so bundles
         // round-trip cleanly in either direction.
         for (const med of patientMedications) {
+          // urn:uuid: values must be real UUIDs per RFC 4122; the earlier
+          // `urn:uuid:request-${id}` form is rejected by strict FHIR
+          // consumers. Generate a fresh UUID for the bundle-entry fullUrl;
+          // `resource.id` keeps `med.id` so cross-resource references
+          // (MedicationRequest.subject → Patient/{patientId}) stay stable.
           entry.push({
-            fullUrl: `urn:uuid:request-${med.id}`,
+            fullUrl: `urn:uuid:${crypto.randomUUID()}`,
             resource: toFhirMedicationRequest(med, patientId),
           });
         }

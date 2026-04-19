@@ -48,6 +48,12 @@ describe("toFhirMedicationRequest (#388)", () => {
       ["draft", "draft"],
       ["entered-in-error", "entered-in-error"],
       ["xyz", "unknown"],
+      // Case-insensitive — prior version mapped any non-lowercase value
+      // to "unknown", hiding legitimate active prescriptions in the FHIR
+      // export when the DB carried a mixed-case status.
+      ["ACTIVE", "active"],
+      ["On-Hold", "on-hold"],
+      ["COMPLETED", "completed"],
     ];
     for (const [input, expected] of cases) {
       it(`maps status '${input}' → '${expected}'`, () => {

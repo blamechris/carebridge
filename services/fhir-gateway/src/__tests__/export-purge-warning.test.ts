@@ -19,6 +19,7 @@ const diagnosesTable = { __name: "diagnoses" };
 const allergiesTable = { __name: "allergies" };
 const encountersTable = { __name: "encounters" };
 const proceduresTable = { __name: "procedures" };
+const usersTable = { __name: "users" };
 const fhirResourcesTable = { __name: "fhir_resources" };
 const auditLogTable = { __name: "audit_log" };
 
@@ -61,11 +62,13 @@ vi.mock("@carebridge/db-schema", () => ({
   allergies: allergiesTable,
   encounters: encountersTable,
   procedures: proceduresTable,
+  users: usersTable,
 }));
 
 vi.mock("drizzle-orm", () => ({
   eq: (_col: unknown, _val: unknown) => ({ __eq: true }),
   and: (..._args: unknown[]) => ({ __and: true }),
+  inArray: (_col: unknown, _values: unknown[]) => ({ __inArray: true }),
   sql: Object.assign(
     (_strings: TemplateStringsArray, ..._values: unknown[]) => ({
       __sql: true,
@@ -83,6 +86,10 @@ vi.mock("../generators/index.js", () => ({
   toFhirAllergyIntolerance: () => ({ resourceType: "AllergyIntolerance" }),
   toFhirEncounter: () => ({ resourceType: "Encounter" }),
   toFhirProcedure: () => ({ resourceType: "Procedure" }),
+  toFhirPractitioner: () => ({ resourceType: "Practitioner" }),
+  toFhirMedicationRequest: () => ({ resourceType: "MedicationRequest" }),
+  isClinicalRole: (role: string) =>
+    ["physician", "specialist", "nurse"].includes(role),
 }));
 
 vi.mock("@carebridge/phi-sanitizer", () => ({

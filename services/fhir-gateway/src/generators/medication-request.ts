@@ -46,7 +46,7 @@ const ROUTE_SNOMED: Record<string, { code: string; display: string }> = {
  *   stopped | draft | unknown
  */
 function mapRequestStatus(status: string): FhirMedicationRequest["status"] {
-  switch (status) {
+  switch (status.toLowerCase()) {
     case "active":
       return "active";
     case "held":
