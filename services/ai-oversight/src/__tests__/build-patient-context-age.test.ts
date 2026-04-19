@@ -14,6 +14,7 @@ const diagnosesSelect = vi.fn();
 const medicationsSelect = vi.fn();
 const allergiesSelect = vi.fn();
 const labsSelect = vi.fn();
+const overridesSelect = vi.fn();
 const selectMock = vi.fn();
 const patientFindFirst = vi.fn();
 
@@ -39,6 +40,20 @@ vi.mock("@carebridge/db-schema", () => ({
     created_at: "created_at",
     verification_status: "verification_status",
   },
+  // #233 — review-service.ts now queries allergy_overrides left-joined with
+  // clinical_flags. Both table shims are required at mock-load time so the
+  // Drizzle query builder doesn't trip over `undefined` column references.
+  allergyOverrides: {
+    patient_id: "patient_id",
+    allergy_id: "allergy_id",
+    flag_id: "flag_id",
+    override_reason: "override_reason",
+    overridden_at: "overridden_at",
+  },
+  clinicalFlags: {
+    id: "id",
+    summary: "summary",
+  },
   patients: { id: "patients.id" },
   labPanels: { id: "id", patient_id: "patient_id" },
   labResults: {
@@ -61,12 +76,18 @@ function primeSelectMocks(): void {
   medicationsSelect.mockReset();
   allergiesSelect.mockReset();
   labsSelect.mockReset();
+  overridesSelect.mockReset();
   patientFindFirst.mockReset();
 
   diagnosesSelect.mockResolvedValue([]);
   medicationsSelect.mockResolvedValue([]);
   allergiesSelect.mockResolvedValue([]);
   labsSelect.mockResolvedValue([]);
+  // Default: no overrides. Age enrichment tests don't exercise the
+  // allergy-override suppression branch (#233), but the 5th select call
+  // still fires inside the Promise.all so it must resolve to something
+  // array-shaped to avoid a shape error in the consuming code.
+  overridesSelect.mockResolvedValue([]);
 
   selectMock
     .mockImplementationOnce(() => ({
@@ -83,6 +104,12 @@ function primeSelectMocks(): void {
         innerJoin: () => ({
           where: () => ({ orderBy: () => labsSelect() }),
         }),
+      }),
+    }))
+    // 5th: allergy_overrides left-joined with clinical_flags (#233).
+    .mockImplementationOnce(() => ({
+      from: () => ({
+        leftJoin: () => ({ where: () => overridesSelect() }),
       }),
     }));
 }

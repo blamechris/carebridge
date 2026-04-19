@@ -17,6 +17,7 @@ vi.mock("@carebridge/db-schema", () => {
       where: vi.fn().mockImplementation(() => makeQueryChain()),
       from: vi.fn().mockImplementation(() => makeQueryChain()),
       innerJoin: vi.fn().mockImplementation(() => makeQueryChain()),
+      leftJoin: vi.fn().mockImplementation(() => makeQueryChain()),
       limit: vi.fn().mockImplementation(() => makeQueryChain()),
       orderBy: vi.fn().mockImplementation(() => makeQueryChain()),
     };
@@ -46,11 +47,18 @@ vi.mock("@carebridge/db-schema", () => {
     medications: { patient_id: "patient_id", status: "status", started_at: "started_at", ended_at: "ended_at" },
     patients: {},
     allergies: { patient_id: "patient_id", created_at: "created_at", verification_status: "verification_status" },
+    allergyOverrides: {
+      patient_id: "patient_id",
+      allergy_id: "allergy_id",
+      flag_id: "flag_id",
+      override_reason: "override_reason",
+      overridden_at: "overridden_at",
+    },
     messages: {},
     patientObservations: {},
     labPanels: {},
     labResults: { created_at: "created_at" },
-    clinicalFlags: {},
+    clinicalFlags: { id: "id", summary: "summary" },
     encounters: {
       patient_id: "patient_id",
       location: "location",

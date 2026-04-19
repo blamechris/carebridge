@@ -309,6 +309,18 @@ vi.mock("@carebridge/validators", async () => {
       reason: z.string(),
     }),
     noteTemplateTypeSchema: z.enum(["soap", "progress", "h_and_p", "discharge", "consult"]),
+    // #233 — patient-records router now accepts an allergy-override input.
+    // The schema shape itself isn't exercised by the caregiver-scope matrix
+    // (none of the mapped caregiver scopes can invoke the clinician-only
+    // override mutation), but the router module wires it to `.input(...)`
+    // at load time so the mock must provide *something* with `.parse`.
+    overrideAllergyFlagSchema: z.object({
+      flag_id: z.string().uuid(),
+      allergy_id: z.string().uuid().optional(),
+      override_reason: z.string(),
+      clinical_justification: z.string(),
+    }),
+    allergyOverrideReasonSchema: z.string(),
   };
 });
 

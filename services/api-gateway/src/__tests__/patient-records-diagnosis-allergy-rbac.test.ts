@@ -62,6 +62,9 @@ vi.mock("@carebridge/db-schema", () => ({
   patients: { id: "patients.id" },
   diagnoses: { id: "diagnoses.id", patient_id: "diagnoses.patient_id" },
   allergies: { id: "allergies.id", patient_id: "allergies.patient_id" },
+  allergyOverrides: { id: "allergy_overrides.id" },
+  auditLog: {},
+  clinicalFlags: { id: "clinical_flags.id" },
   careTeamMembers: { patient_id: "care_team_members.patient_id" },
 }));
 
@@ -106,6 +109,19 @@ vi.mock("@carebridge/validators", async () => {
     updateAllergySchema: z.object({
       severity: z.string().optional(),
       reaction: z.string().optional(),
+    }),
+    overrideAllergyFlagSchema: z.object({
+      flag_id: z.string().uuid(),
+      allergy_id: z.string().uuid().optional(),
+      override_reason: z.enum([
+        "mild_reaction_ok",
+        "patient_tolerated_previously",
+        "benefit_exceeds_risk",
+        "desensitized",
+        "misdiagnosed_allergy",
+        "other",
+      ]),
+      clinical_justification: z.string().trim().min(10).max(2000),
     }),
   };
 });

@@ -10,7 +10,11 @@
  */
 
 import type { FlagSeverity, FlagCategory, RuleFlag } from "@carebridge/shared-types";
-import type { PatientContext } from "./cross-specialty.js";
+import type {
+  PatientContext,
+  PatientAllergy,
+  ResolvedAllergyOverride,
+} from "./cross-specialty.js";
 
 /**
  * Known drug class → ingredient mappings for cross-reactivity detection.
@@ -128,11 +132,65 @@ function buildRuleId(allergen: string, medication: string, matchType: string): s
 }
 
 /**
+ * Is there a structured allergy override that already clears this
+ * specific allergy-drug pair? (issue #233)
+ *
+ * A match fires when EITHER:
+ *   - the override's allergy_id matches the candidate allergy's id; OR
+ *   - (fallback for overrides that lack an allergy_id — contraindication-
+ *     only overrides) the override's allergen matches the candidate
+ *     allergen case-insensitively AND the override's recorded medication
+ *     (if any) matches the candidate medication name.
+ *
+ * Rationale: we deliberately scope suppression to the *same* allergy-drug
+ * pair. An override of amoxicillin for a penicillin allergy must not
+ * suppress a sulfa-vs-bactrim flag for the same patient — each clinical
+ * decision is separate and deserves its own structured review.
+ */
+function isAllergyMedPairOverridden(
+  allergy: PatientAllergy,
+  medication: string,
+  overrides: ResolvedAllergyOverride[] | undefined,
+): boolean {
+  if (!overrides || overrides.length === 0) return false;
+  const allergenLower = allergy.allergen.toLowerCase();
+  const medLower = medication.toLowerCase();
+
+  for (const o of overrides) {
+    // Prefer structured id matching when both sides have an id — it's the
+    // unambiguous link between the override row and the allergy that
+    // triggered the flag.
+    if (allergy.id && o.allergy_id && allergy.id === o.allergy_id) {
+      // When the override recorded a specific medication, require the
+      // candidate med to match. When it didn't, the override is treated
+      // as covering the whole allergy regardless of which cross-reactive
+      // drug is being prescribed.
+      if (!o.medication) return true;
+      if (medLower.includes(o.medication.toLowerCase())) return true;
+      continue;
+    }
+
+    // Fallback — match on allergen string when ids are missing.
+    if (o.allergen && o.allergen.toLowerCase() === allergenLower) {
+      if (!o.medication) return true;
+      if (medLower.includes(o.medication.toLowerCase())) return true;
+    }
+  }
+
+  return false;
+}
+
+/**
  * Check medications against patient allergies.
  *
  * Fires on medication.created events. Cross-references the new medication
  * against the patient's allergy list using both name patterns and RxNorm
  * ingredient-class matching.
+ *
+ * Suppression (issue #233): if `context.resolved_overrides` records a prior
+ * structured override for the same allergy-drug pair, the flag is skipped.
+ * This lets a physician formally clear a warning once without seeing the
+ * same flag re-fire on every subsequent medication event.
  */
 export function checkAllergyMedication(context: PatientContext): RuleFlag[] {
   const flags: RuleFlag[] = [];
@@ -148,6 +206,9 @@ export function checkAllergyMedication(context: PatientContext): RuleFlag[] {
 
       // Strategy 1: Direct name match (allergen name appears in medication name)
       if (medLower.includes(allergenLower) || allergenLower.includes(medLower.split(" ")[0])) {
+        if (isAllergyMedPairOverridden(allergy, med, context.resolved_overrides)) {
+          break; // Already cleared — no flag for this medication.
+        }
         flags.push({
           severity: mapAllergyToFlagSeverity(allergy.severity),
           category: "medication-safety" as FlagCategory,
@@ -168,6 +229,9 @@ export function checkAllergyMedication(context: PatientContext): RuleFlag[] {
       // Strategy 2: Cross-reactivity class matching
       for (const mapping of CROSS_REACTIVITY_MAP) {
         if (mapping.allergenPattern.test(allergy.allergen) && mapping.medicationPattern.test(med)) {
+          if (isAllergyMedPairOverridden(allergy, med, context.resolved_overrides)) {
+            break; // Already cleared — no flag for this cross-reactivity pair.
+          }
           flags.push({
             severity: mapAllergyToFlagSeverity(allergy.severity),
             category: "medication-safety" as FlagCategory,

@@ -16,6 +16,7 @@ const diagnosesWhereSpy = vi.fn();
 const medicationsWhereSpy = vi.fn();
 const allergiesWhereSpy = vi.fn();
 const labsWhereSpy = vi.fn();
+const overridesWhereSpy = vi.fn();
 
 const selectMock = vi.fn();
 
@@ -37,6 +38,17 @@ vi.mock("@carebridge/db-schema", () => ({
     patient_id: "allergies.patient_id",
     created_at: "allergies.created_at",
     verification_status: "allergies.verification_status",
+  },
+  allergyOverrides: {
+    patient_id: "allergy_overrides.patient_id",
+    allergy_id: "allergy_overrides.allergy_id",
+    flag_id: "allergy_overrides.flag_id",
+    override_reason: "allergy_overrides.override_reason",
+    overridden_at: "allergy_overrides.overridden_at",
+  },
+  clinicalFlags: {
+    id: "clinical_flags.id",
+    summary: "clinical_flags.summary",
   },
   patients: {},
   labPanels: { id: "lab_panels.id", patient_id: "lab_panels.patient_id" },
@@ -69,6 +81,7 @@ function primeSelectMocks(): void {
   medicationsWhereSpy.mockReset();
   allergiesWhereSpy.mockReset();
   labsWhereSpy.mockReset();
+  overridesWhereSpy.mockReset();
 
   selectMock
     .mockImplementationOnce(() => ({
@@ -101,6 +114,17 @@ function primeSelectMocks(): void {
           where: (...args: unknown[]) => {
             labsWhereSpy(...args);
             return { orderBy: () => Promise.resolve([]) };
+          },
+        }),
+      }),
+    }))
+    // 5th: allergy_overrides left-joined with clinical_flags (#233)
+    .mockImplementationOnce(() => ({
+      from: () => ({
+        leftJoin: () => ({
+          where: (...args: unknown[]) => {
+            overridesWhereSpy(...args);
+            return Promise.resolve([]);
           },
         }),
       }),
