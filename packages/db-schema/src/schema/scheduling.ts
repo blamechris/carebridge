@@ -24,6 +24,12 @@ export const appointments = pgTable("appointments", {
   cancelled_at: text("cancelled_at"),
   cancelled_by: text("cancelled_by"),
   cancel_reason: text("cancel_reason"),
+  // BullMQ job IDs for scheduled reminder delivery. Nullable — populated when
+  // a future-dated appointment is booked and cleared when the appointment is
+  // cancelled. Two fixed reminder offsets (24 h and 2 h before start_time)
+  // are hardcoded per issue #333. See services/scheduling/src/reminders.ts.
+  reminder_24h_job_id: text("reminder_24h_job_id"),
+  reminder_2h_job_id: text("reminder_2h_job_id"),
   created_at: text("created_at").notNull(),
   updated_at: text("updated_at").notNull(),
 }, (table) => [

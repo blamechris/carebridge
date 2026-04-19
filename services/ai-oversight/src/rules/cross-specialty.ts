@@ -71,6 +71,15 @@ export interface PatientContext {
    * triggering event, not to when the worker happens to process it.
    */
   event_timestamp?: string;
+  /**
+   * Patient age in fractional years at the time of the triggering event.
+   * Populated by `buildPatientContextForRules` when the patient row carries
+   * a usable date_of_birth. `null` or `undefined` means the patient's age is
+   * unknown — age-gated rules (Beers criteria for elderly, pediatric
+   * contraindications, etc.) must fail closed and NOT fire in that case to
+   * avoid false positives on demographically unverified records. Issue #236.
+   */
+  age_years?: number | null;
 }
 
 /** ICD-10 pattern for pregnancy-related diagnoses (Z33, Z34, O00-O9A). */
@@ -310,6 +319,48 @@ function classifyBleedingSeverity(symptoms: string[]): "critical" | "warning" | 
 /** Matches any bleeding-related symptom across all severity tiers. */
 const ANTICOAG_BLEED_ANY_PATTERN =
   /hemorrhage|haemorrhage|hematemesis|melena|hematochezia|hemoptysis|intracranial bleed|gi bleed|gastrointestinal bleed|retroperitoneal|blood in stool|hematuria|blood in urine|epistaxis|nosebleed|post.?procedural bleeding|bleeding|bruis|petechiae|ecchymosis/i;
+
+/**
+ * Congestive heart failure diagnosis patterns.
+ * ICD-10: I50.* (heart failure — all subtypes), I11.0 (hypertensive heart
+ * disease with HF), I13.0 / I13.2 (hypertensive heart + CKD with HF).
+ *
+ * We deliberately match the full I50 family (HFrEF, HFpEF, acute, chronic,
+ * systolic, diastolic, combined) because NSAIDs carry fluid-retention and
+ * renal-perfusion risks across every CHF phenotype, not just reduced-EF.
+ */
+const CHF_ICD10_PATTERN = /^(I50(\.|$)|I11\.0|I13\.[02])/;
+
+const CHF_DESCRIPTION_PATTERN =
+  /\bchf\b|congestive heart failure|heart failure|cardiomyopathy|reduced ejection|systolic dysfunction|diastolic dysfunction|\bhfref\b|\bhfpef\b|\bhfmref\b|cardiac decompensation/i;
+
+/**
+ * Severe-CHF indicators. When any of these is present in the diagnosis
+ * description the NSAID+CHF rule escalates from warning to critical, because
+ * incremental renal-perfusion compromise in decompensated or advanced disease
+ * can precipitate acute decompensation within days. An explicit EF <30% cue
+ * in the description also qualifies as severe (most EHRs record EF in the
+ * structured note or diagnosis text when it is clinically significant).
+ */
+const CHF_SEVERE_DESCRIPTION_PATTERN =
+  /\bnyha (?:iii|iv|3|4)\b|class (?:iii|iv|3|4)|decompensated|advanced heart failure|end.?stage (?:cardiac|heart)|acute (?:heart failure|decompensation|on chronic)|ef\s*<\s*(?:30|25|20|15|10)|ejection fraction\s*(?:of\s*)?(?:<\s*)?(?:1\d|2\d|30)\s*%/i;
+
+/**
+ * Severe hepatic-impairment descriptors. Broader statin-hepatic contraindication
+ * (#237) applies specifically to severe hepatic disease — Child-Pugh C, acute
+ * hepatic failure, decompensated cirrhosis, ALT/AST elevation >3x ULN. A
+ * well-compensated chronic hepatitis B carrier on a low-dose statin does not
+ * meet this rule; statins are only fully contraindicated once metabolic
+ * reserve is impaired enough that routine hepatic clearance fails.
+ *
+ * We match on explicit severity cues in the description AND on the ICD-10
+ * codes for hepatic failure (K72.*), acute/subacute liver failure, and
+ * Child-Pugh C/decompensated cirrhosis cues.
+ */
+const SEVERE_HEPATIC_ICD10_PATTERN = /^K72(\.|$)/;
+
+const SEVERE_HEPATIC_DESCRIPTION_PATTERN =
+  /hepatic failure|liver failure|acute liver injury|fulminant hepat|decompensated (?:cirrhosis|liver|hepatic)|child.?pugh (?:c|b)|child pugh (?:c|b)|advanced (?:cirrhosis|liver disease)|end.?stage liver disease|\besld\b|hepatic encephalopathy|coagulopath.*hepat|ast\s*>\s*3x|alt\s*>\s*3x|transaminases?\s*>\s*3x|lft\s*>\s*3x ulN/i;
 
 /**
  * Thiazide diuretic name pattern. Distinct from LOOP_THIAZIDE_DIURETIC_PATTERN
@@ -1034,6 +1085,114 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       return base;
     },
     notify_specialties: ["nephrology", "cardiology"],
+  },
+  {
+    // CROSS-NSAID-CHF-001 — NSAIDs in heart failure produce sodium and fluid
+    // retention (prostaglandin-mediated suppression of natriuresis) and
+    // reduce renal perfusion. The ACC/AHA HF guideline and Beers Criteria
+    // both flag NSAIDs as drugs to avoid in CHF regardless of ejection
+    // fraction. Real-world observational data (Arfe 2016, BMJ) show a ~20%
+    // relative increase in HF hospitalization within 2 weeks of NSAID
+    // exposure.
+    //
+    // Severity: warning by default. Escalates to critical when the
+    // diagnosis text signals severe/advanced disease (NYHA III-IV,
+    // decompensated, acute, or EF <30) — those patients have minimal
+    // compensatory reserve and an NSAID can precipitate acute
+    // decompensation within days.
+    id: "CROSS-NSAID-CHF-001",
+    name: "NSAID in patient with congestive heart failure",
+    check: (ctx: PatientContext) => {
+      const hasCHF =
+        ctx.active_diagnosis_codes.some((code) => CHF_ICD10_PATTERN.test(code)) ||
+        ctx.active_diagnoses.some((d) => CHF_DESCRIPTION_PATTERN.test(d));
+      if (!hasCHF) return false;
+      return ctx.active_medications.some((m) => NSAID_PATTERN.test(m));
+    },
+    buildSeverity: (ctx: PatientContext) => {
+      const hasSevere = ctx.active_diagnoses.some((d) =>
+        CHF_SEVERE_DESCRIPTION_PATTERN.test(d),
+      );
+      return hasSevere ? "critical" : "warning";
+    },
+    severity: "warning" as const,
+    category: "cross-specialty" as const,
+    summary:
+      "Patient with congestive heart failure is on an NSAID — risk of fluid retention and decompensation",
+    rationale:
+      "NSAIDs inhibit renal prostaglandin synthesis, causing sodium and water retention, blunting " +
+      "diuretic response, and reducing renal perfusion. In CHF this precipitates volume overload, " +
+      "hyperkalemia, and acute kidney injury. The ACC/AHA Heart Failure guideline classifies NSAIDs " +
+      "as harmful (Class III) in all stages of HF. Observational data show a ~20% relative increase " +
+      "in HF hospitalization within two weeks of NSAID initiation. Advanced disease (NYHA III-IV, " +
+      "decompensated, acute HF, EF <30%) carries the highest risk and warrants critical escalation.",
+    buildSuggestedAction: (ctx: PatientContext) => {
+      const hasSevere = ctx.active_diagnoses.some((d) =>
+        CHF_SEVERE_DESCRIPTION_PATTERN.test(d),
+      );
+      const base =
+        "Discontinue the NSAID and switch to a cardiac-safe analgesic (acetaminophen first-line; topical " +
+        "diclofenac for localized pain is reasonable because systemic absorption is low). Review volume " +
+        "status, daily weights, and renal function; check BMP within 1 week if the NSAID has already been " +
+        "taken for more than a few days.";
+      if (hasSevere) {
+        return (
+          base +
+          " Advanced / decompensated HF: obtain same-day BMP and BNP, assess for new edema or weight " +
+          "gain, and consider hospital admission if any signs of acute decompensation are present."
+        );
+      }
+      return base;
+    },
+    notify_specialties: ["cardiology"],
+  },
+  {
+    // CROSS-STATIN-HEPATIC-001 — All statins undergo substantial hepatic
+    // metabolism (CYP3A4 / CYP2C9) and their package inserts list active
+    // liver disease or unexplained persistent elevations of hepatic
+    // transaminases as contraindications. In severe hepatic impairment
+    // (Child-Pugh C, decompensated cirrhosis, acute liver failure,
+    // AST/ALT >3x ULN) clearance is reduced enough that statin exposure
+    // can worsen hepatic injury and precipitate rhabdomyolysis from
+    // supratherapeutic serum levels.
+    //
+    // This rule is deliberately broader than HEPATIC-HEPATOTOXIN-001
+    // (which already fires on high-dose statins + any hepatic disease):
+    // any statin at any dose is flagged when the hepatic disease is
+    // severe. The two rules are complementary — HEPATIC-HEPATOTOXIN-001
+    // covers the broad hepatotoxin set + moderate hepatic disease;
+    // CROSS-STATIN-HEPATIC-001 catches the any-dose-severe edge.
+    id: "CROSS-STATIN-HEPATIC-001",
+    name: "Statin in patient with severe hepatic impairment",
+    check: (ctx: PatientContext) => {
+      const hasSevereHepatic =
+        ctx.active_diagnosis_codes.some((code) =>
+          SEVERE_HEPATIC_ICD10_PATTERN.test(code),
+        ) ||
+        ctx.active_diagnoses.some((d) =>
+          SEVERE_HEPATIC_DESCRIPTION_PATTERN.test(d),
+        );
+      if (!hasSevereHepatic) return false;
+      return ctx.active_medications.some((m) => STATIN_PATTERN.test(m));
+    },
+    severity: "warning" as const,
+    category: "cross-specialty" as const,
+    summary:
+      "Patient with severe hepatic impairment is on a statin — contraindication per FDA labeling",
+    rationale:
+      "Statin package inserts list active liver disease or unexplained persistent transaminase " +
+      "elevations as contraindications. In severe hepatic impairment (Child-Pugh C, decompensated " +
+      "cirrhosis, acute liver failure, AST/ALT >3x ULN) reduced CYP3A4/CYP2C9 clearance produces " +
+      "supratherapeutic systemic exposure, elevating risk of drug-induced liver injury and " +
+      "rhabdomyolysis. Benefit on cardiovascular outcomes is unproven in this population while " +
+      "incremental hepatic injury is a direct on-treatment harm.",
+    suggested_action:
+      "Hold the statin and consult hepatology. Obtain AST, ALT, total bilirubin, INR, albumin, and CK. " +
+      "If lipid control is clinically essential (secondary prevention after recent MI), consider " +
+      "bile-acid sequestrants (cholestyramine, colesevelam) or ezetimibe — both of which bypass " +
+      "hepatic metabolism — after hepatology input. Do NOT resume the statin until LFTs stabilize " +
+      "and the underlying hepatic process is adjudicated.",
+    notify_specialties: ["hepatology", "cardiology"],
   },
 ];
 

@@ -23,6 +23,7 @@ vi.mock("@carebridge/db-schema", () => ({
     specialty: "specialty",
     role: "role",
     is_active: "is_active",
+    patient_id: "patient_id",
   },
   careTeamAssignments: {
     user_id: "user_id",
@@ -233,6 +234,172 @@ describe("dispatch-worker", () => {
     expect(mockPublishNotification).toHaveBeenCalledTimes(2);
   });
 
+  // ── Audience routing (issue #897 fix) ────────────────────────────
+  //
+  // Appointment reminders must NOT route via `careTeamAssignments` —
+  // that would deliver the patient's reminder to their PROVIDERS,
+  // which is a HIPAA-adjacent misdelivery. The `audience: "patient"`
+  // branch looks up the patient's own user row via `users.patient_id`
+  // and targets it directly.
+
+  describe("audience routing", () => {
+    it("routes to the patient's own user id when audience='patient'", async () => {
+      // 1st select: patient user lookup (users WHERE patient_id = ...)
+      db.willSelect([{ id: "user-patient-1" }]);
+      // 2nd select: per-recipient notification_preferences (empty → default opt-in)
+      db.willSelect([]);
+
+      const event = makeEvent({
+        audience: "patient",
+        severity: "info",
+        category: "appointment-reminder",
+        source: "scheduling.reminder",
+        notify_specialties: [],
+      });
+      await processorFn({ data: event, id: "job-aud-1" });
+
+      expect(db.insert).toHaveBeenCalledOnce();
+      const insertedRecords = getInsertedRecords();
+      expect(insertedRecords).toHaveLength(1);
+      expect(insertedRecords[0].user_id).toBe("user-patient-1");
+    });
+
+    it("skips delivery when no active user row owns the patient_id", async () => {
+      // Patient user lookup returns empty (patient hasn't registered a
+      // portal account, or their user row is inactive).
+      db.willSelect([]);
+
+      const event = makeEvent({
+        audience: "patient",
+        severity: "info",
+        category: "appointment-reminder",
+        source: "scheduling.reminder",
+      });
+      await processorFn({ data: event, id: "job-aud-2" });
+
+      expect(db.insert).not.toHaveBeenCalled();
+      expect(mockPublishNotification).not.toHaveBeenCalled();
+    });
+
+    it("keeps care-team routing when audience is omitted (default='providers')", async () => {
+      primeDispatch(
+        [{ user_id: "user-neuro" }],
+        [{ id: "user-neuro", specialty: "Neurology", role: "physician" }],
+      );
+
+      // `audience` intentionally omitted — we rely on the server-side
+      // default ("providers") so existing ai-oversight callers are
+      // unaffected.
+      const event = makeEvent();
+      await processorFn({ data: event, id: "job-aud-3" });
+
+      const insertedRecords = getInsertedRecords();
+      expect(insertedRecords).toHaveLength(1);
+      expect(insertedRecords[0].user_id).toBe("user-neuro");
+    });
+
+    it("uses care-team routing when audience='providers' explicitly", async () => {
+      primeDispatch(
+        [{ user_id: "user-onco" }],
+        [{ id: "user-onco", specialty: "Hematology/Oncology", role: "physician" }],
+      );
+
+      const event = makeEvent({ audience: "providers" });
+      await processorFn({ data: event, id: "job-aud-4" });
+
+      const insertedRecords = getInsertedRecords();
+      expect(insertedRecords).toHaveLength(1);
+      expect(insertedRecords[0].user_id).toBe("user-onco");
+    });
+  });
+
+  // ── Scheduling reminder titles (issue #897 fix) ───────────────────
+
+  describe("scheduling.reminder source", () => {
+    const primePatient = (): void => {
+      db.willSelect([{ id: "user-patient-1" }]);
+      db.willSelect([]); // preferences
+    };
+
+    it("renders title as 'Appointment reminder' (no severity prefix, no 'Clinical flag —')", async () => {
+      primePatient();
+
+      const event = makeEvent({
+        audience: "patient",
+        severity: "info",
+        category: "appointment-reminder",
+        source: "scheduling.reminder",
+        summary: "Reminder: You have an appointment with Dr. Smith tomorrow at 2:30 PM UTC.",
+      });
+      await processorFn({ data: event, id: "job-src-1" });
+
+      const insertedRecords = getInsertedRecords();
+      expect(insertedRecords[0].title).toBe("Appointment reminder");
+      expect(insertedRecords[0].title).not.toContain("Clinical flag");
+      expect(insertedRecords[0].title).not.toContain("Info:");
+    });
+
+    it("renders summary_safe with a reminder-shaped template (no 'Clinical flag —')", async () => {
+      primePatient();
+
+      const event = makeEvent({
+        audience: "patient",
+        severity: "info",
+        category: "appointment-reminder",
+        source: "scheduling.reminder",
+      });
+      await processorFn({ data: event, id: "job-src-2" });
+
+      const insertedRecords = getInsertedRecords();
+      expect(insertedRecords[0].summary_safe).toBe(
+        "You have an upcoming appointment. Open the portal for details.",
+      );
+      expect(insertedRecords[0].summary_safe).not.toContain("Clinical flag");
+    });
+
+    it("keeps the PHI-carrying full summary on record.body for authenticated fetch", async () => {
+      primePatient();
+
+      const fullSummary =
+        "Reminder: You have an appointment with Dr. Smith tomorrow at 2:30 PM UTC at Main Clinic.";
+      const event = makeEvent({
+        audience: "patient",
+        severity: "info",
+        category: "appointment-reminder",
+        source: "scheduling.reminder",
+        summary: fullSummary,
+      });
+      await processorFn({ data: event, id: "job-src-3" });
+
+      const insertedRecords = getInsertedRecords();
+      expect(insertedRecords[0].body).toBe(fullSummary);
+    });
+
+    it("published lock-screen payload for reminders carries no PHI", async () => {
+      primePatient();
+
+      const event = makeEvent({
+        audience: "patient",
+        severity: "info",
+        category: "appointment-reminder",
+        source: "scheduling.reminder",
+        summary: "Reminder: You have an appointment with Dr. Alice Smith at 2:30 PM UTC.",
+      });
+      await processorFn({ data: event, id: "job-src-4" });
+
+      expect(mockPublishNotification).toHaveBeenCalledTimes(1);
+      const [, payload] = mockPublishNotification.mock.calls[0];
+      expect(payload.title).toBe("Appointment reminder");
+      expect(payload.body).toBe(
+        "You have an upcoming appointment. Open the portal for details.",
+      );
+      expect(payload.body).not.toContain("Alice");
+      expect(payload.body).not.toContain("Smith");
+      expect(payload.body).not.toContain("2:30");
+      expect(payload.body).not.toMatch(/\d/);
+    });
+  });
+
   // ── PHI lock-screen safety (issue #289) ────────────────────────────
   //
   // These tests lock in the two-tier split: the Redis pub/sub payload
@@ -332,6 +499,11 @@ describe("dispatch-worker", () => {
       );
     };
 
+    // Clinical-flag categories render with the full
+    // "<Severity>: Clinical flag — <label>" prefix. The
+    // appointment-reminder category is covered separately in the
+    // `scheduling.reminder source` describe block because its source
+    // branch suppresses the clinical-flag prefix entirely.
     const knownCategoryCases: Array<[string, string]> = [
       ["cross-specialty", "Cross-specialty concern"],
       ["drug-interaction", "Drug interaction"],

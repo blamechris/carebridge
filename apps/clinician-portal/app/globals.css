@@ -58,6 +58,9 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Prevent accidental page-level horizontal scroll at narrow viewports.
+     Overflow inside cards / tables is handled per-container. */
+  overflow-x: hidden;
 }
 
 a {
@@ -309,7 +312,11 @@ a {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  overflow: hidden;
+  /* Allow horizontal scroll by default so narrow viewports (tablet) can
+     scroll wide tables. The stacked-card layout at <768px overrides this
+     to `visible`. Vertical clipping isn't needed since tables flow. */
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .table-header {
@@ -917,17 +924,16 @@ tr:hover td {
     border-bottom: none;
   }
 
-  /* Touch-friendly buttons (WCAG 44x44 min) */
-  .btn {
+  /* Touch-friendly buttons (WCAG 2.5.5 — 44x44 min) */
+  .btn,
+  .btn-sm {
     min-height: 44px;
     min-width: 44px;
-    padding: 10px 18px;
+    padding: 10px 14px;
     font-size: 14px;
   }
 
   .btn-sm {
-    min-height: 40px;
-    padding: 8px 14px;
     font-size: 13px;
   }
 

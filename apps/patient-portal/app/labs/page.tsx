@@ -92,7 +92,10 @@ export default function LabsPage() {
             </span>
           </div>
 
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <table
+            className="pp-stack-table"
+            style={{ width: "100%", borderCollapse: "collapse" }}
+          >
             <thead>
               <tr style={{ borderBottom: "1px solid #333", color: "#999", fontSize: "0.8rem", textAlign: "left" }}>
                 <th style={{ padding: "0.5rem 0" }}>Test</th>
@@ -112,10 +115,10 @@ export default function LabsPage() {
                 flag?: string | null;
               }) => (
                 <tr key={result.id} style={{ borderBottom: "1px solid #222" }}>
-                  <td style={{ padding: "0.5rem 0", fontSize: "0.9rem" }}>
+                  <td data-label="Test" style={{ padding: "0.5rem 0", fontSize: "0.9rem" }}>
                     {result.test_name}
                   </td>
-                  <td style={{
+                  <td data-label="Value" style={{
                     padding: "0.5rem 0",
                     fontSize: "0.9rem",
                     fontWeight: result.flag ? 600 : 400,
@@ -123,12 +126,12 @@ export default function LabsPage() {
                   }}>
                     {result.value} {result.unit}
                   </td>
-                  <td style={{ padding: "0.5rem 0", fontSize: "0.8rem", color: "#666" }}>
+                  <td data-label="Reference Range" style={{ padding: "0.5rem 0", fontSize: "0.8rem", color: "#666" }}>
                     {result.reference_low != null && result.reference_high != null
                       ? `${result.reference_low} - ${result.reference_high} ${result.unit}`
                       : "—"}
                   </td>
-                  <td style={{ padding: "0.5rem 0" }}>
+                  <td data-label="Status" style={{ padding: "0.5rem 0" }}>
                     {result.flag && (
                       <span style={{
                         fontSize: "0.7rem",

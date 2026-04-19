@@ -12,6 +12,23 @@ const QUEUE_NAME = "notifications";
 
 const connection = getRedisConnection();
 
+/**
+ * Identifies who a notification is intended for.
+ *
+ * - `"providers"` (default): route via `care_team_assignments` → all active
+ *   clinicians on the patient's care team, then filter by
+ *   `notify_specialties` (the historical clinical-flag path).
+ * - `"patient"`: deliver to the patient's own user row (looked up via
+ *   `users.patient_id`). Used for patient-addressed notifications such as
+ *   appointment reminders, secure messages from the care team, and
+ *   "lab result available" pings — where care-team routing would be a
+ *   HIPAA-adjacent misdelivery.
+ *
+ * Optional and defaulted server-side to `"providers"` so existing callers
+ * (e.g. ai-oversight flag-service, escalation-worker) are unaffected.
+ */
+export type NotificationAudience = "patient" | "providers";
+
 export interface NotificationEvent {
   flag_id: string;
   patient_id: string;
@@ -22,6 +39,11 @@ export interface NotificationEvent {
   notify_specialties: string[];
   source: string;
   created_at: string;
+  /**
+   * Who should receive this notification. Defaults to `"providers"` when
+   * omitted to preserve the existing clinical-flag delivery path.
+   */
+  audience?: NotificationAudience;
 }
 
 export const notificationsQueue = new Queue(QUEUE_NAME, {
