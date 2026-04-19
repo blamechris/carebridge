@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { modalOverlay, modalCard, btnGhost, inputBase } from "./styles";
+import { useModalFocusTrap } from "@/lib/use-modal-focus-trap";
 
 export interface CancelAppointmentModalProps {
   appointmentId: string;
@@ -21,6 +22,8 @@ export function CancelAppointmentModal({
   const [reason, setReason] = useState("");
   const trimmed = reason.trim();
   const isValid = trimmed.length > 0;
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useModalFocusTrap(true, dialogRef, onClose);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -29,7 +32,14 @@ export function CancelAppointmentModal({
   }
 
   return (
-    <div style={modalOverlay} role="dialog" aria-modal="true" aria-labelledby="cancel-appt-heading">
+    <div
+      ref={dialogRef}
+      tabIndex={-1}
+      style={modalOverlay}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="cancel-appt-heading"
+    >
       <form role="form" aria-label={heading} onSubmit={handleSubmit} style={modalCard}>
         <h2 id="cancel-appt-heading" style={{ margin: "0 0 0.5rem", fontSize: "1.1rem" }}>{heading}</h2>
         <p style={{ margin: "0 0 1rem", color: "#bbb", fontSize: "0.85rem" }}>

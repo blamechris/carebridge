@@ -31,6 +31,11 @@ export default function AppointmentsPage() {
   const cancelMutation = trpc.scheduling.appointments.cancel.useMutation({
     onSuccess: () => utils.scheduling.appointments.listByPatient.invalidate(),
   });
+  // Atomic reschedule (#892) — single RBAC-checked call replaces the
+  // former cancel+create split.
+  const rescheduleMutation = trpc.scheduling.appointments.reschedule.useMutation({
+    onSuccess: () => utils.scheduling.appointments.listByPatient.invalidate(),
+  });
 
   const loadSlots = useCallback(async (a: { providerId: string; date: string }): Promise<SlotOption[]> => {
     return (await utils.scheduling.schedule.availability.fetch(a)).slots;
@@ -43,6 +48,12 @@ export default function AppointmentsPage() {
   const handleCancel = useCallback(
     async (a: { appointmentId: string; reason: string }) => { await cancelMutation.mutateAsync(a); },
     [cancelMutation],
+  );
+  const handleReschedule = useCallback(
+    async (a: { appointmentId: string; newStartTime: string; newEndTime: string; reason: string }) => {
+      await rescheduleMutation.mutateAsync(a);
+    },
+    [rescheduleMutation],
   );
 
   if (!hydrated) return <p style={{ color: "#999" }}>Loading...</p>;
@@ -105,6 +116,7 @@ export default function AppointmentsPage() {
           onLoadSlots={loadSlots}
           onBook={handleBook}
           onCancel={handleCancel}
+          onReschedule={handleReschedule}
         />
       )}
     </div>
