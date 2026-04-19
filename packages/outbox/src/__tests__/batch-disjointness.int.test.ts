@@ -13,14 +13,31 @@
  * CI runs a `postgres` service and supplies TEST_DATABASE_URL. See the
  * `test` job in .github/workflows/ci.yml.
  */
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { sql } from "drizzle-orm";
 
 // Point @carebridge/db-schema's getDb() singleton at the test DB BEFORE
 // importing @carebridge/outbox (which calls getDb() lazily on first use).
-// Honor an explicit DATABASE_URL if the caller has already set one.
+//
+// Safety invariant: TRUNCATE is destructive. This test ALWAYS overrides
+// DATABASE_URL with TEST_DATABASE_URL when the latter is set, so a
+// developer with `DATABASE_URL=<prod-or-dev-DB>` in their shell can't
+// accidentally have us truncate the wrong database. If the caller has
+// set both to the same value we no-op; if they diverge we force the
+// test URL. The old "honor existing DATABASE_URL" behaviour was
+// unsafe — review comment on PR #917.
 const TEST_URL = process.env.TEST_DATABASE_URL;
-if (TEST_URL && !process.env.DATABASE_URL) {
+if (TEST_URL) {
+  if (
+    process.env.DATABASE_URL &&
+    process.env.DATABASE_URL !== TEST_URL
+  ) {
+    // Structured warning so the override is audible in CI logs.
+    console.warn(
+      `[batch-disjointness.int] Overriding DATABASE_URL (${process.env.DATABASE_URL}) ` +
+        `with TEST_DATABASE_URL for test safety — the test TRUNCATEs failed_clinical_events.`,
+    );
+  }
   process.env.DATABASE_URL = TEST_URL;
 }
 
@@ -34,6 +51,16 @@ describe.skipIf(!TEST_URL)(
       // Fail fast with a readable error if migrations haven't run against
       // the test DB.
       await getDb().execute(sql`SELECT 1 FROM failed_clinical_events LIMIT 1`);
+    });
+
+    afterAll(async () => {
+      // Close the underlying postgres-js client so Vitest / CI don't hang
+      // on the open connection handle. drizzle-orm/postgres-js exposes the
+      // raw client on `$client`; `.end()` is idempotent and awaitable.
+      const db = getDb() as unknown as {
+        $client?: { end?: () => Promise<void> };
+      };
+      await db.$client?.end?.();
     });
 
     beforeEach(async () => {
