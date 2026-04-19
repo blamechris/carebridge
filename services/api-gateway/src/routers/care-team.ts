@@ -133,6 +133,14 @@ export const careTeamRbacRouter = t.router({
    * Add a provider to a patient's clinical care team. When `assignment_role`
    * is supplied, the RBAC grant is inserted in the same transaction so a
    * grant failure rolls the roster row back (prevents chart/access split-brain).
+   *
+   * Idempotency (#881): if an active roster row already exists for this
+   * (provider_id, patient_id) pair, return the existing row without writing
+   * ANY new state (no insert, no audit). A duplicate add is not an error —
+   * it aligns with the partial UNIQUE index in migration 0038 and keeps
+   * clients safe to retry on transient failures. The DB index is the hard
+   * guardrail; this app-level check avoids a needless round-trip + error
+   * serialisation on the common happy retry path.
    */
   addMember: protectedProcedure
     .input(addCareTeamMemberSchema)
@@ -140,6 +148,23 @@ export const careTeamRbacRouter = t.router({
       assertCanManageCareTeam(ctx.user);
       await enforcePatientAccess(ctx.user, input.patient_id, ctx.clientIp);
       const db = getDb();
+
+      // Idempotency check BEFORE the transaction: if an active row already
+      // exists, return it verbatim and write no audit row. No state change
+      // means no HIPAA-auditable event.
+      const [existingActive] = await db
+        .select()
+        .from(careTeamMembers)
+        .where(
+          and(
+            eq(careTeamMembers.provider_id, input.provider_id),
+            eq(careTeamMembers.patient_id, input.patient_id),
+            eq(careTeamMembers.is_active, true),
+          ),
+        )
+        .limit(1);
+      if (existingActive) return existingActive;
+
       const now = new Date().toISOString();
       const memberId = crypto.randomUUID();
       const memberRow = {
@@ -153,14 +178,19 @@ export const careTeamRbacRouter = t.router({
         created_at: now,
       };
 
+      // Track the assignment id so the audit row can record it (#883) —
+      // auditors need to correlate the roster insert with the access grant.
+      let assignmentId: string | undefined;
+
       await db.transaction(async (tx) => {
         await tx.insert(careTeamMembers).values(memberRow);
 
         if (input.assignment_role) {
+          assignmentId = crypto.randomUUID();
           // Atomic pair: if this grant throws (unique violation, DB outage),
           // the outer transaction rolls the member insert back.
           await tx.insert(careTeamAssignments).values({
-            id: crypto.randomUUID(),
+            id: assignmentId,
             user_id: input.provider_id,
             patient_id: input.patient_id,
             role: input.assignment_role,
@@ -181,6 +211,9 @@ export const careTeamRbacRouter = t.router({
               role: input.role,
               specialty: input.specialty,
               assignment_role: input.assignment_role,
+              // #883: record the RBAC assignment_id (when applicable) so an
+              // auditor can trace the team+grant pair back to a single row.
+              ...(assignmentId !== undefined && { assignment_id: assignmentId }),
             },
             procedure_name: "careTeam.addMember",
             client_ip: ctx.clientIp,
@@ -214,6 +247,14 @@ export const careTeamRbacRouter = t.router({
       // clinical-data.medications.update where the resource id is the only
       // input and patient_id is looked up before the access check.
       await enforcePatientAccess(ctx.user, existing.patient_id as string, ctx.clientIp);
+
+      // Idempotency (#881): if already inactive, treat as a 200 no-op per
+      // REST idempotent-DELETE semantics. Crucially we do NOT overwrite the
+      // original `ended_at` — auditors need to trust WHEN the member was
+      // actually removed, and a stale retry shouldn't rewrite that history.
+      if (!existing.is_active) {
+        return { removed: true, member_id: input.member_id };
+      }
 
       const now = new Date().toISOString();
       await db.transaction(async (tx) => {
@@ -312,6 +353,24 @@ export const careTeamRbacRouter = t.router({
         assertCanManageCareTeam(ctx.user);
         await enforcePatientAccess(ctx.user, input.patient_id, ctx.clientIp);
         const db = getDb();
+
+        // Idempotency (#881): if an active assignment exists for this
+        // (user_id, patient_id), return it and write no state. Matches the
+        // partial UNIQUE index added in migration 0038. No audit row —
+        // nothing actually changed.
+        const [existingActive] = await db
+          .select()
+          .from(careTeamAssignments)
+          .where(
+            and(
+              eq(careTeamAssignments.user_id, input.user_id),
+              eq(careTeamAssignments.patient_id, input.patient_id),
+              isNull(careTeamAssignments.removed_at),
+            ),
+          )
+          .limit(1);
+        if (existingActive) return existingActive;
+
         const now = new Date().toISOString();
         const assignmentId = crypto.randomUUID();
         const assignmentRow = {
@@ -348,24 +407,28 @@ export const careTeamRbacRouter = t.router({
       .mutation(async ({ ctx, input }) => {
         assertCanManageCareTeam(ctx.user);
         const db = getDb();
+        // Drop the `removed_at IS NULL` filter so we can distinguish
+        // "does not exist" (NOT_FOUND) from "already revoked" (no-op).
         const [existing] = await db
           .select()
           .from(careTeamAssignments)
-          .where(
-            and(
-              eq(careTeamAssignments.id, input.assignment_id),
-              isNull(careTeamAssignments.removed_at),
-            ),
-          )
+          .where(eq(careTeamAssignments.id, input.assignment_id))
           .limit(1);
         if (!existing) {
           throw new TRPCError({
             code: "NOT_FOUND",
-            message: `Care-team assignment ${input.assignment_id} not found or already revoked`,
+            message: `Care-team assignment ${input.assignment_id} not found`,
           });
         }
 
         await enforcePatientAccess(ctx.user, existing.patient_id as string, ctx.clientIp);
+
+        // Idempotency (#881): already revoked → 200 no-op. Preserve the
+        // original `removed_at` so the audit trail of WHEN access was
+        // actually revoked stays trustworthy.
+        if (existing.removed_at) {
+          return { revoked: true, assignment_id: input.assignment_id };
+        }
 
         const now = new Date().toISOString();
         await db.transaction(async (tx) => {

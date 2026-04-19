@@ -26,6 +26,8 @@ const hoisted = vi.hoisted(() => {
   const AUDIT_TABLE = { __tableName: "audit_log" };
   const captured: { values: Record<string, unknown>[] } = { values: [] };
   // Row returned by the DB mock's select().limit() — overridden per test.
+  // `null` means the SELECT returns `[]` (no row), which matters for
+  // procedures whose first SELECT is an idempotency pre-check.
   const state: { selectRow: unknown } = {
     selectRow: { patient_id: "placeholder" },
   };
@@ -34,7 +36,12 @@ const hoisted = vi.hoisted(() => {
     const chain: Record<string, unknown> = {};
     chain.from = vi.fn(() => chain);
     chain.where = vi.fn(() => chain);
-    chain.limit = vi.fn(async () => [state.selectRow]);
+    // `null` selectRow encodes "no match" so procedures whose first SELECT
+    // is an idempotency/existence pre-check (careTeam.addMember post-#881)
+    // fall through to the insert path.
+    chain.limit = vi.fn(async () =>
+      state.selectRow === null ? [] : [state.selectRow],
+    );
     return chain;
   }
 
@@ -217,6 +224,9 @@ describe("issue #885 — explicit audit_log rows carry ctx.clientIp", () => {
   });
 
   it("careTeam.addMember writes the caller IP into audit_log.ip_address", async () => {
+    // post-#881: addMember does an idempotency pre-check. `null` signals
+    // the SELECT returns no row so the insert path runs.
+    hoisted.state.selectRow = null;
     const caller = careTeamRbacRouter.createCaller(makeCtx(CLIENT_IP));
 
     await caller.addMember({

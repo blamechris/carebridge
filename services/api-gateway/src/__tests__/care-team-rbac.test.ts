@@ -101,10 +101,18 @@ const mocks = vi.hoisted(() => {
 
 vi.mock("@carebridge/db-schema", () => ({
   getDb: () => mocks.mockDb,
-  careTeamMembers: { __table: "care_team_members", id: "care_team_members.id" },
+  careTeamMembers: {
+    __table: "care_team_members",
+    id: "care_team_members.id",
+    patient_id: "care_team_members.patient_id",
+    provider_id: "care_team_members.provider_id",
+    is_active: "care_team_members.is_active",
+  },
   careTeamAssignments: {
     __table: "care_team_assignments",
     id: "care_team_assignments.id",
+    user_id: "care_team_assignments.user_id",
+    patient_id: "care_team_assignments.patient_id",
     removed_at: "care_team_assignments.removed_at",
   },
   auditLog: { __table: "audit_log" },
@@ -268,6 +276,74 @@ describe("careTeam.addMember", () => {
       role: "nursing",
     });
   });
+
+  // Issue #883 — capture the RBAC assignment_id in the audit row's
+  // structured details so auditors can correlate the team-member insert
+  // with the access-grant it triggered.
+  it("records the new assignment_id in audit details when RBAC grant is paired", async () => {
+    await callerFor(makeUser("physician")).addMember({
+      ...input,
+      assignment_role: "nursing",
+    });
+    const audit = auditRows();
+    expect(audit).toHaveLength(1);
+    const details = JSON.parse(audit[0]!.row.details as string);
+    expect(details.new_value.assignment_id).toEqual(expect.any(String));
+    // Must match the actual committed assignment row's id.
+    expect(details.new_value.assignment_id).toBe(assignmentRows()[0]!.row.id);
+    expect(details.new_value.assignment_role).toBe("nursing");
+  });
+
+  it("omits assignment_id from audit details when no RBAC grant is paired", async () => {
+    await callerFor(makeUser("physician")).addMember(input);
+    const details = JSON.parse(auditRows()[0]!.row.details as string);
+    // assignment_id must only be present when an assignment was actually
+    // inserted — a stray field would mislead auditors.
+    expect(details.new_value.assignment_id).toBeUndefined();
+  });
+
+  // Issue #881 — idempotency: a duplicate add for an already-active
+  // (provider_id, patient_id) pair returns the existing row and writes
+  // NO new state (no member insert, no audit row).
+  describe("idempotency (#881)", () => {
+    const existingMember = {
+      id: MEMBER_ID,
+      patient_id: PATIENT_ID,
+      provider_id: TARGET_PROVIDER_ID,
+      role: "nurse",
+      specialty: "Oncology",
+      is_active: true,
+      started_at: "2026-04-16T00:00:00.000Z",
+      created_at: "2026-04-16T00:00:00.000Z",
+    };
+
+    it("returns the existing active row and writes no new state", async () => {
+      mocks.state.limitResults = [[existingMember]];
+      const result = await callerFor(makeUser("physician")).addMember(input);
+      expect(result).toMatchObject({
+        id: MEMBER_ID,
+        provider_id: TARGET_PROVIDER_ID,
+        patient_id: PATIENT_ID,
+        is_active: true,
+      });
+      // No new member row, no new assignment row, no audit row.
+      expect(memberRows()).toHaveLength(0);
+      expect(assignmentRows()).toHaveLength(0);
+      expect(auditRows()).toHaveLength(0);
+    });
+
+    it("is idempotent even when an assignment_role is supplied", async () => {
+      mocks.state.limitResults = [[existingMember]];
+      const result = await callerFor(makeUser("physician")).addMember({
+        ...input,
+        assignment_role: "nursing",
+      });
+      expect(result).toMatchObject({ id: MEMBER_ID });
+      expect(memberRows()).toHaveLength(0);
+      expect(assignmentRows()).toHaveLength(0);
+      expect(auditRows()).toHaveLength(0);
+    });
+  });
 });
 
 describe("careTeam.removeMember (soft delete)", () => {
@@ -318,6 +394,34 @@ describe("careTeam.removeMember (soft delete)", () => {
     ).rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(mocks.state.updatedRows).toHaveLength(0);
     expect(auditRows()).toHaveLength(0);
+  });
+
+  // Issue #881 — REST idempotent DELETE: removing an already-inactive
+  // member is a 200 no-op, not an error. The original `ended_at` is
+  // preserved (not overwritten) so the audit trail of WHEN the member
+  // was removed remains trustworthy.
+  describe("idempotency (#881) — already inactive", () => {
+    const originalEndedAt = "2026-04-15T10:00:00.000Z";
+    const alreadyRemoved = {
+      id: MEMBER_ID,
+      patient_id: PATIENT_ID,
+      provider_id: TARGET_PROVIDER_ID,
+      role: "nurse",
+      specialty: "Oncology",
+      is_active: false,
+      ended_at: originalEndedAt,
+    };
+
+    it("no-ops when the member is already inactive (preserves ended_at, no audit row)", async () => {
+      mocks.state.limitResults = [[alreadyRemoved]];
+      const result = await callerFor(makeUser("physician")).removeMember({
+        member_id: MEMBER_ID,
+      });
+      expect(result).toMatchObject({ removed: true, member_id: MEMBER_ID });
+      // Critical: no UPDATE may run, so the original ended_at is preserved.
+      expect(mocks.state.updatedRows).toHaveLength(0);
+      expect(auditRows()).toHaveLength(0);
+    });
   });
 });
 
@@ -414,6 +518,32 @@ describe("careTeam.assignments.grant", () => {
     expect(assignmentRows()).toHaveLength(0);
     expect(auditRows()).toHaveLength(0);
   });
+
+  // Issue #881 — grant is idempotent on (user_id, patient_id). Second
+  // grant for an already-active assignment returns the existing row and
+  // writes no new state.
+  describe("idempotency (#881)", () => {
+    const existingAssignment = {
+      id: ASSIGNMENT_ID,
+      user_id: TARGET_PROVIDER_ID,
+      patient_id: PATIENT_ID,
+      role: "attending",
+      assigned_at: "2026-04-16T00:00:00.000Z",
+      removed_at: null,
+    };
+
+    it("returns the existing active assignment and writes no new state", async () => {
+      mocks.state.limitResults = [[existingAssignment]];
+      const result = await callerFor(makeUser("physician")).assignments.grant(input);
+      expect(result).toMatchObject({
+        id: ASSIGNMENT_ID,
+        user_id: TARGET_PROVIDER_ID,
+        patient_id: PATIENT_ID,
+      });
+      expect(assignmentRows()).toHaveLength(0);
+      expect(auditRows()).toHaveLength(0);
+    });
+  });
 });
 
 describe("careTeam.assignments.revoke", () => {
@@ -452,6 +582,28 @@ describe("careTeam.assignments.revoke", () => {
     await expect(
       callerFor(makeUser("physician")).assignments.revoke({ assignment_id: ASSIGNMENT_ID }),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  // Issue #881 — revoking an already-revoked assignment is a 200 no-op.
+  // Preserves the original `removed_at` (do NOT overwrite) so auditors
+  // can trust WHEN access was actually revoked.
+  it("no-ops when the assignment is already revoked (preserves removed_at)", async () => {
+    const originalRemovedAt = "2026-04-15T10:00:00.000Z";
+    mocks.state.limitResults = [[
+      {
+        id: ASSIGNMENT_ID,
+        user_id: TARGET_PROVIDER_ID,
+        patient_id: PATIENT_ID,
+        role: "attending",
+        removed_at: originalRemovedAt,
+      },
+    ]];
+    const result = await callerFor(makeUser("physician")).assignments.revoke({
+      assignment_id: ASSIGNMENT_ID,
+    });
+    expect(result).toMatchObject({ revoked: true, assignment_id: ASSIGNMENT_ID });
+    expect(mocks.state.updatedRows).toHaveLength(0);
+    expect(auditRows()).toHaveLength(0);
   });
 
   it("rejects unauthenticated callers (UNAUTHORIZED)", async () => {
