@@ -24,6 +24,8 @@ export interface Quantity {
 
 export interface Reference {
   reference?: string;
+  /** Human-readable label for the referenced resource. */
+  display?: string;
 }
 
 export interface Period {
@@ -129,6 +131,12 @@ export interface EncounterParticipant {
   individual?: Reference;
 }
 
+export interface EncounterLocation {
+  location: Reference;
+  status?: "planned" | "active" | "reserved" | "completed";
+  period?: Period;
+}
+
 export interface FhirEncounter {
   resourceType: "Encounter";
   id: string;
@@ -139,6 +147,7 @@ export interface FhirEncounter {
   subject?: Reference;
   period?: Period;
   participant?: EncounterParticipant[];
+  location?: EncounterLocation[];
   serviceProvider?: Reference;
   reasonCode?: CodeableConcept[];
 }

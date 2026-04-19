@@ -17,6 +17,8 @@ const labResultsTable = { __name: "lab_results" };
 const medicationsTable = { __name: "medications" };
 const diagnosesTable = { __name: "diagnoses" };
 const allergiesTable = { __name: "allergies" };
+const encountersTable = { __name: "encounters" };
+const proceduresTable = { __name: "procedures" };
 const fhirResourcesTable = { __name: "fhir_resources" };
 const auditLogTable = { __name: "audit_log" };
 
@@ -57,6 +59,8 @@ vi.mock("@carebridge/db-schema", () => ({
   medications: medicationsTable,
   diagnoses: diagnosesTable,
   allergies: allergiesTable,
+  encounters: encountersTable,
+  procedures: proceduresTable,
 }));
 
 vi.mock("drizzle-orm", () => ({
@@ -77,6 +81,8 @@ vi.mock("../generators/index.js", () => ({
   toFhirCondition: () => ({ resourceType: "Condition" }),
   toFhirMedicationStatement: () => ({ resourceType: "MedicationStatement" }),
   toFhirAllergyIntolerance: () => ({ resourceType: "AllergyIntolerance" }),
+  toFhirEncounter: () => ({ resourceType: "Encounter" }),
+  toFhirProcedure: () => ({ resourceType: "Procedure" }),
 }));
 
 vi.mock("@carebridge/phi-sanitizer", () => ({
