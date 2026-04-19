@@ -47,6 +47,14 @@ describe("normalizeAllergen (#232)", () => {
     expect(normalizeAllergen("Norco")).toBe("opioid");
   });
 
+  it("resolves vancomycin shorthand / brand / Red Man entries", () => {
+    expect(normalizeAllergen("Vanco")).toBe("vancomycin");
+    expect(normalizeAllergen("Vancocin")).toBe("vancomycin");
+    expect(normalizeAllergen("Red Man")).toBe("vancomycin");
+    expect(normalizeAllergen("Red Man Syndrome")).toBe("vancomycin");
+    expect(normalizeAllergen("teicoplanin")).toBe("vancomycin");
+  });
+
   it("returns the trimmed/lowercased input for unknown allergens", () => {
     expect(normalizeAllergen("  Salmon  ")).toBe("salmon");
     expect(normalizeAllergen("zolbidopride")).toBe("zolbidopride");
@@ -73,6 +81,22 @@ describe("expandAllergenAliases (#232)", () => {
     expect(aliases).toContain("lovenox");
     expect(aliases).toContain("enoxaparin");
     expect(aliases).toContain("heparin");
+  });
+
+  it("expands vancomycin aliases so the direct-match path reaches brand/shorthand meds", () => {
+    // The ai-oversight allergy-medication rule (Strategy 1) iterates
+    // expandAllergenAliases() and substring-tests each against the
+    // candidate medication name. Asserting the expanded set directly
+    // locks in the contract the consumer relies on, not just the
+    // normalize-to-canonical reduction.
+    const vancoAliases = expandAllergenAliases("Vanco");
+    expect(vancoAliases).toContain("vancomycin");
+    expect(vancoAliases).toContain("vancocin");
+    expect(vancoAliases).toContain("teicoplanin");
+
+    const redManAliases = expandAllergenAliases("Red Man Syndrome");
+    expect(redManAliases).toContain("vancomycin");
+    expect(redManAliases).toContain("vancocin");
   });
 
   it("unknown allergen returns single-element list", () => {
