@@ -163,6 +163,7 @@ function callerFor(user: User | null) {
     user,
     sessionId: "s",
     requestId: "r",
+    clientIp: null,
   };
   return patientRecordsRbacRouter.createCaller(ctx);
 }
