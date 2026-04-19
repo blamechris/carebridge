@@ -165,6 +165,80 @@ describe("CROSS-STEROID-PCP-001 — chronic corticosteroid without PCP prophylax
       ),
     ).toBeUndefined();
   });
+
+  // ── #940: duration-awareness gate ──────────────────────────────
+  it("prednisone 40 mg started 3 days ago (short burst) does NOT fire (#940)", () => {
+    const recentStart = new Date(
+      Date.now() - 3 * 86_400_000,
+    ).toISOString();
+    const ctx = emptyCtx({
+      active_medications: ["Prednisone 40mg daily"],
+      active_medications_detail: [
+        {
+          id: "m1",
+          name: "Prednisone",
+          dose_amount: 40,
+          dose_unit: "mg",
+          route: "oral",
+          frequency: "daily",
+          rxnorm_code: null,
+          started_at: recentStart,
+        },
+      ],
+    });
+    expect(
+      checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-STEROID-PCP-001",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("prednisone 40 mg started 35 days ago fires (past the 4-week gate) (#940)", () => {
+    const oldStart = new Date(Date.now() - 35 * 86_400_000).toISOString();
+    const ctx = emptyCtx({
+      active_medications: ["Prednisone 40mg daily"],
+      active_medications_detail: [
+        {
+          id: "m1",
+          name: "Prednisone",
+          dose_amount: 40,
+          dose_unit: "mg",
+          route: "oral",
+          frequency: "daily",
+          rxnorm_code: null,
+          started_at: oldStart,
+        },
+      ],
+    });
+    expect(
+      checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-STEROID-PCP-001",
+      ),
+    ).toBeDefined();
+  });
+
+  it("unknown started_at fails open — chronic course without start metadata still fires (#940)", () => {
+    const ctx = emptyCtx({
+      active_medications: ["Prednisone 40mg daily"],
+      active_medications_detail: [
+        {
+          id: "m1",
+          name: "Prednisone",
+          dose_amount: 40,
+          dose_unit: "mg",
+          route: "oral",
+          frequency: "daily",
+          rxnorm_code: null,
+          // started_at undefined / not supplied
+        },
+      ],
+    });
+    expect(
+      checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-STEROID-PCP-001",
+      ),
+    ).toBeDefined();
+  });
 });
 
 describe("CROSS-ANTICOAG-NSAID-GIBLEED-001 — triple bleed risk (#263)", () => {

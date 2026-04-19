@@ -892,6 +892,9 @@ export async function buildPatientContextForRules(
       frequency: m.frequency ?? null,
       max_doses_per_day: null,
       rxnorm_code: m.rxnorm_code ?? null,
+      // Expose prescription start date for duration-aware rules (#940).
+      // Null when the writer never recorded a start — rules must fail-open.
+      started_at: m.started_at ?? null,
     })),
     new_symptoms: newSymptoms,
     care_team_specialties: [], // Not needed for current rules, but available for future
