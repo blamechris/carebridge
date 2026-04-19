@@ -293,7 +293,7 @@ export const clinicalNotesRbacRouter = t.router({
           patient_id: existing.patient_id,
           procedure_name: "clinicalNotes.cosign",
           details: JSON.stringify({ cosigned_by: ctx.user.id }),
-          ip_address: "",
+          ip_address: ctx.clientIp ?? "",
           success: true,
           timestamp: new Date().toISOString(),
         });
@@ -362,7 +362,7 @@ export const clinicalNotesRbacRouter = t.router({
             reason: input.reason,
             new_version: result.version,
           }),
-          ip_address: "",
+          ip_address: ctx.clientIp ?? "",
           success: true,
           timestamp: new Date().toISOString(),
         });

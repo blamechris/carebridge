@@ -110,6 +110,7 @@ function makeCtx(user: Context["user"]): Context {
     user,
     sessionId: user ? "session-1" : null,
     requestId: "req-1",
+    clientIp: null,
   };
 }
 

@@ -84,6 +84,7 @@ function makeContext(user: Context["user"]): Context {
     user,
     sessionId: null,
     requestId: "test-request",
+    clientIp: null,
   };
 }
 

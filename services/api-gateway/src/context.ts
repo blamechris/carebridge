@@ -10,11 +10,44 @@ export interface Context {
   sessionId: string | null;
   requestId: string;
   /**
+   * Client IP address for HIPAA § 164.312(b) audit trail. Null when the
+   * underlying transport cannot resolve one (shouldn't happen for HTTP but
+   * guarded defensively). Procedures that write explicit audit_log rows
+   * must read this instead of hard-coding "".
+   */
+  clientIp: string | null;
+  /**
    * Set an HTTP response header on the underlying Fastify reply. Available
    * for tRPC procedures that need transport-layer control (e.g.,
    * Cache-Control on FHIR exports). Absent in non-HTTP contexts.
    */
   setHeader?: (name: string, value: string) => void;
+}
+
+/**
+ * Resolve the client IP for audit logging.
+ *
+ * Security note: we intentionally prefer Fastify's `request.ip` over manually
+ * parsing `x-forwarded-for`. Fastify only trusts the XFF header when
+ * `trustProxy` is configured — which the gateway does NOT currently enable
+ * (see server.ts). In that mode, `request.ip` is the direct TCP peer,
+ * which is what HIPAA auditing actually wants.
+ *
+ * If a future deployment turns `trustProxy` on (e.g. behind an AWS ALB),
+ * Fastify will automatically populate `request.ip` from XFF per its own
+ * validation rules — this resolver keeps working without code changes and
+ * without opening a spoofing gap where a malicious client could forge XFF
+ * against a gateway that has no upstream proxy.
+ *
+ * Exported for direct unit testing.
+ */
+export function resolveClientIp(
+  req: Pick<FastifyRequest, "ip">,
+): string | null {
+  const raw = req.ip;
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 export async function createContext(
@@ -32,6 +65,7 @@ export async function createContext(
     user,
     sessionId,
     requestId: crypto.randomUUID(),
+    clientIp: resolveClientIp(req),
     setHeader: (name: string, value: string) => {
       opts.res.header(name, value);
     },

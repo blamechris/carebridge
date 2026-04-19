@@ -105,6 +105,7 @@ function buildAuditRow(params: {
   old_value?: Record<string, unknown>;
   new_value?: Record<string, unknown>;
   procedure_name: string;
+  client_ip?: string | null;
 }) {
   return {
     id: crypto.randomUUID(),
@@ -119,7 +120,7 @@ function buildAuditRow(params: {
       old_value: params.old_value,
       new_value: params.new_value,
     }),
-    ip_address: "",
+    ip_address: params.client_ip ?? "",
     timestamp: new Date().toISOString(),
   };
 }
@@ -179,6 +180,7 @@ export const careTeamRbacRouter = t.router({
               assignment_role: input.assignment_role,
             },
             procedure_name: "careTeam.addMember",
+            client_ip: ctx.clientIp,
           }),
         );
       });
@@ -232,6 +234,7 @@ export const careTeamRbacRouter = t.router({
             },
             new_value: { is_active: false, ended_at: now },
             procedure_name: "careTeam.removeMember",
+            client_ip: ctx.clientIp,
           }),
         );
       });
@@ -285,6 +288,7 @@ export const careTeamRbacRouter = t.router({
               specialty: input.specialty ?? existing.specialty,
             },
             procedure_name: "careTeam.updateRole",
+            client_ip: ctx.clientIp,
           }),
         );
       });
@@ -328,6 +332,7 @@ export const careTeamRbacRouter = t.router({
               target_user_id: input.user_id,
               new_value: { role: input.role },
               procedure_name: "careTeamAssignments.grant",
+              client_ip: ctx.clientIp,
             }),
           );
         });
@@ -377,6 +382,7 @@ export const careTeamRbacRouter = t.router({
               old_value: { role: existing.role, removed_at: null },
               new_value: { removed_at: now },
               procedure_name: "careTeamAssignments.revoke",
+              client_ip: ctx.clientIp,
             }),
           );
         });
