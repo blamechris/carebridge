@@ -57,7 +57,8 @@ describe("parseFrequencyText (#235)", () => {
     // uninterpretable
     ["when sleepy", null],
     ["", null],
-    ["every 5 hours", null], // non-canonical interval → fail open
+    // Non-canonical q-N-hour intervals now parse to a QNHoursFrequency;
+    // see the dedicated "non-canonical qNh" describe block below.
     [" ", null],
   ];
 
@@ -70,6 +71,24 @@ describe("parseFrequencyText (#235)", () => {
   it("returns null for null/undefined", () => {
     expect(parseFrequencyText(null)).toBeNull();
     expect(parseFrequencyText(undefined)).toBeNull();
+  });
+});
+
+describe("parseFrequencyText non-canonical qNh intervals (#933)", () => {
+  for (const n of [1, 5, 7, 9, 10, 11, 13, 14, 16, 18, 20, 23]) {
+    it(`q${n}h → structured QNHoursFrequency with n=${n}`, () => {
+      expect(parseFrequencyText(`q${n}h`)).toEqual({ kind: "qNh", n });
+    });
+  }
+
+  it('"every 5 hours" parses to structured qNh', () => {
+    expect(parseFrequencyText("every 5 hours")).toEqual({ kind: "qNh", n: 5 });
+  });
+
+  it("q0h / q25h / q1000h fall outside [1,24] and fail open", () => {
+    expect(parseFrequencyText("q0h")).toBeNull();
+    expect(parseFrequencyText("q25h")).toBeNull();
+    expect(parseFrequencyText("q1000h")).toBeNull();
   });
 });
 
@@ -149,5 +168,46 @@ describe("estimateDailyDose (#235)", () => {
   it("explicit cap looser than scheduled frequency is ignored (frequency wins)", () => {
     // q4h is 6/day; cap of 10 doesn't expand the scheduled dose.
     expect(estimateDailyDose(10, "q4h", 10)).toBe(60);
+  });
+});
+
+describe("estimateDailyDose with non-canonical qNh (#933)", () => {
+  it("10 mg q5h → 48 mg/day (24/5 × 10)", () => {
+    const f = parseFrequencyText("q5h");
+    expect(estimateDailyDose(10, f)).toBe((24 / 5) * 10);
+  });
+
+  it("10 mg q10h → 24 mg/day (24/10 × 10)", () => {
+    const f = parseFrequencyText("q10h");
+    expect(estimateDailyDose(10, f)).toBe((24 / 10) * 10);
+  });
+
+  it("50 mg q16h → 75 mg/day (renal-dosing shape)", () => {
+    const f = parseFrequencyText("q16h");
+    expect(estimateDailyDose(50, f)).toBeCloseTo((24 / 16) * 50);
+  });
+
+  it("25 mg q18h → ~33.33 mg/day", () => {
+    const f = parseFrequencyText("q18h");
+    expect(estimateDailyDose(25, f)).toBeCloseTo((24 / 18) * 25);
+  });
+
+  it("explicit cap still wins for qNh prescriptions", () => {
+    const f = parseFrequencyText("q5h");
+    // q5h ≈ 4.8/day; cap of 3 overrides → 3 × 10.
+    expect(estimateDailyDose(10, f, 3)).toBe(30);
+  });
+
+  it("returns null for hand-constructed QNHoursFrequency with invalid n", () => {
+    // QNHoursFrequency is exported; defend against non-parser callers or
+    // deserialized payloads that bypass parseFrequencyText's range guard.
+    expect(estimateDailyDose(10, { kind: "qNh", n: 0 })).toBeNull();
+    expect(estimateDailyDose(10, { kind: "qNh", n: 25 })).toBeNull();
+    expect(estimateDailyDose(10, { kind: "qNh", n: -3 })).toBeNull();
+    expect(estimateDailyDose(10, { kind: "qNh", n: Number.NaN })).toBeNull();
+    expect(estimateDailyDose(10, { kind: "qNh", n: 4.5 })).toBeNull();
+    expect(
+      estimateDailyDose(10, { kind: "qNh", n: Number.POSITIVE_INFINITY }),
+    ).toBeNull();
   });
 });

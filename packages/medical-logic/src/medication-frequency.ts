@@ -37,6 +37,28 @@ export type MedFrequency =
   | "prn"; // as-needed — no implicit daily count; caller must supply max_doses_per_day
 
 /**
+ * Non-canonical every-N-hours interval (e.g. q5h, q10h, q16h) for which we
+ * compute the daily multiplier dynamically rather than round to the nearest
+ * canonical slot. Real-world renal-dosing regimens do write these.
+ *
+ * `n` is an integer in [1, 24]. `n === 1` → q1h (24x/day) is allowed but
+ * unusual; `n > 24` is treated as unparseable (cross into q-N-days territory,
+ * handled separately).
+ */
+export interface QNHoursFrequency {
+  kind: "qNh";
+  n: number;
+}
+
+/**
+ * Discriminated union returned by {@link parseFrequencyText}. Callers that
+ * only care about daily-dose math should forward this straight to
+ * {@link estimateDailyDose}; callers that dispatch on frequency shape can
+ * narrow with `typeof f === "string"` vs `f.kind === "qNh"`.
+ */
+export type ParsedFrequency = MedFrequency | QNHoursFrequency;
+
+/**
  * Doses-per-24h multiplier for each structured frequency. `prn` is zero
  * here — PRN prescriptions must carry an explicit `max_doses_per_day`
  * for daily-sum estimation; otherwise the rule cannot bound the dose.
@@ -64,18 +86,23 @@ export const FREQUENCY_DOSES_PER_DAY: Record<MedFrequency, number> = {
 };
 
 /**
- * Parse a free-text frequency string into a {@link MedFrequency}.
+ * Parse a free-text frequency string into a {@link ParsedFrequency}.
  *
  * Handles: q2h / q 2 h / q2hr / q2hrs / every 2 hours / every 2h, bid, tid,
  * qid, qd / once daily / daily / once a day, weekly / q7d, monthly, stat /
- * once / one-time, prn / as needed.
+ * once / one-time, prn / as needed. Canonical every-N-hours strings in
+ * {q2,q3,q4,q6,q8,q12} map to a {@link MedFrequency}; q24 collapses to
+ * `daily`; any other integer N in [1,24] returns a structured
+ * {@link QNHoursFrequency} (`{ kind: "qNh", n }`) so `estimateDailyDose`
+ * can compute `24/n` rather than silently fail-open on renal-dosing
+ * intervals like q5h / q10h.
  *
  * Intentionally lenient on whitespace and punctuation. Returns null for
  * strings it cannot classify — callers treat that as "unknown, don't flag".
  */
 export function parseFrequencyText(
   text: string | null | undefined,
-): MedFrequency | null {
+): ParsedFrequency | null {
   if (!text) return null;
   // Normalise: lowercase, collapse whitespace, drop punctuation that
   // shorthand forms commonly sprinkle in.
@@ -118,9 +145,14 @@ export function parseFrequencyText(
     if (n === 8) return "q8h";
     if (n === 12) return "q12h";
     if (n === 24) return "daily";
-    // Non-canonical intervals (e.g. q5h) — we could compute 24/n but
-    // clinicians rarely write these and being strict avoids false daily
-    // sums for odd values. Return null to fail open.
+    // Non-canonical intervals (q5h, q10h, q16h, q18h). Renal-dosing
+    // regimens do use these. The daily multiplier is well-defined for any
+    // positive integer N in [1, 24] — return a structured QNHoursFrequency
+    // so estimateDailyDose can compute 24/n rather than silently fail-open
+    // and miss overdoses that would have flagged on q8h.
+    if (Number.isInteger(n) && n >= 1 && n <= 24) {
+      return { kind: "qNh", n };
+    }
     return null;
   }
 
@@ -172,13 +204,25 @@ export function parseFrequencyText(
  */
 export function estimateDailyDose(
   doseAmount: number | null | undefined,
-  frequency: MedFrequency | null,
+  frequency: ParsedFrequency | null,
   maxDosesPerDay?: number | null,
 ): number | null {
   if (doseAmount == null || doseAmount <= 0) return null;
   if (frequency === null) return null;
 
-  let dosesPerDay = FREQUENCY_DOSES_PER_DAY[frequency];
+  let dosesPerDay: number;
+  if (typeof frequency === "string") {
+    dosesPerDay = FREQUENCY_DOSES_PER_DAY[frequency];
+  } else {
+    // QNHoursFrequency — compute 24/n dynamically. The parser guarantees
+    // n in [1, 24], but QNHoursFrequency is exported and could be built
+    // by non-parser callers or deserialized from a queue payload, so
+    // defend against 0 / NaN / non-integer / out-of-range n rather than
+    // returning Infinity or NaN daily doses.
+    const n = frequency.n;
+    if (!Number.isInteger(n) || n < 1 || n > 24) return null;
+    dosesPerDay = 24 / n;
+  }
 
   // PRN-only prescriptions must have an explicit cap to be boundable.
   if (frequency === "prn") {
