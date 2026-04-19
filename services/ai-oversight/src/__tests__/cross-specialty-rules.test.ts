@@ -239,6 +239,83 @@ describe("CROSS-STEROID-PCP-001 — chronic corticosteroid without PCP prophylax
       ),
     ).toBeDefined();
   });
+
+  it("duration gate anchors to ctx.event_timestamp, not wall-clock (#940)", () => {
+    // Event happened 2026-01-01; steroid started 2025-12-25 (7 days prior
+    // to the event). Even though wall-clock `Date.now()` is well past that,
+    // the rule must evaluate duration against event_timestamp and suppress.
+    const ctx = emptyCtx({
+      active_medications: ["Prednisone 40mg daily"],
+      active_medications_detail: [
+        {
+          id: "m1",
+          name: "Prednisone",
+          dose_amount: 40,
+          dose_unit: "mg",
+          route: "oral",
+          frequency: "daily",
+          rxnorm_code: null,
+          started_at: "2025-12-25T00:00:00.000Z",
+        },
+      ],
+      event_timestamp: "2026-01-01T00:00:00.000Z",
+    });
+    expect(
+      checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-STEROID-PCP-001",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("event_timestamp anchoring: 35 days elapsed relative to event → fires (#940)", () => {
+    const ctx = emptyCtx({
+      active_medications: ["Prednisone 40mg daily"],
+      active_medications_detail: [
+        {
+          id: "m1",
+          name: "Prednisone",
+          dose_amount: 40,
+          dose_unit: "mg",
+          route: "oral",
+          frequency: "daily",
+          rxnorm_code: null,
+          started_at: "2025-11-27T00:00:00.000Z", // 35d before event below
+        },
+      ],
+      event_timestamp: "2026-01-01T00:00:00.000Z",
+    });
+    expect(
+      checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-STEROID-PCP-001",
+      ),
+    ).toBeDefined();
+  });
+
+  it("future-dated started_at (data-entry typo) fails open — fires (#940)", () => {
+    // Start date recorded as after the event. Don't silently suppress on
+    // bad data; treat as unknown duration and fall through to fire.
+    const ctx = emptyCtx({
+      active_medications: ["Prednisone 40mg daily"],
+      active_medications_detail: [
+        {
+          id: "m1",
+          name: "Prednisone",
+          dose_amount: 40,
+          dose_unit: "mg",
+          route: "oral",
+          frequency: "daily",
+          rxnorm_code: null,
+          started_at: "2026-06-01T00:00:00.000Z",
+        },
+      ],
+      event_timestamp: "2026-01-01T00:00:00.000Z",
+    });
+    expect(
+      checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-STEROID-PCP-001",
+      ),
+    ).toBeDefined();
+  });
 });
 
 describe("CROSS-ANTICOAG-NSAID-GIBLEED-001 — triple bleed risk (#263)", () => {

@@ -1160,12 +1160,21 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
         // course started < 28 days ago; fail-open (keep firing) when the
         // writer didn't record a start date, so chronic steroid courses
         // without start-date metadata still surface.
+        //
+        // Anchor to `ctx.event_timestamp` (not wall-clock) so replayed /
+        // backfilled / late-processed events evaluate deterministically —
+        // same pattern as the ONCO-VTE recency gate above. A start date in
+        // the future relative to the event (data-entry typo) is treated as
+        // unknown and falls through to fire (fail-open).
         const startedAt = systemicSteroidDetail.started_at;
         if (startedAt) {
           const startedMs = Date.parse(startedAt);
-          if (Number.isFinite(startedMs)) {
-            const daysSinceStart = (Date.now() - startedMs) / 86_400_000;
-            if (daysSinceStart < 28) return false;
+          const refMs = ctx.event_timestamp
+            ? Date.parse(ctx.event_timestamp)
+            : Date.now();
+          if (Number.isFinite(startedMs) && Number.isFinite(refMs)) {
+            const daysSinceStart = (refMs - startedMs) / 86_400_000;
+            if (daysSinceStart >= 0 && daysSinceStart < 28) return false;
           }
         }
       }
