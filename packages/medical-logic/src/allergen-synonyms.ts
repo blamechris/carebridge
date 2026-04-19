@@ -277,12 +277,28 @@ export const ALLERGEN_SYNONYMS: Record<string, string[]> = {
     "iodinated contrast",
     "iv contrast",
     "contrast dye",
-    "iodine",
     "iohexol",
     "omnipaque",
     "iopamidol",
     "iodixanol",
     "visipaque",
+    "ioversol",
+    "optiray",
+  ],
+  // Elemental / topical iodine is a distinct canonical. Chart entries of
+  // "iodine allergy" are usually Betadine (povidone-iodine) skin-prep
+  // irritation or the "shellfish iodine" folk belief — NOT an IV contrast
+  // reaction. Cross-reactivity to iodinated contrast is linked at the
+  // rule layer (allergy-medication.ts) with a downgraded warning severity
+  // rather than conflated at the synonym layer, so a patient charted
+  // "allergic to iodine" doesn't get a critical contrast-CT flag.
+  iodine: [
+    "iodine",
+    "elemental iodine",
+    "betadine",
+    "povidone iodine",
+    "povidone-iodine",
+    "povidone",
   ],
   latex: ["latex", "natural rubber latex"],
 };
