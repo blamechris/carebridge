@@ -200,9 +200,17 @@ describe("allergies.override — role gate", () => {
   function seedFlagAndAllergy() {
     // 1st .limit() -> clinical_flags lookup
     mocks.state.selectQueue.push([
-      { id: FLAG_ID, patient_id: PATIENT_ID, status: "open" },
+      {
+        id: FLAG_ID,
+        patient_id: PATIENT_ID,
+        status: "open",
+        summary:
+          'Medication "Amoxicillin" matches patient allergy to "Penicillin"',
+      },
     ]);
-    // 2nd .limit() -> allergies lookup
+    // 2nd .limit() -> allergies lookup (cross-patient guard + allergen
+    // denormalisation source; both needs served by the same fetch after
+    // the #905 refactor).
     mocks.state.selectQueue.push([
       { id: ALLERGY_ID, patient_id: PATIENT_ID, allergen: "Penicillin" },
     ]);
@@ -367,10 +375,83 @@ describe("allergies.override — flag / allergy lookups", () => {
   });
 });
 
+describe("allergies.override — denormalised allergen/medication (#905)", () => {
+  function seedFlagAndAllergy(summary: string, allergen = "Penicillin") {
+    mocks.state.selectQueue.push([
+      { id: FLAG_ID, patient_id: PATIENT_ID, status: "open", summary },
+    ]);
+    mocks.state.selectQueue.push([
+      { id: ALLERGY_ID, patient_id: PATIENT_ID, allergen },
+    ]);
+  }
+
+  it("denormalises medication_name and allergen_name onto the override row", async () => {
+    seedFlagAndAllergy(
+      'Medication "Amoxicillin 500mg" matches patient allergy to "Penicillin"',
+    );
+    const caller = callerFor(makeUser("physician"));
+    await caller.allergies.override(overrideInput);
+
+    expect(overrideRows()).toHaveLength(1);
+    expect(overrideRows()[0]!.row).toMatchObject({
+      medication_name: "Amoxicillin 500mg",
+      allergen_name: "Penicillin",
+    });
+  });
+
+  it("prefers the structured allergies row for allergen_name over the flag summary", async () => {
+    // Summary names "Penicillin" but the structured allergies row records
+    // the canonical "Amoxicillin" — the denormalisation must prefer the
+    // structured row so reviewers see the clinician's documented allergen
+    // rather than the flag's rendered description.
+    seedFlagAndAllergy(
+      'Medication "Augmentin" may cross-react with allergy to "Penicillin" (penicillin class)',
+      "Amoxicillin",
+    );
+    const caller = callerFor(makeUser("physician"));
+    await caller.allergies.override(overrideInput);
+
+    expect(overrideRows()[0]!.row).toMatchObject({
+      medication_name: "Augmentin",
+      allergen_name: "Amoxicillin",
+    });
+  });
+
+  it("leaves denormalised columns NULL when the flag summary has no recognisable medication line", async () => {
+    // Contraindication-only override (no allergy_id) against a flag whose
+    // summary isn't produced by checkAllergyMedication — e.g. a
+    // cross-specialty warning. The loader-side fallback keeps suppression
+    // correct; the row itself simply has NULLs.
+    mocks.state.selectQueue.push([
+      {
+        id: FLAG_ID,
+        patient_id: PATIENT_ID,
+        status: "open",
+        summary: "Unrelated pattern warning — see care plan",
+      },
+    ]);
+
+    const { allergy_id: _omit, ...withoutAllergy } = overrideInput;
+    const caller = callerFor(makeUser("physician"));
+    await caller.allergies.override(withoutAllergy);
+
+    expect(overrideRows()[0]!.row).toMatchObject({
+      medication_name: null,
+      allergen_name: null,
+    });
+  });
+});
+
 describe("allergies.override — audit ip_address capture (issue #907)", () => {
   function seedFlagAndAllergy() {
     mocks.state.selectQueue.push([
-      { id: FLAG_ID, patient_id: PATIENT_ID, status: "open" },
+      {
+        id: FLAG_ID,
+        patient_id: PATIENT_ID,
+        status: "open",
+        summary:
+          'Medication "Amoxicillin" matches patient allergy to "Penicillin"',
+      },
     ]);
     mocks.state.selectQueue.push([
       { id: ALLERGY_ID, patient_id: PATIENT_ID, allergen: "Penicillin" },

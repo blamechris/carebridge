@@ -113,7 +113,8 @@ describe("createNote", () => {
       sections: soapSections,
     });
 
-    expect(db.insert).toHaveBeenCalledTimes(1);
+    // Two inserts: the clinical_notes row and the v1 draft archive (#888).
+    expect(db.insert).toHaveBeenCalledTimes(2);
     const insertCall = db.insert.calls[0];
     expect(insertCall?.chain).toContain("values");
     const insertedValues = insertCall?.chainArgs[0]?.[0] as {
@@ -124,6 +125,31 @@ describe("createNote", () => {
     expect(insertedValues.patient_id).toBe(PATIENT_ID);
     expect(insertedValues.version).toBe(1);
     expect(insertedValues.status).toBe("draft");
+  });
+
+  it("archives v1 to note_versions with lifecycle_event=draft on create (#888)", async () => {
+    await createNote({
+      patient_id: PATIENT_ID,
+      provider_id: PROVIDER_ID,
+      template_type: "soap",
+      sections: soapSections,
+    });
+
+    // The 2nd insert is the version-archive write. Before #888 the
+    // version history was empty until the first sign / update — a note
+    // that was viewed as a draft had no snapshot to show.
+    expect(db.insert).toHaveBeenCalledTimes(2);
+    const archived = db.insert.calls[1]?.chainArgs[0]?.[0] as {
+      note_id: string;
+      version: number;
+      sections: unknown;
+      saved_by: string;
+      lifecycle_event: string;
+    };
+    expect(archived.version).toBe(1);
+    expect(archived.saved_by).toBe(PROVIDER_ID);
+    expect(archived.sections).toEqual(soapSections);
+    expect(archived.lifecycle_event).toBe("draft");
   });
 
   it("emits a note.saved clinical event on create", async () => {
@@ -766,11 +792,21 @@ describe("getVersionHistory", () => {
   // query does), so the assertions pin both the event labels and the
   // chronological order that getVersionHistory must produce.
 
-  it("create → sign → cosign yields [signed, cosigned] in chronological order", async () => {
-    // Create does NOT archive (no pre-existing state to snapshot), so the
-    // history contains only the sign and cosign archive rows. Both share
-    // version=1 because neither sign nor cosign bumps clinical_notes.version.
+  it("create → sign → cosign yields [draft, signed, cosigned] in chronological order (#888)", async () => {
+    // After #888, createNote archives the initial draft as v1 — so a
+    // create → sign → cosign sequence produces THREE rows, not two. All
+    // three share version=1 because neither sign nor cosign bumps
+    // clinical_notes.version; the lifecycle_event label is what
+    // disambiguates them.
     db.willSelect([
+      {
+        note_id: NOTE_ID,
+        version: 1,
+        sections: [{ key: "s", label: "Subjective", fields: [], free_text: "initial" }],
+        saved_at: "2026-03-15T09:00:00.000Z",
+        saved_by: PROVIDER_ID,
+        lifecycle_event: "draft",
+      },
       {
         note_id: NOTE_ID,
         version: 1,
@@ -791,22 +827,32 @@ describe("getVersionHistory", () => {
 
     const versions = await getVersionHistory(NOTE_ID);
 
-    expect(versions).toHaveLength(2);
-    expect(versions[0].lifecycle_event).toBe("signed");
+    expect(versions).toHaveLength(3);
+    expect(versions.map((v) => v.lifecycle_event)).toEqual([
+      "draft",
+      "signed",
+      "cosigned",
+    ]);
     expect(versions[0].saved_by).toBe(PROVIDER_ID);
-    expect(versions[1].lifecycle_event).toBe("cosigned");
-    expect(versions[1].saved_by).toBe(COSIGNER_ID);
-    // Both rows sit at version=1 — the lifecycle_event label is what
-    // disambiguates them.
-    expect(versions[0].version).toBe(1);
-    expect(versions[1].version).toBe(1);
+    expect(versions[1].saved_by).toBe(PROVIDER_ID);
+    expect(versions[2].saved_by).toBe(COSIGNER_ID);
+    expect(versions.map((v) => v.version)).toEqual([1, 1, 1]);
   });
 
-  it("create → sign → amend → amend yields [signed, amended, amended] in chronological order", async () => {
-    // First amend archives the signed snapshot at version=1, then the live
-    // row bumps to version=2. Second amend archives version=2, live row
-    // bumps to version=3.
+  it("create → sign → amend → amend yields [draft, signed, amended, amended] in chronological order (#888)", async () => {
+    // After #888 the initial draft gets archived at create time. First
+    // amend archives the signed snapshot at version=1 and bumps the live
+    // row to version=2. Second amend archives version=2 and bumps to
+    // version=3 — so the full history is four rows, not three.
     db.willSelect([
+      {
+        note_id: NOTE_ID,
+        version: 1,
+        sections: [{ key: "s", label: "Subjective", fields: [], free_text: "initial" }],
+        saved_at: "2026-03-15T09:00:00.000Z",
+        saved_by: PROVIDER_ID,
+        lifecycle_event: "draft",
+      },
       {
         note_id: NOTE_ID,
         version: 1,
@@ -835,13 +881,38 @@ describe("getVersionHistory", () => {
 
     const versions = await getVersionHistory(NOTE_ID);
 
-    expect(versions).toHaveLength(3);
+    expect(versions).toHaveLength(4);
     expect(versions.map((v) => v.lifecycle_event)).toEqual([
+      "draft",
       "signed",
       "amended",
       "amended",
     ]);
-    expect(versions.map((v) => v.version)).toEqual([1, 1, 2]);
+    expect(versions.map((v) => v.version)).toEqual([1, 1, 1, 2]);
+  });
+
+  it("returns [draft v1] for a note that was created but never transitioned (#888)", async () => {
+    // Prior to #888 the version history of an unsaved-past-draft note
+    // was []. After #888 it's a single draft row — which is what the
+    // "what did this draft look like when it was first saved?" audit
+    // question needs to answer.
+    db.willSelect([
+      {
+        note_id: NOTE_ID,
+        version: 1,
+        sections: [{ key: "s", label: "Subjective", fields: [], free_text: "initial" }],
+        saved_at: "2026-03-15T09:00:00.000Z",
+        saved_by: PROVIDER_ID,
+        lifecycle_event: "draft",
+      },
+    ]);
+
+    const versions = await getVersionHistory(NOTE_ID);
+
+    expect(versions).toHaveLength(1);
+    expect(versions[0].lifecycle_event).toBe("draft");
+    expect(versions[0].version).toBe(1);
+    expect(versions[0].saved_by).toBe(PROVIDER_ID);
   });
 });
 

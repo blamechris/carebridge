@@ -714,6 +714,10 @@ export async function buildPatientContextForRules(
         allergy_id: allergyOverrides.allergy_id,
         override_reason: allergyOverrides.override_reason,
         overridden_at: allergyOverrides.overridden_at,
+        // Denormalised columns (#905) — preferred over the legacy summary
+        // parse below. Nullable for rows written before migration 0040.
+        medication_name: allergyOverrides.medication_name,
+        allergen_name: allergyOverrides.allergen_name,
         flag_summary: clinicalFlags.summary,
       })
       .from(allergyOverrides)
@@ -874,12 +878,15 @@ export async function buildPatientContextForRules(
     })),
     resolved_overrides: overrideRows.map((o) => ({
       allergy_id: o.allergy_id ?? null,
-      // Recover allergen + medication strings from the overridden flag's
-      // summary. We parse loosely (empty values are fine) so the fallback
-      // matcher in `checkAllergyMedication` can still match on allergen
-      // alone when the override references an allergy_id.
-      allergen: extractAllergenFromFlagSummary(o.flag_summary),
-      medication: extractMedicationFromFlagSummary(o.flag_summary),
+      // Prefer the denormalised columns populated by `allergies.override`
+      // after migration 0040 (#905). Fall back to the legacy
+      // parse-from-flag-summary path for rows written before the migration,
+      // or if a future rule writes an override without the denormalised
+      // fields populated.
+      allergen:
+        o.allergen_name ?? extractAllergenFromFlagSummary(o.flag_summary),
+      medication:
+        o.medication_name ?? extractMedicationFromFlagSummary(o.flag_summary),
       override_reason: o.override_reason,
       overridden_at: o.overridden_at,
     })),

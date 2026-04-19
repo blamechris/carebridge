@@ -39,6 +39,8 @@ vi.mock("@carebridge/db-schema", () => ({
     flag_id: "flag_id",
     override_reason: "override_reason",
     overridden_at: "overridden_at",
+    medication_name: "medication_name",
+    allergen_name: "allergen_name",
   },
   clinicalFlags: {
     id: "id",
@@ -582,6 +584,102 @@ describe("buildPatientContextForRules — recent_labs wiring", () => {
     const ctx = await buildPatientContextForRules("p-1", event);
 
     expect((ctx.allergies ?? []).map((a) => a.allergen)).toEqual(["peanut"]);
+  });
+});
+
+// ─── #905 — denormalised override allergen/medication preference ────
+describe("buildPatientContextForRules — override denormalisation (#905)", () => {
+  beforeEach(() => {
+    primeSelectMocks();
+  });
+
+  it("prefers denormalised allergen_name / medication_name over the legacy flag-summary parse", async () => {
+    // Row written after migration 0040 — both denormalised columns
+    // populated. Even though the legacy flag_summary is present and
+    // would parse to different-looking strings, the loader must use
+    // the structured columns.
+    diagnosesSelect.mockResolvedValue([]);
+    medicationsSelect.mockResolvedValue([]);
+    labsSelect.mockResolvedValue([]);
+    overridesSelect.mockResolvedValue([
+      {
+        allergy_id: "a-1",
+        override_reason: "patient_tolerated_previously",
+        overridden_at: "2026-04-10T00:00:00.000Z",
+        medication_name: "Amoxicillin 500mg",
+        allergen_name: "Penicillin",
+        // Intentionally different phrasing to prove the columns win.
+        flag_summary:
+          'Medication "SHOULD_IGNORE" matches patient allergy to "SHOULD_IGNORE"',
+      },
+    ]);
+
+    const ctx = await buildPatientContextForRules("p-1", stubEvent);
+
+    expect(ctx.resolved_overrides).toEqual([
+      {
+        allergy_id: "a-1",
+        allergen: "Penicillin",
+        medication: "Amoxicillin 500mg",
+        override_reason: "patient_tolerated_previously",
+        overridden_at: "2026-04-10T00:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("falls back to parsing flag_summary when denormalised columns are NULL (pre-migration rows)", async () => {
+    diagnosesSelect.mockResolvedValue([]);
+    medicationsSelect.mockResolvedValue([]);
+    labsSelect.mockResolvedValue([]);
+    overridesSelect.mockResolvedValue([
+      {
+        allergy_id: "a-legacy",
+        override_reason: "benefit_exceeds_risk",
+        overridden_at: "2025-12-01T00:00:00.000Z",
+        medication_name: null,
+        allergen_name: null,
+        flag_summary:
+          'Medication "Augmentin" may cross-react with allergy to "Penicillin" (penicillin-cephalosporin-cross class)',
+      },
+    ]);
+
+    const ctx = await buildPatientContextForRules("p-1", stubEvent);
+
+    expect(ctx.resolved_overrides).toEqual([
+      {
+        allergy_id: "a-legacy",
+        allergen: "Penicillin",
+        medication: "Augmentin",
+        override_reason: "benefit_exceeds_risk",
+        overridden_at: "2025-12-01T00:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("leaves allergen/medication as null when both the columns and the summary are empty", async () => {
+    diagnosesSelect.mockResolvedValue([]);
+    medicationsSelect.mockResolvedValue([]);
+    labsSelect.mockResolvedValue([]);
+    overridesSelect.mockResolvedValue([
+      {
+        allergy_id: null,
+        override_reason: "other",
+        overridden_at: "2026-04-10T00:00:00.000Z",
+        medication_name: null,
+        allergen_name: null,
+        flag_summary: null,
+      },
+    ]);
+
+    const ctx = await buildPatientContextForRules("p-1", stubEvent);
+
+    expect(ctx.resolved_overrides?.[0]).toEqual({
+      allergy_id: null,
+      allergen: null,
+      medication: null,
+      override_reason: "other",
+      overridden_at: "2026-04-10T00:00:00.000Z",
+    });
   });
 });
 
