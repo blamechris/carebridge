@@ -18,22 +18,29 @@
 const UCUM_SYSTEM = "http://unitsofmeasure.org";
 
 /**
- * Lowercase atomic/compound UCUM codes we accept verbatim. Common drug
- * dosing units; not exhaustive for all of UCUM (which is several thousand
- * units including physical constants).
+ * Canonical UCUM codes we accept. UCUM is case-sensitive (`L` = liter,
+ * `l` is not a case-sensitive UCUM atom), so the allowlist stores the
+ * canonical casing and lookup happens through a lowercase index. Common
+ * drug dosing units; not exhaustive for all of UCUM (which is several
+ * thousand units including physical constants).
+ *
+ * When emitting the Quantity we return the canonical casing from this
+ * list so external validators (Epic, Cerner, Inferno) accept the code,
+ * while still accepting mixed-case user input (`MG`, `mL`, `mmol/l`).
  */
-const UCUM_ALLOWLIST = new Set<string>([
+const UCUM_CANONICAL: readonly string[] = [
   // Mass
   "kg",
   "g",
   "mg",
   "ug",
   "ng",
-  // Volume
-  "l",
-  "ml",
-  "dl",
-  "ul",
+  // Volume (note case: L is liter; l/dl/ml are also accepted UCUM atoms
+  // but the case-sensitive canonical forms are the capital-L variants)
+  "L",
+  "mL",
+  "dL",
+  "uL",
   // Time
   "h",
   "min",
@@ -42,6 +49,10 @@ const UCUM_ALLOWLIST = new Set<string>([
   "wk",
   "mo",
   "a",
+  // Amount / electrolytes
+  "meq",
+  "mmol",
+  "mol",
   // Derived dose units (per-weight, per-time, concentration)
   "mg/kg",
   "ug/kg",
@@ -49,15 +60,19 @@ const UCUM_ALLOWLIST = new Set<string>([
   "mg/m2",
   "mg/min",
   "mg/h",
-  "mcg/h",
   "ug/h",
-  "meq",
-  "mmol",
-  "mol",
-  "mg/ml",
-  "g/dl",
-  "mmol/l",
-]);
+  "mg/mL",
+  "g/dL",
+  "mg/dL",
+  "ng/mL",
+  "pg/mL",
+  "mmol/L",
+];
+
+/** Lowercase-indexed lookup to the canonical form. */
+const UCUM_ALLOWLIST: Map<string, string> = new Map(
+  UCUM_CANONICAL.map((c) => [c.toLowerCase(), c]),
+);
 
 /**
  * Common non-UCUM unit strings → UCUM curly-brace annotation code.
@@ -88,8 +103,12 @@ const NON_UCUM_TO_UCUM_CODE: Record<string, string> = {
   units: "[iU]",
   u: "[iU]",
   // Clinical "mcg" is the legacy microgram form; strict UCUM uses "ug"
-  // (or the Unicode micro). Map to the canonical UCUM atom.
+  // (or the Unicode micro). Map to the canonical UCUM atom, for both the
+  // bare form and common per-time compound.
   mcg: "ug",
+  "mcg/h": "ug/h",
+  "mcg/kg": "ug/kg",
+  "mcg/min": "ug/min",
 };
 
 export interface DoseQuantity {
@@ -110,14 +129,10 @@ export interface DoseQuantity {
  */
 export function toDoseQuantity(value: number, unit: string): DoseQuantity {
   const normalised = unit.trim().toLowerCase();
-  if (UCUM_ALLOWLIST.has(normalised)) {
-    return {
-      value,
-      unit,
-      system: UCUM_SYSTEM,
-      code: normalised,
-    };
-  }
+
+  // 1. Check the non-UCUM alias table first so that entries like
+  //    `mcg` → `ug`, `mcg/h` → `ug/h` translate to canonical UCUM even
+  //    when the legacy form happens to share a prefix with the allowlist.
   const annotation = NON_UCUM_TO_UCUM_CODE[normalised];
   if (annotation) {
     return {
@@ -127,7 +142,19 @@ export function toDoseQuantity(value: number, unit: string): DoseQuantity {
       code: annotation,
     };
   }
-  // Unknown. Emit value + human-readable unit only — valid FHIR Quantity.
+
+  // 2. Look up against the canonical allowlist; emit with canonical casing.
+  const canonical = UCUM_ALLOWLIST.get(normalised);
+  if (canonical) {
+    return {
+      value,
+      unit,
+      system: UCUM_SYSTEM,
+      code: canonical,
+    };
+  }
+
+  // 3. Unknown. Emit value + human-readable unit only — valid FHIR Quantity.
   return { value, unit };
 }
 

@@ -3,13 +3,35 @@ import { toDoseQuantity, isUcumAllowed } from "./ucum.js";
 
 describe("toDoseQuantity — UCUM validity (#946)", () => {
   it("emits full UCUM Quantity for atomic codes (mg, g, mL, kg, L)", () => {
-    for (const u of ["mg", "g", "mL", "kg", "L"]) {
-      const q = toDoseQuantity(100, u);
+    // UCUM is case-sensitive: `L`/`mL` are canonical, `l`/`ml` are not
+    // the case-sensitive atoms most validators expect. Assert the
+    // canonical casing is what we emit.
+    const cases: Array<[string, string]> = [
+      ["mg", "mg"],
+      ["g", "g"],
+      ["mL", "mL"],
+      ["kg", "kg"],
+      ["L", "L"],
+    ];
+    for (const [input, expectedCode] of cases) {
+      const q = toDoseQuantity(100, input);
       expect(q.value).toBe(100);
-      expect(q.unit).toBe(u);
+      expect(q.unit).toBe(input);
       expect(q.system).toBe("http://unitsofmeasure.org");
-      expect(q.code).toBe(u.toLowerCase());
+      expect(q.code).toBe(expectedCode);
     }
+  });
+
+  it("emits canonical UCUM casing for mixed-case inputs (ml → mL, l → L, dl → dL)", () => {
+    // Regression guard: lowercase inputs must map to the case-sensitive
+    // UCUM form the rest of the gateway already uses in observation.ts
+    // (mg/dL, mmol/L, ng/mL).
+    expect(toDoseQuantity(10, "ml").code).toBe("mL");
+    expect(toDoseQuantity(1, "l").code).toBe("L");
+    expect(toDoseQuantity(1, "dl").code).toBe("dL");
+    expect(toDoseQuantity(5, "mmol/l").code).toBe("mmol/L");
+    expect(toDoseQuantity(150, "mg/dl").code).toBe("mg/dL");
+    expect(toDoseQuantity(50, "ng/ml").code).toBe("ng/mL");
   });
 
   it("maps clinical 'mcg' to canonical UCUM 'ug' microgram", () => {
@@ -17,6 +39,12 @@ describe("toDoseQuantity — UCUM validity (#946)", () => {
     expect(q.system).toBe("http://unitsofmeasure.org");
     expect(q.code).toBe("ug");
     expect(q.unit).toBe("mcg"); // clinician-readable unit preserved
+  });
+
+  it("maps 'mcg/h' and 'mcg/kg' compounds to canonical 'ug/...' UCUM", () => {
+    expect(toDoseQuantity(5, "mcg/h").code).toBe("ug/h");
+    expect(toDoseQuantity(2, "mcg/kg").code).toBe("ug/kg");
+    expect(toDoseQuantity(10, "mcg/min").code).toBe("ug/min");
   });
 
   it("emits full UCUM Quantity for compound codes (mg/kg, mg/m2)", () => {
@@ -75,6 +103,12 @@ describe("toDoseQuantity — UCUM validity (#946)", () => {
 describe("isUcumAllowed", () => {
   it("accepts the common mass / volume / time codes", () => {
     for (const u of ["mg", "g", "mL", "L", "ug", "kg"]) {
+      expect(isUcumAllowed(u)).toBe(true);
+    }
+  });
+
+  it("accepts lowercase volume forms via case-insensitive lookup", () => {
+    for (const u of ["ml", "l", "dl"]) {
       expect(isUcumAllowed(u)).toBe(true);
     }
   });
