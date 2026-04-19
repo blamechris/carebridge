@@ -260,6 +260,13 @@
       "when": 1746806400000,
       "tag": "0036_note_versions_lifecycle_event",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1746892800000,
+      "tag": "0037_allergy_overrides",
+      "breakpoints": true
     }
   ]
 }
