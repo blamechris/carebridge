@@ -8,6 +8,7 @@
 
 import type { medications } from "@carebridge/db-schema";
 import type { Coding } from "../types/fhir-r4.js";
+import { toDoseQuantity } from "./ucum.js";
 
 type Medication = typeof medications.$inferSelect;
 
@@ -40,8 +41,11 @@ interface FhirDosage {
     doseQuantity: {
       value: number;
       unit: string;
-      system: string;
-      code: string;
+      // UCUM system + code are populated only when dose_unit is valid
+      // UCUM (or maps to a known UCUM annotation). Unknown units emit
+      // a text-only Quantity — see generators/ucum.ts.
+      system?: string;
+      code?: string;
     };
   }[];
 }
@@ -181,12 +185,10 @@ export function toFhirMedicationStatement(
   if (medication.dose_amount != null && medication.dose_unit) {
     dosage.doseAndRate = [
       {
-        doseQuantity: {
-          value: medication.dose_amount,
-          unit: medication.dose_unit,
-          system: "http://unitsofmeasure.org",
-          code: medication.dose_unit,
-        },
+        doseQuantity: toDoseQuantity(
+          medication.dose_amount,
+          medication.dose_unit,
+        ),
       },
     ];
     hasDosage = true;
