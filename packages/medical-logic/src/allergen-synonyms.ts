@@ -108,6 +108,33 @@ export const ALLERGEN_SYNONYMS: Record<string, string[]> = {
   ],
 
   // ── Analgesics ──────────────────────────────────────────────────
+  // AERD tradeoff: aspirin / ASA / acetylsalicylic acid are intentionally
+  // folded into the `nsaid` canonical rather than given a standalone class.
+  //
+  // Why: aspirin-exacerbated respiratory disease (AERD, Samter's triad)
+  // means a documented aspirin allergy usually implies cross-reactivity
+  // to the NSAID class (classically non-selective NSAIDs; COX-2 agents
+  // like celecoxib are often tolerated in AERD but not reliably so).
+  // The safest default for a clinical-safety layer is to treat
+  // "allergic to aspirin" as "allergic to the NSAID class" — including
+  // celecoxib — rather than silently allow ibuprofen/naproxen/celecoxib/
+  // etc. Narrower COX-2 tolerance is a clinician-reviewed decision, not
+  // a synonym-layer default.
+  //
+  // Tradeoff: patients with true isolated aspirin hypersensitivity (not
+  // AERD, not NSAID-class cross-reactive) will be over-flagged on other
+  // NSAIDs. The override-suppression mechanism in
+  // services/ai-oversight/src/rules/allergy-medication.ts handles the
+  // "clinician reviewed, approved, proceed" workflow for those patients.
+  //
+  // If a future policy splits aspirin into its own canonical, the
+  // migration path is: (1) add `aspirin: ["aspirin","asa",...]` here,
+  // (2) remove aspirin aliases from the `nsaid` entry, (3) move AERD
+  // cross-reactivity coverage to a rule-layer cross-reactivity map so
+  // it's not silently baked into synonym normalization.
+  //
+  // Ref: Szczeklik & Stevenson, "Aspirin-induced asthma: advances in
+  // pathogenesis, diagnosis, and management" (J Allergy Clin Immunol).
   nsaid: [
     "nsaid",
     "nsaids",
