@@ -85,6 +85,8 @@ vi.mock("../generators/index.js", () => ({
   toFhirCondition: () => ({ resourceType: "Condition" }),
   toFhirMedicationStatement: () => ({ resourceType: "MedicationStatement" }),
   toFhirAllergyIntolerance: () => ({ resourceType: "AllergyIntolerance" }),
+  toFhirEncounter: () => ({ resourceType: "Encounter" }),
+  toFhirProcedure: () => ({ resourceType: "Procedure" }),
 }));
 
 vi.mock("@carebridge/phi-sanitizer", () => ({

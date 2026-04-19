@@ -111,6 +111,19 @@ describe("toFhirEncounter (#387)", () => {
       expect(enc.participant).toBeUndefined();
     });
 
+    it("maps encounter.location to a FHIR Encounter.location reference with display text", () => {
+      const enc = toFhirEncounter(
+        makeEncounter({ location: "Main Hospital, Room 302B" }),
+        "p1",
+      );
+      expect(enc.location?.[0]?.location?.display).toBe("Main Hospital, Room 302B");
+    });
+
+    it("omits Encounter.location when the column is null", () => {
+      const enc = toFhirEncounter(makeEncounter({ location: null }), "p1");
+      expect(enc.location).toBeUndefined();
+    });
+
     it("includes reasonCode when reason set", () => {
       const enc = toFhirEncounter(
         makeEncounter({ reason: "Chest pain workup" }),

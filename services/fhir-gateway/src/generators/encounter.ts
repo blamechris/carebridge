@@ -109,5 +109,20 @@ export function toFhirEncounter(
     resource.reasonCode = [{ text: encounter.reason }];
   }
 
+  // Encounter.location — the internal `location` column is a free-text
+  // identifier (bed, unit, clinic room). FHIR R4 wants a Location
+  // Reference, so we emit a reference whose `display` carries the
+  // internal string. When a proper Location resource set exists the
+  // reference string can be upgraded to `Location/<id>`.
+  if (encounter.location) {
+    resource.location = [
+      {
+        location: {
+          display: encounter.location,
+        },
+      },
+    ];
+  }
+
   return resource;
 }
