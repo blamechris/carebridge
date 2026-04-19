@@ -51,23 +51,37 @@ function slugForRuleId(name: string): string {
 }
 
 /**
- * Map the excess-ratio of estimated-over-max into a flag severity.
+ * Opioid daily-dose excess-ratio at which we escalate warning → critical.
  *
- * Opioids: the CDC 2022 guidance calibrates the per-drug daily caps in
- * MEDICATION_MAX_DAILY_DOSES to the 90 MME/day elevated-risk threshold.
- * Exceeding that cap by even 20% (1.2× → 108 MME) crosses into the zone
- * where respiratory-depression and overdose risk climbs steeply, so we
- * escalate to critical aggressively.
+ * CDC 2022 calibrates the per-drug daily caps in MEDICATION_MAX_DAILY_DOSES
+ * to the 90 MME/day elevated-risk threshold. Exceeding that cap by even 20%
+ * (1.2× → 108 MME) crosses into the zone where respiratory-depression and
+ * overdose risk climb steeply, so we escalate aggressively. Lowering this
+ * number makes the rule more sensitive; raising it makes the rule more
+ * tolerant of over-threshold prescribing.
  *
- * Non-opioid NSAID / analgesic over-limits cause cumulative rather than
- * acute harm (hepatic, renal, GI), so 1–2× is warning, ≥2× is critical.
+ * If clinical teams want deployment-specific tuning (e.g. hospice vs
+ * outpatient), follow-up #968 tracks exposing this as config. Until then
+ * any calibration change requires a deliberate code edit + review.
  */
+export const OPIOID_CRITICAL_RATIO = 1.2;
+
+/**
+ * Non-opioid NSAID / analgesic over-limits cause cumulative rather than
+ * acute harm (hepatic, renal, GI over weeks of over-dosing), so we use a
+ * gentler gradient: 1–2× is warning, ≥2× is critical.
+ */
+export const NON_OPIOID_CRITICAL_RATIO = 2.0;
+
+/** Map the excess-ratio of estimated-over-max into a flag severity. */
 function severityForDailyOver(
   ratio: number,
   isOpioid: boolean,
 ): FlagSeverity {
-  if (isOpioid) return ratio >= 1.2 ? "critical" : "warning";
-  return ratio >= 2.0 ? "critical" : "warning";
+  const critThreshold = isOpioid
+    ? OPIOID_CRITICAL_RATIO
+    : NON_OPIOID_CRITICAL_RATIO;
+  return ratio >= critThreshold ? "critical" : "warning";
 }
 
 export function checkMedicationDailyDose(context: PatientContext): RuleFlag[] {
