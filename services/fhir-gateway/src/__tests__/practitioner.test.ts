@@ -84,4 +84,40 @@ describe("toFhirPractitioner (#388)", () => {
     const p = toFhirPractitioner(makeUser({ specialty: null }));
     expect(p.qualification).toBeUndefined();
   });
+
+  it("Hispanic two-part surname: 'María García López' → family='García López' (#944)", () => {
+    const p = toFhirPractitioner(makeUser({ name: "María García López" }));
+    expect(p.name?.[0]?.family).toBe("García López");
+    expect(p.name?.[0]?.given).toEqual(["María"]);
+  });
+
+  it("particle-prefixed family: 'Sarah de Klerk' → family='de Klerk' (#944)", () => {
+    const p = toFhirPractitioner(makeUser({ name: "Sarah de Klerk" }));
+    expect(p.name?.[0]?.family).toBe("de Klerk");
+    expect(p.name?.[0]?.given).toEqual(["Sarah"]);
+  });
+
+  it("van particle: 'Jan van der Berg' → family='van der Berg' (#944)", () => {
+    const p = toFhirPractitioner(makeUser({ name: "Jan van der Berg" }));
+    expect(p.name?.[0]?.family).toBe("van der Berg");
+    expect(p.name?.[0]?.given).toEqual(["Jan"]);
+  });
+
+  it("bin particle: 'Omar bin Hassan' → family='bin Hassan' (#944)", () => {
+    const p = toFhirPractitioner(makeUser({ name: "Omar bin Hassan" }));
+    expect(p.name?.[0]?.family).toBe("bin Hassan");
+    expect(p.name?.[0]?.given).toEqual(["Omar"]);
+  });
+
+  it("hyphenated surname stays as one token: 'Sarah Smith-Jones' → family='Smith-Jones'", () => {
+    const p = toFhirPractitioner(makeUser({ name: "Sarah Smith-Jones" }));
+    expect(p.name?.[0]?.family).toBe("Smith-Jones");
+    expect(p.name?.[0]?.given).toEqual(["Sarah"]);
+  });
+
+  it("middle initial preserves Anglo parse: 'Sarah M. Jones' → family='Jones'", () => {
+    const p = toFhirPractitioner(makeUser({ name: "Sarah M. Jones" }));
+    expect(p.name?.[0]?.family).toBe("Jones");
+    expect(p.name?.[0]?.given).toEqual(["Sarah", "M."]);
+  });
 });
