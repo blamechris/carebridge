@@ -61,7 +61,7 @@ function slugForRuleId(name: string): string {
  * tolerant of over-threshold prescribing.
  *
  * If clinical teams want deployment-specific tuning (e.g. hospice vs
- * outpatient), follow-up #930 tracks exposing this as config. Until then
+ * outpatient), follow-up #968 tracks exposing this as config. Until then
  * any calibration change requires a deliberate code edit + review.
  */
 export const OPIOID_CRITICAL_RATIO = 1.2;
