@@ -183,7 +183,7 @@ export function checkMedicationDailyDose(context: PatientContext): RuleFlag[] {
         `widen dosing interval (e.g. q6h → q8h), or impose a PRN cap ` +
         `(max_doses_per_day) that bounds the daily total below ` +
         `${limit.maxDailyDoseMg} mg.`,
-      notify_specialties: isOpioid ? ["pharmacy", "pain"] : ["pharmacy"],
+      notify_specialties: isOpioid ? ["pharmacy", "pain_management"] : ["pharmacy"],
       rule_id: `MED-DAILY-OVER-${slug.toUpperCase()}`,
     });
   }
