@@ -309,6 +309,8 @@ vi.mock("@carebridge/validators", async () => {
       reason: z.string(),
     }),
     noteTemplateTypeSchema: z.enum(["soap", "progress", "h_and_p", "discharge", "consult"]),
+    appointmentTypeSchema: z.enum(["follow_up", "new_patient", "procedure", "telehealth"]),
+    cancelReasonSchema: z.string().trim().min(1),
   };
 });
 

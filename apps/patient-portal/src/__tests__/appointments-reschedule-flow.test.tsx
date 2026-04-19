@@ -86,14 +86,17 @@ describe("AppointmentsPageInner", () => {
     );
   });
 
-  it("reschedule flow: cancels original, then auto-opens book and books new slot", async () => {
+  it("legacy reschedule flow: cancels original, then auto-opens book and books new slot", async () => {
+    // When onReschedule is not provided (legacy path) we still run the
+    // two-step cancel→book UX. Locked in so existing pages that haven't
+    // yet opted into the atomic procedure keep working.
     const onCancel = vi.fn().mockResolvedValue(undefined);
     const onBook = vi.fn().mockResolvedValue(undefined);
     render(<AppointmentsPageInner {...props({ onCancel, onBook })} />);
 
     fireEvent.click(screen.getByRole("button", { name: /reschedule/i }));
     fireEvent.change(await screen.findByLabelText(/reason/i), { target: { value: "Rescheduling" } });
-    fireEvent.click(screen.getByRole("button", { name: /confirm cancel/i }));
+    fireEvent.click(screen.getByRole("button", { name: /confirm cancel|continue/i }));
 
     await waitFor(() =>
       expect(onCancel).toHaveBeenCalledWith({ appointmentId: "appt-1", reason: "Rescheduling" }),
@@ -111,6 +114,57 @@ describe("AppointmentsPageInner", () => {
         startTime: "2026-04-30T15:00:00.000Z",
         endTime: "2026-04-30T15:30:00.000Z",
       }),
+    );
+  });
+
+  it("atomic reschedule flow (#892): calls onReschedule once with both halves", async () => {
+    const onCancel = vi.fn().mockResolvedValue(undefined);
+    const onBook = vi.fn().mockResolvedValue(undefined);
+    const onReschedule = vi.fn().mockResolvedValue(undefined);
+    render(<AppointmentsPageInner {...props({ onCancel, onBook, onReschedule })} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /reschedule/i }));
+    // The reason modal re-labels Confirm -> Continue so users understand
+    // they haven't committed anything yet.
+    expect(await screen.findByRole("heading", { name: /reschedule appointment/i })).toBeDefined();
+    fireEvent.change(screen.getByLabelText(/reason/i), { target: { value: "Rescheduling" } });
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+    // After collecting the reason the slot picker opens — but we have NOT
+    // called cancel or book yet (the whole transaction runs server-side).
+    expect(await screen.findByRole("heading", { name: /select provider/i })).toBeDefined();
+    expect(onCancel).not.toHaveBeenCalled();
+
+    await walkBookWizard();
+
+    await waitFor(() =>
+      expect(onReschedule).toHaveBeenCalledWith({
+        appointmentId: "appt-1",
+        newStartTime: "2026-04-30T15:00:00.000Z",
+        newEndTime: "2026-04-30T15:30:00.000Z",
+        reason: "Rescheduling",
+      }),
+    );
+    // Critically: the standalone create/cancel procedures are NEVER called.
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(onBook).not.toHaveBeenCalled();
+  });
+
+  it("atomic reschedule surface failures: conflict on new slot leaves UI in slot picker", async () => {
+    const onReschedule = vi
+      .fn()
+      .mockRejectedValue(new Error("New time slot conflicts with an existing appointment"));
+    render(<AppointmentsPageInner {...props({ onReschedule })} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /reschedule/i }));
+    fireEvent.change(await screen.findByLabelText(/reason/i), { target: { value: "Rescheduling" } });
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+    expect(await screen.findByRole("heading", { name: /select provider/i })).toBeDefined();
+    await walkBookWizard();
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toMatch(/conflict/i),
     );
   });
 });
