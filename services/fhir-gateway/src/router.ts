@@ -13,8 +13,9 @@ import {
   allergies,
   encounters,
   procedures,
+  users,
 } from "@carebridge/db-schema";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, inArray } from "drizzle-orm";
 import { createLogger } from "@carebridge/logger";
 import crypto from "node:crypto";
 import type { Vital, LabResult, User } from "@carebridge/shared-types";
@@ -27,6 +28,9 @@ import {
   toFhirAllergyIntolerance,
   toFhirEncounter,
   toFhirProcedure,
+  toFhirPractitioner,
+  isClinicalRole,
+  toFhirMedicationRequest,
 } from "./generators/index.js";
 import { fhirBundleSchema } from "./schemas/bundle.js";
 import { sanitizeFreeText } from "@carebridge/phi-sanitizer";
@@ -418,6 +422,48 @@ export const fhirGatewayRouter = t.router({
             fullUrl: `urn:uuid:${procedure.id}`,
             resource: toFhirProcedure(procedure, patientId),
           });
+        }
+
+        // Epic-compatible MedicationRequest resources for active/ordered
+        // medications (#388). MedicationStatement above remains for the
+        // recorded/historical view; both formats are emitted so bundles
+        // round-trip cleanly in either direction.
+        for (const med of patientMedications) {
+          entry.push({
+            fullUrl: `urn:uuid:request-${med.id}`,
+            resource: toFhirMedicationRequest(med, patientId),
+          });
+        }
+
+        // Practitioner resources — one per unique clinician referenced by
+        // any resource in the bundle (Encounter.participant,
+        // Procedure.performer, MedicationRequest.requester, or the
+        // medication-statement informationSource). Deduplicated by id.
+        const providerIds = new Set<string>();
+        for (const enc of patientEncounters) {
+          if (enc.provider_id) providerIds.add(enc.provider_id);
+        }
+        for (const proc of patientProcedures) {
+          if (proc.performed_by) providerIds.add(proc.performed_by);
+          if (proc.provider_id) providerIds.add(proc.provider_id);
+        }
+        for (const med of patientMedications) {
+          if (med.ordering_provider_id) providerIds.add(med.ordering_provider_id);
+          if (med.prescribed_by) providerIds.add(med.prescribed_by);
+        }
+
+        if (providerIds.size > 0) {
+          const providerRows = await db
+            .select()
+            .from(users)
+            .where(inArray(users.id, Array.from(providerIds)));
+          for (const row of providerRows) {
+            if (!isClinicalRole(row.role)) continue;
+            entry.push({
+              fullUrl: `urn:uuid:${row.id}`,
+              resource: toFhirPractitioner(row),
+            });
+          }
         }
 
         // HIPAA § 164.312(b): record the successful PHI egress AFTER the
