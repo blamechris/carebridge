@@ -49,6 +49,8 @@ vi.mock("@carebridge/db-schema", () => ({
     flag_id: "flag_id",
     override_reason: "override_reason",
     overridden_at: "overridden_at",
+    medication_name: "medication_name",
+    allergen_name: "allergen_name",
   },
   clinicalFlags: {
     id: "id",

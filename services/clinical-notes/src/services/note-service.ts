@@ -87,6 +87,22 @@ export async function createNote(input: CreateNoteInput): Promise<ClinicalNote> 
 
   await db.insert(clinicalNotes).values(note);
 
+  // Archive the initial draft as a v1 version row (#888). Historically
+  // archiving only began on the first state transition (updateNote /
+  // signNote), so a note that was created and viewed without being
+  // signed produced an empty version history. That gap broke "what did
+  // this note look like at time T" audit queries for drafts under
+  // active composition. Lifecycle event is "draft" — the same label
+  // updateNote writes when it archives a pre-edit draft snapshot.
+  await archiveVersion({
+    noteId: id,
+    version: 1,
+    sections: input.sections,
+    savedBy: input.provider_id,
+    savedAt: now,
+    lifecycleEvent: "draft",
+  });
+
   await emitClinicalEvent({
     id: crypto.randomUUID(),
     type: "note.saved",

@@ -20,6 +20,9 @@ import { users } from "./auth.js";
  *
  * Related:
  *  - migration 0037_allergy_overrides.sql — schema + reason CHECK constraint
+ *  - migration 0040_allergy_overrides_hardening.sql — denormalised
+ *    medication_name / allergen_name columns (#905) + DB-level
+ *    append-only triggers (#906)
  *  - services/ai-oversight/src/rules/allergy-medication.ts — suppresses
  *    flags for allergy-drug pairs with an existing override
  *  - services/api-gateway/src/routers/patient-records.ts — `allergies.override`
@@ -49,6 +52,16 @@ export const allergyOverrides = pgTable(
     overridden_at: text("overridden_at")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
+    /**
+     * Denormalised medication / allergen strings (issue #905). Added in
+     * migration 0040 so the rule-layer suppression (`checkAllergyMedication`)
+     * can read them directly rather than regex-parsing the triggering flag's
+     * `summary` column. Nullable to preserve compatibility with rows written
+     * before 0040 — the review-service override loader falls back to the
+     * legacy flag-summary parse when either column is NULL.
+     */
+    medication_name: text("medication_name"),
+    allergen_name: text("allergen_name"),
   },
   (table) => [
     index("idx_allergy_overrides_patient").on(

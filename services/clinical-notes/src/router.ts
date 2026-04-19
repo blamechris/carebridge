@@ -3,7 +3,6 @@ import { z } from "zod";
 import {
   createNoteSchema,
   updateNoteSchema,
-  signNoteSchema,
   cosignNoteSchema,
   amendNoteSchema,
   noteTemplateTypeSchema,
@@ -17,7 +16,43 @@ import { createHAndPTemplate } from "./templates/h-and-p.js";
 import { createDischargeTemplate } from "./templates/discharge.js";
 import { createConsultTemplate } from "./templates/consult.js";
 
-const t = initTRPC.create();
+/**
+ * Internal router context (#884).
+ *
+ * The internal clinical-notes router no longer accepts `cosigned_by` /
+ * `amended_by` in Zod input — those fields were a spoofing vector even if
+ * the only in-tree caller (the gateway wrapper) passes the authenticated
+ * user id. Call sites that do not flow through the auth boundary (unit
+ * tests, future BullMQ workers) must pass the actor id via ctx.actorId.
+ *
+ * Leaving `actorId` optional keeps the router ergonomic for read-only
+ * procedures (getVersionHistory, getByPatient, getById, templates.*) that
+ * never need an actor — the actor resolution helper only throws for the
+ * mutation procedures that actually write an actor-bearing row.
+ */
+export interface ClinicalNotesRouterContext {
+  actorId?: string;
+}
+
+const t = initTRPC.context<ClinicalNotesRouterContext>().create();
+
+/**
+ * Resolve the acting user id for a state-changing procedure. Throws
+ * UNAUTHORIZED when the context lacks one so mis-wired call sites fail
+ * loudly instead of silently attributing a write to an empty string.
+ */
+function getActorId(
+  ctx: ClinicalNotesRouterContext,
+  operation: string,
+): string {
+  if (!ctx.actorId || ctx.actorId.length === 0) {
+    throw new TRPCError({
+      code: "UNAUTHORIZED",
+      message: `Internal clinical-notes router requires ctx.actorId for ${operation}`,
+    });
+  }
+  return ctx.actorId;
+}
 
 const templateBuilders: Record<NoteTemplateType, (() => ReturnType<typeof createSOAPTemplate>) | null> = {
   soap: createSOAPTemplate,
@@ -49,20 +84,32 @@ export const clinicalNotesRouter = t.router({
     }),
 
   sign: t.procedure
-    .input(z.object({ noteId: z.string().uuid() }).merge(signNoteSchema))
-    .mutation(async ({ input }) => {
-      return noteService.signNote(input.noteId, input.signed_by);
+    // `signed_by` is server-derived from ctx.actorId — see #884. The
+    // input schema carries only the target note id so the internal
+    // router has no avenue to spoof the signer even if mounted directly.
+    .input(z.object({ noteId: z.string().uuid() }))
+    .mutation(async ({ input, ctx }) => {
+      const actor = getActorId(ctx, "sign");
+      return noteService.signNote(input.noteId, actor);
     }),
 
   cosign: t.procedure
-    // Cosigner identity is carried in the caller's auth context at the
-    // gateway tier; this internal router takes it as a second field to
-    // keep the service-under-router ergonomic for unit tests and for
-    // future call sites that don't go through the auth boundary.
-    .input(cosignNoteSchema.extend({ cosigned_by: z.string().uuid() }))
-    .mutation(async ({ input }) => {
+    // Cosigner and amender identities are server-derived only (#884).
+    //
+    // Previously these procedures accepted `cosigned_by` / `amended_by` in
+    // input via `.extend()`, which would have let a caller forge another
+    // user's signature if the internal router were ever mounted directly.
+    // The gateway-level wrapper in `api-gateway/src/routers/clinical-notes.ts`
+    // already ignores client input and uses `ctx.user.id`, but this
+    // internal router is the last line of defence — accepting identity via
+    // Zod input was a latent spoofing vector, so we drop those fields from
+    // the schema and read them from the meta object passed by call sites
+    // that don't flow through the auth boundary (unit tests, workers).
+    .input(cosignNoteSchema)
+    .mutation(async ({ input, ctx }) => {
+      const actor = getActorId(ctx, "cosign");
       try {
-        return await noteService.cosignNote(input.noteId, input.cosigned_by);
+        return await noteService.cosignNote(input.noteId, actor);
       } catch (err) {
         if (err instanceof NoteStateError) {
           throw new TRPCError({ code: "CONFLICT", message: err.message });
@@ -72,12 +119,13 @@ export const clinicalNotesRouter = t.router({
     }),
 
   amend: t.procedure
-    .input(amendNoteSchema.extend({ amended_by: z.string().uuid() }))
-    .mutation(async ({ input }) => {
+    .input(amendNoteSchema)
+    .mutation(async ({ input, ctx }) => {
+      const actor = getActorId(ctx, "amend");
       try {
         return await noteService.amendNote(
           input.noteId,
-          input.amended_by,
+          actor,
           input.sections,
           input.reason,
         );

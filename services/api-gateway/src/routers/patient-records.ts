@@ -660,6 +660,11 @@ export const patientRecordsRbacRouter = t.router({
         // patient as the flag. This blocks cross-patient override bleed
         // (an attacker passing a valid flag_id for patient A together with
         // a valid allergy_id for patient B to dilute the audit trail).
+        // The row itself is retained for the allergen-name denormalisation
+        // below (#905) — saves a second round-trip.
+        let allergyRowForOverride:
+          | { patient_id: string; allergen: string }
+          | undefined;
         if (input.allergy_id) {
           const [allergyRow] = await db
             .select()
@@ -679,6 +684,7 @@ export const patientRecordsRbacRouter = t.router({
                 "allergy_id does not belong to the same patient as the flag",
             });
           }
+          allergyRowForOverride = allergyRow;
         }
 
         const now = new Date().toISOString();
@@ -693,6 +699,24 @@ export const patientRecordsRbacRouter = t.router({
             2000,
           );
 
+        // Denormalise the allergen / medication strings onto the override
+        // row so the rule-layer suppression can read them directly rather
+        // than regex-parsing the triggering flag's summary (#905). The
+        // allergen prefers the structured allergies row (when supplied);
+        // the medication is recovered from the flag summary which is
+        // produced by `checkAllergyMedication` in a stable format:
+        //   `Medication "<med>" matches patient allergy to "<allergen>"`
+        //   `Medication "<med>" may cross-react with allergy to "<allergen>" ...`
+        // A parse miss leaves the column NULL — downstream loader falls
+        // back to the legacy summary parse so legacy rows still resolve.
+        const summary = flag.summary ?? "";
+        const medMatch = summary.match(/^Medication "([^"]+)"/);
+        const allergenFromSummary = summary.match(/allergy to "([^"]+)"/);
+        const medicationName = medMatch ? medMatch[1]! : null;
+        const allergenName: string | null =
+          allergyRowForOverride?.allergen ??
+          (allergenFromSummary ? allergenFromSummary[1]! : null);
+
         await db.transaction(async (tx) => {
           await tx.insert(allergyOverrides).values({
             id: overrideId,
@@ -703,6 +727,8 @@ export const patientRecordsRbacRouter = t.router({
             override_reason: input.override_reason,
             clinical_justification: input.clinical_justification,
             overridden_at: now,
+            medication_name: medicationName,
+            allergen_name: allergenName,
           });
 
           await tx

@@ -267,6 +267,13 @@
       "when": 1746892800000,
       "tag": "0037_allergy_overrides",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1747152000000,
+      "tag": "0040_allergy_overrides_hardening",
+      "breakpoints": true
     }
   ]
 }

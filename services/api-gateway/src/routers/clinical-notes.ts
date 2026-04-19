@@ -319,8 +319,21 @@ export const clinicalNotesRbacRouter = t.router({
       }
 
       const db = getDb();
+      // Capture the pre-amend status + version so the audit row can
+      // record the clinically-meaningful transition (#886). Amending a
+      // cosigned note is a different HIPAA-level event than amending a
+      // signed-but-not-cosigned one, and without the pair the audit row
+      // alone can't reconstruct which state the chart was in when the
+      // amendment happened. Reading before the service call gives us a
+      // snapshot of the row as it existed at the moment of the amend
+      // decision — races with a concurrent amend are safe because the
+      // service-side amend is itself ordered by DB row state.
       const [existing] = await db
-        .select({ patient_id: clinicalNotes.patient_id })
+        .select({
+          patient_id: clinicalNotes.patient_id,
+          status: clinicalNotes.status,
+          version: clinicalNotes.version,
+        })
         .from(clinicalNotes)
         .where(eq(clinicalNotes.id, input.noteId))
         .limit(1);
@@ -351,6 +364,9 @@ export const clinicalNotesRbacRouter = t.router({
 
       // Record the amendment reason explicitly — HIPAA amendment audit
       // requires the reason be retrievable alongside the actor/subject.
+      // `old_status` + `new_status` + `previous_version` capture the
+      // clinical transition (#886): amending a cosigned chart is a
+      // materially different event than amending a signed-only draft.
       try {
         await db.insert(auditLog).values({
           id: crypto.randomUUID(),
@@ -363,6 +379,9 @@ export const clinicalNotesRbacRouter = t.router({
           details: JSON.stringify({
             amended_by: ctx.user.id,
             reason: input.reason,
+            old_status: existing.status,
+            new_status: result.status,
+            previous_version: existing.version,
             new_version: result.version,
           }),
           ip_address: ctx.clientIp ?? "",
