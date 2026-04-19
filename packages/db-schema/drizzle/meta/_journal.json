@@ -281,6 +281,13 @@
       "when": 1747152000000,
       "tag": "0040_allergy_overrides_hardening",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1747238400000,
+      "tag": "0041_medications_max_doses_per_day",
+      "breakpoints": true
     }
   ]
 }

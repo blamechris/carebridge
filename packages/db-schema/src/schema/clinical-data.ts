@@ -1,4 +1,4 @@
-import { pgTable, text, real, index, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, real, integer, index, jsonb } from "drizzle-orm/pg-core";
 import { encryptedText, encryptedNumeric } from "../encryption.js";
 import { patients } from "./patients.js";
 
@@ -11,6 +11,14 @@ export const medications = pgTable("medications", {
   dose_unit: text("dose_unit"),
   route: text("route"),
   frequency: text("frequency"),
+  /**
+   * Optional PRN / hard-cap dose count per 24 h. Populated when a
+   * prescription carries an explicit cap (e.g. "morphine 10 mg q4h PRN,
+   * max 4 doses/day"). Consumed by ai-oversight to bound PRN daily
+   * totals via estimateDailyDose; absent means PRN is unboundable and
+   * the rule fails open. See issue #935.
+   */
+  max_doses_per_day: integer("max_doses_per_day"),
   status: text("status").notNull().default("active"),
   started_at: text("started_at"),
   ended_at: text("ended_at"),
