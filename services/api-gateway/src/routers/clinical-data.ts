@@ -81,6 +81,18 @@ async function enforcePatientAccess(
   }
 
   if (user.role === "family_caregiver") {
+    // Default-deny: caregivers only ever access scope-gated reads. Every
+    // patient-scoped mutation on this router calls enforcePatientAccess
+    // WITHOUT a requiredScope, so an undefined scope here means "not a
+    // read procedure" — and caregivers must not write. Blocks the latent
+    // privilege escalation from issue #908 regardless of whether the
+    // procedure-level block is forgotten. (HIPAA / defense in depth)
+    if (requiredScope === undefined) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "Caregivers cannot perform this operation",
+      });
+    }
     const db = getDb();
     const [row] = await db
       .select({
@@ -104,16 +116,14 @@ async function enforcePatientAccess(
           "Access denied: no active family relationship grants access to this patient",
       });
     }
-    if (requiredScope !== undefined) {
-      const scopes = normaliseScopes(
-        (row.access_scopes ?? null) as ScopeToken[] | null,
-      );
-      if (!hasScope(scopes, requiredScope)) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: `Access denied: caregiver lacks ${requiredScope} scope`,
-        });
-      }
+    const scopes = normaliseScopes(
+      (row.access_scopes ?? null) as ScopeToken[] | null,
+    );
+    if (!hasScope(scopes, requiredScope)) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: `Access denied: caregiver lacks ${requiredScope} scope`,
+      });
     }
     return;
   }
@@ -134,6 +144,17 @@ const vitalsRouter = t.router({
   create: protectedProcedure
     .input(createVitalSchema)
     .mutation(async ({ ctx, input }) => {
+      // Explicit caregiver block (issue #908 / defense in depth). Caregiver
+      // role is read-only — ROLE_PERMISSIONS in shared-types/auth.ts grants
+      // zero write:* perms. Mirror the diagnoses/allergies/observations
+      // pattern in patient-records.ts so the intent is visible at the
+      // procedure level and does not rely on enforcePatientAccess alone.
+      if (ctx.user.role === "family_caregiver") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Caregivers cannot create vitals",
+        });
+      }
       // Mutations remain role-blocked elsewhere; no scope check on writes.
       await enforcePatientAccess(ctx.user, input.patient_id);
       return vitalRepo.createVital(input);
@@ -161,6 +182,12 @@ const labsRouter = t.router({
   createPanel: protectedProcedure
     .input(createLabPanelSchema)
     .mutation(async ({ ctx, input }) => {
+      if (ctx.user.role === "family_caregiver") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Caregivers cannot create lab panels",
+        });
+      }
       await enforcePatientAccess(ctx.user, input.patient_id);
       return labRepo.createLabPanel(input);
     }),
@@ -186,6 +213,12 @@ const medicationsRouter = t.router({
   create: protectedProcedure
     .input(createMedicationSchema)
     .mutation(async ({ ctx, input }) => {
+      if (ctx.user.role === "family_caregiver") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Caregivers cannot create medications",
+        });
+      }
       await enforcePatientAccess(ctx.user, input.patient_id);
       return medicationRepo.createMedication(input);
     }),
@@ -193,6 +226,12 @@ const medicationsRouter = t.router({
   update: protectedProcedure
     .input(z.object({ id: z.string().uuid() }).merge(updateMedicationSchema))
     .mutation(async ({ ctx, input }) => {
+      if (ctx.user.role === "family_caregiver") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Caregivers cannot update medications",
+        });
+      }
       // Resolve patientId from the medication record before checking access.
       const db = getDb();
       const [existing] = await db
@@ -236,6 +275,12 @@ const medicationsRouter = t.router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      if (ctx.user.role === "family_caregiver") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Caregivers cannot log medication administration",
+        });
+      }
       // Resolve patientId from the medication before checking access.
       const db = getDb();
       const [existing] = await db
@@ -269,6 +314,12 @@ const proceduresRouter = t.router({
   create: protectedProcedure
     .input(createProcedureSchema)
     .mutation(async ({ ctx, input }) => {
+      if (ctx.user.role === "family_caregiver") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Caregivers cannot create procedures",
+        });
+      }
       await enforcePatientAccess(ctx.user, input.patient_id);
       return procedureRepo.createProcedure(input);
     }),

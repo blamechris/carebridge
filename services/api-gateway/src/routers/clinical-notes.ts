@@ -89,6 +89,17 @@ async function enforcePatientAccess(
   }
 
   if (user.role === "family_caregiver") {
+    // Default-deny: notes mutations (create/update/sign/cosign/amend) all
+    // call enforcePatientAccess without a requiredScope. An undefined
+    // scope here means "not a read procedure" — caregivers never write
+    // clinical notes. Explicit block matches the per-procedure role
+    // checks below and the issue #908 defense-in-depth posture.
+    if (requiredScope === undefined) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: "Caregivers cannot perform this operation",
+      });
+    }
     const db = getDb();
     const [row] = await db
       .select({
@@ -112,16 +123,14 @@ async function enforcePatientAccess(
           "Access denied: no active family relationship grants access to this patient",
       });
     }
-    if (requiredScope !== undefined) {
-      const scopes = normaliseScopes(
-        (row.access_scopes ?? null) as ScopeToken[] | null,
-      );
-      if (!hasScope(scopes, requiredScope)) {
-        throw new TRPCError({
-          code: "FORBIDDEN",
-          message: `Access denied: caregiver lacks ${requiredScope} scope`,
-        });
-      }
+    const scopes = normaliseScopes(
+      (row.access_scopes ?? null) as ScopeToken[] | null,
+    );
+    if (!hasScope(scopes, requiredScope)) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: `Access denied: caregiver lacks ${requiredScope} scope`,
+      });
     }
     return;
   }
@@ -151,6 +160,18 @@ export const clinicalNotesRbacRouter = t.router({
   create: protectedProcedure
     .input(createNoteSchema)
     .mutation(async ({ ctx, input }) => {
+      // Issue #908: caregivers are read-only — they must never author a
+      // clinical note. sign/cosign/amend below already gate on
+      // physician/specialist/admin, but create and update had no explicit
+      // role gate and previously relied on enforcePatientAccess to reject
+      // caregivers at the care-team fallback. The caregiver branch added
+      // in #896 broke that assumption, so block here explicitly.
+      if (ctx.user.role === "family_caregiver") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Caregivers cannot create clinical notes",
+        });
+      }
       await enforcePatientAccess(ctx.user, input.patient_id);
       return noteService.createNote(input);
     }),
@@ -158,6 +179,12 @@ export const clinicalNotesRbacRouter = t.router({
   update: protectedProcedure
     .input(z.object({ id: z.string().uuid() }).merge(updateNoteSchema))
     .mutation(async ({ ctx, input }) => {
+      if (ctx.user.role === "family_caregiver") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Caregivers cannot update clinical notes",
+        });
+      }
       const db = getDb();
       const [existing] = await db
         .select({ patient_id: clinicalNotes.patient_id })
