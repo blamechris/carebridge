@@ -47,6 +47,14 @@ describe("normalizeAllergen (#232)", () => {
     expect(normalizeAllergen("Norco")).toBe("opioid");
   });
 
+  it("resolves vancomycin shorthand / brand / Red Man entries", () => {
+    expect(normalizeAllergen("Vanco")).toBe("vancomycin");
+    expect(normalizeAllergen("Vancocin")).toBe("vancomycin");
+    expect(normalizeAllergen("Red Man")).toBe("vancomycin");
+    expect(normalizeAllergen("Red Man Syndrome")).toBe("vancomycin");
+    expect(normalizeAllergen("teicoplanin")).toBe("vancomycin");
+  });
+
   it("returns the trimmed/lowercased input for unknown allergens", () => {
     expect(normalizeAllergen("  Salmon  ")).toBe("salmon");
     expect(normalizeAllergen("zolbidopride")).toBe("zolbidopride");

@@ -106,6 +106,21 @@ export const ALLERGEN_SYNONYMS: Record<string, string[]> = {
     "minocycline",
     "minocin",
   ],
+  // Glycopeptides. Vancomycin is the common chart entry; "Red Man" (a
+  // pseudoallergic histamine-release reaction, not IgE) is frequently
+  // charted in the allergy field regardless of mechanism — the synonym
+  // layer captures the class match and leaves the true-allergy vs
+  // infusion-reaction judgement to the flag consumer.
+  vancomycin: [
+    "vancomycin",
+    "vanco",
+    "vancocin",
+    "glycopeptide",
+    "glycopeptides",
+    "teicoplanin",
+    "red man",
+    "red man syndrome",
+  ],
 
   // ── Analgesics ──────────────────────────────────────────────────
   nsaid: [
