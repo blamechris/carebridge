@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
-import { pgTable, text, boolean, real, index } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { pgTable, text, boolean, real, index, uniqueIndex, check } from "drizzle-orm/pg-core";
 import { encryptedText } from "../encryption.js";
 
 export const patients = pgTable("patients", {
@@ -78,7 +79,9 @@ export const careTeamMembers = pgTable("care_team_members", {
   id: text("id").primaryKey(),
   patient_id: text("patient_id").notNull().references(() => patients.id),
   provider_id: text("provider_id").notNull(),
-  role: text("role").notNull(), // "primary", "specialist", "nurse", "coordinator"
+  // CHECK constraint mirrors `careTeamMemberRoleSchema` in
+  // packages/validators — see migration 0038_care_team_constraints.sql.
+  role: text("role").notNull(), // "primary" | "specialist" | "nurse" | "coordinator"
   specialty: text("specialty"),
   is_active: boolean("is_active").notNull().default(true),
   started_at: text("started_at").notNull(),
@@ -86,6 +89,16 @@ export const careTeamMembers = pgTable("care_team_members", {
   created_at: text("created_at").notNull(),
 }, (table) => [
   index("idx_care_team_patient").on(table.patient_id, table.is_active),
+  // Partial UNIQUE index — DB guardrail for #881 idempotency. App-layer
+  // check in care-team.ts short-circuits before we ever hit this, but
+  // the index defends against concurrent writers and direct SQL.
+  uniqueIndex("idx_care_team_members_active_unique")
+    .on(table.provider_id, table.patient_id)
+    .where(sql`${table.is_active} = true`),
+  check(
+    "care_team_members_role_check",
+    sql`${table.role} IN ('primary', 'specialist', 'nurse', 'coordinator')`,
+  ),
 ]);
 
 /**
@@ -108,10 +121,22 @@ export const careTeamAssignments = pgTable("care_team_assignments", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   user_id: text("user_id").notNull(),
   patient_id: text("patient_id").notNull(),
-  role: text("role").notNull(), // "attending", "consulting", "nursing", etc.
+  // CHECK constraint mirrors `careTeamAssignmentRoleSchema` in
+  // packages/validators — see migration 0038_care_team_constraints.sql.
+  role: text("role").notNull(), // "attending" | "consulting" | "nursing" | "covering"
   assigned_at: text("assigned_at").notNull().$defaultFn(() => new Date().toISOString()),
   removed_at: text("removed_at"), // null = active
 }, (table) => [
   index("idx_care_team_assignments_user_patient").on(table.user_id, table.patient_id),
   index("idx_care_team_assignments_patient").on(table.patient_id),
+  // Partial UNIQUE index — DB guardrail for #881 idempotency on the
+  // RBAC table. Revoked rows (removed_at set) are excluded so the row
+  // is retained for audit history.
+  uniqueIndex("idx_care_team_assignments_active_unique")
+    .on(table.user_id, table.patient_id)
+    .where(sql`${table.removed_at} IS NULL`),
+  check(
+    "care_team_assignments_role_check",
+    sql`${table.role} IN ('attending', 'consulting', 'nursing', 'covering')`,
+  ),
 ]);

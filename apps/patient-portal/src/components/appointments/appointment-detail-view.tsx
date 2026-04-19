@@ -1,8 +1,10 @@
 "use client";
 
+import { useRef } from "react";
 import { appointmentTypeLabel, prepInstructionsFor } from "./prep-instructions";
 import type { AppointmentRow } from "./appointment-list";
 import { modalOverlay, modalCard, DetailRow } from "./styles";
+import { useModalFocusTrap } from "@/lib/use-modal-focus-trap";
 
 export interface AppointmentDetailViewProps {
   appointment: AppointmentRow;
@@ -18,9 +20,18 @@ export function AppointmentDetailView({ appointment, providerName, onClose }: Ap
     : appointment.location ?? "Location TBD";
 
   const timeFmt = (d: Date) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useModalFocusTrap(true, dialogRef, onClose);
 
   return (
-    <div style={modalOverlay} role="dialog" aria-modal="true" aria-labelledby="detail-heading">
+    <div
+      ref={dialogRef}
+      tabIndex={-1}
+      style={modalOverlay}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="detail-heading"
+    >
       <div style={modalCard}>
         <h2 id="detail-heading" style={{ margin: "0 0 1rem", fontSize: "1.15rem" }}>Appointment details</h2>
         <dl style={{ fontSize: "0.9rem", margin: 0 }}>

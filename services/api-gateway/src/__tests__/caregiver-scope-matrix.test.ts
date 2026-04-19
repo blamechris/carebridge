@@ -309,6 +309,8 @@ vi.mock("@carebridge/validators", async () => {
       reason: z.string(),
     }),
     noteTemplateTypeSchema: z.enum(["soap", "progress", "h_and_p", "discharge", "consult"]),
+    appointmentTypeSchema: z.enum(["follow_up", "new_patient", "procedure", "telehealth"]),
+    cancelReasonSchema: z.string().trim().min(1),
     // #233 — patient-records router now accepts an allergy-override input.
     // The schema shape itself isn't exercised by the caregiver-scope matrix
     // (none of the mapped caregiver scopes can invoke the clinician-only

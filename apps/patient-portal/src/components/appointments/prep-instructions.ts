@@ -1,15 +1,27 @@
 /**
- * Static prep instructions by appointment type.
+ * Static prep instructions by appointment type (#895).
+ *
+ * The canonical set of appointment types is declared once in
+ * `@carebridge/validators` (see `appointmentTypeSchema`) so runtime + compile
+ * checks share a single source of truth. The DB column is still plain `text`
+ * — see the schema comment in `packages/db-schema/src/schema/scheduling.ts`
+ * and the follow-up tracked to promote it to a `pgEnum`. Until then, this
+ * `Record<AppointmentType, string>` map is the strongest compile-time
+ * guarantee we have: adding a new variant to the Zod enum forces every
+ * consumer (this map + the booking wizard's list) to add a matching entry.
  *
  * TODO(issue #332 follow-up): replace with server-side content so clinicians
  * can maintain per-type prep text without a frontend deploy.
  */
 
-export type AppointmentType =
-  | "follow_up"
-  | "new_patient"
-  | "procedure"
-  | "telehealth";
+import { appointmentTypeSchema, type AppointmentType } from "@carebridge/validators";
+
+export type { AppointmentType };
+export { appointmentTypeSchema };
+
+/** Ordered list of canonical appointment types, derived from the Zod enum. */
+export const APPOINTMENT_TYPES: readonly AppointmentType[] =
+  appointmentTypeSchema.options;
 
 export const PREP_INSTRUCTIONS: Record<AppointmentType, string> = {
   follow_up:
@@ -22,19 +34,28 @@ export const PREP_INSTRUCTIONS: Record<AppointmentType, string> = {
     "Join the video call 5 minutes early from a quiet, private location with a stable internet connection. Have a list of current medications and recent symptoms ready.",
 };
 
+/** Type guard — narrows an unknown string to the enum literal. */
+export function isAppointmentType(t: string): t is AppointmentType {
+  return appointmentTypeSchema.safeParse(t).success;
+}
+
 export function prepInstructionsFor(type: string): string {
-  if (type in PREP_INSTRUCTIONS) {
-    return PREP_INSTRUCTIONS[type as AppointmentType];
+  if (isAppointmentType(type)) {
+    return PREP_INSTRUCTIONS[type];
   }
   return "Please arrive 10 minutes early to check in. Bring a list of current medications and any questions you have.";
 }
 
+const APPOINTMENT_TYPE_LABELS: Record<AppointmentType, string> = {
+  follow_up: "Follow-up",
+  new_patient: "New Patient",
+  procedure: "Procedure",
+  telehealth: "Telehealth",
+};
+
 export function appointmentTypeLabel(type: string): string {
-  const labels: Record<string, string> = {
-    follow_up: "Follow-up",
-    new_patient: "New Patient",
-    procedure: "Procedure",
-    telehealth: "Telehealth",
-  };
-  return labels[type] ?? type.replace(/_/g, " ");
+  if (isAppointmentType(type)) {
+    return APPOINTMENT_TYPE_LABELS[type];
+  }
+  return type.replace(/_/g, " ");
 }

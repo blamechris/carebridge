@@ -33,6 +33,10 @@ import {
   normaliseScopes,
   type ScopeToken,
 } from "@carebridge/shared-types";
+import {
+  appointmentTypeSchema,
+  cancelReasonSchema,
+} from "@carebridge/validators";
 import type { Context } from "../context.js";
 import { assertCareTeamAccess } from "../middleware/rbac.js";
 
@@ -181,7 +185,7 @@ export const schedulingRbacRouter = t.router({
         // membership.
         patientId: z.string().optional(),
         providerId: z.string(),
-        appointmentType: z.enum(["follow_up", "new_patient", "procedure", "telehealth"]),
+        appointmentType: appointmentTypeSchema,
         startTime: z.string(),
         endTime: z.string(),
         location: z.string().optional(),
@@ -253,7 +257,10 @@ export const schedulingRbacRouter = t.router({
       }),
 
     cancel: protectedProcedure
-      .input(z.object({ appointmentId: z.string(), reason: z.string() }))
+      // Issue #893: reason is server-authoritative — trim + min(1) reject
+      // empty/whitespace with BAD_REQUEST even if the client UI fails to
+      // enforce it.
+      .input(z.object({ appointmentId: z.string(), reason: cancelReasonSchema }))
       .mutation(async ({ ctx, input }) => {
         const db = getDb();
 
@@ -287,6 +294,130 @@ export const schedulingRbacRouter = t.router({
           })
           .where(eq(appointments.id, input.appointmentId));
         return { success: true };
+      }),
+
+    /**
+     * Atomic reschedule (issue #892): cancel the existing appointment AND
+     * insert a new row at the requested slot inside a single transaction.
+     *
+     * Motivation: the patient-portal previously invoked cancel + create as
+     * two separate RBAC-gated calls. If the network dropped between them
+     * the patient ended up with their old slot cancelled and no new one
+     * booked. Wrapping both mutations in a DB transaction makes the
+     * operation all-or-nothing: a conflict on the new slot rolls back the
+     * cancel, leaving the original appointment untouched.
+     *
+     * RBAC: the target patient_id is read from the existing appointment
+     * row (not trusted from the wire) so the same enforcePatientAccess
+     * check used by create/cancel applies here too.
+     */
+    reschedule: protectedProcedure
+      .input(z.object({
+        appointmentId: z.string(),
+        newStartTime: z.string(),
+        newEndTime: z.string(),
+        reason: cancelReasonSchema,
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const db = getDb();
+
+        // Pre-transaction lookup: resolve the patient for the access check
+        // without holding a write lock. If the appointment is gone, bail
+        // with NOT_FOUND before we even open a transaction.
+        const [existing] = await db
+          .select({
+            id: appointments.id,
+            patient_id: appointments.patient_id,
+            provider_id: appointments.provider_id,
+            appointment_type: appointments.appointment_type,
+            location: appointments.location,
+            reason: appointments.reason,
+            start_time: appointments.start_time,
+            end_time: appointments.end_time,
+            status: appointments.status,
+          })
+          .from(appointments)
+          .where(eq(appointments.id, input.appointmentId))
+          .limit(1);
+
+        if (!existing) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: `Appointment ${input.appointmentId} not found`,
+          });
+        }
+
+        await enforcePatientAccess(ctx.user, existing.patient_id);
+
+        const now = new Date().toISOString();
+
+        return db.transaction(async (tx) => {
+          // Re-read inside the tx so the row is visible to the cancel
+          // UPDATE below. If the row disappeared between the pre-check and
+          // the tx (rare — someone else cancelled), treat as conflict.
+          const [current] = await tx
+            .select()
+            .from(appointments)
+            .where(eq(appointments.id, input.appointmentId))
+            .limit(1);
+          if (!current) {
+            throw new Error("Appointment no longer exists");
+          }
+
+          // Overlap check on the new slot against the same provider's
+          // active appointments. Exclude the appointment we're about to
+          // cancel so a self-reschedule onto an overlapping slot doesn't
+          // race against its own row.
+          const overlapping = await tx
+            .select()
+            .from(appointments)
+            .where(
+              and(
+                eq(appointments.provider_id, current.provider_id),
+                ne(appointments.status, "cancelled"),
+                ne(appointments.id, input.appointmentId),
+                lte(appointments.start_time, input.newEndTime),
+                gte(appointments.end_time, input.newStartTime),
+              ),
+            );
+
+          if (overlapping.length > 0) {
+            throw new Error(
+              "New time slot conflicts with an existing appointment",
+            );
+          }
+
+          // 1. Cancel the original row.
+          await tx
+            .update(appointments)
+            .set({
+              status: "cancelled",
+              cancelled_at: now,
+              cancelled_by: ctx.user.id,
+              cancel_reason: input.reason,
+              updated_at: now,
+            })
+            .where(eq(appointments.id, input.appointmentId));
+
+          // 2. Insert the new appointment.
+          const newAppt = {
+            id: crypto.randomUUID(),
+            patient_id: current.patient_id,
+            provider_id: current.provider_id,
+            appointment_type: current.appointment_type,
+            start_time: input.newStartTime,
+            end_time: input.newEndTime,
+            status: "scheduled",
+            location: current.location ?? null,
+            reason: current.reason ?? null,
+            created_at: now,
+            updated_at: now,
+          };
+
+          await tx.insert(appointments).values(newAppt);
+
+          return newAppt;
+        });
       }),
   }),
 

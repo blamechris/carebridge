@@ -1,8 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { appointmentTypeLabel, type AppointmentType } from "./prep-instructions";
+import { useEffect, useRef, useState } from "react";
+import {
+  APPOINTMENT_TYPES,
+  appointmentTypeLabel,
+  type AppointmentType,
+} from "./prep-instructions";
 import { modalOverlay, modalCard, btnPrimary, btnGhost, inputBase, DetailRow } from "./styles";
+import { useModalFocusTrap } from "@/lib/use-modal-focus-trap";
 
 export interface CareTeamProvider {
   provider_id: string;
@@ -27,7 +32,10 @@ export interface BookAppointmentModalProps {
   onClose: () => void;
 }
 
-const TYPES: AppointmentType[] = ["follow_up", "new_patient", "procedure", "telehealth"];
+// Sourced from the canonical `appointmentTypeSchema` enum (#895) so adding a
+// new type in `@carebridge/validators` automatically surfaces it in the UI
+// — and removing one becomes a compile error elsewhere (PREP_INSTRUCTIONS).
+const TYPES: readonly AppointmentType[] = APPOINTMENT_TYPES;
 
 const radioLabel = (selected: boolean): React.CSSProperties => ({
   display: "flex", alignItems: "center", gap: 10,
@@ -49,6 +57,8 @@ export function BookAppointmentModal({ careTeam, onLoadSlots, onConfirm, onClose
   const [slots, setSlots] = useState<SlotOption[] | null>(null);
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState<SlotOption | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useModalFocusTrap(true, dialogRef, onClose);
 
   useEffect(() => {
     if (step !== 3 || !providerId || !date) return;
@@ -70,7 +80,14 @@ export function BookAppointmentModal({ careTeam, onLoadSlots, onConfirm, onClose
   }
 
   return (
-    <div style={modalOverlay} role="dialog" aria-modal="true" aria-labelledby="book-heading">
+    <div
+      ref={dialogRef}
+      tabIndex={-1}
+      style={modalOverlay}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="book-heading"
+    >
       <div style={modalCard}>
         {step === 1 && (
           <Step heading="Select provider" desc="Choose a provider from your care team.">

@@ -5,6 +5,13 @@
  *
  * Data + mutation side-effects are injected as props so the component is
  * fully testable without tRPC. The page shell wires these to tRPC procs.
+ *
+ * Reschedule flow (#892): the coordinator collects the cancel reason AND
+ * the new slot via the book wizard, then invokes the single-call
+ * `onReschedule` prop which maps to the atomic
+ * `scheduling.appointments.reschedule` tRPC procedure. This replaces the
+ * previous cancel→book split that could leave the patient without an
+ * appointment if the second call failed.
  */
 
 import { useMemo, useState } from "react";
@@ -16,6 +23,13 @@ import {
 import { CancelAppointmentModal } from "./cancel-appointment-modal";
 import { AppointmentDetailView } from "./appointment-detail-view";
 
+export interface ReschedulePayload {
+  appointmentId: string;
+  newStartTime: string;
+  newEndTime: string;
+  reason: string;
+}
+
 export interface AppointmentsPageInnerProps {
   patientId: string;
   appointments: AppointmentRow[];
@@ -23,15 +37,23 @@ export interface AppointmentsPageInnerProps {
   onLoadSlots: (args: { providerId: string; date: string }) => Promise<SlotOption[]>;
   onBook: (args: BookPayload & { patientId: string }) => Promise<void>;
   onCancel: (args: { appointmentId: string; reason: string }) => Promise<void>;
+  /**
+   * Atomic reschedule (cancel old + book new in one transaction). When
+   * omitted, the coordinator falls back to the legacy two-call flow so
+   * existing callers keep working during rollout.
+   */
+  onReschedule?: (args: ReschedulePayload) => Promise<void>;
 }
 
 type Mode =
   | { kind: "idle" }
   | { kind: "book" }
-  | { kind: "cancel" | "reschedule" | "detail"; appointmentId: string };
+  | { kind: "cancel" | "detail"; appointmentId: string }
+  | { kind: "reschedule"; appointmentId: string; phase: "reason"; reason?: never }
+  | { kind: "reschedule"; appointmentId: string; phase: "slot"; reason: string };
 
 export function AppointmentsPageInner({
-  patientId, appointments, careTeam, onLoadSlots, onBook, onCancel,
+  patientId, appointments, careTeam, onLoadSlots, onBook, onCancel, onReschedule,
 }: AppointmentsPageInnerProps) {
   const [mode, setMode] = useState<Mode>({ kind: "idle" });
   const [error, setError] = useState<string | null>(null);
@@ -48,10 +70,29 @@ export function AppointmentsPageInner({
 
   async function handleCancelConfirm(args: { appointmentId: string; reason: string }) {
     setError(null);
-    const wasReschedule = mode.kind === "reschedule";
+    // In reschedule mode we EITHER stash the reason and advance to the slot
+    // picker (atomic path) OR fall back to legacy cancel-then-book.
+    if (mode.kind === "reschedule") {
+      if (onReschedule) {
+        setMode({
+          kind: "reschedule",
+          appointmentId: args.appointmentId,
+          phase: "slot",
+          reason: args.reason,
+        });
+        return;
+      }
+      try {
+        await onCancel(args);
+        setMode({ kind: "book" });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to cancel appointment");
+      }
+      return;
+    }
     try {
       await onCancel(args);
-      setMode(wasReschedule ? { kind: "book" } : { kind: "idle" });
+      setMode({ kind: "idle" });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to cancel appointment");
     }
@@ -59,6 +100,27 @@ export function AppointmentsPageInner({
 
   async function handleBookConfirm(payload: BookPayload) {
     setError(null);
+    // Atomic reschedule branch — the reason was collected in the prior
+    // cancel-style step; we now run a single `reschedule` call instead of
+    // the separate create.
+    if (
+      mode.kind === "reschedule" &&
+      mode.phase === "slot" &&
+      onReschedule
+    ) {
+      try {
+        await onReschedule({
+          appointmentId: mode.appointmentId,
+          newStartTime: payload.startTime,
+          newEndTime: payload.endTime,
+          reason: mode.reason,
+        });
+        setMode({ kind: "idle" });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to reschedule appointment");
+      }
+      return;
+    }
     try {
       await onBook({ ...payload, patientId });
       setMode({ kind: "idle" });
@@ -92,18 +154,39 @@ export function AppointmentsPageInner({
         appointments={appointments}
         providerMap={providerMap}
         onCancel={(id) => setMode({ kind: "cancel", appointmentId: id })}
-        onReschedule={(id) => setMode({ kind: "reschedule", appointmentId: id })}
+        onReschedule={(id) =>
+          setMode({ kind: "reschedule", appointmentId: id, phase: "reason" })
+        }
         onViewDetail={(id) => setMode({ kind: "detail", appointmentId: id })}
       />
 
-      {mode.kind === "book" && (
-        <BookAppointmentModal careTeam={careTeam} onLoadSlots={onLoadSlots}
-          onConfirm={handleBookConfirm} onClose={() => setMode({ kind: "idle" })} />
+      {/* Book flow (standalone) AND reschedule slot picker both use the
+          BookAppointmentModal; handleBookConfirm branches on `mode` to run
+          either the `create` or the atomic `reschedule` call. */}
+      {(mode.kind === "book" ||
+        (mode.kind === "reschedule" && mode.phase === "slot")) && (
+        <BookAppointmentModal
+          careTeam={careTeam}
+          onLoadSlots={onLoadSlots}
+          onConfirm={handleBookConfirm}
+          onClose={() => setMode({ kind: "idle" })}
+        />
       )}
 
-      {(mode.kind === "cancel" || mode.kind === "reschedule") && activeAppointment && (
-        <CancelAppointmentModal appointmentId={activeAppointment.id}
-          onConfirm={handleCancelConfirm} onClose={() => setMode({ kind: "idle" })} />
+      {(mode.kind === "cancel" ||
+        (mode.kind === "reschedule" && mode.phase === "reason")) &&
+        activeAppointment && (
+        <CancelAppointmentModal
+          appointmentId={activeAppointment.id}
+          heading={
+            mode.kind === "reschedule" ? "Reschedule appointment" : "Cancel appointment"
+          }
+          confirmLabel={
+            mode.kind === "reschedule" ? "Continue" : "Confirm cancel"
+          }
+          onConfirm={handleCancelConfirm}
+          onClose={() => setMode({ kind: "idle" })}
+        />
       )}
 
       {mode.kind === "detail" && activeAppointment && (
