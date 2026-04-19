@@ -21,3 +21,24 @@
  */
 export const METFORMIN_PATTERN =
   /\bmetformin\b|glucophage|glumetza|fortamet|riomet|janumet|jentadueto|kombiglyze|synjardy|xigduo|invokamet|kazano|prandimet/i;
+
+/**
+ * NSAID name pattern (non-steroidal anti-inflammatory drugs). Unified source
+ * for rules in multiple modules that gate on NSAID exposure — previously this
+ * list was duplicated between `cross-specialty.ts` (triple-whammy AKI,
+ * CROSS-NSAID-CHF-001) and `age-stratified.ts` (Beers geriatric chronic
+ * NSAID). Issue #903.
+ *
+ * Broader (no word boundaries) is intentional: clinical free-text medication
+ * strings occasionally carry the drug name without a leading or trailing
+ * word-boundary character (e.g. "naproxen-sodium", "ibuprofen/pseudoephedrine
+ * combo"), and NSAID exposure must still trigger safety rules in those cases.
+ * Celecoxib is included because despite being COX-2 selective it still
+ * carries the renal-perfusion and fluid-retention risks targeted by these
+ * rules.
+ *
+ * Extend cautiously — additions should come from FDA-approved NSAID generics
+ * or brand-name products.
+ */
+export const NSAID_PATTERN =
+  /ibuprofen|advil|motrin|naproxen|aleve|diclofenac|voltaren|celecoxib|celebrex|indomethacin|ketorolac|toradol|meloxicam|piroxicam|nabumetone|etodolac|sulindac|ketoprofen/i;
