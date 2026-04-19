@@ -202,8 +202,10 @@ export function checkAllergyMedication(context: PatientContext): RuleFlag[] {
     // Expand shorthand / brand-name allergen strings to their canonical
     // generic / class (issue #232). Without this, "PCN" never hit the
     // penicillin cross-reactivity rule and "Lovenox" never hit the
-    // heparin rule.
+    // heparin rule. Hoisted out of the med loop because the value is
+    // constant per-allergy (#920 review follow-up).
     const allergenAliases = expandAllergenAliases(allergy.allergen);
+    const allergenBlob = allergenAliases.join(" ");
 
     for (let i = 0; i < context.active_medications.length; i++) {
       const med = context.active_medications[i];
@@ -212,9 +214,16 @@ export function checkAllergyMedication(context: PatientContext): RuleFlag[] {
       // Strategy 1: Direct name match across ANY alias of the allergen.
       // A prescription for "penicillin VK" and an allergy recorded as
       // "PCN" must match — which they do once we expand PCN to
-      // [penicillin, pcn, amoxicillin, …].
+      // [penicillin, pcn, amoxicillin, …]. Aliases shorter than 4 chars
+      // are matched with a word-boundary guard so "pcn" doesn't hit
+      // "pentoxifylline" / "norpace" (#920 review).
       const directMatch = allergenAliases.some((alias) => {
-        if (medLower.includes(alias)) return true;
+        if (alias.length < 4) {
+          const boundary = new RegExp(`\\b${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+          if (boundary.test(medLower)) return true;
+        } else if (medLower.includes(alias)) {
+          return true;
+        }
         // Also check the first token of the medication against the alias,
         // e.g. "amoxicillin 500mg PO" split → first token "amoxicillin"
         // in the allergen-aliases of an allergy recorded as "PCN".
@@ -243,9 +252,9 @@ export function checkAllergyMedication(context: PatientContext): RuleFlag[] {
       }
 
       // Strategy 2: Cross-reactivity class matching, expanded. The
-      // allergenPattern regex runs against each alias so "PCN" reaches
-      // the penicillin class rule, "Lovenox" reaches the heparin rule.
-      const allergenBlob = allergenAliases.join(" ");
+      // allergenPattern regex runs against the alias blob (computed
+      // once per allergy above) so "PCN" reaches the penicillin class
+      // rule and "Lovenox" reaches the heparin rule.
       for (const mapping of CROSS_REACTIVITY_MAP) {
         if (mapping.allergenPattern.test(allergenBlob) && mapping.medicationPattern.test(med)) {
           if (isAllergyMedPairOverridden(allergy, med, context.resolved_overrides)) {

@@ -155,4 +155,17 @@ describe("allergy-medication allergen normalization (#232)", () => {
     const flags = checkAllergyMedication(ctx);
     expect(flags).toHaveLength(0);
   });
+
+  it("PCN allergy does NOT false-positive on pentoxifylline (substring collision)", () => {
+    // Before the alias-set fix the "pen" alias under penicillin caused
+    // substring hits on "pentoxifylline" and over-flagged an unrelated
+    // medication. "pen" is now excluded; aliases shorter than 4 chars
+    // that remain (pcn, pnc, asa, etc.) go through a word-boundary check.
+    const ctx = makeContext(
+      [{ allergen: "PCN", severity: "severe", reaction: "anaphylaxis" }],
+      ["Pentoxifylline 400mg TID"],
+    );
+    const flags = checkAllergyMedication(ctx);
+    expect(flags).toHaveLength(0);
+  });
 });
