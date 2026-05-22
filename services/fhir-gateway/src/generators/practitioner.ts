@@ -11,6 +11,13 @@
 
 import type { users } from "@carebridge/db-schema";
 import type { FhirPractitioner, HumanName } from "../types/fhir-r4.js";
+import { CAREBRIDGE_IDENTIFIER_BASE } from "./identifiers.js";
+
+// Re-exported for backward compatibility with consumers that imported
+// CAREBRIDGE_IDENTIFIER_BASE from this module before #969 lifted the
+// constant into identifiers.ts. New consumers should import directly
+// from "./identifiers.js" or via the generators barrel.
+export { CAREBRIDGE_IDENTIFIER_BASE };
 
 type UserRow = typeof users.$inferSelect;
 
@@ -145,9 +152,6 @@ function parseName(fullName: string): HumanName {
     given: givenTokens.length > 0 ? givenTokens : undefined,
   };
 }
-
-export { CAREBRIDGE_IDENTIFIER_BASE } from "./identifiers.js";
-import { CAREBRIDGE_IDENTIFIER_BASE } from "./identifiers.js";
 
 export function toFhirPractitioner(user: UserRow): FhirPractitioner {
   const resource: FhirPractitioner = {
