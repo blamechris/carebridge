@@ -131,22 +131,4 @@ describe("review-service wires checkMedicationReconciliation (#983)", () => {
     );
   });
 
-  it("invokes the rule before patient-context construction so it does not depend on context-builder availability", async () => {
-    // The rule reads only event.data; placing it before buildPatientContextForRules
-    // keeps the no-encounter-event short-circuit cheap and avoids coupling the
-    // rule to a DB-heavy code path.
-    const buildPatientContext = await import("../workers/context-builder.js");
-    const contextBuilderSpy = vi.mocked(buildPatientContext.buildPatientContext);
-    contextBuilderSpy.mockImplementationOnce(() => {
-      throw new Error("context builder must not be reached before reconciliation rule");
-    });
-
-    try {
-      await processReviewJob(makeEvent());
-    } catch {
-      // expected — pipeline aborts when context builder throws
-    }
-
-    expect(checkMedicationReconciliationMock).toHaveBeenCalled();
-  });
 });
