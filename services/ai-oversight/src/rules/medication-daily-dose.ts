@@ -34,6 +34,9 @@ import {
   getMedicationDoseLimit,
 } from "@carebridge/medical-logic";
 import type { PatientContext, PatientMedication } from "./cross-specialty.js";
+import { createLogger } from "@carebridge/logger";
+
+const log = createLogger("medication-daily-dose");
 
 /**
  * Canonicalise a drug name into a rule_id slug: lowercase, replace
@@ -51,27 +54,87 @@ function slugForRuleId(name: string): string {
 }
 
 /**
+ * CDC-calibrated defaults for the opioid / non-opioid critical-escalation
+ * ratios. The active values are exported as
+ * {@link OPIOID_CRITICAL_RATIO} / {@link NON_OPIOID_CRITICAL_RATIO} below
+ * and may be tuned per-deployment via env vars (see {@link resolveRatio}).
+ */
+export const OPIOID_CRITICAL_RATIO_DEFAULT = 1.2;
+export const NON_OPIOID_CRITICAL_RATIO_DEFAULT = 2.0;
+
+/**
+ * Resolve a per-deployment ratio override from an env var. Returns the
+ * default when the env var is unset, empty, non-numeric, or ≤ 1.0 (a
+ * ratio of 1.0 or below would fire critical on any over-cap dose at all,
+ * collapsing the warning band and almost certainly a misconfiguration).
+ *
+ * Invalid values fall back to the default with a structured warning so
+ * the operator can see the misconfiguration in CI / startup logs without
+ * the safety guard silently de-tuning to nothing.
+ */
+export function resolveRatio(envKey: string, defaultValue: number): number {
+  const raw = process.env[envKey];
+  if (raw === undefined || raw === "") return defaultValue;
+  const parsed = Number.parseFloat(raw);
+  if (!Number.isFinite(parsed) || parsed <= 1.0) {
+    log.warn("invalid_ratio_override", {
+      envKey,
+      raw,
+      reason: "non-finite or ≤ 1.0",
+      fallback: defaultValue,
+    });
+    return defaultValue;
+  }
+  return parsed;
+}
+
+/**
  * Opioid daily-dose excess-ratio at which we escalate warning → critical.
  *
- * CDC 2022 calibrates the per-drug daily caps in MEDICATION_MAX_DAILY_DOSES
- * to the 90 MME/day elevated-risk threshold. Exceeding that cap by even 20%
- * (1.2× → 108 MME) crosses into the zone where respiratory-depression and
- * overdose risk climb steeply, so we escalate aggressively. Lowering this
- * number makes the rule more sensitive; raising it makes the rule more
- * tolerant of over-threshold prescribing.
+ * Default (1.2×) is calibrated against the CDC 2022 90 MME/day elevated-
+ * risk threshold — per-drug daily caps in MEDICATION_MAX_DAILY_DOSES are
+ * pegged to 90 MME, so 1.2× → 108 MME, the zone where respiratory-
+ * depression and overdose risk climb steeply.
  *
- * If clinical teams want deployment-specific tuning (e.g. hospice vs
- * outpatient), follow-up #968 tracks exposing this as config. Until then
- * any calibration change requires a deliberate code edit + review.
+ * Override via `OPIOID_CRITICAL_RATIO` env var. Different care settings
+ * have legitimate calibration needs:
+ *  - Hospice / palliative: CDC exempts active cancer / sickle-cell /
+ *    end-of-life from the 90 MME threshold. Raise to 2.0+ to avoid
+ *    flooding the flag queue with expected-and-appropriate prescriptions.
+ *  - Outpatient / primary care: 1.2× is CDC's target — keep default.
+ *  - Inpatient acute / post-op: short-horizon higher doses are routine;
+ *    consider 1.5–1.8×.
+ *
+ * When the override differs from the default, the active value is
+ * surfaced in the flag rationale so reviewers see which threshold fired.
  */
-export const OPIOID_CRITICAL_RATIO = 1.2;
+export const OPIOID_CRITICAL_RATIO = resolveRatio(
+  "OPIOID_CRITICAL_RATIO",
+  OPIOID_CRITICAL_RATIO_DEFAULT,
+);
 
 /**
  * Non-opioid NSAID / analgesic over-limits cause cumulative rather than
- * acute harm (hepatic, renal, GI over weeks of over-dosing), so we use a
- * gentler gradient: 1–2× is warning, ≥2× is critical.
+ * acute harm (hepatic, renal, GI over weeks of over-dosing), so the
+ * default is a gentler 2.0× gradient: 1–2× is warning, ≥2× is critical.
+ *
+ * Override via `NON_OPIOID_CRITICAL_RATIO` env var (e.g. hepatic-clinic
+ * deployments may want 1.5× given Child-Pugh-B patients' diminished
+ * tolerance). Same fallback / audit-rationale visibility as the opioid
+ * ratio above.
  */
-export const NON_OPIOID_CRITICAL_RATIO = 2.0;
+export const NON_OPIOID_CRITICAL_RATIO = resolveRatio(
+  "NON_OPIOID_CRITICAL_RATIO",
+  NON_OPIOID_CRITICAL_RATIO_DEFAULT,
+);
+
+/** Per-deployment override active? */
+function isOpioidRatioOverridden(): boolean {
+  return OPIOID_CRITICAL_RATIO !== OPIOID_CRITICAL_RATIO_DEFAULT;
+}
+function isNonOpioidRatioOverridden(): boolean {
+  return NON_OPIOID_CRITICAL_RATIO !== NON_OPIOID_CRITICAL_RATIO_DEFAULT;
+}
 
 /** Map the excess-ratio of estimated-over-max into a flag severity. */
 function severityForDailyOver(
@@ -175,6 +238,18 @@ export function checkMedicationDailyDose(context: PatientContext): RuleFlag[] {
     const mmeNote = isOpioid
       ? ` (implied ${Math.round(daily * (limit.mmeFactor ?? 1))} MME/day; CDC elevated-risk threshold is 90 MME/day)`
       : "";
+    // Surface the active critical-escalation ratio in the audit trail
+    // when it has been overridden via env config so reviewers can see
+    // which threshold fired (#968).
+    const activeRatio = isOpioid ? OPIOID_CRITICAL_RATIO : NON_OPIOID_CRITICAL_RATIO;
+    const isOverridden = isOpioid
+      ? isOpioidRatioOverridden()
+      : isNonOpioidRatioOverridden();
+    const overrideNote = isOverridden
+      ? ` Active critical-escalation ratio: ${activeRatio}× (deployment override; CDC default ${
+          isOpioid ? OPIOID_CRITICAL_RATIO_DEFAULT : NON_OPIOID_CRITICAL_RATIO_DEFAULT
+        }×).`
+      : "";
     flags.push({
       severity,
       category: "medication-safety" as FlagCategory,
@@ -191,7 +266,8 @@ export function checkMedicationDailyDose(context: PatientContext): RuleFlag[] {
           ? `Over-prescription beyond the CDC 90 MME/day elevated-risk ` +
             `threshold is a leading driver of respiratory depression and overdose.`
           : `Chronic dosing above this threshold carries hepatic, renal, and ` +
-            `GI risks depending on the agent.`),
+            `GI risks depending on the agent.`) +
+        overrideNote,
       suggested_action:
         `Review frequency and dose. Typical options: reduce per-dose amount, ` +
         `widen dosing interval (e.g. q6h → q8h), or impose a PRN cap ` +
