@@ -288,6 +288,41 @@
       "when": 1747238400000,
       "tag": "0041_medications_max_doses_per_day",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1747324800000,
+      "tag": "0033_failed_events_updated_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1747324860000,
+      "tag": "0033_medication_status_held",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1747324920000,
+      "tag": "0034_gin_trigger_event_ids",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1747324980000,
+      "tag": "0035_encrypt_lab_vital_numerics",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1747325040000,
+      "tag": "0037_appointment_reminder_job_ids",
+      "breakpoints": true
     }
   ]
 }
