@@ -32,6 +32,7 @@ import {
   parseFrequencyText,
   estimateDailyDose,
   getMedicationDoseLimit,
+  getComboApapMg,
 } from "@carebridge/medical-logic";
 import type { PatientContext, PatientMedication } from "./cross-specialty.js";
 import { createLogger } from "@carebridge/logger";
@@ -332,5 +333,123 @@ export function checkMedicationDailyDose(context: PatientContext): RuleFlag[] {
     });
   }
 
+  // ── Cumulative APAP across combo opioids + plain acetaminophen (#926) ──
+  //
+  // Combo opioids (Percocet, Vicodin, Norco, Tylenol #3, ...) are aliased
+  // in DRUG_NAME_ALIASES to their opioid component for the per-drug
+  // ceiling check above, which is correct because the opioid cap is
+  // generally the binding constraint. But the APAP component of those
+  // same pills is silently dropped — and a patient on, say, Norco 5/325
+  // q6h + supplemental Tylenol 650 mg TID can approach the 4000 mg/day
+  // APAP cap without any single medication tripping its own check.
+  //
+  // Roll the APAP component up across every active medication, sum
+  // against the cap, and emit a flag when the patient exceeds it. Uses
+  // the same fail-open semantics as the per-drug rule: missing dose
+  // amount, unparseable frequency, or unboundable PRN drop out of the
+  // sum quietly rather than over-flag.
+  const apapFlag = checkCumulativeApap(context);
+  if (apapFlag) flags.push(apapFlag);
+
   return flags;
+}
+
+/**
+ * Roll up APAP contribution across the patient's active-medication list.
+ * Sources two streams:
+ *   1. Combo opioid products via {@link getComboApapMg} — APAP mg per
+ *      dose unit, multiplied by daily doses derived from frequency +
+ *      max_doses_per_day.
+ *   2. Plain acetaminophen entries — dose_amount in mg (no per-pill
+ *      lookup needed; the dose IS the APAP mg).
+ *
+ * Compares the daily sum against the FDA 4000 mg/day APAP cap. Returns
+ * a single MED-DAILY-OVER-APAP-COMBO flag when exceeded, undefined
+ * otherwise. Severity matches the existing acetaminophen escalation
+ * shape (1×–2× warning, ≥2× critical).
+ *
+ * Fail-open by design: medications with missing dose_amount, missing
+ * unit, unparseable frequency, or unboundable PRN drop out of the sum
+ * rather than over-flag. Issue #926.
+ */
+function checkCumulativeApap(context: PatientContext): RuleFlag | null {
+  const details = context.active_medications_detail;
+  if (!details || details.length === 0) return null;
+
+  const APAP_CAP_MG = 4000;
+  const contributions: { name: string; mgPerDay: number }[] = [];
+
+  for (const m of details) {
+    if (m.dose_amount == null) continue;
+    const unit = (m.dose_unit ?? "").toLowerCase();
+    if (unit !== "mg") continue;
+
+    const freq = parseFrequencyText(m.frequency);
+    let apapPerDose: number;
+
+    const comboApap = getComboApapMg(m.name);
+    if (comboApap !== undefined) {
+      // Combo opioid: dose_amount is the opioid component; APAP per dose
+      // unit comes from COMBO_OPIOID_APAP_MG.
+      apapPerDose = comboApap;
+    } else {
+      // Plain acetaminophen: dose_amount IS the APAP mg. Resolve by
+      // canonical name match to avoid mis-counting other non-opioid meds.
+      const limit = getMedicationDoseLimit(m.name);
+      if (!limit || limit.displayName !== "Acetaminophen") continue;
+      apapPerDose = m.dose_amount;
+    }
+
+    const dailyDoses = estimateDailyDose(
+      1, // We want raw doses-per-day, not mg-per-day, so pass dose=1.
+      freq,
+      m.max_doses_per_day ?? null,
+    );
+    if (dailyDoses === null || dailyDoses === 0) continue;
+
+    contributions.push({
+      name: m.name,
+      mgPerDay: apapPerDose * dailyDoses,
+    });
+  }
+
+  if (contributions.length === 0) return null;
+  const totalApap = contributions.reduce((s, c) => s + c.mgPerDay, 0);
+  if (totalApap <= APAP_CAP_MG) return null;
+
+  // Skip if a single plain-acetaminophen entry already drives the total
+  // — the per-drug MED-DAILY-OVER-ACETAMINOPHEN flag above covers it and
+  // we don't want duplicate signal.
+  if (
+    contributions.length === 1 &&
+    !getComboApapMg(contributions[0]!.name)
+  ) {
+    return null;
+  }
+
+  const ratio = totalApap / APAP_CAP_MG;
+  const severity: FlagSeverity = ratio >= 2 ? "critical" : "warning";
+  const breakdown = contributions
+    .map((c) => `${c.name} ~${Math.round(c.mgPerDay)} mg/day`)
+    .join("; ");
+
+  return {
+    severity,
+    category: "medication-safety" as FlagCategory,
+    summary: `Cumulative APAP across active medications ~${Math.round(totalApap)} mg/day exceeds the 4000 mg/day ceiling`,
+    rationale:
+      `The acetaminophen component of combo opioid products (Percocet, Vicodin, Norco, Tylenol #3, etc.) ` +
+      `is captured by the brand-alias collapse to the opioid component for the per-drug check, which leaves ` +
+      `the APAP contribution invisible at the single-drug level. Summed across this patient's active ` +
+      `medications (${breakdown}), implied APAP is approximately ${Math.round(totalApap)} mg/day — ` +
+      `${ratio.toFixed(1)}× the 4000 mg/day FDA adult ceiling. Hepatotoxicity risk rises sharply with ` +
+      `chronic exposure above this threshold.`,
+    suggested_action:
+      `Confirm intent. If the combo opioid is the only APAP source and the patient is using <4000 mg/day, ` +
+      `reduce or remove supplemental plain acetaminophen. If chronic APAP >4000 mg/day is unavoidable, ` +
+      `consider switching the opioid component to a non-combo formulation (oxycodone IR, hydromorphone) ` +
+      `and dose plain acetaminophen separately so the daily total is tractable.`,
+    notify_specialties: ["pharmacy", "pain_management"],
+    rule_id: "MED-DAILY-OVER-APAP-COMBO",
+  };
 }
