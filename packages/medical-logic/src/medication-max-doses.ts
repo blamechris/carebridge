@@ -334,6 +334,51 @@ export function getComboApapMg(drugName: string): number | undefined {
 }
 
 /**
+ * MME-per-day-per-(mcg/hr) factor for transdermal fentanyl patches
+ * (Duragesic) (#1020).
+ *
+ * Per CDC 2022 opioid prescribing guideline and the FDA Duragesic
+ * label, transdermal fentanyl delivers continuously and the
+ * conversion to oral morphine equivalent is:
+ *
+ *   MME/day = (mcg/hr) × 2.4
+ *
+ * Reference points used by the daily-dose rule:
+ *   - 12 mcg/hr → 28.8 MME/day (sub-threshold; common starter)
+ *   - 25 mcg/hr → 60 MME/day (under 90 MME cap)
+ *   - 37.5 mcg/hr → 90 MME/day (at CDC threshold)
+ *   - 50 mcg/hr → 120 MME/day (1.33× cap → critical at default 1.2×)
+ *   - 100 mcg/hr → 240 MME/day (2.67× cap → critical)
+ *
+ * IV/IM fentanyl uses a different conversion factor (route-aware
+ * lookup tracked separately in #927/#1021) and is NOT covered here —
+ * this helper applies ONLY to the transdermal patch presentation.
+ */
+export const FENTANYL_TRANSDERMAL_MME_PER_MCG_HR = 2.4;
+
+/**
+ * Detect whether a free-text drug name + dose_unit combination is a
+ * transdermal fentanyl patch order (#1020). True only when both:
+ *   - name matches /fentanyl|duragesic/i, AND
+ *   - dose_unit is the patch delivery rate ("mcg/hr" or variants)
+ *
+ * Returns false for IV/IM fentanyl (which uses "mcg" or "mg" units)
+ * or for any non-fentanyl medication. Callers use the boolean to
+ * gate the mcg/hr → MME/day conversion.
+ */
+export function isFentanylTransdermal(
+  drugName: string,
+  doseUnit: string | null | undefined,
+): boolean {
+  if (!/fentanyl|duragesic/i.test(drugName)) return false;
+  if (!doseUnit) return false;
+  // Accept "mcg/hr", "mcg/h", "mcg per hr", "mcg per hour", "ug/hr", "μg/hr".
+  // Normalise spaces and "per" tokens; lowercase.
+  const unit = doseUnit.toLowerCase().replace(/\s+/g, "").replace(/per/g, "/");
+  return /^(mcg|ug|μg)\/h(r|our)?$/.test(unit);
+}
+
+/**
  * Strip trailing strength / route / frequency tokens from a free-text
  * drug name so entries like "Ibuprofen 600mg TID" or "Acetaminophen
  * 500mg PO q6h" still resolve to their canonical entry.

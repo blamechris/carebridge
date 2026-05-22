@@ -743,6 +743,134 @@ describe("checkMedicationDailyDose (#235)", () => {
     });
   });
 
+  describe("fentanyl transdermal patch (mcg/hr) (#1020)", () => {
+    function makeFentanylPatch(mcgHr: number, unit = "mcg/hr"): PatientMedication {
+      return makeMed({
+        name: "Fentanyl transdermal patch",
+        dose_amount: mcgHr,
+        dose_unit: unit,
+        route: "topical",
+        frequency: "q72h", // patch is replaced every 72h; rule reads the rate
+      });
+    }
+
+    it("12 mcg/hr → no flag (28.8 MME/day, well under 90 cap)", () => {
+      const flags = checkMedicationDailyDose(makeCtx(makeFentanylPatch(12)));
+      expect(
+        flags.find((f) => f.rule_id === "MED-DAILY-OVER-FENTANYL-TRANSDERMAL"),
+      ).toBeUndefined();
+    });
+
+    it("25 mcg/hr → no flag (60 MME/day, under cap)", () => {
+      const flags = checkMedicationDailyDose(makeCtx(makeFentanylPatch(25)));
+      expect(
+        flags.find((f) => f.rule_id === "MED-DAILY-OVER-FENTANYL-TRANSDERMAL"),
+      ).toBeUndefined();
+    });
+
+    it("40 mcg/hr → warning (96 MME/day, 1.07× cap, below 1.2× critical)", () => {
+      const flags = checkMedicationDailyDose(makeCtx(makeFentanylPatch(40)));
+      const f = flags.find((x) => x.rule_id === "MED-DAILY-OVER-FENTANYL-TRANSDERMAL");
+      expect(f).toBeDefined();
+      expect(f!.severity).toBe("warning");
+      expect(f!.summary).toMatch(/96 MME/);
+    });
+
+    it("50 mcg/hr → critical (120 MME/day, 1.33× cap)", () => {
+      const flags = checkMedicationDailyDose(makeCtx(makeFentanylPatch(50)));
+      const f = flags.find((x) => x.rule_id === "MED-DAILY-OVER-FENTANYL-TRANSDERMAL");
+      expect(f).toBeDefined();
+      expect(f!.severity).toBe("critical");
+      expect(f!.summary).toMatch(/120 MME/);
+    });
+
+    it("100 mcg/hr → critical (240 MME/day, 2.67× cap)", () => {
+      const flags = checkMedicationDailyDose(makeCtx(makeFentanylPatch(100)));
+      const f = flags.find((x) => x.rule_id === "MED-DAILY-OVER-FENTANYL-TRANSDERMAL");
+      expect(f).toBeDefined();
+      expect(f!.severity).toBe("critical");
+      expect(f!.summary).toMatch(/240 MME/);
+    });
+
+    it("Duragesic brand resolves to fentanyl transdermal", () => {
+      const flags = checkMedicationDailyDose(
+        makeCtx(makeMed({
+          name: "Duragesic",
+          dose_amount: 75,
+          dose_unit: "mcg/hr",
+          route: "topical",
+          frequency: "q72h",
+        })),
+      );
+      const f = flags.find((x) => x.rule_id === "MED-DAILY-OVER-FENTANYL-TRANSDERMAL");
+      expect(f).toBeDefined();
+      expect(f!.severity).toBe("critical"); // 75 × 2.4 = 180 MME → 2× cap
+    });
+
+    it("unit alias 'mcg/h' (no r) is accepted", () => {
+      const flags = checkMedicationDailyDose(makeCtx(makeFentanylPatch(50, "mcg/h")));
+      const f = flags.find((x) => x.rule_id === "MED-DAILY-OVER-FENTANYL-TRANSDERMAL");
+      expect(f).toBeDefined();
+    });
+
+    it("unit alias 'ug/hr' (micro abbrev) is accepted", () => {
+      const flags = checkMedicationDailyDose(makeCtx(makeFentanylPatch(50, "ug/hr")));
+      const f = flags.find((x) => x.rule_id === "MED-DAILY-OVER-FENTANYL-TRANSDERMAL");
+      expect(f).toBeDefined();
+    });
+
+    it("IV fentanyl (mcg, not mcg/hr) → does NOT trigger transdermal path", () => {
+      // IV fentanyl uses a different conversion factor — out of scope here.
+      // The mcg-only branch should fall through to the existing non-mg
+      // path (no flag, fail-open) rather than convert at the transdermal
+      // factor. Future issue #1021 adds IV unit conversion.
+      const flags = checkMedicationDailyDose(
+        makeCtx(makeMed({
+          name: "Fentanyl",
+          dose_amount: 100,
+          dose_unit: "mcg",
+          route: "IV",
+          frequency: "q4h",
+        })),
+      );
+      expect(
+        flags.find((f) => f.rule_id === "MED-DAILY-OVER-FENTANYL-TRANSDERMAL"),
+      ).toBeUndefined();
+    });
+
+    it("non-fentanyl drug with mcg/hr unit does NOT match", () => {
+      // Some other continuous-release drug expressed in mcg/hr — must
+      // not be mistakenly treated as fentanyl.
+      const flags = checkMedicationDailyDose(
+        makeCtx(makeMed({
+          name: "Clonidine patch",
+          dose_amount: 100,
+          dose_unit: "mcg/hr",
+          route: "topical",
+          frequency: "weekly",
+        })),
+      );
+      expect(
+        flags.find((f) => f.rule_id === "MED-DAILY-OVER-FENTANYL-TRANSDERMAL"),
+      ).toBeUndefined();
+    });
+
+    it("missing dose_amount → no flag (fail-open)", () => {
+      const flags = checkMedicationDailyDose(
+        makeCtx(makeMed({
+          name: "Fentanyl patch",
+          dose_amount: null,
+          dose_unit: "mcg/hr",
+          route: "topical",
+          frequency: "q72h",
+        })),
+      );
+      expect(
+        flags.find((f) => f.rule_id === "MED-DAILY-OVER-FENTANYL-TRANSDERMAL"),
+      ).toBeUndefined();
+    });
+  });
+
   describe("rule_id conventions", () => {
     it("daily flag rule_id starts with MED-DAILY-OVER-<DRUG>", () => {
       const flags = checkMedicationDailyDose(

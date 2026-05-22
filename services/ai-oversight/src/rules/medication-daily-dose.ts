@@ -34,6 +34,8 @@ import {
   estimateDailyDose,
   getMedicationDoseLimit,
   getComboApapMg,
+  isFentanylTransdermal,
+  FENTANYL_TRANSDERMAL_MME_PER_MCG_HR,
 } from "@carebridge/medical-logic";
 import type { PatientContext, PatientMedication } from "./cross-specialty.js";
 import { createLogger } from "@carebridge/logger";
@@ -228,8 +230,20 @@ export function checkMedicationDailyDose(context: PatientContext): RuleFlag[] {
   if (!med) return flags;
 
   if (med.dose_amount == null) return flags;
+
+  // Fentanyl transdermal patch (#1020). Continuous-release delivery
+  // expressed in mcg/hr — bypass the mg-only single/daily ceilings
+  // (mcg-based caps would be 1000× wrong) and convert directly to MME/day
+  // via the CDC 2022 transdermal factor (2.4 MME per mcg/hr).
+  if (isFentanylTransdermal(med.name, med.dose_unit)) {
+    const fentanylFlag = checkFentanylTransdermal(med);
+    if (fentanylFlag) flags.push(fentanylFlag);
+    return flags;
+  }
+
   // Per-drug ceilings are expressed in mg. Skip non-mg prescriptions
-  // (mcg patches, mL infusions) — a future issue will add unit conversion.
+  // (other mcg presentations, mL infusions) — a future issue (#1021) will
+  // add IV infusion unit conversion.
   const unit = (med.dose_unit ?? "").toLowerCase();
   if (unit !== "mg") return flags;
 
@@ -457,5 +471,62 @@ function checkCumulativeApap(context: PatientContext): RuleFlag | null {
       `and dose plain acetaminophen separately so the daily total is tractable.`,
     notify_specialties: ["pharmacy", "pain_management"],
     rule_id: "MED-DAILY-OVER-APAP-COMBO",
+  };
+}
+
+/**
+ * Compute MME/day from a transdermal-fentanyl patch order and flag when
+ * the dose exceeds the CDC 90 MME/day elevated-risk threshold (#1020).
+ *
+ * Conversion: MME/day = (mcg/hr) × 2.4. Severity follows the same warning
+ * vs critical escalation as the main mg-based opioid path — under cap →
+ * no flag; over cap → warning until ratio reaches OPIOID_CRITICAL_RATIO
+ * (default 1.2×), at which point → critical.
+ *
+ * Fail-open: PRN frequency on a continuous-release patch is non-sensical
+ * but tolerated as a typo — the patch delivers continuously regardless
+ * of the frequency field, so we compute MME purely from the mcg/hr rate.
+ */
+function checkFentanylTransdermal(med: PatientMedication): RuleFlag | null {
+  if (med.dose_amount == null || med.dose_amount <= 0) return null;
+  const mmePerDay = med.dose_amount * FENTANYL_TRANSDERMAL_MME_PER_MCG_HR;
+  const cap = 90; // CDC 2022 elevated-risk threshold (MME/day)
+  if (mmePerDay <= cap) return null;
+
+  const ratio = mmePerDay / cap;
+  const severity = severityForDailyOver(ratio, true);
+
+  // Surface override note in the rationale when the operator has tuned
+  // the opioid critical ratio away from CDC default (same pattern as
+  // the main MED-DAILY-OVER opioid path).
+  const isOverridden = OPIOID_CRITICAL_RATIO !== OPIOID_CRITICAL_RATIO_DEFAULT;
+  const overrideNote = isOverridden
+    ? ` Active critical-escalation ratio: ${OPIOID_CRITICAL_RATIO}× (deployment override; CDC default ${OPIOID_CRITICAL_RATIO_DEFAULT}×).`
+    : "";
+
+  return {
+    severity,
+    category: "medication-safety" as FlagCategory,
+    summary:
+      `"${med.name}" ${med.dose_amount} mcg/hr transdermal patch implies ` +
+      `~${Math.round(mmePerDay)} MME/day — exceeds the 90 MME/day CDC threshold`,
+    rationale:
+      `Transdermal fentanyl delivers continuously at the labelled mcg/hr ` +
+      `rate; the CDC 2022 conversion factor for the patch presentation is ` +
+      `${FENTANYL_TRANSDERMAL_MME_PER_MCG_HR} MME per mcg/hr. ${med.dose_amount} mcg/hr × ` +
+      `${FENTANYL_TRANSDERMAL_MME_PER_MCG_HR} = ~${Math.round(mmePerDay)} MME/day, ` +
+      `which is ${ratio.toFixed(1)}× the 90 MME/day elevated-risk threshold. ` +
+      `Over-prescription at this level is a leading driver of respiratory ` +
+      `depression and overdose, especially in opioid-naive or recently-` +
+      `rotated patients.` + overrideNote,
+    suggested_action:
+      `Verify opioid tolerance and clinical context. Common safe steps: ` +
+      `confirm the patch strength is appropriate for the patient's baseline ` +
+      `MME load (transdermal initiation in opioid-naive patients is contra-` +
+      `indicated by the Duragesic label), step down to a lower-strength ` +
+      `patch (25 → 12 mcg/hr), or rotate to a different long-acting opioid ` +
+      `with PO dose-titration room.`,
+    notify_specialties: ["pharmacy", "pain_management"],
+    rule_id: "MED-DAILY-OVER-FENTANYL-TRANSDERMAL",
   };
 }
