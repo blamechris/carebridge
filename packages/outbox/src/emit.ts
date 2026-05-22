@@ -31,7 +31,14 @@ const clinicalEventsQueue = new Queue("clinical-events", {
 
 export async function emitClinicalEvent(event: ClinicalEvent): Promise<void> {
   try {
-    await clinicalEventsQueue.add(event.type, event);
+    // jobId: event.id — BullMQ dedupes jobs by jobId. A retried emit from
+    // the same writer (network glitch / partial-success replay) becomes a
+    // no-op at the queue layer instead of producing a duplicate BullMQ
+    // job and a downstream duplicate review_jobs row. The reconciler path
+    // (outbox-reconciler.ts:93) uses { jobId: row.id } for the same
+    // reason, scoped to outbox-row identity rather than event identity.
+    // See #1003.
+    await clinicalEventsQueue.add(event.type, event, { jobId: event.id });
   } catch (queueError) {
     // Redis/BullMQ unavailable — persist to DB outbox for later retry
     try {

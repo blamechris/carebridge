@@ -46,8 +46,26 @@ describe("emitClinicalEvent", () => {
   it("adds event to BullMQ queue on success", async () => {
     await emitClinicalEvent(sampleEvent);
 
-    expect(addMock).toHaveBeenCalledWith(sampleEvent.type, sampleEvent);
+    expect(addMock).toHaveBeenCalledWith(
+      sampleEvent.type,
+      sampleEvent,
+      expect.objectContaining({ jobId: sampleEvent.id }),
+    );
     expect(writeOutboxEntryMock).not.toHaveBeenCalled();
+  });
+
+  it("passes event.id as the BullMQ jobId for idempotent enqueue (#1003)", async () => {
+    // BullMQ dedupes jobs by jobId. The reconciler path already passes
+    // { jobId: outbox_row.id } at outbox-reconciler.ts:93; the primary
+    // path must symmetrically pass { jobId: event.id } so a retried emit
+    // from the same writer (network glitch, partial-success replay)
+    // becomes a no-op at the queue layer instead of producing a duplicate
+    // BullMQ job → duplicate review_jobs row.
+    await emitClinicalEvent(sampleEvent);
+
+    const opts = addMock.mock.calls[0]?.[2];
+    expect(opts).toBeDefined();
+    expect(opts.jobId).toBe(sampleEvent.id);
   });
 
   it("falls back to outbox when queue fails", async () => {
