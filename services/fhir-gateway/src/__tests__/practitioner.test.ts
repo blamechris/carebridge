@@ -135,4 +135,14 @@ describe("toFhirPractitioner (#388)", () => {
     expect(p.name?.[0]?.family).toBe("Marie Jones");
     expect(p.name?.[0]?.given).toEqual(["Sarah"]);
   });
+
+  it("4-token Anglo full middle name: 'John Robert Quincy Adams' → family='Quincy Adams' (#1027)", () => {
+    // The Anglo-middle-name tradeoff isn't bounded to 3 tokens. With any
+    // 3+-token name and a non-initial penultimate, family absorbs the
+    // penultimate. Pinning a 4-token case so a future edit doesn't
+    // silently change behaviour for longer chains.
+    const p = toFhirPractitioner(makeUser({ name: "John Robert Quincy Adams" }));
+    expect(p.name?.[0]?.family).toBe("Quincy Adams");
+    expect(p.name?.[0]?.given).toEqual(["John", "Robert"]);
+  });
 });
