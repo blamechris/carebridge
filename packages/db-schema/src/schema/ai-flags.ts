@@ -30,6 +30,13 @@ export const clinicalFlags = pgTable("clinical_flags", {
   prompt_version: text("prompt_version"),
   escalation_count: integer("escalation_count").notNull().default(0),
   last_escalated_at: text("last_escalated_at"),
+  /**
+   * Rule-specific structured telemetry forwarded from RuleFlag.metadata
+   * at flag-creation time (#1039). Queryable per-flag for FP-rate
+   * dashboards without joining through review_jobs.rules_output.
+   * Null for LLM-path flags and historical rows pre-#1039.
+   */
+  metadata: jsonb("metadata").$type<Record<string, unknown>>(),
   created_at: text("created_at").notNull(),
 }, (table) => [
   index("idx_flags_patient").on(table.patient_id, table.status),

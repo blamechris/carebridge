@@ -322,4 +322,31 @@ describe("createFlag", () => {
 
     expect(mockEmitNotificationEvent).not.toHaveBeenCalled();
   });
+
+  it("persists metadata into the inserted clinical_flags row (#1039)", async () => {
+    // RuleFlag.metadata forwarded by review-service must land in the
+    // clinical_flags.metadata column so per-flag FP-rate dashboards can
+    // query it without joining review_jobs.rules_output.
+    const flagWithMetadata = {
+      ...baseFlag,
+      rule_id: "CROSS-STEROID-PCP-001",
+      metadata: { duration_known: true, chronic_marked: false },
+    };
+    await createFlag(flagWithMetadata);
+    const inserted = mockValues.mock.calls[0]?.[0];
+    expect(inserted.metadata).toEqual({
+      duration_known: true,
+      chronic_marked: false,
+    });
+  });
+
+  it("omits metadata key entirely when the rule doesn't provide it", async () => {
+    // Rules without buildMetadata (e.g. ONCO-VTE-NEURO-001) call createFlag
+    // without a `metadata` key. The inserted row must reflect that — not
+    // a JSON null, just absence — so downstream consumers can distinguish
+    // "rule had no telemetry" from "rule had explicit-null telemetry".
+    await createFlag(baseFlag);
+    const inserted = mockValues.mock.calls[0]?.[0];
+    expect(Object.prototype.hasOwnProperty.call(inserted, "metadata")).toBe(false);
+  });
 });
