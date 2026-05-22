@@ -131,17 +131,8 @@ function parseName(fullName: string): HumanName {
   };
 }
 
-/**
- * Canonical URL namespace for CareBridge-minted FHIR identifiers. Using
- * a URL-form `system` rather than an ad-hoc `urn:` scheme is the shape
- * Epic, Cerner, and other major EHRs are trained to recognise.
- *
- * Convention: append a domain-specific path segment (`/user-id`,
- * `/patient-id`, `/encounter-id`, …) under this base so new resource
- * generators reuse the same namespace root.
- */
-export const CAREBRIDGE_IDENTIFIER_BASE =
-  "https://carebridge.dev/fhir/sid";
+export { CAREBRIDGE_IDENTIFIER_BASE } from "./identifiers.js";
+import { CAREBRIDGE_IDENTIFIER_BASE } from "./identifiers.js";
 
 export function toFhirPractitioner(user: UserRow): FhirPractitioner {
   const resource: FhirPractitioner = {
