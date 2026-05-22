@@ -454,6 +454,38 @@ interface CrossSpecialtyRule {
 }
 
 /**
+ * Generic + brand names of systemic-exposure-relevant corticosteroids
+ * driving CROSS-STEROID-PCP-001. Shared between the rule's `check` and the
+ * `steroidPcpDurationKnown` telemetry helper so a new addition can't drift
+ * between the two sites (#1038).
+ *
+ * Note: DIABETES-STEROID-001 uses a different (smaller, plus `cortisone`)
+ * pattern intentionally — unifying changes behaviour and is out of scope
+ * for this refactor.
+ */
+const PCP_CORTICOSTEROID_PATTERN =
+  /prednisone|prednisolone|methylprednisolone|medrol|solu-medrol|dexamethasone|decadron|hydrocortisone|solu-cortef|betamethasone|triamcinolone/i;
+
+/**
+ * Route / formulation tokens that mark a corticosteroid as non-systemic
+ * (creams, eye drops, intranasal sprays, inhalers) and therefore outside
+ * the PCP-prophylaxis risk cohort. Tested against both `route` and `name`
+ * because writers commonly stuff route hints into the medication name
+ * (e.g. "Flonase (triamcinolone intranasal)"). (#1038)
+ */
+const PCP_TOPICAL_ROUTE_PATTERN =
+  /topical|ophthalmic|otic|intranasal|inhaled|inhalation|cream|ointment|gel|drops|spray/i;
+
+/**
+ * Drugs that satisfy PCP prophylaxis — TMP-SMX (first-line) plus the
+ * standard sulfa-intolerant alternatives. If any of these are on the
+ * active-medication list alongside a qualifying steroid course, the
+ * CROSS-STEROID-PCP-001 flag is suppressed. (#1038)
+ */
+const PCP_PROPHYLAXIS_PATTERN =
+  /trimethoprim.?sulfamethoxazole|bactrim|septra|tmp.?smx|dapsone|atovaquone|mepron|pentamidine|nebupent/i;
+
+/**
  * Re-run the CROSS-STEROID-PCP-001 duration gate to determine whether
  * the rule fired with a usable started_at or on the fail-open path.
  * Mirrors the gate inside the rule's `check`; kept as a small standalone
@@ -463,15 +495,11 @@ interface CrossSpecialtyRule {
 function steroidPcpDurationKnown(ctx: PatientContext): boolean {
   const details = ctx.active_medications_detail;
   if (!details) return false;
-  const CORTICOSTEROID_PATTERN =
-    /prednisone|prednisolone|methylprednisolone|medrol|solu-medrol|dexamethasone|decadron|hydrocortisone|solu-cortef|betamethasone|triamcinolone/i;
-  const TOPICAL_ROUTE_PATTERN =
-    /topical|ophthalmic|otic|intranasal|inhaled|inhalation|cream|ointment|gel|drops|spray/i;
   const systemic = details.find((m) => {
-    if (!CORTICOSTEROID_PATTERN.test(m.name)) return false;
+    if (!PCP_CORTICOSTEROID_PATTERN.test(m.name)) return false;
     const route = m.route?.toLowerCase() ?? "";
-    if (TOPICAL_ROUTE_PATTERN.test(route)) return false;
-    if (TOPICAL_ROUTE_PATTERN.test(m.name)) return false;
+    if (PCP_TOPICAL_ROUTE_PATTERN.test(route)) return false;
+    if (PCP_TOPICAL_ROUTE_PATTERN.test(m.name)) return false;
     return true;
   });
   if (!systemic) return false;
@@ -1125,15 +1153,10 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       // that raises PCP risk. Creams, eye drops, and intranasal sprays
       // with hydrocortisone / triamcinolone / betamethasone have minimal
       // systemic exposure and should not trigger prophylaxis warnings.
-      const CORTICOSTEROID_PATTERN =
-        /prednisone|prednisolone|methylprednisolone|medrol|solu-medrol|dexamethasone|decadron|hydrocortisone|solu-cortef|betamethasone|triamcinolone/i;
-      const TOPICAL_ROUTE_PATTERN =
-        /topical|ophthalmic|otic|intranasal|inhaled|inhalation|cream|ointment|gel|drops|spray/i;
-      const PCP_PROPHYLAXIS_PATTERN =
-        /trimethoprim.?sulfamethoxazole|bactrim|septra|tmp.?smx|dapsone|atovaquone|mepron|pentamidine|nebupent/i;
-
+      // Patterns hoisted to module scope (#1038) so this rule and
+      // steroidPcpDurationKnown stay in sync when the list changes.
       const steroidMed = ctx.active_medications.find((m) =>
-        CORTICOSTEROID_PATTERN.test(m),
+        PCP_CORTICOSTEROID_PATTERN.test(m),
       );
       if (!steroidMed) return false;
 
@@ -1145,13 +1168,13 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       if (ctx.active_medications_detail) {
         const systemicSteroidDetail = ctx.active_medications_detail.find(
           (m) => {
-            if (!CORTICOSTEROID_PATTERN.test(m.name)) return false;
+            if (!PCP_CORTICOSTEROID_PATTERN.test(m.name)) return false;
             const route = m.route?.toLowerCase() ?? "";
-            if (TOPICAL_ROUTE_PATTERN.test(route)) return false;
+            if (PCP_TOPICAL_ROUTE_PATTERN.test(route)) return false;
             // Inhaled/nasal/topical strings sometimes appear in name not
             // route — e.g., "Flonase (triamcinolone intranasal)". Drop
             // those too.
-            if (TOPICAL_ROUTE_PATTERN.test(m.name)) return false;
+            if (PCP_TOPICAL_ROUTE_PATTERN.test(m.name)) return false;
             return true;
           },
         );
