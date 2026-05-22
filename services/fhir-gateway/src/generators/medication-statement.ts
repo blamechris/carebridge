@@ -48,6 +48,21 @@ interface FhirDosage {
       code?: string;
     };
   }[];
+  /**
+   * Dosage.maxDosePerPeriod (#935) — explicit PRN ceiling carried as a
+   * FHIR Ratio (count / time unit). External EHRs ingesting the
+   * exported MedicationStatement see the same daily-cap signal that
+   * the ai-oversight daily-dose rule uses internally.
+   */
+  maxDosePerPeriod?: {
+    numerator?: { value: number; unit: string };
+    denominator?: {
+      value: number;
+      unit: string;
+      system?: string;
+      code?: string;
+    };
+  };
 }
 
 interface FhirMedicationStatement {
@@ -191,6 +206,25 @@ export function toFhirMedicationStatement(
         ),
       },
     ];
+    hasDosage = true;
+  }
+
+  // Emit Dosage.maxDosePerPeriod when an explicit PRN ceiling is set.
+  // Mirrors medication-request.ts so the two exports carry the same
+  // daily-cap signal external EHRs can ingest. (#935)
+  if (medication.max_doses_per_day != null) {
+    dosage.maxDosePerPeriod = {
+      numerator: {
+        value: medication.max_doses_per_day,
+        unit: "doses",
+      },
+      denominator: {
+        value: 1,
+        unit: "day",
+        system: "http://unitsofmeasure.org",
+        code: "d",
+      },
+    };
     hasDosage = true;
   }
 

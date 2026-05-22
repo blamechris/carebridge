@@ -146,4 +146,32 @@ describe("toFhirMedicationRequest (#388)", () => {
     );
     expect(r.dosageInstruction).toBeUndefined();
   });
+
+  describe("Dosage.maxDosePerPeriod (#935)", () => {
+    it("emits maxDosePerPeriod as a per-day Ratio when max_doses_per_day is set", () => {
+      const r = toFhirMedicationRequest(
+        makeMed({
+          frequency: "Q4H PRN",
+          max_doses_per_day: 4,
+        }),
+        "p1",
+      );
+      const cap = r.dosageInstruction?.[0]?.maxDosePerPeriod;
+      expect(cap).toBeDefined();
+      expect(cap?.numerator?.value).toBe(4);
+      expect(cap?.numerator?.unit).toBe("doses");
+      expect(cap?.denominator?.value).toBe(1);
+      expect(cap?.denominator?.unit).toBe("day");
+      expect(cap?.denominator?.system).toBe("http://unitsofmeasure.org");
+      expect(cap?.denominator?.code).toBe("d");
+    });
+
+    it("omits maxDosePerPeriod when max_doses_per_day is null", () => {
+      const r = toFhirMedicationRequest(
+        makeMed({ max_doses_per_day: null }),
+        "p1",
+      );
+      expect(r.dosageInstruction?.[0]?.maxDosePerPeriod).toBeUndefined();
+    });
+  });
 });

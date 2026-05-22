@@ -58,6 +58,14 @@ export interface Medication extends MutableRecord {
    * autoimmune, GVHD). See issue #1023.
    */
   chronic?: boolean;
+  /**
+   * Optional PRN / hard-cap dose count per 24 h. Populated when a
+   * prescription carries an explicit cap (e.g. "morphine 10 mg q4h PRN,
+   * max 4 doses/day"). Consumed by the ai-oversight daily-dose rule via
+   * estimateDailyDose to bound otherwise-unboundable PRN regimens.
+   * See issues #235 and #935.
+   */
+  max_doses_per_day?: number;
 }
 
 export interface MedLog extends BaseRecord {

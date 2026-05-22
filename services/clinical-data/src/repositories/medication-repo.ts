@@ -148,6 +148,7 @@ export async function createMedication(input: CreateMedicationInput): Promise<Me
     // rule fall back to runtime parsing — same fail-open behaviour as
     // before the structured column existed.
     frequency_structured: serializeFrequency(parseFrequencyText(input.frequency ?? null)),
+    max_doses_per_day: input.max_doses_per_day ?? null,
     status: input.status ?? "active",
     started_at: input.started_at ?? null,
     ended_at: input.ended_at ?? null,
@@ -182,6 +183,7 @@ export async function createMedication(input: CreateMedicationInput): Promise<Me
     frequency: input.frequency,
     frequency_structured:
       serializeFrequency(parseFrequencyText(input.frequency ?? null)) ?? undefined,
+    max_doses_per_day: input.max_doses_per_day,
     status: input.status ?? "active",
     started_at: input.started_at,
     ended_at: input.ended_at,
@@ -229,6 +231,7 @@ export async function updateMedication(
     // Re-derive the structured column whenever the free-text changes (#931).
     updates.frequency_structured = serializeFrequency(parseFrequencyText(fields.frequency));
   }
+  if (fields.max_doses_per_day !== undefined) updates.max_doses_per_day = fields.max_doses_per_day;
   if (fields.status !== undefined) updates.status = fields.status;
   if (fields.started_at !== undefined) updates.started_at = fields.started_at;
   if (fields.ended_at !== undefined) updates.ended_at = fields.ended_at;
@@ -281,6 +284,7 @@ export async function updateMedication(
     route: (updated.route as Medication["route"]) ?? undefined,
     frequency: updated.frequency ?? undefined,
     frequency_structured: updated.frequency_structured ?? undefined,
+    max_doses_per_day: updated.max_doses_per_day ?? undefined,
     status: updated.status as MedStatus,
     started_at: updated.started_at ?? undefined,
     ended_at: updated.ended_at ?? undefined,
@@ -325,6 +329,7 @@ export async function getMedicationsByPatient(
     route: (row.route as Medication["route"]) ?? undefined,
     frequency: row.frequency ?? undefined,
     frequency_structured: row.frequency_structured ?? undefined,
+    max_doses_per_day: row.max_doses_per_day ?? undefined,
     status: row.status as MedStatus,
     started_at: row.started_at ?? undefined,
     ended_at: row.ended_at ?? undefined,
