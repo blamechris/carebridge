@@ -67,6 +67,14 @@ export interface RuleFlag {
   suggested_action: string;
   notify_specialties: string[];
   rule_id: string;
+  /**
+   * Optional rule-specific structured telemetry. Persisted with the flag
+   * so downstream FP-rate analysis can distinguish gate branches without
+   * having to parse the human-readable rationale. Keys are
+   * namespace-free (rule_id provides scoping). #976 introduces
+   * `duration_known` for CROSS-STEROID-PCP-001.
+   */
+  metadata?: Record<string, unknown>;
 }
 
 // ─── Clinical Rules ──────────────────────────────────────────────
