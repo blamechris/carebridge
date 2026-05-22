@@ -9,7 +9,7 @@ import {
   updateDiagnosisSchema,
   createAllergySchema,
   updateAllergySchema,
-} from "@carebridge/validators";
+} from "@carebridge/shared-types";
 import { eq, desc } from "drizzle-orm";
 import { Queue } from "bullmq";
 import {

@@ -6,7 +6,7 @@ import {
   cosignNoteSchema,
   amendNoteSchema,
   noteTemplateTypeSchema,
-} from "@carebridge/validators";
+} from "@carebridge/shared-types";
 import type { NoteTemplateType } from "@carebridge/shared-types";
 import * as noteService from "./services/note-service.js";
 import { NoteConflictError, NoteStateError } from "./services/note-service.js";

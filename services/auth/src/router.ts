@@ -8,7 +8,7 @@ import {
   mfaDisableSchema,
   mfaCompleteLoginSchema,
   changePasswordSchema,
-} from "@carebridge/validators";
+} from "@carebridge/shared-types";
 import { getDb, users, sessions, auditLog } from "@carebridge/db-schema";
 import { eq, and, gt, asc, inArray } from "drizzle-orm";
 import crypto from "node:crypto";

@@ -185,9 +185,13 @@ vi.mock("@carebridge/clinical-notes", () => ({
   createProgressTemplate: () => ({}),
 }));
 
-vi.mock("@carebridge/validators", async () => {
+vi.mock("@carebridge/shared-types", async () => {
+  const actual = await vi.importActual<typeof import("@carebridge/shared-types")>(
+    "@carebridge/shared-types",
+  );
   const { z } = await import("zod");
   return {
+    ...actual,
     createVitalSchema: z.object({
       patient_id: z.string().uuid(),
       type: z.string().optional(),

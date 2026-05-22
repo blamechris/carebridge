@@ -20,7 +20,7 @@ import {
   updateCareTeamRoleSchema,
   grantCareTeamAssignmentSchema,
   revokeCareTeamAssignmentSchema,
-} from "@carebridge/validators";
+} from "@carebridge/shared-types";
 import { and, eq, isNull } from "drizzle-orm";
 import crypto from "node:crypto";
 import type { Context } from "../context.js";

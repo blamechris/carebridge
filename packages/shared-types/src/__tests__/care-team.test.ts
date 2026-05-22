@@ -7,7 +7,7 @@ import {
   updateCareTeamRoleSchema,
   grantCareTeamAssignmentSchema,
   revokeCareTeamAssignmentSchema,
-} from "../care-team.js";
+} from "../care-team.schemas.js";
 
 const PATIENT_ID = "f47ac10b-58cc-4372-a567-0e02b2c3d479";
 const PROVIDER_ID = "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5";

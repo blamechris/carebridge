@@ -36,7 +36,7 @@ import {
 import {
   appointmentTypeSchema,
   cancelReasonSchema,
-} from "@carebridge/validators";
+} from "@carebridge/shared-types";
 import {
   scheduleReminders,
   cancelReminders,

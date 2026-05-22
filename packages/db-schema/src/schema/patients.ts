@@ -80,7 +80,7 @@ export const careTeamMembers = pgTable("care_team_members", {
   patient_id: text("patient_id").notNull().references(() => patients.id),
   provider_id: text("provider_id").notNull(),
   // CHECK constraint mirrors `careTeamMemberRoleSchema` in
-  // packages/validators — see migration 0038_care_team_constraints.sql.
+  // packages/shared-types — see migration 0038_care_team_constraints.sql.
   role: text("role").notNull(), // "primary" | "specialist" | "nurse" | "coordinator"
   specialty: text("specialty"),
   is_active: boolean("is_active").notNull().default(true),
@@ -122,7 +122,7 @@ export const careTeamAssignments = pgTable("care_team_assignments", {
   user_id: text("user_id").notNull(),
   patient_id: text("patient_id").notNull(),
   // CHECK constraint mirrors `careTeamAssignmentRoleSchema` in
-  // packages/validators — see migration 0038_care_team_constraints.sql.
+  // packages/shared-types — see migration 0038_care_team_constraints.sql.
   role: text("role").notNull(), // "attending" | "consulting" | "nursing" | "covering"
   assigned_at: text("assigned_at").notNull().$defaultFn(() => new Date().toISOString()),
   removed_at: text("removed_at"), // null = active

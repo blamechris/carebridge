@@ -1,6 +1,6 @@
 import { eq, and, asc, desc } from "drizzle-orm";
 import { getDb, clinicalNotes, noteVersions } from "@carebridge/db-schema";
-import type { CreateNoteInput, UpdateNoteInput } from "@carebridge/validators";
+import type { CreateNoteInput, UpdateNoteInput } from "@carebridge/shared-types";
 import type {
   ClinicalNote,
   NoteLifecycleEvent,

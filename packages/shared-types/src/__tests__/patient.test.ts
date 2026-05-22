@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createPatientSchema, updatePatientSchema } from "../patient.js";
+import { createPatientSchema, updatePatientSchema } from "../patient.schemas.js";
 
 describe("createPatientSchema", () => {
   it("accepts valid patient data with all fields", () => {

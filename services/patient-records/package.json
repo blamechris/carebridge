@@ -9,7 +9,6 @@
   "scripts": { "build": "tsc", "typecheck": "tsc --noEmit", "clean": "rm -rf dist", "test": "vitest run" },
   "dependencies": {
     "@carebridge/shared-types": "workspace:*",
-    "@carebridge/validators": "workspace:*",
     "@carebridge/db-schema": "workspace:*",
     "@carebridge/redis-config": "workspace:*",
     "@trpc/server": "^11.0.0",

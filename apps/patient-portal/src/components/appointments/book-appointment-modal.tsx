@@ -33,7 +33,7 @@ export interface BookAppointmentModalProps {
 }
 
 // Sourced from the canonical `appointmentTypeSchema` enum (#895) so adding a
-// new type in `@carebridge/validators` automatically surfaces it in the UI
+// new type in `@carebridge/shared-types` automatically surfaces it in the UI
 // — and removing one becomes a compile error elsewhere (PREP_INSTRUCTIONS).
 const TYPES: readonly AppointmentType[] = APPOINTMENT_TYPES;
 

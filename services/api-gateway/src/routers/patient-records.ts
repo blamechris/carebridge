@@ -22,7 +22,7 @@ import {
   familyRelationships,
   users,
 } from "@carebridge/db-schema";
-import { createPatientSchema, updatePatientSchema } from "@carebridge/validators";
+import { createPatientSchema, updatePatientSchema } from "@carebridge/shared-types";
 import {
   listObservationsByPatient,
   createObservation,
@@ -37,7 +37,7 @@ import {
   createAllergySchema,
   updateAllergySchema,
   overrideAllergyFlagSchema,
-} from "@carebridge/validators";
+} from "@carebridge/shared-types";
 import {
   hasScope,
   normaliseScopes,

@@ -21,7 +21,7 @@
  */
 
 import type { AllergyStatus } from "@carebridge/shared-types";
-import { patientAllergyStatusSchema } from "@carebridge/validators";
+import { patientAllergyStatusSchema } from "@carebridge/shared-types";
 
 export type { AllergyStatus };
 

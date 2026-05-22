@@ -17,7 +17,7 @@ import { reviewJobs } from "@carebridge/db-schema";
 import type { User } from "@carebridge/shared-types";
 import {
   flagStatusSchema,
-} from "@carebridge/validators";
+} from "@carebridge/shared-types";
 
 import * as flagService from "./services/flag-service.js";
 

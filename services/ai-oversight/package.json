@@ -26,7 +26,6 @@
     "@carebridge/shared-types": "workspace:*",
     "@carebridge/notifications": "workspace:*",
     "@carebridge/phi-sanitizer": "workspace:*",
-    "@carebridge/validators": "workspace:*",
     "@carebridge/db-schema": "workspace:*",
     "@carebridge/medical-logic": "workspace:*",
     "@carebridge/ai-prompts": "workspace:*",

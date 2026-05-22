@@ -159,9 +159,13 @@ vi.mock("@carebridge/patient-records", () => ({
   updateAllergy: vi.fn(),
 }));
 
-vi.mock("@carebridge/validators", async () => {
+vi.mock("@carebridge/shared-types", async () => {
+  const actual = await vi.importActual<typeof import("@carebridge/shared-types")>(
+    "@carebridge/shared-types",
+  );
   const { z } = await import("zod");
   return {
+    ...actual,
     createPatientSchema: z.object({ mrn: z.string().optional() }),
     updatePatientSchema: z.object({}),
     createDiagnosisSchema: z.object({

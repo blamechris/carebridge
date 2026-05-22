@@ -8,7 +8,7 @@ import {
   medStatusSchema,
   createLabPanelSchema,
   createProcedureSchema,
-} from "../clinical-data.js";
+} from "../clinical-data.schemas.js";
 
 // ─── ICD-10-CM codes ────────────────────────────────────────────
 

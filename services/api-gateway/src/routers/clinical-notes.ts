@@ -16,7 +16,7 @@ import {
   cosignNoteSchema,
   amendNoteSchema,
   noteTemplateTypeSchema,
-} from "@carebridge/validators";
+} from "@carebridge/shared-types";
 import type { NoteTemplateType } from "@carebridge/shared-types";
 import {
   noteService,
