@@ -189,6 +189,20 @@ describe("ALLERGEN_SYNONYMS data sanity", () => {
       expect(contrastAliases).not.toContain("povidone-iodine");
       expect(contrastAliases).not.toContain("elemental iodine");
     });
+
+    it("bare 'povidone' token resolves to iodine (#1024)", () => {
+      // The synonym table lists bare `povidone` separately from
+      // `povidone-iodine` / `povidone iodine` because some chart entries
+      // record just "povidone". Pinning so a future cleanup pass that
+      // mistakes it for a duplicate alias doesn't silently drop coverage.
+      expect(normalizeAllergen("povidone")).toBe("iodine");
+      const aliases = expandAllergenAliases("povidone");
+      expect(aliases).toContain("iodine");
+      expect(aliases).toContain("betadine");
+      expect(aliases).toContain("povidone-iodine");
+      expect(aliases).not.toContain("iohexol");
+      expect(aliases).not.toContain("omnipaque");
+    });
   });
 
   it("aspirin/ASA folds into nsaid so cross-reactivity with ibuprofen still fires", () => {
