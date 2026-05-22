@@ -240,12 +240,61 @@ pnpm dev
 
 ### Environment Variables
 
+Cross-reference: the secret-rotation list in `CLAUDE.md > SECURITY NOTICE`
+covers every value below tagged "secret".
+
+#### Required to boot
+
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://carebridge:carebridge@localhost:5432/carebridge` |
-| `REDIS_URL` | Redis connection string | `redis://localhost:6379` |
-| `ANTHROPIC_API_KEY` | Claude API key (required for AI review) | `sk-ant-...` |
-| `JWT_SECRET` | Secret for signing JWTs | any long random string |
+| `DATABASE_URL` | PostgreSQL connection string | `postgresql://carebridge:carebridge_dev@localhost:5432/carebridge` |
+| `JWT_SECRET` | Secret for signing JWTs (auth tokens). Throws on missing | any long random string (secret) |
+| `PHI_ENCRYPTION_KEY` | 64-char hex (32 bytes) for AES-256 PHI column encryption. Throws on missing | `openssl rand -hex 32` (secret) |
+| `ANTHROPIC_API_KEY` | Claude API key for the AI oversight review pipeline | `sk-ant-...` (secret) |
+
+#### Required in production
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `SESSION_SECRET` | Cookie-signing secret. Throws when `NODE_ENV=production` | any long random string (secret) |
+| `PHI_HMAC_KEY` | HMAC key for MRN index lookups. Throws when `NODE_ENV=production` | `openssl rand -hex 32` (secret) |
+| `REDIS_PASSWORD` | Required when the Redis instance has AUTH enabled | (secret) |
+
+#### Required for key rotation
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `PHI_ENCRYPTION_KEY_PREVIOUS` | Prior PHI key during rotation; missing means rows encrypted under the old key cannot be decrypted | `openssl rand -hex 32` (secret) |
+| `REFRESH_TOKEN_HMAC_KEY` | Signs refresh tokens. Falls back to `SESSION_SECRET` if unset, so production deployments should set both explicitly | (secret) |
+
+#### Redis connection (alternative to `REDIS_URL`)
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `REDIS_URL` | Single-string connection URL | (none) |
+| `REDIS_HOST` | Host when not using `REDIS_URL` | `localhost` |
+| `REDIS_PORT` | Port | `6379` |
+| `REDIS_TLS` | `"true"` to require TLS | `"false"` |
+
+#### Operational / observability
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `NODE_ENV` | Toggles production-strict checks (SESSION_SECRET / PHI_HMAC_KEY enforcement) | `development` |
+| `LOG_LEVEL` | Structured log verbosity | `info` |
+| `API_HOST` / `API_PORT` | Gateway bind address / port | `0.0.0.0` / `4000` |
+| `HEALTH_PORT` | ai-oversight worker health check port | `4001` |
+| `NOTIFICATION_HEALTH_PORT` | notifications worker health check port | `4002` |
+| `SCHEDULING_HEALTH_PORT` | scheduling reminder worker health check port | `4003` |
+| `CORS_ORIGIN` | Allowed origin for the gateway CORS plugin | none (locked down) |
+
+#### Dev-mode flags
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `CAREBRIDGE_DEV_AUTH` | Set to `"true"` (with `NODE_ENV != production`) to enable the `x-dev-user-id` header bypass for local development | `"true"` |
+| `NEXT_PUBLIC_API_URL` | Browser-side API base URL injected into Next.js apps | `http://localhost:4000` |
+| `TEST_DATABASE_URL` | Separate database URL for integration tests that need a real Postgres | `postgresql://...` |
 
 ### Running Services
 
@@ -349,9 +398,11 @@ refactor(db): normalize care team member table
 ## Testing the AI Oversight System
 
 The seed data creates **Margaret Chen**, a 67-year-old patient with:
-- Stage III breast cancer (docetaxel + paclitaxel)
+- Stage III breast cancer (Capecitabine / Xeloda)
 - DVT, right lower extremity (IVC filter placed Feb 2026)
-- Warfarin anticoagulation
+- Enoxaparin (Lovenox) anticoagulation — LMWH is preferred over warfarin
+  for cancer-associated thrombosis per ASCO / ASH guidance
+- Ondansetron (Zofran) PRN for chemo-induced nausea
 
 To trigger rule `ONCO-VTE-NEURO-001`:
 
