@@ -97,6 +97,14 @@ export interface PatientMedication {
    * classify the input — rule falls back to runtime parsing.
    */
   frequency_structured?: string | null;
+  /**
+   * Drug concentration in mg/mL for continuous-infusion orders (#1021).
+   * Consumed by the daily-dose rule's mL/hr conversion path:
+   *   mg/day = (mL/hr) × concentration_mg_per_ml × 24
+   * Null when the prescription is non-infusion or when concentration is
+   * encoded inline in the drug name string instead.
+   */
+  concentration_mg_per_ml?: number | null;
   rxnorm_code: string | null;
   /**
    * ISO 8601 prescription start date. Populated from `medications.started_at`

@@ -317,6 +317,49 @@ export const MEDICATION_MAX_DAILY_DOSES: Record<string, MedicationDoseLimit> = {
     citation:
       "CDC 2022 opioid prescribing guideline (adult chronic-pain MME ceiling, PO; 360 mg × 0.15 MME = 54 MME)",
   },
+  // Fentanyl. No PO/IR formulation in clinical use beyond transmucosal
+  // (Actiq, breakthrough cancer pain) which is out of scope here. The
+  // base entry exists for the route-aware lookup to resolve IV/SC
+  // overrides for continuous-infusion orders (#1021); the transdermal
+  // patch presentation is handled separately via {@link isFentanylTransdermal}.
+  fentanyl: {
+    displayName: "Fentanyl",
+    source: "Parenteral only (IV/SC route required)",
+    citation:
+      "Fentanyl has no clinically-relevant PO ceiling; parenteral ceilings are modelled per-route. Transdermal patches use the mcg/hr → MME path (#1020).",
+    byRoute: {
+      IV: {
+        displayName: "Fentanyl (IV)",
+        // 100 mcg = 0.1 mg per typical adult single bolus; many sedation
+        // protocols administer 25–50 mcg per push, so 0.1 mg is the upper
+        // bound that should still pass without verification.
+        maxSingleDoseMg: 0.1,
+        // 5 mg/day = ~5000 mcg/day = ~210 mcg/hr average — high-end ICU
+        // sedation. ICU drips routinely run 50–150 mcg/hr; > 200 mcg/hr
+        // sustained warrants prescriber review.
+        maxDailyDoseMg: 5,
+        source: "CDC 2022 opioid guideline (IV fentanyl)",
+        citation:
+          "CDC 2022 / clinical practice (adult IV fentanyl ICU sedation ceiling, ~210 mcg/hr ~5 mg/day; ICU/anaesthesia acute use)",
+      },
+      IM: {
+        displayName: "Fentanyl (IM)",
+        maxSingleDoseMg: 0.1,
+        maxDailyDoseMg: 5,
+        source: "CDC 2022 opioid guideline (IM fentanyl)",
+        citation:
+          "CDC 2022 / clinical practice (adult IM fentanyl ceiling matched to IV)",
+      },
+      subcutaneous: {
+        displayName: "Fentanyl (SC)",
+        maxSingleDoseMg: 0.1,
+        maxDailyDoseMg: 5,
+        source: "CDC 2022 opioid guideline (SC fentanyl)",
+        citation:
+          "CDC 2022 / clinical practice (adult SC fentanyl ceiling matched to IV)",
+      },
+    },
+  },
   // Tramadol — FDA Ultram label hard-caps at 400 mg/day; the lower CDC MME
   // threshold of 90 MME would be ~450 mg, so the FDA label is the binding
   // constraint here. Citation credits both.
@@ -486,6 +529,73 @@ export function isFentanylTransdermal(
   // Normalise spaces and "per" tokens; lowercase.
   const unit = doseUnit.toLowerCase().replace(/\s+/g, "").replace(/per/g, "/");
   return /^(mcg|ug|μg)\/h(r|our)?$/.test(unit);
+}
+
+/**
+ * Detect whether a dose_unit string is a continuous-infusion flow rate
+ * ("mL/hr" or variants). Used by the daily-dose rule to gate the
+ * mL/hr → mg/day conversion path (#1021).
+ *
+ * Accepts the canonical "mL/hr" and common variants: "ml/hr", "mL/h",
+ * "mL per hour", "mLs/hr". Returns false for non-flow units and for
+ * mcg/hr (which is the transdermal patch path — see
+ * {@link isFentanylTransdermal}).
+ */
+export function isInfusionFlowRate(
+  doseUnit: string | null | undefined,
+): boolean {
+  if (!doseUnit) return false;
+  const unit = doseUnit.toLowerCase().replace(/\s+/g, "").replace(/per/g, "/");
+  return /^mls?\/h(r|our)?$/.test(unit);
+}
+
+/**
+ * Parse an inline concentration "N mg/mL" out of a free-text drug name
+ * as a fallback when no explicit `concentration_mg_per_ml` field is set
+ * on the prescription (#1021). Recognises common ICU/PCA order entry:
+ *   - "Morphine 1 mg/mL IV gtt"
+ *   - "Hydromorphone 0.2 mg/mL PCA"
+ *   - "Fentanyl 0.05mg/ml"
+ *
+ * Returns the mg/mL number when matched; undefined when no
+ * concentration is encoded inline. Matches mg/mL only — alternate unit
+ * encodings (mcg/mL) are not parsed here because the daily-dose
+ * conversion is mg-based; callers wanting mcg should pre-convert.
+ */
+export function parseConcentrationMgPerMl(
+  drugName: string,
+): number | undefined {
+  const match = drugName
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .match(/(\d+(?:\.\d+)?)\s*mg\s*\/\s*ml/i);
+  if (!match) return undefined;
+  const value = Number(match[1]);
+  if (!Number.isFinite(value) || value <= 0) return undefined;
+  return value;
+}
+
+/**
+ * Convert a continuous-infusion flow rate (mL/hr) to a daily mg total
+ * given a drug concentration in mg/mL (#1021). Formula:
+ *   mg/day = mL/hr × concentration × 24
+ *
+ * Returns undefined when any input is missing or non-positive. Callers
+ * compare the result to the route-aware
+ * {@link MedicationDoseLimit.maxDailyDoseMg} for the prescription's
+ * route — IV/SC infusion ceilings are stricter than PO and are looked
+ * up via the byRoute override map (#927).
+ */
+export function infusionMlHrToMgPerDay(
+  mlPerHour: number | null | undefined,
+  concentrationMgPerMl: number | null | undefined,
+): number | undefined {
+  if (mlPerHour == null || concentrationMgPerMl == null) return undefined;
+  if (!Number.isFinite(mlPerHour) || !Number.isFinite(concentrationMgPerMl)) {
+    return undefined;
+  }
+  if (mlPerHour <= 0 || concentrationMgPerMl <= 0) return undefined;
+  return mlPerHour * concentrationMgPerMl * 24;
 }
 
 /**

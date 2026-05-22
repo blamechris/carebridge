@@ -36,6 +36,9 @@ import {
   getComboApapMg,
   isFentanylTransdermal,
   FENTANYL_TRANSDERMAL_MME_PER_MCG_HR,
+  isInfusionFlowRate,
+  parseConcentrationMgPerMl,
+  infusionMlHrToMgPerDay,
 } from "@carebridge/medical-logic";
 import type { PatientContext, PatientMedication } from "./cross-specialty.js";
 import { createLogger } from "@carebridge/logger";
@@ -241,9 +244,22 @@ export function checkMedicationDailyDose(context: PatientContext): RuleFlag[] {
     return flags;
   }
 
+  // Continuous IV/SC infusion (#1021). Flow-rate orders (mL/hr) don't
+  // have a per-dose × frequency expression — the daily total is the
+  // flow rate × concentration × 24 h. Compare to the route-aware
+  // {@link MedicationDoseLimit.maxDailyDoseMg} for the prescription's
+  // route. Concentration source priority: explicit `concentration_mg_per_ml`
+  // field, then inline parse of the drug name ("Morphine 1 mg/mL IV gtt").
+  // Fails open when concentration cannot be resolved — better to silence
+  // than to flag the wrong number.
+  if (isInfusionFlowRate(med.dose_unit)) {
+    const infusionFlag = checkContinuousInfusion(med);
+    if (infusionFlag) flags.push(infusionFlag);
+    return flags;
+  }
+
   // Per-drug ceilings are expressed in mg. Skip non-mg prescriptions
-  // (other mcg presentations, mL infusions) — a future issue (#1021) will
-  // add IV infusion unit conversion.
+  // (other mcg presentations not covered above).
   const unit = (med.dose_unit ?? "").toLowerCase();
   if (unit !== "mg") return flags;
 
@@ -528,5 +544,68 @@ function checkFentanylTransdermal(med: PatientMedication): RuleFlag | null {
       `with PO dose-titration room.`,
     notify_specialties: ["pharmacy", "pain_management"],
     rule_id: "MED-DAILY-OVER-FENTANYL-TRANSDERMAL",
+  };
+}
+
+/**
+ * Continuous IV/SC infusion daily-dose check (#1021).
+ *
+ * Flow-rate orders (mL/hr) bypass the per-dose × frequency math used
+ * for discrete dosing. Daily total = mL/hr × concentration × 24.
+ *
+ * Concentration source priority:
+ *  1. Explicit `concentration_mg_per_ml` field on the prescription.
+ *  2. Inline parse of the drug name (e.g. "Morphine 1 mg/mL IV gtt").
+ *
+ * Fails open when:
+ *  - The drug has no MEDICATION_MAX_DAILY_DOSES entry at the route.
+ *  - Concentration cannot be resolved (no field, no inline parse).
+ *  - The computed mg/day is at or below the route-aware ceiling.
+ *
+ * Returns null on fail-open; a critical/warning flag otherwise.
+ */
+function checkContinuousInfusion(med: PatientMedication): RuleFlag | null {
+  if (med.dose_amount == null || med.dose_amount <= 0) return null;
+
+  const limit = getMedicationDoseLimit(med.name, med.route);
+  if (!limit?.maxDailyDoseMg) return null;
+
+  const concentration =
+    med.concentration_mg_per_ml ?? parseConcentrationMgPerMl(med.name);
+  if (concentration == null) return null;
+
+  const mgPerDay = infusionMlHrToMgPerDay(med.dose_amount, concentration);
+  if (mgPerDay == null) return null;
+  if (mgPerDay <= limit.maxDailyDoseMg) return null;
+
+  const ratio = mgPerDay / limit.maxDailyDoseMg;
+  const isOpioid = limit.mmeFactor !== undefined;
+  const severity = severityForDailyOver(ratio, isOpioid);
+  const slug = slugForRuleId(limit.displayName);
+
+  return {
+    severity,
+    category: "medication-safety" as FlagCategory,
+    summary:
+      `"${med.name}" ${med.dose_amount} mL/hr (${concentration} mg/mL) implies ` +
+      `~${mgPerDay.toFixed(1)} mg/day — exceeds the ${limit.maxDailyDoseMg} mg/day ` +
+      `${limit.displayName} ceiling`,
+    rationale:
+      `Continuous-infusion daily total: ${med.dose_amount} mL/hr × ${concentration} mg/mL × 24 h = ` +
+      `${mgPerDay.toFixed(1)} mg/day, which is ${ratio.toFixed(1)}× the ${limit.displayName} ` +
+      `daily ceiling of ${limit.maxDailyDoseMg} mg (${limit.citation ?? limit.source}). ` +
+      (isOpioid
+        ? `Parenteral opioid infusions at this level carry significant respiratory-depression risk, ` +
+          `especially in opioid-naive or recently-extubated patients.`
+        : `Sustained infusion at this rate exceeds the safe daily window.`),
+    suggested_action:
+      `Verify the infusion rate and concentration. Common safe steps: ` +
+      `confirm the bag concentration on the pump label, lower the flow rate to bring ` +
+      `the daily total under ${limit.maxDailyDoseMg} mg, or switch to a more dilute bag ` +
+      `concentration. Cross-check with the pharmacy if the rate is patient-specific.`,
+    notify_specialties: isOpioid
+      ? ["pharmacy", "pain_management"]
+      : ["pharmacy"],
+    rule_id: `MED-DAILY-OVER-${slug.toUpperCase()}-INFUSION`,
   };
 }
