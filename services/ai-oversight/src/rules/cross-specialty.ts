@@ -444,7 +444,47 @@ interface CrossSpecialtyRule {
   buildSuggestedAction?: (ctx: PatientContext) => string;
   /** Optional dynamic severity builder. */
   buildSeverity?: (ctx: PatientContext) => FlagSeverity;
+  /**
+   * Optional rule-specific structured telemetry attached to the emitted
+   * flag's `metadata` field. Used by downstream FP-rate analysis to
+   * distinguish gate branches without parsing free-text rationale (#976).
+   */
+  buildMetadata?: (ctx: PatientContext) => Record<string, unknown> | undefined;
   notify_specialties: string[];
+}
+
+/**
+ * Re-run the CROSS-STEROID-PCP-001 duration gate to determine whether
+ * the rule fired with a usable started_at or on the fail-open path.
+ * Mirrors the gate inside the rule's `check`; kept as a small standalone
+ * helper so buildMetadata stays cheap and the source-of-truth for the
+ * gate stays inside the check itself. (#976)
+ */
+function steroidPcpDurationKnown(ctx: PatientContext): boolean {
+  const details = ctx.active_medications_detail;
+  if (!details) return false;
+  const CORTICOSTEROID_PATTERN =
+    /prednisone|prednisolone|methylprednisolone|medrol|solu-medrol|dexamethasone|decadron|hydrocortisone|solu-cortef|betamethasone|triamcinolone/i;
+  const TOPICAL_ROUTE_PATTERN =
+    /topical|ophthalmic|otic|intranasal|inhaled|inhalation|cream|ointment|gel|drops|spray/i;
+  const systemic = details.find((m) => {
+    if (!CORTICOSTEROID_PATTERN.test(m.name)) return false;
+    const route = m.route?.toLowerCase() ?? "";
+    if (TOPICAL_ROUTE_PATTERN.test(route)) return false;
+    if (TOPICAL_ROUTE_PATTERN.test(m.name)) return false;
+    return true;
+  });
+  if (!systemic) return false;
+  const startedAt = systemic.started_at;
+  if (!startedAt) return false;
+  const startedMs = Date.parse(startedAt);
+  const refMs = ctx.event_timestamp
+    ? Date.parse(ctx.event_timestamp)
+    : Date.now();
+  if (!Number.isFinite(startedMs) || !Number.isFinite(refMs)) return false;
+  // Future-dated start (typo) is treated as unknown by the gate.
+  const daysSinceStart = (refMs - startedMs) / 86_400_000;
+  return daysSinceStart >= 0;
 }
 
 const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
@@ -1166,6 +1206,12 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
         // same pattern as the ONCO-VTE recency gate above. A start date in
         // the future relative to the event (data-entry typo) is treated as
         // unknown and falls through to fire (fail-open).
+        //
+        // #976 — also track whether the duration gate had data so the
+        // emitted flag carries `metadata.duration_known`. Downstream
+        // FP-rate analysis uses this to measure how often the rule fires
+        // on the fail-open path (started_at null / unparseable / future-
+        // dated) vs. the data-driven path.
         const startedAt = systemicSteroidDetail.started_at;
         if (startedAt) {
           const startedMs = Date.parse(startedAt);
@@ -1175,6 +1221,10 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
           if (Number.isFinite(startedMs) && Number.isFinite(refMs)) {
             const daysSinceStart = (refMs - startedMs) / 86_400_000;
             if (daysSinceStart >= 0 && daysSinceStart < 28) return false;
+            // duration_known is surfaced in flag metadata by
+            // buildSteroidPcpMetadata below; the gate logic above is the
+            // source of truth for whether started_at carried a usable
+            // value at evaluation time.
           }
         }
       }
@@ -1199,6 +1249,9 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       "sulfa-intolerant patients include dapsone 100 mg daily (check G6PD first), atovaquone 1500 mg daily " +
       "with food, or aerosolised pentamidine 300 mg monthly.",
     notify_specialties: ["infectious_disease", "pharmacy"],
+    buildMetadata: (ctx: PatientContext) => ({
+      duration_known: steroidPcpDurationKnown(ctx),
+    }),
   },
 
   {
@@ -1336,6 +1389,7 @@ export function checkCrossSpecialtyPatterns(
           `Cross-specialty rule ${rule.id} is missing both suggested_action and buildSuggestedAction`,
         );
       }
+      const metadata = rule.buildMetadata?.(patientContext);
       flags.push({
         severity: rule.buildSeverity ? rule.buildSeverity(patientContext) : rule.severity,
         category: rule.category,
@@ -1344,6 +1398,7 @@ export function checkCrossSpecialtyPatterns(
         suggested_action: suggestedAction,
         notify_specialties: rule.notify_specialties,
         rule_id: rule.id,
+        ...(metadata !== undefined ? { metadata } : {}),
       });
     }
   }

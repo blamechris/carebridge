@@ -316,6 +316,78 @@ describe("CROSS-STEROID-PCP-001 — chronic corticosteroid without PCP prophylax
       ),
     ).toBeDefined();
   });
+
+  describe("metadata.duration_known telemetry (#976)", () => {
+    it("emits duration_known=true when started_at is a usable date past the gate", () => {
+      const ctx = emptyCtx({
+        active_medications: ["Prednisone 40mg daily"],
+        active_medications_detail: [
+          {
+            id: "m1",
+            name: "Prednisone",
+            dose_amount: 40,
+            dose_unit: "mg",
+            route: "oral",
+            frequency: "daily",
+            rxnorm_code: null,
+            started_at: "2025-11-27T00:00:00.000Z",
+          },
+        ],
+        event_timestamp: "2026-01-01T00:00:00.000Z",
+      });
+      const flag = checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-STEROID-PCP-001",
+      );
+      expect(flag).toBeDefined();
+      expect(flag!.metadata).toEqual({ duration_known: true });
+    });
+
+    it("emits duration_known=false when started_at is unset (fail-open path)", () => {
+      const ctx = emptyCtx({
+        active_medications: ["Prednisone 40mg daily"],
+        active_medications_detail: [
+          {
+            id: "m1",
+            name: "Prednisone",
+            dose_amount: 40,
+            dose_unit: "mg",
+            route: "oral",
+            frequency: "daily",
+            rxnorm_code: null,
+          },
+        ],
+      });
+      const flag = checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-STEROID-PCP-001",
+      );
+      expect(flag).toBeDefined();
+      expect(flag!.metadata).toEqual({ duration_known: false });
+    });
+
+    it("emits duration_known=false when started_at is future-dated (typo)", () => {
+      const ctx = emptyCtx({
+        active_medications: ["Prednisone 40mg daily"],
+        active_medications_detail: [
+          {
+            id: "m1",
+            name: "Prednisone",
+            dose_amount: 40,
+            dose_unit: "mg",
+            route: "oral",
+            frequency: "daily",
+            rxnorm_code: null,
+            started_at: "2026-06-01T00:00:00.000Z",
+          },
+        ],
+        event_timestamp: "2026-01-01T00:00:00.000Z",
+      });
+      const flag = checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-STEROID-PCP-001",
+      );
+      expect(flag).toBeDefined();
+      expect(flag!.metadata).toEqual({ duration_known: false });
+    });
+  });
 });
 
 describe("CROSS-ANTICOAG-NSAID-GIBLEED-001 — triple bleed risk (#263)", () => {
