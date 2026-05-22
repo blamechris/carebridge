@@ -55,6 +55,16 @@ describe("normalizeAllergen (#232)", () => {
     expect(normalizeAllergen("teicoplanin")).toBe("vancomycin");
   });
 
+  it("resolves lipoglycopeptide class members to vancomycin (#973)", () => {
+    expect(normalizeAllergen("dalbavancin")).toBe("vancomycin");
+    expect(normalizeAllergen("Dalvance")).toBe("vancomycin");
+    expect(normalizeAllergen("oritavancin")).toBe("vancomycin");
+    expect(normalizeAllergen("Orbactiv")).toBe("vancomycin");
+    expect(normalizeAllergen("telavancin")).toBe("vancomycin");
+    expect(normalizeAllergen("Vibativ")).toBe("vancomycin");
+    expect(normalizeAllergen("lipoglycopeptide")).toBe("vancomycin");
+  });
+
   it("returns the trimmed/lowercased input for unknown allergens", () => {
     expect(normalizeAllergen("  Salmon  ")).toBe("salmon");
     expect(normalizeAllergen("zolbidopride")).toBe("zolbidopride");
@@ -97,6 +107,21 @@ describe("expandAllergenAliases (#232)", () => {
     const redManAliases = expandAllergenAliases("Red Man Syndrome");
     expect(redManAliases).toContain("vancomycin");
     expect(redManAliases).toContain("vancocin");
+  });
+
+  it("'glycopeptide' chart entry expands to the full lipoglycopeptide class (#973)", () => {
+    // Strategy 1 in services/ai-oversight/src/rules/allergy-medication.ts
+    // iterates the expanded alias list and substring-tests against each
+    // active medication. A charted "glycopeptide" allergy must therefore
+    // expand to dalbavancin / oritavancin / telavancin so an Rx for any
+    // of those triggers a direct-match flag without depending on the
+    // (separately gated) class-level cross-reactivity map.
+    const aliases = expandAllergenAliases("glycopeptide");
+    expect(aliases).toContain("vancomycin");
+    expect(aliases).toContain("teicoplanin");
+    expect(aliases).toContain("dalbavancin");
+    expect(aliases).toContain("oritavancin");
+    expect(aliases).toContain("telavancin");
   });
 
   it("unknown allergen returns single-element list", () => {
