@@ -295,7 +295,7 @@ covers every value below tagged "secret".
 | `OPIOID_CRITICAL_RATIO` | Excess-over-cap ratio at which opioid daily-dose flags escalate warning → critical. Tune for deployment context: hospice/palliative may raise to 2.0+; outpatient CDC-calibrated stays at default. | `1.2` |
 | `NON_OPIOID_CRITICAL_RATIO` | Same gradient for NSAID / analgesic daily-dose flags. Hepatic-clinic deployments may want 1.5. | `2.0` |
 
-Invalid overrides (non-numeric or ≤1.0) fall back to default and log a structured `invalid_ratio_override` warning so the misconfiguration surfaces in CI / startup logs. Flag rationale surfaces the active value when an override is in effect.
+Invalid overrides (non-numeric, ≤1.0, or >10) fall back to default and log a structured `invalid_ratio_override` warning so the misconfiguration surfaces in CI / startup logs. The upper bound catches decimal-point typos like `OPIOID_CRITICAL_RATIO=120` (intended `1.20`) that would otherwise silently disable critical escalation. Flag rationale surfaces the active value when an override is in effect.
 
 #### Dev-mode flags
 
