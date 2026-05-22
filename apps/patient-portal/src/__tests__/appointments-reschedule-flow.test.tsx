@@ -56,9 +56,13 @@ describe("AppointmentsPageInner", () => {
   // silently rots once real wall-clock passes the fixture date — the row
   // moves to the "past" tab where action buttons are intentionally hidden,
   // and `getByRole("button", { name: /reschedule/i })` cannot find them.
+  // Derived from upcomingAppt.start_time so updating the fixture date
+  // can never drift from the frozen clock.
   beforeAll(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    vi.setSystemTime(new Date("2026-04-20T00:00:00.000Z"));
+    const fixtureStart = new Date(upcomingAppt.start_time).getTime();
+    const oneDayMs = 24 * 60 * 60 * 1000;
+    vi.setSystemTime(new Date(fixtureStart - oneDayMs));
   });
   afterAll(() => {
     vi.useRealTimers();
