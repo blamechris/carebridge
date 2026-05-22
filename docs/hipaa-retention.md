@@ -10,17 +10,41 @@ laws require longer retention).
 
 ## Immutability
 
-The `audit_log` table is append-only. PostgreSQL triggers
-(`audit_log_no_update`, `audit_log_no_delete`, migration
-`0012_audit_log_immutability.sql`) raise an exception on any UPDATE or
-DELETE against the table. This provides database-level tamper protection
-independent of application code.
+The `audit_log` table is append-only. PostgreSQL triggers raise an
+exception on UPDATE, DELETE, and TRUNCATE against the table:
+
+- Row triggers `audit_log_no_update` and `audit_log_no_delete`
+  (migration `0012_audit_log_immutability.sql`) catch per-row UPDATE
+  and DELETE.
+- Statement trigger `audit_log_no_truncate` (migration
+  `0042_audit_log_truncate_revoke.sql`) catches TRUNCATE, which
+  bypasses row-level triggers and would otherwise wipe the table.
+- The same migration `REVOKE`s `UPDATE, DELETE, TRUNCATE` on
+  `audit_log` from the `PUBLIC` pseudo-role. This removes the implicit
+  grant PostgreSQL gives PUBLIC on new tables in many configurations.
+  It does NOT revoke privileges explicitly granted to named roles —
+  those callers still go through the trigger. The REVOKE is
+  defense-in-depth against future GRANTs to PUBLIC, not a replacement
+  for the trigger.
+
+This provides defense-in-depth tamper protection independent of
+application code.
+
+### Known limitation: owner DROP TRIGGER
+
+The role that owns the `audit_log` table can `DROP TRIGGER` to bypass
+enforcement. The migration role and the runtime application role MUST
+be distinct — the application must run with `INSERT` privilege only.
+This is an operational requirement, not a guarantee enforceable inside
+a single migration. CI is the natural place to assert the production
+runtime role lacks `UPDATE`/`DELETE`/`TRUNCATE`/`TRIGGER` on
+`audit_log`.
 
 ### Scope of immutability guarantees
 
 | Table | Role | Immutability triggers | Notes |
 |---|---|---|---|
-| `audit_log` | Authoritative tamper-evident audit trail | Yes (migration 0012) | Append-only; UPDATE/DELETE blocked at DB level |
+| `audit_log` | Authoritative tamper-evident audit trail | UPDATE / DELETE / TRUNCATE blocked (migrations 0012, 0042) + REVOKE from PUBLIC | Append-only at DB level; see owner DROP TRIGGER limitation above |
 | `review_jobs` | Supplementary operational state | No | Stores `rules_output` for decision reconstruction (migration 0032); mutable by normal application operations |
 
 Only `audit_log` satisfies the HIPAA tamper-evidence requirement
