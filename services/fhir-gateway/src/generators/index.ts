@@ -10,4 +10,5 @@ export { toFhirAllergyIntolerance } from "./allergy-intolerance.js";
 export { toFhirEncounter } from "./encounter.js";
 export { toFhirProcedure } from "./procedure.js";
 export { toFhirPractitioner, isClinicalRole } from "./practitioner.js";
+export { CAREBRIDGE_IDENTIFIER_BASE } from "./identifiers.js";
 export { toFhirMedicationRequest } from "./medication-request.js";

@@ -1,4 +1,5 @@
 import type { FhirPatient } from "../types/index.js";
+import { CAREBRIDGE_IDENTIFIER_BASE } from "./identifiers.js";
 
 /** Shape of a row from the `patients` table after decryption. */
 interface PatientRow {
@@ -65,7 +66,7 @@ export function toFhirPatient(patient: PatientRow): FhirPatient {
                 },
               ],
             },
-            system: "http://carebridge.health/mrn",
+            system: `${CAREBRIDGE_IDENTIFIER_BASE}/mrn`,
             value: patient.mrn,
           },
         ]

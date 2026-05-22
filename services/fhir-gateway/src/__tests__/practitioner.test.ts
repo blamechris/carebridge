@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { toFhirPractitioner, isClinicalRole } from "../generators/practitioner.js";
+import { CAREBRIDGE_IDENTIFIER_BASE } from "../generators/identifiers.js";
 
 type User = Parameters<typeof toFhirPractitioner>[0];
 
@@ -43,7 +44,7 @@ describe("toFhirPractitioner (#388)", () => {
     expect(p.resourceType).toBe("Practitioner");
     expect(p.id).toBe("prov-123");
     expect(p.identifier?.[0]?.system).toBe(
-      "https://carebridge.dev/fhir/sid/user-id",
+      `${CAREBRIDGE_IDENTIFIER_BASE}/user-id`,
     );
     expect(p.identifier?.[0]?.value).toBe("prov-123");
   });
