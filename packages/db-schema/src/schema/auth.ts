@@ -6,6 +6,24 @@ export const users = pgTable("users", {
   email: text("email").notNull().unique(),
   password_hash: text("password_hash").notNull(),
   name: text("name").notNull(),
+  /**
+   * Structured name columns (#972). Populated authoritatively by writers
+   * and preferred by FHIR Practitioner export. `parseName` in
+   * services/fhir-gateway/src/generators/practitioner.ts remains as a
+   * fallback for rows where the structured columns are still null.
+   *
+   * `name_family` carries the full family name including particles
+   * (e.g. "de Klerk", "van der Berg") and two-part Hispanic surnames
+   * (e.g. "García López"). `name_given` is the ordered list of given
+   * names including middle names. Prefix is honorifics ("Dr.", "Mrs.");
+   * suffix is credentials ("MD", "RN", "PhD", "III").
+   *
+   * Nullable until a one-shot backfill populates every clinical-role row.
+   */
+  name_family: text("name_family"),
+  name_given: text("name_given").array(),
+  name_prefix: text("name_prefix"),
+  name_suffix: text("name_suffix"),
   role: text("role").notNull(), // patient, nurse, physician, specialist, admin, family_caregiver
   patient_id: text("patient_id"), // links patient users to their patient record
   specialty: text("specialty"),

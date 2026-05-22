@@ -159,6 +159,39 @@ function parseName(fullName: string): HumanName {
   };
 }
 
+/**
+ * Build the FHIR HumanName from a user row, preferring the authoritative
+ * structured columns (#972) when populated. Falls back to the parseName
+ * heuristic over the free-text `name` column for rows that haven't been
+ * backfilled yet.
+ *
+ * The structured path is exact — no guessing about Hispanic two-part
+ * surnames vs middle names, no particle-absorption heuristics. Writers
+ * have already classified the name correctly.
+ */
+function buildPractitionerName(user: UserRow): HumanName {
+  if (user.name_family) {
+    const name: HumanName = {
+      text: user.name,
+      family: user.name_family,
+    };
+    if (user.name_given && user.name_given.length > 0) {
+      name.given = user.name_given;
+    }
+    if (user.name_prefix) {
+      name.prefix = [user.name_prefix];
+    }
+    if (user.name_suffix) {
+      name.suffix = [user.name_suffix];
+    }
+    return name;
+  }
+  // Fallback: heuristic parse of the free-text `name` column. Removed
+  // once the backfill completes and the structured columns flip to NOT
+  // NULL — see #972.
+  return parseName(user.name);
+}
+
 export function toFhirPractitioner(user: UserRow): FhirPractitioner {
   const resource: FhirPractitioner = {
     resourceType: "Practitioner",
@@ -169,7 +202,7 @@ export function toFhirPractitioner(user: UserRow): FhirPractitioner {
         value: user.id,
       },
     ],
-    name: [parseName(user.name)],
+    name: [buildPractitionerName(user)],
   };
 
   // Qualification / specialty — surfaced as a text-only CodeableConcept.

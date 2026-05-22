@@ -45,6 +45,10 @@ export interface HumanName {
   text?: string;
   family?: string;
   given?: string[];
+  /** Honorifics (e.g. "Dr.", "Mrs."). FHIR R4 HumanName.prefix. */
+  prefix?: string[];
+  /** Credentials / generational (e.g. "MD", "RN", "PhD", "III"). FHIR R4 HumanName.suffix. */
+  suffix?: string[];
 }
 
 export interface Meta {
