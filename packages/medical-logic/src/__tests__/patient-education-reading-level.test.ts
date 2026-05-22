@@ -6,24 +6,48 @@ import {
 } from "../patient-education.js";
 
 /**
- * Lock-test for patient-education reading level (#949).
+ * Lock-test for patient-education reading level (#949, extended in #975).
  *
- * Targets ~8th-grade / plain-language reading level. We use Flesch-Kincaid
- * grade level because it's the standard patient-education benchmark (HHS
- * Office of Minority Health targets 6th–8th for consumer health material).
+ * Targets ~8th-grade / plain-language reading level. We use three
+ * independent grade-level metrics so the guard is robust to gaming any
+ * single formula:
  *
- * A small pure-function implementation — no runtime dep. Syllables are
- * counted with a vowel-group heuristic that is close enough for a guard
- * test: we're catching "this sentence has four-syllable jargon", not
+ *   - Flesch-Kincaid (FK)  — standard patient-education benchmark.
+ *     Sensitive to sentence length and syllable density.
+ *     HHS Office of Minority Health targets 6th–8th for consumer health
+ *     material.
+ *
+ *   - SMOG Index           — McLaughlin 1969. Focuses on polysyllable
+ *     density and is stable on short bullet lists where FK gets noisy
+ *     because words/sentences collapses to a tiny ratio.
+ *
+ *   - Gunning-Fog          — Gunning 1952. Combines sentence length and
+ *     hard-word density; tends to read 1–2 grades above FK on the same
+ *     text and complements both FK and SMOG.
+ *
+ * ALL THREE must be at or below ceiling for the card to pass. FK alone
+ * can be gamed by short fragments; SMOG alone misses long-but-simple
+ * prose; Gunning-Fog alone is sensitive to sentence punctuation. The
+ * intersection catches each failure mode.
+ *
+ * Pure-function implementations — no runtime deps. Syllables are counted
+ * with a vowel-group heuristic that is close enough for a guard test:
+ * we're catching "this sentence has four-syllable jargon", not
  * comma-level precision.
  *
- * The limit is deliberately loose (grade ≤ 11.0) so legitimate technical
- * terms (hypertension, immunosuppressant) don't flake the suite. If this
- * catches a PR it means the card has slid meaningfully above 11th grade,
- * which is worth re-wording.
+ * Ceilings are deliberately loose so legitimate technical terms
+ * (hypertension, immunosuppressant) don't flake the suite. If any of the
+ * three catches a PR it means the card has slid meaningfully above
+ * mid-high-school reading level — worth re-wording.
+ *
+ * Multilingual roadmap is documented in
+ * `docs/patient-education-readability.md`; until non-English cards land,
+ * these English-tuned formulas are the only guard.
  */
 
 const FK_GRADE_CEILING = 11.0;
+const SMOG_GRADE_CEILING = 13.0;
+const FOG_GRADE_CEILING = 13.0;
 
 /** Count syllables in a single word (lowercased). Vowel-group heuristic. */
 function countSyllables(word: string): number {
@@ -62,11 +86,61 @@ function fleschKincaidGrade(text: string): number {
   );
 }
 
+/**
+ * SMOG Index (McLaughlin 1969). Returns a grade-level estimate based on
+ * polysyllable density and sentence count.
+ *
+ *   SMOG grade = 1.0430 × √(polysyllables × 30 / sentences) + 3.1291
+ *
+ * Polysyllable = a word with 3 or more syllables. The canonical formula
+ * is calibrated to a sample of 30 sentences; for short content we apply
+ * the formula with the actual sentence count, which is the standard
+ * approximation. (#975)
+ */
+function smogGrade(text: string): number {
+  const tokens = tokenizeWords(text);
+  if (tokens.length === 0) return 0;
+  const sentences = countSentences(text);
+  const polysyllables = tokens.filter((w) => countSyllables(w) >= 3).length;
+  return (
+    1.0430 * Math.sqrt((polysyllables * 30) / sentences) + 3.1291
+  );
+}
+
+/**
+ * Gunning-Fog Index (Gunning 1952). Combines sentence length with the
+ * density of "hard" words (3+ syllables, excluding common -es / -ed /
+ * -ing inflections which the original heuristic also dropped).
+ *
+ *   Fog = 0.4 × ((words / sentences) + 100 × (hard_words / words))
+ *
+ * (#975)
+ */
+function gunningFogGrade(text: string): number {
+  const tokens = tokenizeWords(text);
+  const words = tokens.length;
+  if (words === 0) return 0;
+  const sentences = countSentences(text);
+  const hardWords = tokens.filter((w) => {
+    const lower = w.toLowerCase();
+    // Strip common inflectional endings before counting syllables —
+    // "process" is hard, "processed" / "processes" / "processing" are
+    // treated as the same word per Gunning's original definition.
+    const stripped = lower
+      .replace(/(?:ed|es|ing)$/i, "")
+      .replace(/[^a-z]/g, "");
+    return countSyllables(stripped) >= 3;
+  }).length;
+  return 0.4 * (words / sentences + 100 * (hardWords / words));
+}
+
 interface GradedText {
   ownerKey: string;
   field: string;
   text: string;
-  grade: number;
+  fk: number;
+  smog: number;
+  fog: number;
 }
 
 /**
@@ -81,25 +155,20 @@ function gradeEveryBlock(
 ): GradedText[] {
   const selfCareJoined = content.self_care.join(" ");
   const whenJoined = content.when_to_contact_provider.join(" ");
+  function score(field: string, text: string): GradedText {
+    return {
+      ownerKey: key,
+      field,
+      text,
+      fk: fleschKincaidGrade(text),
+      smog: smogGrade(text),
+      fog: gunningFogGrade(text),
+    };
+  }
   return [
-    {
-      ownerKey: key,
-      field: "summary",
-      text: content.summary,
-      grade: fleschKincaidGrade(content.summary),
-    },
-    {
-      ownerKey: key,
-      field: "self_care",
-      text: selfCareJoined,
-      grade: fleschKincaidGrade(selfCareJoined),
-    },
-    {
-      ownerKey: key,
-      field: "when_to_contact_provider",
-      text: whenJoined,
-      grade: fleschKincaidGrade(whenJoined),
-    },
+    score("summary", content.summary),
+    score("self_care", selfCareJoined),
+    score("when_to_contact_provider", whenJoined),
   ];
 }
 
@@ -121,16 +190,50 @@ describe("patient-education reading level (#949)", () => {
   });
 
   for (const g of graded) {
-    it(`${g.ownerKey}.${g.field}: grade ${g.grade.toFixed(1)} ≤ ${FK_GRADE_CEILING}`, () => {
-      if (g.grade > FK_GRADE_CEILING) {
+    it(`${g.ownerKey}.${g.field}: FK ${g.fk.toFixed(1)} ≤ ${FK_GRADE_CEILING}, SMOG ${g.smog.toFixed(1)} ≤ ${SMOG_GRADE_CEILING}, Fog ${g.fog.toFixed(1)} ≤ ${FOG_GRADE_CEILING}`, () => {
+      if (
+        g.fk > FK_GRADE_CEILING ||
+        g.smog > SMOG_GRADE_CEILING ||
+        g.fog > FOG_GRADE_CEILING
+      ) {
         // Surface the offending block so content PRs get a clear fix.
         console.log(
-          `[reading-level] ${g.ownerKey}.${g.field} reads at grade ${g.grade.toFixed(1)}: "${g.text}"`,
+          `[reading-level] ${g.ownerKey}.${g.field}: FK=${g.fk.toFixed(1)} SMOG=${g.smog.toFixed(1)} Fog=${g.fog.toFixed(1)}: "${g.text}"`,
         );
       }
-      expect(g.grade).toBeLessThanOrEqual(FK_GRADE_CEILING);
+      expect(g.fk, `${g.ownerKey}.${g.field} FK`).toBeLessThanOrEqual(FK_GRADE_CEILING);
+      expect(g.smog, `${g.ownerKey}.${g.field} SMOG`).toBeLessThanOrEqual(SMOG_GRADE_CEILING);
+      expect(g.fog, `${g.ownerKey}.${g.field} Fog`).toBeLessThanOrEqual(FOG_GRADE_CEILING);
     });
   }
+});
+
+describe("smogGrade sanity (#975)", () => {
+  it("elementary writing scores in single digits", () => {
+    const s = smogGrade("The dog ran fast. The cat sat. Birds fly high.");
+    expect(s).toBeLessThan(8);
+  });
+
+  it("polysyllable-dense prose scores meaningfully higher", () => {
+    const s = smogGrade(
+      "Immunosuppressant pharmacotherapy necessitates stringent immunological surveillance in transplantation recipients.",
+    );
+    expect(s).toBeGreaterThan(10);
+  });
+});
+
+describe("gunningFogGrade sanity (#975)", () => {
+  it("elementary writing scores in single digits", () => {
+    const f = gunningFogGrade("The dog ran fast. The cat sat. Birds fly high.");
+    expect(f).toBeLessThan(8);
+  });
+
+  it("polysyllable-dense prose scores meaningfully higher", () => {
+    const f = gunningFogGrade(
+      "Immunosuppressant pharmacotherapy necessitates stringent immunological surveillance in transplantation recipients.",
+    );
+    expect(f).toBeGreaterThan(15);
+  });
 });
 
 describe("fleschKincaidGrade sanity (#949)", () => {
