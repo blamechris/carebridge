@@ -53,6 +53,7 @@ import { screenPatientMessage } from "../rules/message-screening.js";
 import { screenPatientObservation } from "../rules/observation-screening.js";
 import { checkAllergyMedication } from "../rules/allergy-medication.js";
 import { checkMedicationDailyDose } from "../rules/medication-daily-dose.js";
+import { checkMedicationReconciliation } from "../rules/medication-reconciliation.js";
 import {
   isoBefore,
   isoLTE,
@@ -129,11 +130,11 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
   //   2) In-flight run: prior row in `processing` that is fresh
   //      (< IN_FLIGHT_WINDOW_MS old). Another worker is mid-pipeline for
   //      this event — running concurrently risks duplicate flags for any
-  //      rule whose open-flag dedup can’t span the race window. Stale
+  //      rule whose open-flag dedup can't span the race window. Stale
   //      `processing` rows (orphans from crashed workers) fall outside
   //      the window and do NOT short-circuit — matching the prior
   //      behavior for crash recovery. See #522.
-  const inFlightCutoff = sql`NOW() - ${IN_FLIGHT_WINDOW_SEC} * interval ‘1 second’`;
+  const inFlightCutoff = sql`NOW() - ${IN_FLIGHT_WINDOW_SEC} * interval '1 second'`;
 
   const existingJob = await db
     .select({
@@ -194,6 +195,19 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
     if (criticalValueFlags.length > 0) {
       rulesFired.push("critical-values");
       allRuleFlags.push(...criticalValueFlags);
+    }
+
+    // 2a-bis. Medication reconciliation across encounter transitions
+    // (issue #983). Runs before patient-context construction because the
+    // rule reads event.data directly (encounter_id, new_status) and
+    // performs its own DB queries; the rule's internal guard returns
+    // early unless new_status === "finished", so non-encounter events
+    // incur only the no-op call.
+    rulesEvaluated.push("medication-reconciliation");
+    const reconciliationFlags = await checkMedicationReconciliation(event);
+    if (reconciliationFlags.length > 0) {
+      rulesFired.push("medication-reconciliation");
+      allRuleFlags.push(...reconciliationFlags);
     }
 
     // 2b. Cross-specialty patterns — need patient context from DB
