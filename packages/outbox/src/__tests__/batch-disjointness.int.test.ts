@@ -14,7 +14,7 @@
  * `test` job in .github/workflows/ci.yml.
  */
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
-import { sql } from "drizzle-orm";
+import { sql, inArray } from "drizzle-orm";
 
 // Point @carebridge/db-schema's getDb() singleton at the test DB BEFORE
 // importing @carebridge/outbox (which calls getDb() lazily on first use).
@@ -140,9 +140,10 @@ describe.skipIf(!TEST_URL)(
       expect(claimedIds).toHaveLength(10);
 
       // Verify status directly from the DB for the claimed rows.
-      const claimedRows = (await getDb().execute(
-        sql`SELECT status FROM failed_clinical_events WHERE id = ANY(${claimedIds})`,
-      )) as unknown as Array<{ status: string }>;
+      const claimedRows = await getDb()
+        .select({ status: failedClinicalEvents.status })
+        .from(failedClinicalEvents)
+        .where(inArray(failedClinicalEvents.id, claimedIds));
       expect(claimedRows).toHaveLength(claimedIds.length);
       for (const row of claimedRows) expect(row.status).toBe("processing");
 

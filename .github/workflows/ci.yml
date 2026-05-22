@@ -47,6 +47,23 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: carebridge
+          POSTGRES_USER: carebridge
+          POSTGRES_PASSWORD: carebridge_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U carebridge"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://carebridge:carebridge_dev@localhost:5432/carebridge
+      TEST_DATABASE_URL: postgresql://carebridge:carebridge_dev@localhost:5432/carebridge
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -57,4 +74,6 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Run database migrations
+        run: pnpm db:migrate
       - run: pnpm test
