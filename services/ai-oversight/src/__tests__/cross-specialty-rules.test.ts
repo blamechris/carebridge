@@ -339,7 +339,7 @@ describe("CROSS-STEROID-PCP-001 — chronic corticosteroid without PCP prophylax
         (f) => f.rule_id === "CROSS-STEROID-PCP-001",
       );
       expect(flag).toBeDefined();
-      expect(flag!.metadata).toEqual({ duration_known: true });
+      expect(flag!.metadata).toEqual({ duration_known: true, chronic_marked: false });
     });
 
     it("emits duration_known=false when started_at is unset (fail-open path)", () => {
@@ -361,7 +361,7 @@ describe("CROSS-STEROID-PCP-001 — chronic corticosteroid without PCP prophylax
         (f) => f.rule_id === "CROSS-STEROID-PCP-001",
       );
       expect(flag).toBeDefined();
-      expect(flag!.metadata).toEqual({ duration_known: false });
+      expect(flag!.metadata).toEqual({ duration_known: false, chronic_marked: false });
     });
 
     it("emits duration_known=false when started_at is future-dated (typo)", () => {
@@ -385,7 +385,113 @@ describe("CROSS-STEROID-PCP-001 — chronic corticosteroid without PCP prophylax
         (f) => f.rule_id === "CROSS-STEROID-PCP-001",
       );
       expect(flag).toBeDefined();
-      expect(flag!.metadata).toEqual({ duration_known: false });
+      expect(flag!.metadata).toEqual({ duration_known: false, chronic_marked: false });
+    });
+
+    it("prescriber-marked-chronic fires immediately, bypassing the 28-day duration gate (#1023)", () => {
+      // Patient just started lifelong immunosuppression for renal transplant.
+      // started_at is < 28 days ago, but `chronic: true` short-circuits the
+      // duration gate so the PCP-prophylaxis flag fires at prescription time.
+      const ctx = emptyCtx({
+        active_medications: ["Prednisone 40mg daily"],
+        active_medications_detail: [
+          {
+            id: "m1",
+            name: "Prednisone",
+            dose_amount: 40,
+            dose_unit: "mg",
+            route: "oral",
+            frequency: "daily",
+            rxnorm_code: null,
+            started_at: "2026-04-15T00:00:00.000Z",
+            chronic: true,
+          },
+        ],
+        event_timestamp: "2026-04-18T12:00:00.000Z", // only 3 days in
+      });
+      const flag = checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-STEROID-PCP-001",
+      );
+      expect(flag).toBeDefined();
+      expect(flag!.metadata).toMatchObject({ chronic_marked: true });
+    });
+
+    it("chronic=true without started_at still fires and surfaces chronic_marked=true (#1023)", () => {
+      // No started_at at all + chronic: true → flag fires, chronic_marked
+      // tracks the prescriber decision rather than the data path.
+      const ctx = emptyCtx({
+        active_medications: ["Prednisone 40mg daily"],
+        active_medications_detail: [
+          {
+            id: "m1",
+            name: "Prednisone",
+            dose_amount: 40,
+            dose_unit: "mg",
+            route: "oral",
+            frequency: "daily",
+            rxnorm_code: null,
+            chronic: true,
+          },
+        ],
+      });
+      const flag = checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-STEROID-PCP-001",
+      );
+      expect(flag).toBeDefined();
+      expect(flag!.metadata).toMatchObject({ chronic_marked: true });
+    });
+
+    it("chronic=false leaves the duration gate in charge (#1023)", () => {
+      // chronic=false is the same as not-set — the duration gate suppresses
+      // the 3-days-in burst, and chronic_marked is false in metadata.
+      const ctx = emptyCtx({
+        active_medications: ["Prednisone 40mg daily"],
+        active_medications_detail: [
+          {
+            id: "m1",
+            name: "Prednisone",
+            dose_amount: 40,
+            dose_unit: "mg",
+            route: "oral",
+            frequency: "daily",
+            rxnorm_code: null,
+            started_at: "2026-04-15T00:00:00.000Z",
+            chronic: false,
+          },
+        ],
+        event_timestamp: "2026-04-18T12:00:00.000Z",
+      });
+      const flag = checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-STEROID-PCP-001",
+      );
+      // Duration gate suppresses the flag (started < 28 days ago).
+      expect(flag).toBeUndefined();
+    });
+
+    it("topical/inhaled corticosteroid with chronic=true does NOT trigger chronic_marked (#1023)", () => {
+      // Chronic intranasal triamcinolone (Flonase) for allergic rhinitis is
+      // clinically distinct from systemic immunosuppression — the route
+      // gate must still strip it from the systemic-exposure cohort even
+      // when chronic is marked.
+      const ctx = emptyCtx({
+        active_medications: ["Triamcinolone intranasal"],
+        active_medications_detail: [
+          {
+            id: "m1",
+            name: "Triamcinolone intranasal",
+            dose_amount: 110,
+            dose_unit: "mcg",
+            route: "intranasal",
+            frequency: "daily",
+            rxnorm_code: null,
+            chronic: true,
+          },
+        ],
+      });
+      const flag = checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-STEROID-PCP-001",
+      );
+      expect(flag).toBeUndefined();
     });
   });
 });

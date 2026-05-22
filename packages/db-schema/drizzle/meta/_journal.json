@@ -330,6 +330,13 @@
       "when": 1747411200000,
       "tag": "0042_audit_log_truncate_revoke",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1747929600000,
+      "tag": "0043_medications_chronic_flag",
+      "breakpoints": true
     }
   ]
 }

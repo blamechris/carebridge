@@ -912,6 +912,10 @@ export async function buildPatientContextForRules(
       // Expose prescription start date for duration-aware rules (#940).
       // Null when the writer never recorded a start — rules must fail-open.
       started_at: m.started_at ?? null,
+      // Prescriber-marked-chronic flag (#1023). When set, the
+      // CROSS-STEROID-PCP-001 duration gate is bypassed and the flag
+      // fires at prescription time. Null when the writer never recorded.
+      chronic: m.chronic ?? null,
     })),
     new_symptoms: newSymptoms,
     care_team_specialties: [], // Not needed for current rules, but available for future
