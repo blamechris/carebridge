@@ -446,6 +446,34 @@ describe("allergy safety check", () => {
     expect(db.insert).not.toHaveBeenCalled();
   });
 
+  it("does NOT false-positive on amoxapine against a penicillin allergy via 'amox' alias (#994)", async () => {
+    // Amoxapine is a tetracyclic antidepressant. Pre-#994 the 4-letter
+    // alias "amox" (under penicillin canonical class) hit it via
+    // substring match. With the boundary tightening to length <= 4 the
+    // alias must occur as a separate token in the medication name,
+    // which it does not in "amoxapine".
+    db.willSelect([
+      {
+        id: "allergy-pcn",
+        patient_id: PATIENT_ID,
+        allergen: "Penicillin",
+        rxnorm_code: null,
+        severity: "severe",
+        reaction: "anaphylaxis",
+        snomed_code: null,
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    const result = await createMedication({
+      ...sampleMedInput,
+      name: "Amoxapine 50mg PO BID",
+    });
+
+    expect(result.name).toBe("Amoxapine 50mg PO BID");
+    expect(db.insert).toHaveBeenCalledOnce();
+  });
+
   it("allows medication when no allergy conflicts exist", async () => {
     db.willSelect([
       {

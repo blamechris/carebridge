@@ -49,9 +49,12 @@ export async function checkAllergyConflicts(
     // Strategy 1: Direct name match against any alias of the allergen.
     const directMatch = allergenAliases.some((alias) => {
       const aliasLower = alias.toLowerCase();
-      if (aliasLower.length < 4) {
-        // Short aliases (PCN, ASA) need a word boundary so "pcn" doesn't
-        // accidentally hit "pentoxifylline".
+      if (aliasLower.length <= 4) {
+        // Short aliases (PCN, ASA, amox, ampi, apap, lmwh, acei) need
+        // a word boundary so they don't substring-hit unrelated drugs
+        // ("pcn" → "pentoxifylline", "amox" → "amoxapine",
+        // "ampi" → "ampyra"). The boundary cutoff matches the AI rule
+        // (#994) so writer and rule agree on false-positive avoidance.
         const boundary = new RegExp(
           `\\b${aliasLower.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
           "i",

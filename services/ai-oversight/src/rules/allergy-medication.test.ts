@@ -168,4 +168,60 @@ describe("allergy-medication allergen normalization (#232)", () => {
     const flags = checkAllergyMedication(ctx);
     expect(flags).toHaveLength(0);
   });
+
+  // ── Issue #994: 4-letter abbreviation substring false-positives ────────
+  //
+  // ALLERGEN_SYNONYMS includes 4-letter abbreviations (amox, ampi, apap,
+  // lmwh, acei). The original direct-match path applied word-boundary
+  // checks only for aliases with length < 4, so the 4-char abbreviations
+  // hit via substring match anywhere in the medication name. This caused
+  // unrelated drugs whose names happened to contain those 4 chars to
+  // produce a false-positive allergy flag at order time.
+  //
+  // The fix tightens the boundary check to length <= 4 so every known
+  // 4-letter abbreviation uses word-boundary matching, while genuine
+  // class-level matches still work via the longer canonical alias
+  // (e.g. PCN → penicillin → "amoxicillin" full string).
+
+  it("PCN allergy does NOT false-positive on amoxapine via the 'amox' alias (#994)", () => {
+    // Amoxapine is a tetracyclic antidepressant. Pre-#994 the 4-letter
+    // alias "amox" hit it via substring match against the PCN canonical
+    // class. Now the word-boundary check rejects the match — "amox" is
+    // not a separate token inside "amoxapine".
+    const ctx = makeContext(
+      [{ allergen: "PCN", severity: "severe", reaction: "anaphylaxis" }],
+      ["Amoxapine 50mg PO BID"],
+    );
+    const flags = checkAllergyMedication(ctx);
+    expect(flags).toHaveLength(0);
+  });
+
+  it("PCN allergy DOES still flag amoxicillin (regression guard for #994 fix)", () => {
+    // The fix must not break the legitimate match. Amoxicillin is in the
+    // alias set as a full canonical name (length 11), so the substring
+    // path still catches it regardless of the boundary tightening.
+    const ctx = makeContext(
+      [{ allergen: "PCN", severity: "severe", reaction: "anaphylaxis" }],
+      ["Amoxicillin 500mg PO q8h"],
+    );
+    const flags = checkAllergyMedication(ctx);
+    expect(flags.length).toBeGreaterThan(0);
+  });
+
+  it("Penicillin allergy does NOT false-positive on ampyra via the 'ampi' alias (#994)", () => {
+    // Ampyra (dalfampridine) is an MS treatment. The 4-letter alias
+    // "ampi" under penicillin would have matched substring-wise.
+    const ctx = makeContext(
+      [
+        {
+          allergen: "Penicillin",
+          severity: "moderate",
+          reaction: "rash",
+        },
+      ],
+      ["Ampyra 10mg PO BID"],
+    );
+    const flags = checkAllergyMedication(ctx);
+    expect(flags).toHaveLength(0);
+  });
 });
