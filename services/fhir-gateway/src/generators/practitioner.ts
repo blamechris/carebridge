@@ -81,10 +81,10 @@ const FAMILY_PARTICLES = new Set([
  * The bare-initial guard above keeps `Sarah M. Jones` working, but
  * spelled-out middle names regress.
  *
- * The same applies to longer Anglo chains — any non-initial penultimate
- * is absorbed into family regardless of token count, so
- * `John Robert Quincy Adams` parses as family=`Quincy Adams`,
- * given=`[John, Robert]`. This is not a 3-token-only quirk.
+ * The same applies to longer Anglo chains — whenever the penultimate
+ * token is not a bare initial, it is absorbed into family regardless of
+ * token count. So `John Robert Quincy Adams` parses as family=`Quincy
+ * Adams`, given=`[John, Robert]`. This is not a 3-token-only quirk.
  *
  * Long-term fix is the structured `name_family` / `name_given[]` columns
  * on the users table tracked in #972; until then, the test suite pins
