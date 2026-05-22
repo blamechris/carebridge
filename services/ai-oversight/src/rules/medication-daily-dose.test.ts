@@ -309,6 +309,38 @@ describe("checkMedicationDailyDose (#235)", () => {
       process.env[envKey] = "Infinity";
       expect(resolveRatio(envKey, 1.2)).toBe(1.2);
     });
+
+    it("falls back on partial-numeric '2.0x' (#1043)", () => {
+      process.env[envKey] = "2.0x";
+      expect(resolveRatio(envKey, 1.2)).toBe(1.2);
+    });
+
+    it("falls back on locale-typo '2,0' (#1043)", () => {
+      process.env[envKey] = "2,0";
+      expect(resolveRatio(envKey, 1.2)).toBe(1.2);
+    });
+
+    it("falls back on scientific notation '1e2' (#1043)", () => {
+      // Scientific notation is unusual for a human-set ratio and is a
+      // common copy-paste artifact from spreadsheets. Reject it.
+      process.env[envKey] = "1e2";
+      expect(resolveRatio(envKey, 1.2)).toBe(1.2);
+    });
+
+    it("falls back on explicit-positive prefix '+1.5' (#1043)", () => {
+      process.env[envKey] = "+1.5";
+      expect(resolveRatio(envKey, 1.2)).toBe(1.2);
+    });
+
+    it("falls back on leading-dot '.5' (#1043)", () => {
+      process.env[envKey] = ".5";
+      expect(resolveRatio(envKey, 1.2)).toBe(1.2);
+    });
+
+    it("accepts whitespace-padded valid values (trimmed)", () => {
+      process.env[envKey] = "  1.5  ";
+      expect(resolveRatio(envKey, 1.2)).toBe(1.5);
+    });
   });
 
   describe("override rationale surfacing (#968)", () => {
