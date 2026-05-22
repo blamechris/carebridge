@@ -63,10 +63,24 @@ export const OPIOID_CRITICAL_RATIO_DEFAULT = 1.2;
 export const NON_OPIOID_CRITICAL_RATIO_DEFAULT = 2.0;
 
 /**
+ * Strict numeric pattern: positive decimal, no sign, no trailing junk,
+ * no commas. Rejects partials that Number.parseFloat would silently
+ * accept like "2.0x" → 2.0 or "2,0" → 2 (#1043).
+ */
+const STRICT_NUMERIC = /^\d+(?:\.\d+)?$/;
+
+/**
  * Resolve a per-deployment ratio override from an env var. Returns the
- * default when the env var is unset, empty, non-numeric, or ≤ 1.0 (a
- * ratio of 1.0 or below would fire critical on any over-cap dose at all,
- * collapsing the warning band and almost certainly a misconfiguration).
+ * default when the env var is unset, empty, fails strict numeric parsing,
+ * or is ≤ 1.0 (a ratio of 1.0 or below would fire critical on any
+ * over-cap dose at all, collapsing the warning band and almost certainly
+ * a misconfiguration).
+ *
+ * Strict numeric parsing rejects partial matches that Number.parseFloat
+ * would accept silently: "2.0x" (typo), "2,0" (locale typo), "1e3"
+ * (scientific notation — unusual for a human-set ratio), "+1.5" (sign
+ * prefix). Any of these surface as `invalid_ratio_override` rather than
+ * a silently de-tuned safety guard (#1043).
  *
  * Invalid values fall back to the default with a structured warning so
  * the operator can see the misconfiguration in CI / startup logs without
@@ -75,7 +89,17 @@ export const NON_OPIOID_CRITICAL_RATIO_DEFAULT = 2.0;
 export function resolveRatio(envKey: string, defaultValue: number): number {
   const raw = process.env[envKey];
   if (raw === undefined || raw === "") return defaultValue;
-  const parsed = Number.parseFloat(raw);
+  const trimmed = raw.trim();
+  if (!STRICT_NUMERIC.test(trimmed)) {
+    log.warn("invalid_ratio_override", {
+      envKey,
+      raw,
+      reason: "not a strict decimal literal",
+      fallback: defaultValue,
+    });
+    return defaultValue;
+  }
+  const parsed = Number.parseFloat(trimmed);
   if (!Number.isFinite(parsed) || parsed <= 1.0) {
     log.warn("invalid_ratio_override", {
       envKey,
