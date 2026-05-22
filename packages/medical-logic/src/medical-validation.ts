@@ -287,6 +287,7 @@ export function validateMedicationDose(
   doseAmount: number | undefined,
   doseUnit: string | undefined,
   drugName?: string,
+  route?: import("@carebridge/shared-types").MedRoute,
 ): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -301,7 +302,7 @@ export function validateMedicationDose(
   if (doseAmount <= 0) errors.push("Dose must be a positive number");
 
   const unit = doseUnit?.toLowerCase();
-  const limit = drugName ? getMedicationDoseLimit(drugName) : undefined;
+  const limit = drugName ? getMedicationDoseLimit(drugName, route) : undefined;
 
   // Per-drug ceilings (issue #238). Only apply when the unit is mg — the
   // table's limits are expressed in milligrams; cross-unit comparisons
