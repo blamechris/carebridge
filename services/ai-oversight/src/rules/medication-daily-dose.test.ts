@@ -1,6 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { ClinicalEvent } from "@carebridge/shared-types";
-import { checkMedicationDailyDose } from "./medication-daily-dose.js";
+import {
+  checkMedicationDailyDose,
+  resolveRatio,
+  OPIOID_CRITICAL_RATIO_DEFAULT,
+} from "./medication-daily-dose.js";
 import type { PatientContext, PatientMedication } from "./cross-specialty.js";
 
 function makeMed(
@@ -253,6 +257,102 @@ describe("checkMedicationDailyDose (#235)", () => {
       ctx.active_medications_detail = [];
       const flags = checkMedicationDailyDose(ctx);
       expect(flags).toHaveLength(0);
+    });
+  });
+
+  describe("resolveRatio — deployment override (#968)", () => {
+    const envKey = "TEST_RATIO_OVERRIDE_968";
+    afterEach(() => {
+      delete process.env[envKey];
+    });
+
+    it("returns default when env var is unset", () => {
+      expect(resolveRatio(envKey, 1.2)).toBe(1.2);
+    });
+
+    it("returns default when env var is empty string", () => {
+      process.env[envKey] = "";
+      expect(resolveRatio(envKey, 1.2)).toBe(1.2);
+    });
+
+    it("parses a valid numeric override", () => {
+      process.env[envKey] = "1.5";
+      expect(resolveRatio(envKey, 1.2)).toBe(1.5);
+    });
+
+    it("parses an integer override", () => {
+      process.env[envKey] = "2";
+      expect(resolveRatio(envKey, 1.2)).toBe(2);
+    });
+
+    it("falls back when env value is non-numeric", () => {
+      process.env[envKey] = "tomato";
+      expect(resolveRatio(envKey, 1.2)).toBe(1.2);
+    });
+
+    it("falls back when env value is exactly 1.0 (collapsed warning band)", () => {
+      process.env[envKey] = "1.0";
+      expect(resolveRatio(envKey, 1.2)).toBe(1.2);
+    });
+
+    it("falls back when env value is ≤ 1.0", () => {
+      process.env[envKey] = "0.8";
+      expect(resolveRatio(envKey, 1.2)).toBe(1.2);
+    });
+
+    it("falls back when env value is negative", () => {
+      process.env[envKey] = "-1.5";
+      expect(resolveRatio(envKey, 1.2)).toBe(1.2);
+    });
+
+    it("falls back on Infinity", () => {
+      process.env[envKey] = "Infinity";
+      expect(resolveRatio(envKey, 1.2)).toBe(1.2);
+    });
+  });
+
+  describe("override rationale surfacing (#968)", () => {
+    // The constants are resolved at module-load time, so to test the
+    // override-note rendering we have to reload the module with the env
+    // var pre-set. vi.resetModules + dynamic import keeps the override
+    // contained to this test.
+    let prev: string | undefined;
+    beforeEach(() => {
+      prev = process.env.OPIOID_CRITICAL_RATIO;
+    });
+    afterEach(() => {
+      if (prev === undefined) delete process.env.OPIOID_CRITICAL_RATIO;
+      else process.env.OPIOID_CRITICAL_RATIO = prev;
+      vi.resetModules();
+    });
+
+    it("includes 'deployment override' note in flag rationale when overridden", async () => {
+      process.env.OPIOID_CRITICAL_RATIO = "2.0";
+      vi.resetModules();
+      const fresh = await import("./medication-daily-dose.js");
+      // 10 mg morphine q2h = 120 mg/day, 1.33× the 90 mg cap. Under default
+      // 1.2× this would be critical; under override 2.0× it stays warning.
+      // The rationale should mention the active override either way.
+      const flags = fresh.checkMedicationDailyDose(
+        makeCtx(makeMed({ name: "Morphine", dose_amount: 10, frequency: "q2h" })),
+      );
+      const daily = flags.find((f) => f.rule_id?.startsWith("MED-DAILY-OVER"));
+      expect(daily).toBeDefined();
+      expect(daily!.rationale).toMatch(/deployment override/);
+      expect(daily!.rationale).toMatch(/2(\.0)?×/);
+      expect(daily!.rationale).toMatch(
+        new RegExp(`${OPIOID_CRITICAL_RATIO_DEFAULT}×`),
+      );
+    });
+
+    it("omits the override note when running at the default ratio", () => {
+      // Module-load default path — no env override.
+      const flags = checkMedicationDailyDose(
+        makeCtx(makeMed({ name: "Morphine", dose_amount: 10, frequency: "q2h" })),
+      );
+      const daily = flags.find((f) => f.rule_id?.startsWith("MED-DAILY-OVER"));
+      expect(daily).toBeDefined();
+      expect(daily!.rationale).not.toMatch(/deployment override/);
     });
   });
 

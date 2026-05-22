@@ -288,6 +288,15 @@ covers every value below tagged "secret".
 | `SCHEDULING_HEALTH_PORT` | scheduling reminder worker health check port | `4003` |
 | `CORS_ORIGIN` | Allowed origin for the gateway CORS plugin | none (locked down) |
 
+#### Clinical-rule tuning
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `OPIOID_CRITICAL_RATIO` | Excess-over-cap ratio at which opioid daily-dose flags escalate warning → critical. Tune for deployment context: hospice/palliative may raise to 2.0+; outpatient CDC-calibrated stays at default. | `1.2` |
+| `NON_OPIOID_CRITICAL_RATIO` | Same gradient for NSAID / analgesic daily-dose flags. Hepatic-clinic deployments may want 1.5. | `2.0` |
+
+Invalid overrides (non-numeric or ≤1.0) fall back to default and log a structured `invalid_ratio_override` warning so the misconfiguration surfaces in CI / startup logs. Flag rationale surfaces the active value when an override is in effect.
+
 #### Dev-mode flags
 
 | Variable | Description | Example |
