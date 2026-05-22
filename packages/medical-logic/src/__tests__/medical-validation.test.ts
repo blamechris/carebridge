@@ -442,16 +442,31 @@ describe("MEDICATION_MAX_DAILY_DOSES reference data (#238)", () => {
     }
   });
 
-  it("naproxen source string flags the unenforced chronic ceiling (#1028)", () => {
+  it("naproxen citation flags the unenforced chronic ceiling (#1028)", () => {
     // Encoded ceiling is the acute 1500 mg/day. The chronic 1000 mg/day
     // ceiling on the same FDA label is intentionally NOT enforced until
-    // use-context-aware lookup (#927) lands. The source string must
-    // advertise that gap so a reviewer reading the entry can't be misled
-    // into treating 1500 mg/day as the chronic ceiling.
+    // use-context-aware lookup (#927) lands. After #1026 split source
+    // into a terse label + rich citation, the chronic-use warning lives
+    // in citation (the source is now "FDA Rx label (Naprosyn)" alone).
     const naproxen = MEDICATION_MAX_DAILY_DOSES.naproxen!;
     expect(naproxen.maxDailyDoseMg).toBe(1500);
-    expect(naproxen.source).toMatch(/chronic[- ]use 1000 mg\/day ceiling NOT enforced/i);
-    expect(naproxen.source).toMatch(/#927/);
+    expect(naproxen.citation).toMatch(/chronic[- ]use 1000 mg\/day ceiling NOT enforced/i);
+    expect(naproxen.citation).toMatch(/#927/);
+  });
+
+  it("source field is a terse inline label, citation carries the rich text (#1026)", () => {
+    // Inline single-dose error strings interpolate `source` directly into
+    // a clinician-facing warning where space is tight. Cap `source` at
+    // 40 chars so a future verbose addition can't accidentally bloat the
+    // inline warning — it should land in `citation` instead.
+    for (const [drug, limit] of Object.entries(MEDICATION_MAX_DAILY_DOSES)) {
+      expect(limit.source.length, `drug=${drug} source too long for inline use`).toBeLessThanOrEqual(40);
+      if (limit.citation) {
+        expect(limit.citation.length, `drug=${drug} citation should be richer than source`).toBeGreaterThanOrEqual(
+          limit.source.length,
+        );
+      }
+    }
   });
 
   it("every limit's maxSingleDoseMg <= maxDailyDoseMg (internal consistency)", () => {
