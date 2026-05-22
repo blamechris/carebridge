@@ -259,7 +259,7 @@ export function checkMedicationDailyDose(context: PatientContext): RuleFlag[] {
         `"${med.name}" ${med.dose_amount} ${med.dose_unit ?? ""} single dose ` +
         `exceeds the ${limit.maxSingleDoseMg} mg maximum for ${limit.displayName}`,
       rationale:
-        `Per ${limit.source}, the maximum single oral dose of ${limit.displayName} ` +
+        `Per ${limit.citation ?? limit.source}, the maximum single oral dose of ${limit.displayName} ` +
         `is ${limit.maxSingleDoseMg} mg. The prescribed single dose of ` +
         `${med.dose_amount} ${med.dose_unit ?? ""} exceeds this ceiling` +
         (isOpioid
@@ -313,7 +313,7 @@ export function checkMedicationDailyDose(context: PatientContext): RuleFlag[] {
         `(${limit.maxDailyDoseMg} mg/day)${mmeNote}`,
       rationale:
         `${limit.displayName} daily cap is ${limit.maxDailyDoseMg} mg ` +
-        `(${limit.source}). The prescribed ${med.dose_amount} ${med.dose_unit ?? ""} ` +
+        `(${limit.citation ?? limit.source}). The prescribed ${med.dose_amount} ${med.dose_unit ?? ""} ` +
         `${med.frequency ?? ""} translates to approximately ${Math.round(daily)} mg/day, ` +
         `which is ${ratio.toFixed(1)}× the ceiling. ` +
         (isOpioid
