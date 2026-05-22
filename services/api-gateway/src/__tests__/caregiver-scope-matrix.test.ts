@@ -329,6 +329,11 @@ vi.mock("@carebridge/validators", async () => {
 vi.mock("@carebridge/redis-config", () => ({
   getRedisConnection: () => ({}),
   CLINICAL_EVENTS_JOB_OPTIONS: {},
+  // Required because scheduling.ts now imports scheduleReminders /
+  // cancelReminders from @carebridge/scheduling (moved here from the
+  // dead scheduling router in #1006), and the scheduling package's
+  // reminders.ts consumes this constant.
+  DEFAULT_RETENTION_AGE_SECONDS: 600,
 }));
 
 vi.mock("bullmq", () => ({

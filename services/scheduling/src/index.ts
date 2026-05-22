@@ -1,4 +1,3 @@
-export { schedulingRouter, type SchedulingRouter } from "./router.js";
 export {
   scheduleReminders,
   cancelReminders,
