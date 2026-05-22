@@ -323,6 +323,13 @@
       "when": 1747325040000,
       "tag": "0037_appointment_reminder_job_ids",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1747411200000,
+      "tag": "0042_audit_log_truncate_revoke",
+      "breakpoints": true
     }
   ]
 }
