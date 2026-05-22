@@ -30,6 +30,8 @@ import {
   labValueColor,
   deriveInferredFlag,
 } from "@/lib/lab-display";
+import { PrescriptionForm } from "./PrescriptionForm";
+import type { Medication } from "@carebridge/shared-types";
 
 const tabs = [
   { key: "overview", label: "Overview" },
@@ -572,6 +574,7 @@ interface MedicationStatusSectionProps {
   titleColor?: string;
   textColor: string;
   badge: MedicationBadge;
+  onEdit?: (medicationId: string) => void;
 }
 
 function MedicationStatusSection({
@@ -580,6 +583,7 @@ function MedicationStatusSection({
   titleColor,
   textColor,
   badge,
+  onEdit,
 }: MedicationStatusSectionProps) {
   if (medications.length === 0) return null;
 
@@ -601,6 +605,7 @@ function MedicationStatusSection({
             <th>Route</th>
             <th>Frequency</th>
             <th>Status</th>
+            {onEdit ? <th aria-label="Actions" /> : null}
           </tr>
         </thead>
         <tbody>
@@ -626,6 +631,18 @@ function MedicationStatusSection({
                   {badge.label}
                 </span>
               </td>
+              {onEdit ? (
+                <td data-label="Edit">
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    aria-label={`Edit medication ${med.name}`}
+                    onClick={() => onEdit(med.id)}
+                  >
+                    {"✎"} Edit
+                  </button>
+                </td>
+              ) : null}
             </tr>
           ))}
         </tbody>
@@ -635,10 +652,44 @@ function MedicationStatusSection({
 }
 
 function MedicationsTab({ patientId }: { patientId: string }) {
+  const utils = trpc.useUtils();
   const medsQuery = trpc.clinicalData.medications.getByPatient.useQuery({
     patientId,
   });
   const medications = medsQuery.data ?? [];
+
+  const [formMode, setFormMode] = useState<"create" | "edit" | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  // Mutations are declared at the tab level so the form can use them
+  // via injected `mutateAsync` adapters \u2014 keeps the form testable and
+  // the tab-level cache invalidation centralised.
+  const createMutation = trpc.clinicalData.medications.create.useMutation();
+  const updateMutation = trpc.clinicalData.medications.update.useMutation();
+
+  async function invalidateMedications() {
+    await utils.clinicalData.medications.getByPatient.invalidate({ patientId });
+  }
+
+  function closeForm() {
+    setFormMode(null);
+    setEditingId(null);
+  }
+
+  function openCreate() {
+    setEditingId(null);
+    setFormMode("create");
+  }
+
+  function openEdit(medicationId: string) {
+    setEditingId(medicationId);
+    setFormMode("edit");
+  }
+
+  const editing: Medication | undefined =
+    editingId !== null
+      ? (medications.find((m) => m.id === editingId) as Medication | undefined)
+      : undefined;
 
   if (medsQuery.isLoading) return <LoadingState label="medications" />;
   if (medsQuery.isError) return <ErrorState label="medications" />;
@@ -648,21 +699,63 @@ function MedicationsTab({ patientId }: { patientId: string }) {
   const discontinued = medications.filter((m) => m.status === "discontinued");
   const completed = medications.filter((m) => m.status === "completed");
 
+  const addButton = (
+    <button
+      type="button"
+      className="btn btn-primary btn-sm"
+      onClick={openCreate}
+    >
+      + Add medication
+    </button>
+  );
+
+  const formNode = formMode ? (
+    <PrescriptionForm
+      patientId={patientId}
+      mode={formMode}
+      existing={formMode === "edit" ? editing : undefined}
+      onClose={closeForm}
+      onSaved={invalidateMedications}
+      createMutate={async (input) => createMutation.mutateAsync(input)}
+      updateMutate={async (input) => updateMutation.mutateAsync(input)}
+    />
+  ) : null;
+
   if (medications.length === 0) {
     return (
-      <div className="empty-state">
-        <div className="empty-state-text">No medications recorded for this patient</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+          }}
+        >
+          {addButton}
+        </div>
+        <div className="empty-state">
+          <div className="empty-state-text">No medications recorded for this patient</div>
+        </div>
+        {formNode}
       </div>
     );
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "flex-end",
+        }}
+      >
+        {addButton}
+      </div>
       <MedicationStatusSection
         medications={active}
         title="Active Medications"
         textColor="var(--text-secondary)"
         badge={{ label: "Active", className: "badge badge-success" }}
+        onEdit={openEdit}
       />
       <MedicationStatusSection
         medications={held}
@@ -673,6 +766,7 @@ function MedicationsTab({ patientId }: { patientId: string }) {
           className: "badge badge-warning",
           title: "Temporarily paused \u2014 intent to resume",
         }}
+        onEdit={openEdit}
       />
       <MedicationStatusSection
         medications={discontinued}
@@ -683,6 +777,7 @@ function MedicationsTab({ patientId }: { patientId: string }) {
           label: "Discontinued",
           className: "badge badge-muted",
         }}
+        onEdit={openEdit}
       />
       <MedicationStatusSection
         medications={completed}
@@ -693,7 +788,9 @@ function MedicationsTab({ patientId }: { patientId: string }) {
           label: "Completed",
           className: "badge badge-completed",
         }}
+        onEdit={openEdit}
       />
+      {formNode}
     </div>
   );
 }
