@@ -2,78 +2,11 @@ import { eq, and, desc } from "drizzle-orm";
 import { getDb, medications, medLogs, allergies } from "@carebridge/db-schema";
 import type { CreateMedicationInput, UpdateMedicationInput } from "@carebridge/validators";
 import type { Medication, MedLog, MedStatus } from "@carebridge/shared-types";
+import {
+  CROSS_REACTIVITY_MAP,
+  expandAllergenAliases,
+} from "@carebridge/medical-logic";
 import { emitClinicalEvent } from "../events.js";
-
-// ─── Allergy cross-reactivity map ─────────────────────────────────
-// Maps allergen name patterns to medication name patterns that belong to
-// the same drug class or share cross-reactive ingredients.
-
-const CROSS_REACTIVITY_MAP: Array<{
-  allergenPattern: RegExp;
-  medicationPattern: RegExp;
-  class: string;
-}> = [
-  {
-    allergenPattern: /penicillin|amoxicillin|ampicillin/i,
-    medicationPattern: /penicillin|amoxicillin|ampicillin|augmentin|amoxil|piperacillin|nafcillin|oxacillin|dicloxacillin/i,
-    class: "penicillin",
-  },
-  {
-    allergenPattern: /cephalosporin|cefazolin|ceftriaxone|cephalexin/i,
-    medicationPattern: /cefazolin|ceftriaxone|cephalexin|cefepime|cefuroxime|ceftazidime|cefdinir|cefpodoxime|cefotaxime/i,
-    class: "cephalosporin",
-  },
-  {
-    allergenPattern: /penicillin|amoxicillin|ampicillin/i,
-    medicationPattern: /cefazolin|ceftriaxone|cephalexin|cefepime|cefuroxime/i,
-    class: "penicillin-cephalosporin-cross",
-  },
-  {
-    allergenPattern: /sulfa|sulfamethoxazole|bactrim|septra|trimethoprim/i,
-    medicationPattern: /sulfamethoxazole|bactrim|septra|sulfasalazine|sulfadiazine|dapsone/i,
-    class: "sulfonamide",
-  },
-  {
-    allergenPattern: /nsaid|ibuprofen|naproxen|aspirin/i,
-    medicationPattern: /ibuprofen|naproxen|diclofenac|celecoxib|indomethacin|ketorolac|meloxicam|piroxicam|aspirin/i,
-    class: "NSAID",
-  },
-  {
-    allergenPattern: /codeine|morphine|opioid/i,
-    medicationPattern: /codeine|morphine|hydrocodone|oxycodone|fentanyl|tramadol|hydromorphone|meperidine/i,
-    class: "opioid",
-  },
-  {
-    allergenPattern: /fluoroquinolone|ciprofloxacin|levofloxacin/i,
-    medicationPattern: /ciprofloxacin|levofloxacin|moxifloxacin|norfloxacin|ofloxacin/i,
-    class: "fluoroquinolone",
-  },
-  {
-    allergenPattern: /ace inhibitor|lisinopril|enalapril/i,
-    medicationPattern: /lisinopril|enalapril|ramipril|captopril|benazepril|fosinopril|quinapril|perindopril/i,
-    class: "ACE inhibitor",
-  },
-  {
-    allergenPattern: /statin|atorvastatin|simvastatin/i,
-    medicationPattern: /atorvastatin|simvastatin|rosuvastatin|pravastatin|lovastatin|fluvastatin|pitavastatin/i,
-    class: "statin",
-  },
-  {
-    allergenPattern: /macrolide|azithromycin|erythromycin|clarithromycin/i,
-    medicationPattern: /azithromycin|erythromycin|clarithromycin|fidaxomicin/i,
-    class: "macrolide",
-  },
-  {
-    allergenPattern: /tetracycline|doxycycline|minocycline/i,
-    medicationPattern: /tetracycline|doxycycline|minocycline|tigecycline/i,
-    class: "tetracycline",
-  },
-  {
-    allergenPattern: /benzodiazepine|diazepam|lorazepam|alprazolam/i,
-    medicationPattern: /diazepam|lorazepam|alprazolam|clonazepam|midazolam|temazepam|triazolam/i,
-    class: "benzodiazepine",
-  },
-];
 
 export interface AllergyConflict {
   allergen: string;
@@ -101,15 +34,37 @@ export async function checkAllergyConflicts(
 
   const conflicts: AllergyConflict[] = [];
   const medLower = medicationName.toLowerCase();
+  const firstMedToken = medLower.split(" ")[0] ?? "";
 
   for (const allergy of patientAllergies) {
-    const allergenLower = allergy.allergen.toLowerCase();
+    // Expand shorthand / brand-name allergens to their canonical generic /
+    // class via the shared synonym table (#232). Without this the writer
+    // missed cases the post-write AI rule caught — e.g. allergy "Red Man
+    // Syndrome" + medication "vancomycin 1g IV" matched no entry on the
+    // direct path because the strings don't overlap textually, even
+    // though Red Man IS the vancomycin infusion reaction.
+    const allergenAliases = expandAllergenAliases(allergy.allergen);
+    const allergenBlob = allergenAliases.join(" ");
 
-    // Strategy 1: Direct name match
-    if (
-      medLower.includes(allergenLower) ||
-      allergenLower.includes(medLower.split(" ")[0])
-    ) {
+    // Strategy 1: Direct name match against any alias of the allergen.
+    const directMatch = allergenAliases.some((alias) => {
+      const aliasLower = alias.toLowerCase();
+      if (aliasLower.length < 4) {
+        // Short aliases (PCN, ASA) need a word boundary so "pcn" doesn't
+        // accidentally hit "pentoxifylline".
+        const boundary = new RegExp(
+          `\\b${aliasLower.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+          "i",
+        );
+        return boundary.test(medLower);
+      }
+      if (medLower.includes(aliasLower)) return true;
+      // Catch the case where the medication's first token is a stem of
+      // the alias (e.g. med "amoxicillin" first token "amoxicillin" sits
+      // inside alias-blob "penicillin amoxicillin ampicillin").
+      return firstMedToken.length > 3 && aliasLower.includes(firstMedToken);
+    });
+    if (directMatch) {
       conflicts.push({
         allergen: allergy.allergen,
         severity: allergy.severity,
@@ -119,10 +74,12 @@ export async function checkAllergyConflicts(
       continue; // Don't double-match via cross-reactivity
     }
 
-    // Strategy 2: Cross-reactivity class matching
+    // Strategy 2: Cross-reactivity class matching. Run the allergen
+    // pattern against the alias blob so e.g. an allergy charted as "PCN"
+    // still reaches the penicillin cross-reactivity rule.
     for (const mapping of CROSS_REACTIVITY_MAP) {
       if (
-        mapping.allergenPattern.test(allergy.allergen) &&
+        mapping.allergenPattern.test(allergenBlob) &&
         mapping.medicationPattern.test(medicationName)
       ) {
         conflicts.push({

@@ -10,123 +10,20 @@
  */
 
 import type { FlagSeverity, FlagCategory, RuleFlag } from "@carebridge/shared-types";
-import { expandAllergenAliases } from "@carebridge/medical-logic";
+import {
+  expandAllergenAliases,
+  CROSS_REACTIVITY_MAP,
+} from "@carebridge/medical-logic";
 import type {
   PatientContext,
   PatientAllergy,
   ResolvedAllergyOverride,
 } from "./cross-specialty.js";
 
-/**
- * Known drug class → ingredient mappings for cross-reactivity detection.
- * Maps an allergen class to medication name patterns that share the same
- * active ingredient or belong to the same drug family.
- */
-export const CROSS_REACTIVITY_MAP: Array<{
-  allergenPattern: RegExp;
-  medicationPattern: RegExp;
-  class: string;
-  /**
-   * Optional severity override. When present, the cross-reactivity flag is
-   * emitted at this severity regardless of the charted allergy severity.
-   * Used for ambiguous cross-reactivities (e.g. charted "iodine" → IV
-   * contrast) where a hard critical flag would over-escalate the common
-   * case (topical Betadine irritation).
-   */
-  severityOverride?: FlagSeverity;
-}> = [
-  {
-    allergenPattern: /penicillin|amoxicillin|ampicillin/i,
-    medicationPattern: /penicillin|amoxicillin|ampicillin|augmentin|amoxil|piperacillin|nafcillin|oxacillin|dicloxacillin/i,
-    class: "penicillin",
-  },
-  {
-    allergenPattern: /cephalosporin|cefazolin|ceftriaxone|cephalexin/i,
-    medicationPattern: /cefazolin|ceftriaxone|cephalexin|cefepime|cefuroxime|ceftazidime|cefdinir|cefpodoxime|cefotaxime/i,
-    class: "cephalosporin",
-  },
-  {
-    // Cross-reactivity between penicillins and cephalosporins (~2% risk)
-    allergenPattern: /penicillin|amoxicillin|ampicillin/i,
-    medicationPattern: /cefazolin|ceftriaxone|cephalexin|cefepime|cefuroxime/i,
-    class: "penicillin-cephalosporin-cross",
-  },
-  {
-    allergenPattern: /sulfa|sulfamethoxazole|bactrim|septra|trimethoprim/i,
-    medicationPattern: /sulfamethoxazole|bactrim|septra|sulfasalazine|sulfadiazine|dapsone/i,
-    class: "sulfonamide",
-  },
-  {
-    allergenPattern: /nsaid|ibuprofen|naproxen|aspirin/i,
-    medicationPattern: /ibuprofen|naproxen|diclofenac|celecoxib|indomethacin|ketorolac|meloxicam|piroxicam|aspirin/i,
-    class: "NSAID",
-  },
-  {
-    allergenPattern: /codeine|morphine|opioid/i,
-    medicationPattern: /codeine|morphine|hydrocodone|oxycodone|fentanyl|tramadol|hydromorphone|meperidine/i,
-    class: "opioid",
-  },
-  {
-    allergenPattern: /fluoroquinolone|ciprofloxacin|levofloxacin/i,
-    medicationPattern: /ciprofloxacin|levofloxacin|moxifloxacin|norfloxacin|ofloxacin/i,
-    class: "fluoroquinolone",
-  },
-  {
-    allergenPattern: /ace inhibitor|lisinopril|enalapril/i,
-    medicationPattern: /lisinopril|enalapril|ramipril|captopril|benazepril|fosinopril|quinapril|perindopril/i,
-    class: "ACE inhibitor",
-  },
-  {
-    allergenPattern: /statin|atorvastatin|simvastatin/i,
-    medicationPattern: /atorvastatin|simvastatin|rosuvastatin|pravastatin|lovastatin|fluvastatin|pitavastatin/i,
-    class: "statin",
-  },
-  {
-    allergenPattern: /macrolide|azithromycin|erythromycin|clarithromycin/i,
-    medicationPattern: /azithromycin|erythromycin|clarithromycin|fidaxomicin/i,
-    class: "macrolide",
-  },
-  {
-    allergenPattern: /tetracycline|doxycycline|minocycline/i,
-    medicationPattern: /tetracycline|doxycycline|minocycline|tigecycline/i,
-    class: "tetracycline",
-  },
-  {
-    allergenPattern: /benzodiazepine|diazepam|lorazepam|alprazolam/i,
-    medicationPattern: /diazepam|lorazepam|alprazolam|clonazepam|midazolam|temazepam|triazolam/i,
-    class: "benzodiazepine",
-  },
-  {
-    // True iodinated-contrast allergy (IV radiocontrast) — keeps the
-    // default severity path (critical for severe/moderate charted
-    // allergies). Bare "iodine" is handled by the next entry at warning
-    // severity to avoid over-escalating topical-Betadine charts.
-    allergenPattern: /contrast|iodinated|iohexol|iopamidol|iodixanol|ioversol|optiray|omnipaque|visipaque/i,
-    medicationPattern: /contrast|iodinated|iohexol|iopamidol|iodixanol|ioversol|optiray|omnipaque|visipaque/i,
-    class: "iodinated contrast",
-  },
-  {
-    // Charted "iodine" / Betadine / povidone-iodine — usually a topical
-    // skin-prep reaction or the shellfish-iodine folk belief, not a true
-    // IV contrast allergy. Still surface the combination but at warning
-    // severity so the clinician confirms intent rather than getting a
-    // hard critical flag on routine imaging orders.
-    allergenPattern: /\b(iodine|betadine|povidone[-\s]?iodine)\b/i,
-    medicationPattern: /contrast|iodinated|iohexol|iopamidol|iodixanol|ioversol|optiray|omnipaque|visipaque/i,
-    // Human-readable class label — appears verbatim in the flag's
-    // summary/rationale/suggested_action text shown to clinicians. Keep
-    // free of internal slugs. The canonical-name mapping in the
-    // cross-reactivity-sync test collapses this back to "iodinated-contrast"
-    // for LLM⇔rule symmetry.
-    class: "iodine contrast advisory",
-    severityOverride: "warning",
-  },
-  {
-    allergenPattern: /latex/i,
-    medicationPattern: /latex/i,
-    class: "latex",
-  },
-];
+// Re-export the canonical map so existing consumers (cross-reactivity-sync
+// test) continue to resolve `../rules/allergy-medication.js` for it.
+// New code should import directly from @carebridge/medical-logic.
+export { CROSS_REACTIVITY_MAP };
 
 /**
  * Map allergy severity to flag severity.

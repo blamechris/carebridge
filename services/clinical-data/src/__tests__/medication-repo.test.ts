@@ -330,7 +330,12 @@ describe("allergy safety check", () => {
     expect(db.insert).not.toHaveBeenCalled();
   });
 
-  it("blocks medication that cross-reacts with a patient allergy (penicillin → amoxicillin)", async () => {
+  it("blocks penicillin-class prescription against a penicillin allergy (via allergen alias expansion)", async () => {
+    // Amoxicillin is a penicillin (synonym table maps the penicillin
+    // canonical class to amoxicillin/ampicillin/augmentin/…). After #986
+    // the writer expands aliases and treats this as a direct match — the
+    // older "cross-reactivity via penicillin class" framing was less
+    // accurate because amoxicillin IS a penicillin, not just cross-reactive.
     db.willSelect([
       {
         id: "allergy-2",
@@ -346,7 +351,97 @@ describe("allergy safety check", () => {
 
     await expect(
       createMedication({ ...sampleMedInput, name: "Amoxicillin 500mg" }),
-    ).rejects.toThrow(/ALLERGY_CONFLICT.*Amoxicillin.*Penicillin.*penicillin/);
+    ).rejects.toThrow(/ALLERGY_CONFLICT.*Amoxicillin.*Penicillin/);
+
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it("blocks iodinated contrast prescription against a contrast allergy (#986)", async () => {
+    db.willSelect([
+      {
+        id: "allergy-contrast",
+        patient_id: PATIENT_ID,
+        allergen: "Iodinated Contrast",
+        rxnorm_code: null,
+        severity: "severe",
+        reaction: "anaphylaxis",
+        snomed_code: null,
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    await expect(
+      createMedication({ ...sampleMedInput, name: "Iohexol 350 mg/mL IV contrast" }),
+    ).rejects.toThrow(/ALLERGY_CONFLICT.*Iohexol/);
+
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it("blocks contrast prescription against a bare iodine allergy via the warning-severity advisory entry (#986)", async () => {
+    db.willSelect([
+      {
+        id: "allergy-iodine",
+        patient_id: PATIENT_ID,
+        allergen: "Iodine",
+        rxnorm_code: null,
+        severity: "moderate",
+        reaction: "rash",
+        snomed_code: null,
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    await expect(
+      createMedication({ ...sampleMedInput, name: "Iopamidol 370" }),
+    ).rejects.toThrow(/ALLERGY_CONFLICT.*Iopamidol/);
+
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it("blocks latex device prescription against a latex allergy (#986)", async () => {
+    db.willSelect([
+      {
+        id: "allergy-latex",
+        patient_id: PATIENT_ID,
+        allergen: "Latex",
+        rxnorm_code: null,
+        severity: "severe",
+        reaction: "anaphylaxis",
+        snomed_code: null,
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    await expect(
+      createMedication({ ...sampleMedInput, name: "Latex urinary catheter" }),
+    ).rejects.toThrow(/ALLERGY_CONFLICT.*Latex/);
+
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it("blocks vancomycin prescription against a Red Man Syndrome allergy via synonym expansion (#986)", async () => {
+    // Red Man Syndrome is the vancomycin infusion reaction. Pre-#986 the
+    // writer matched on raw allergen string only, so "Red Man" never
+    // textually overlapped with "vancomycin" and the prescription cleared
+    // the order-time check. With expandAllergenAliases the canonical
+    // "vancomycin" class expands to include "red man" / "red man syndrome"
+    // — the alias-aware direct-match now catches it.
+    db.willSelect([
+      {
+        id: "allergy-vanco",
+        patient_id: PATIENT_ID,
+        allergen: "Red Man Syndrome",
+        rxnorm_code: null,
+        severity: "moderate",
+        reaction: "histamine release",
+        snomed_code: null,
+        created_at: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
+
+    await expect(
+      createMedication({ ...sampleMedInput, name: "Vancomycin 1g IV" }),
+    ).rejects.toThrow(/ALLERGY_CONFLICT.*Vancomycin/);
 
     expect(db.insert).not.toHaveBeenCalled();
   });
