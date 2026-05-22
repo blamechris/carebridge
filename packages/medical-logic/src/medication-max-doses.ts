@@ -104,15 +104,16 @@ export const MEDICATION_MAX_DAILY_DOSES: Record<string, MedicationDoseLimit> = {
     maxDailyDoseMg: 150,
     source: "FDA prescription label (Voltaren IR; adult PO diclofenac IR, Rx 150 mg/day)",
   },
-  // Diclofenac ER (Voltaren XR) — 100 mg once-daily, hard ceiling. The
-  // extended-release formulation is intentionally a stricter daily cap
-  // than IR because the slower release maintains supratherapeutic plasma
-  // levels longer (#1041). Aliased via voltaren xr / diclofenac xr below.
+  // Diclofenac ER (Voltaren XR) — FDA-labelled adult ceiling is 100 mg
+  // once-daily. Because the Rx is a once-daily regimen, the single-dose
+  // and daily ceilings coincide (both 100 mg). The 100 mg/day cap is
+  // stricter than the 150 mg/day IR cap, which is the formulation-aware
+  // distinction this entry exists for (#1041).
   "diclofenac er": {
     displayName: "Diclofenac ER",
     maxSingleDoseMg: 100,
     maxDailyDoseMg: 100,
-    source: "FDA prescription label (Voltaren XR; adult PO diclofenac ER, Rx 100 mg/day single-dose ceiling)",
+    source: "FDA prescription label (Voltaren XR; adult PO diclofenac ER, 100 mg once-daily — single = daily ceiling)",
   },
   meloxicam: {
     displayName: "Meloxicam",
