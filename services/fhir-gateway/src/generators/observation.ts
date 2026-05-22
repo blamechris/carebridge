@@ -56,16 +56,68 @@ export interface FhirObservation {
 
 // ─── UCUM unit mapping ──────────────────────────────────────────
 
-const UCUM_UNITS: Record<VitalType, { unit: string; code: string }> = {
-  blood_pressure: { unit: "mmHg", code: "mm[Hg]" },
-  heart_rate: { unit: "/min", code: "/min" },
-  o2_sat: { unit: "%", code: "%" },
-  temperature: { unit: "[degF]", code: "[degF]" },
-  weight: { unit: "[lb_av]", code: "[lb_av]" },
-  respiratory_rate: { unit: "/min", code: "/min" },
-  pain_level: { unit: "{score}", code: "{score}" },
-  blood_glucose: { unit: "mg/dL", code: "mg/dL" },
+const UCUM_SYSTEM = "http://unitsofmeasure.org";
+
+/**
+ * Map every stored-vital-unit form we have ever seen to its UCUM atom.
+ * Keys are matched case-insensitively (see `vitalUnitToUcum` below).
+ *
+ * Issue #985: the original implementation IGNORED `vital.unit` and emitted
+ * the same hardcoded UCUM atom per VitalType (temperature → [degF],
+ * weight → [lb_av]). A row stored as `{value: 37, unit: "degC"}` exported
+ * as Fahrenheit — a 37 °C reading reads as severe hypothermia downstream.
+ * The fix reads vital.unit and emits the UCUM atom that matches the
+ * stored unit, preserving data fidelity end-to-end.
+ */
+const VITAL_UNIT_TO_UCUM: Record<string, string> = {
+  // Temperature
+  "°c": "Cel",
+  "degc": "Cel",
+  "c": "Cel",
+  "cel": "Cel",
+  "celsius": "Cel",
+  "°f": "[degF]",
+  "degf": "[degF]",
+  "f": "[degF]",
+  "[degf]": "[degF]",
+  "fahrenheit": "[degF]",
+  // Weight
+  "kg": "kg",
+  "kilogram": "kg",
+  "kilograms": "kg",
+  "g": "g",
+  "lb": "[lb_av]",
+  "lbs": "[lb_av]",
+  "pound": "[lb_av]",
+  "pounds": "[lb_av]",
+  "[lb_av]": "[lb_av]",
+  // Blood pressure
+  "mmhg": "mm[Hg]",
+  "mm[hg]": "mm[Hg]",
+  // Rate / count
+  "bpm": "/min",
+  "beats/min": "/min",
+  "beats/minute": "/min",
+  "breaths/min": "/min",
+  "breaths/minute": "/min",
+  "/min": "/min",
+  "1/min": "/min",
+  // Saturation / percent
+  "%": "%",
+  "percent": "%",
+  // Score
+  "/10": "{score}",
+  "score": "{score}",
+  "{score}": "{score}",
+  // Glucose / concentration
+  "mg/dl": "mg/dL",
+  "mmol/l": "mmol/L",
 };
+
+function vitalUnitToUcum(unit: string | null | undefined): string | undefined {
+  if (!unit) return undefined;
+  return VITAL_UNIT_TO_UCUM[unit.trim().toLowerCase()];
+}
 
 const VITAL_DISPLAY: Record<VitalType, string> = {
   blood_pressure: "Blood pressure panel",
@@ -88,14 +140,26 @@ function loincCoding(code: string, display?: string): Coding {
   };
 }
 
-function ucumQuantity(value: number, vitalType: VitalType): Quantity {
-  const ucum = UCUM_UNITS[vitalType];
-  return {
-    value,
-    unit: ucum.unit,
-    system: "http://unitsofmeasure.org",
-    code: ucum.code,
-  };
+/**
+ * Build a FHIR Quantity from a vital's stored value + unit. When the stored
+ * unit maps to a recognised UCUM atom we emit a fully-coded Quantity
+ * (system + code); when it does not, we emit value + unit only — preserving
+ * the original reading without lying under the UCUM URL.
+ *
+ * Critically: this reads `vital.unit` — it does NOT consult a per-VitalType
+ * default. A Celsius-stored temperature must export as Cel, never [degF].
+ */
+function vitalQuantity(value: number, storedUnit: string): Quantity {
+  const ucumCode = vitalUnitToUcum(storedUnit);
+  if (ucumCode) {
+    return {
+      value,
+      unit: ucumCode,
+      system: UCUM_SYSTEM,
+      code: ucumCode,
+    };
+  }
+  return { value, unit: storedUnit };
 }
 
 function vitalSignsCategory(): CodeableConcept {
@@ -152,20 +216,20 @@ export function toFhirVitalObservation(
         code: {
           coding: [loincCoding("8480-6", "Systolic blood pressure")],
         },
-        valueQuantity: ucumQuantity(vital.value_primary, "blood_pressure"),
+        valueQuantity: vitalQuantity(vital.value_primary, vital.unit),
       },
       {
         code: {
           coding: [loincCoding("8462-4", "Diastolic blood pressure")],
         },
-        valueQuantity: ucumQuantity(
+        valueQuantity: vitalQuantity(
           vital.value_secondary ?? 0,
-          "blood_pressure",
+          vital.unit,
         ),
       },
     ];
   } else {
-    observation.valueQuantity = ucumQuantity(vital.value_primary, vitalType);
+    observation.valueQuantity = vitalQuantity(vital.value_primary, vital.unit);
   }
 
   return observation;
