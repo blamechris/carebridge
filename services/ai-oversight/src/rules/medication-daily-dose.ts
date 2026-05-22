@@ -73,21 +73,30 @@ export const NON_OPIOID_CRITICAL_RATIO_DEFAULT = 2.0;
 const STRICT_NUMERIC = /^\d+(?:\.\d+)?$/;
 
 /**
+ * Upper bound on critical-escalation ratio overrides (#1033). 10× is well
+ * above any clinically defensible setting — even hospice / palliative
+ * tuning (typically 2.0–3.0×) is comfortably below. The bound catches
+ * decimal-point typos like `OPIOID_CRITICAL_RATIO=120` (intended 1.20)
+ * that would silently disable critical escalation entirely.
+ */
+const MAX_RATIO_OVERRIDE = 10;
+
+/**
  * Resolve a per-deployment ratio override from an env var. Returns the
- * default when the env var is unset, empty, fails strict numeric parsing,
- * or is ≤ 1.0 (a ratio of 1.0 or below would fire critical on any
- * over-cap dose at all, collapsing the warning band and almost certainly
- * a misconfiguration).
+ * default when any of the following fails:
+ *  - env var unset or empty
+ *  - fails strict-decimal parsing (rejects "2.0x", "2,0", "1e3", "+1.5",
+ *    leading-dot ".5", etc. — anything Number.parseFloat would partial-
+ *    accept) (#1043)
+ *  - parsed value is non-finite or ≤ 1.0 (collapsed warning band)
+ *  - parsed value is > {@link MAX_RATIO_OVERRIDE} (likely decimal-point
+ *    typo — `OPIOID_CRITICAL_RATIO=120` for intended 1.20 would silently
+ *    disable critical escalation) (#1033)
  *
- * Strict numeric parsing rejects partial matches that Number.parseFloat
- * would accept silently: "2.0x" (typo), "2,0" (locale typo), "1e3"
- * (scientific notation — unusual for a human-set ratio), "+1.5" (sign
- * prefix). Any of these surface as `invalid_ratio_override` rather than
- * a silently de-tuned safety guard (#1043).
- *
- * Invalid values fall back to the default with a structured warning so
- * the operator can see the misconfiguration in CI / startup logs without
- * the safety guard silently de-tuning to nothing.
+ * Invalid values fall back to the default with a structured
+ * `invalid_ratio_override` warning so the operator can see the
+ * misconfiguration in CI / startup logs without the safety guard
+ * silently de-tuning to nothing.
  */
 export function resolveRatio(envKey: string, defaultValue: number): number {
   const raw = process.env[envKey];
@@ -108,6 +117,17 @@ export function resolveRatio(envKey: string, defaultValue: number): number {
       envKey,
       raw,
       reason: "non-finite or ≤ 1.0",
+      fallback: defaultValue,
+    });
+    return defaultValue;
+  }
+  if (parsed > MAX_RATIO_OVERRIDE) {
+    // Likely decimal-point typo (e.g. 120 for 1.20). Silently accepting
+    // would effectively disable critical escalation.
+    log.warn("invalid_ratio_override", {
+      envKey,
+      raw,
+      reason: `> ${MAX_RATIO_OVERRIDE} (likely decimal-point typo)`,
       fallback: defaultValue,
     });
     return defaultValue;

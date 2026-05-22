@@ -341,6 +341,28 @@ describe("checkMedicationDailyDose (#235)", () => {
       process.env[envKey] = "  1.5  ";
       expect(resolveRatio(envKey, 1.2)).toBe(1.5);
     });
+
+    it("falls back on > MAX_RATIO_OVERRIDE (likely decimal-point typo) (#1033)", () => {
+      // 120 is intended as 1.20 — silently accepting would effectively
+      // disable critical escalation. Upper bound is 10.
+      process.env[envKey] = "120";
+      expect(resolveRatio(envKey, 1.2)).toBe(1.2);
+    });
+
+    it("falls back on 100 (above the 10 upper bound) (#1033)", () => {
+      process.env[envKey] = "100";
+      expect(resolveRatio(envKey, 1.2)).toBe(1.2);
+    });
+
+    it("accepts boundary value of exactly 10 (#1033)", () => {
+      process.env[envKey] = "10";
+      expect(resolveRatio(envKey, 1.2)).toBe(10);
+    });
+
+    it("falls back on 10.5 (just above bound) (#1033)", () => {
+      process.env[envKey] = "10.5";
+      expect(resolveRatio(envKey, 1.2)).toBe(1.2);
+    });
   });
 
   describe("override rationale surfacing (#968)", () => {
