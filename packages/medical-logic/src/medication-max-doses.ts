@@ -66,81 +66,106 @@ export const MEDICATION_MAX_DAILY_DOSES: Record<string, MedicationDoseLimit> = {
     maxDailyDoseMg: 4000,
     source: "FDA prescription label (adult acetaminophen, 4000 mg/day)",
   },
+  // Ibuprofen Rx ceiling is 800 mg single / 3200 mg/day. OTC monograph
+  // separately caps at 400 mg single / 1200 mg/day for self-medication —
+  // CareBridge is prescribing-side, so we encode the Rx ceiling.
   ibuprofen: {
     displayName: "Ibuprofen",
     maxSingleDoseMg: 800,
     warnSingleDoseMg: 400,
     maxDailyDoseMg: 3200,
-    source: "FDA label (prescription strength)",
+    source: "FDA prescription label (adult PO ibuprofen, Rx 800 mg single / 3200 mg/day)",
   },
+  // Naproxen Rx (Naprosyn) caps at 1000 mg single / 1500 mg/day for acute use,
+  // 1000 mg/day chronic. OTC Aleve (naproxen sodium 220 mg) is a separate
+  // monograph capped at 660 mg/day — not applied here.
   naproxen: {
     displayName: "Naproxen",
     maxSingleDoseMg: 1000,
     warnSingleDoseMg: 500,
     maxDailyDoseMg: 1500,
-    source: "FDA label (Naprosyn)",
+    source: "FDA prescription label (Naprosyn; adult PO naproxen, Rx 1500 mg/day acute)",
   },
+  // Aspirin analgesic dosing — 4 g/day is the OTC monograph adult ceiling.
+  // Low-dose Rx aspirin (81–325 mg/day) for antiplatelet / cardioprotection
+  // is a categorically different indication and is NOT bounded by this entry;
+  // the daily cap is a guardrail against analgesic over-dosing.
   aspirin: {
     displayName: "Aspirin",
     maxSingleDoseMg: 1000,
     warnSingleDoseMg: 650,
     maxDailyDoseMg: 4000,
-    source: "FDA OTC monograph (analgesic dosing)",
+    source: "FDA OTC monograph (adult analgesic aspirin, 4000 mg/day; antiplatelet Rx 81–325 mg is out of scope)",
   },
+  // Diclofenac IR (Voltaren) — 50 mg single / 150 mg/day. ER formulation
+  // (Voltaren XR) is a single 100 mg/day cap and is NOT encoded here; an
+  // ER prescription should resolve to a separate `diclofenac er` entry
+  // when formulation-aware lookup lands (issue #927).
   diclofenac: {
     displayName: "Diclofenac",
     maxSingleDoseMg: 50,
     maxDailyDoseMg: 150,
-    source: "FDA label (Voltaren IR)",
+    source: "FDA prescription label (Voltaren IR; adult PO diclofenac IR, Rx 150 mg/day)",
   },
   meloxicam: {
     displayName: "Meloxicam",
     maxSingleDoseMg: 15,
     maxDailyDoseMg: 15,
-    source: "FDA label (Mobic)",
+    source: "FDA prescription label (Mobic; adult PO meloxicam, Rx 15 mg/day single dose)",
   },
+  // Celecoxib — 400 mg/day for adult RA dosing. Acute pain dosing has a
+  // loading-dose pattern (400 mg day 1, then 200 mg) not modeled here.
   celecoxib: {
     displayName: "Celecoxib",
     maxSingleDoseMg: 200,
     maxDailyDoseMg: 400,
-    source: "FDA label (Celebrex)",
+    source: "FDA prescription label (Celebrex; adult PO celecoxib, Rx 200 mg single / 400 mg/day RA dosing)",
   },
 
-  // ── Oral opioids (PO). Daily caps are calibrated to CDC 2022 90 MME/day.
+  // ── Oral opioids (PO). Daily caps are calibrated to CDC 2022 90 MME/day
+  // — the threshold above which clinicians should "carefully reassess
+  // evidence of benefits and risks" per the guideline. These are NOT
+  // hard FDA-label ceilings; they are the prescribing-safety threshold
+  // CareBridge enforces on adult, chronic-pain prescriptions. IV/IM/
+  // transdermal routes have different conversion factors and are out of
+  // scope (issue #927).
   morphine: {
     displayName: "Morphine (PO)",
     maxSingleDoseMg: 30,
     maxDailyDoseMg: 90,
     mmeFactor: 1.0,
-    source: "CDC 2022 opioid prescribing guideline",
+    source: "CDC 2022 opioid prescribing guideline (adult chronic-pain MME ceiling, PO)",
   },
   oxycodone: {
     displayName: "Oxycodone (PO)",
     maxSingleDoseMg: 20,
     maxDailyDoseMg: 60,
     mmeFactor: 1.5,
-    source: "CDC 2022 opioid prescribing guideline",
+    source: "CDC 2022 opioid prescribing guideline (adult chronic-pain MME ceiling, PO; 60 mg × 1.5 MME = 90 MME)",
   },
   hydrocodone: {
     displayName: "Hydrocodone (PO)",
     maxSingleDoseMg: 10,
     maxDailyDoseMg: 90,
     mmeFactor: 1.0,
-    source: "CDC 2022 opioid prescribing guideline",
+    source: "CDC 2022 opioid prescribing guideline (adult chronic-pain MME ceiling, PO)",
   },
   codeine: {
     displayName: "Codeine (PO)",
     maxSingleDoseMg: 60,
     maxDailyDoseMg: 360,
     mmeFactor: 0.15,
-    source: "CDC 2022 opioid prescribing guideline",
+    source: "CDC 2022 opioid prescribing guideline (adult chronic-pain MME ceiling, PO; 360 mg × 0.15 MME = 54 MME)",
   },
+  // Tramadol — FDA Ultram label hard-caps at 400 mg/day; the lower CDC MME
+  // threshold of 90 MME would be ~450 mg, so the FDA label is the binding
+  // constraint here. Source string credits both.
   tramadol: {
     displayName: "Tramadol (PO)",
     maxSingleDoseMg: 100,
     maxDailyDoseMg: 400,
     mmeFactor: 0.2,
-    source: "FDA label (Ultram) and CDC 2022",
+    source: "FDA prescription label (Ultram; adult PO tramadol, Rx 400 mg/day) + CDC 2022 MME context",
   },
 };
 
