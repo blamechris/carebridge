@@ -11,7 +11,7 @@
 import crypto from "node:crypto";
 import { vitalRepo, labRepo } from "@carebridge/clinical-data";
 import { validateLabResult } from "@carebridge/medical-logic";
-import type { CreateVitalInput, CreateLabPanelInput } from "@carebridge/validators";
+import type { CreateVitalInput, CreateLabPanelInput } from "@carebridge/shared-types";
 
 type VitalType = CreateVitalInput["type"];
 

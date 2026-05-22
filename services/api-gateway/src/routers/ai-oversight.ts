@@ -15,7 +15,7 @@
  */
 import { z } from "zod";
 import { TRPCError, initTRPC } from "@trpc/server";
-import { flagStatusSchema } from "@carebridge/validators";
+import { flagStatusSchema } from "@carebridge/shared-types";
 import {
   flagService,
   getReviewJobsByPatient,

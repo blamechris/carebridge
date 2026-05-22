@@ -18,7 +18,7 @@ import {
   updateMedicationSchema,
   medStatusSchema,
   createProcedureSchema,
-} from "@carebridge/validators";
+} from "@carebridge/shared-types";
 import {
   vitalRepo,
   labRepo,

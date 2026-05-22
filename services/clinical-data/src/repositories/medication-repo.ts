@@ -1,6 +1,6 @@
 import { eq, and, desc } from "drizzle-orm";
 import { getDb, medications, medLogs, allergies } from "@carebridge/db-schema";
-import type { CreateMedicationInput, UpdateMedicationInput } from "@carebridge/validators";
+import type { CreateMedicationInput, UpdateMedicationInput } from "@carebridge/shared-types";
 import type { Medication, MedLog, MedStatus } from "@carebridge/shared-types";
 import {
   CROSS_REACTIVITY_MAP,

@@ -21,7 +21,6 @@
     "@carebridge/outbox": "workspace:*",
     "@carebridge/redis-config": "workspace:*",
     "@carebridge/shared-types": "workspace:*",
-    "@carebridge/validators": "workspace:*",
     "@carebridge/db-schema": "workspace:*",
     "@carebridge/medical-logic": "workspace:*",
     "drizzle-orm": "^0.38.0",

@@ -4,7 +4,7 @@ import {
   vitalTypeSchema,
   icd10CodeSchema,
   createLabPanelSchema,
-} from "@carebridge/validators";
+} from "@carebridge/shared-types";
 
 const VALID_UUID = "11111111-1111-1111-1111-111111111111";
 

@@ -6,7 +6,7 @@ import {
   acknowledgeFlagSchema,
   resolveFlagSchema,
   dismissFlagSchema,
-} from "../ai-flags.js";
+} from "../ai-flags.schemas.js";
 
 // ─── Severity Enum ─────────────────────────────────────────────
 

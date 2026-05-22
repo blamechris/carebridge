@@ -10,7 +10,7 @@ const nextConfig: NextConfig = {
     "@carebridge/clinical-notes",
     "@carebridge/ai-oversight",
     "@carebridge/db-schema",
-    "@carebridge/validators",
+    "@carebridge/shared-types",
   ],
   // Issue #284: PHI pages embed patient identifiers in the URL path.
   // Without a strict Referrer-Policy, those identifiers leak to any

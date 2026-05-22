@@ -8,7 +8,7 @@ import {
   updateMedicationSchema,
   medStatusSchema,
   createProcedureSchema,
-} from "@carebridge/validators";
+} from "@carebridge/shared-types";
 import * as vitalRepo from "./repositories/vital-repo.js";
 import * as labRepo from "./repositories/lab-repo.js";
 import * as medicationRepo from "./repositories/medication-repo.js";

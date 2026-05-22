@@ -13,7 +13,6 @@
   },
   "dependencies": {
     "@carebridge/shared-types": "workspace:*",
-    "@carebridge/validators": "workspace:*",
     "@carebridge/db-schema": "workspace:*",
     "@carebridge/auth": "workspace:*",
     "@carebridge/patient-records": "workspace:*",

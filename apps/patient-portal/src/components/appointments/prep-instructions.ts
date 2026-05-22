@@ -2,7 +2,7 @@
  * Static prep instructions by appointment type (#895).
  *
  * The canonical set of appointment types is declared once in
- * `@carebridge/validators` (see `appointmentTypeSchema`) so runtime + compile
+ * `@carebridge/shared-types` (see `appointmentTypeSchema`) so runtime + compile
  * checks share a single source of truth. The DB column is still plain `text`
  * — see the schema comment in `packages/db-schema/src/schema/scheduling.ts`
  * and the follow-up tracked to promote it to a `pgEnum`. Until then, this
@@ -14,7 +14,7 @@
  * can maintain per-type prep text without a frontend deploy.
  */
 
-import { appointmentTypeSchema, type AppointmentType } from "@carebridge/validators";
+import { appointmentTypeSchema, type AppointmentType } from "@carebridge/shared-types";
 
 export type { AppointmentType };
 export { appointmentTypeSchema };

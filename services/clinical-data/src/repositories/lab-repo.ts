@@ -1,6 +1,6 @@
 import { eq, and, desc } from "drizzle-orm";
 import { getDb, labPanels, labResults } from "@carebridge/db-schema";
-import type { CreateLabPanelInput } from "@carebridge/validators";
+import type { CreateLabPanelInput } from "@carebridge/shared-types";
 import type { LabPanel, LabResult } from "@carebridge/shared-types";
 import { validateLabResult } from "@carebridge/medical-logic";
 import { emitClinicalEvent } from "../events.js";

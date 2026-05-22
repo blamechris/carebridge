@@ -7,7 +7,7 @@ import {
   mfaDisableSchema,
   mfaCompleteLoginSchema,
   changePasswordSchema,
-} from "../auth.js";
+} from "../auth.schemas.js";
 
 // ─── User Roles ────────────────────────────────────────────────
 

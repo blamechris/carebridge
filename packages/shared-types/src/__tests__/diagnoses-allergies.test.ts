@@ -8,7 +8,7 @@ import {
   allergySeveritySchema,
   allergyVerificationStatusSchema,
   patientAllergyStatusSchema,
-} from "../clinical-data.js";
+} from "../clinical-data.schemas.js";
 
 // ─── Diagnosis Validators ──────────────────────────────────────
 
@@ -312,7 +312,7 @@ describe("patientAllergyStatusSchema", () => {
 import {
   allergyOverrideReasonSchema,
   overrideAllergyFlagSchema,
-} from "../clinical-data.js";
+} from "../clinical-data.schemas.js";
 
 const VALID_FLAG_ID = "11111111-1111-4111-8111-111111111111";
 const VALID_ALLERGY_ID = "22222222-2222-4222-8222-222222222222";

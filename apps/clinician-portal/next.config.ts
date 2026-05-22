@@ -3,7 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   transpilePackages: [
     "@carebridge/shared-types",
-    "@carebridge/validators",
+    "@carebridge/shared-types",
     "@carebridge/api-gateway",
     "@carebridge/auth",
     "@carebridge/patient-records",

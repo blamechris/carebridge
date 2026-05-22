@@ -1,6 +1,6 @@
 import { eq, desc } from "drizzle-orm";
 import { getDb, procedures } from "@carebridge/db-schema";
-import type { CreateProcedureInput } from "@carebridge/validators";
+import type { CreateProcedureInput } from "@carebridge/shared-types";
 import type { Procedure, ProcedureStatus } from "@carebridge/shared-types";
 import { emitClinicalEvent } from "../events.js";
 

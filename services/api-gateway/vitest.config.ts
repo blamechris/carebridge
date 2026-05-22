@@ -15,10 +15,6 @@ export default defineConfig({
         __dirname,
         "../../packages/shared-types/src/index.ts",
       ),
-      "@carebridge/validators": path.resolve(
-        __dirname,
-        "../../packages/validators/src/index.ts",
-      ),
       "@carebridge/auth": path.resolve(
         __dirname,
         "../../services/auth/src/index.ts",

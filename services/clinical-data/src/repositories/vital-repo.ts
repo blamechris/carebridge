@@ -1,6 +1,6 @@
 import { eq, and, desc } from "drizzle-orm";
 import { getDb, vitals } from "@carebridge/db-schema";
-import type { CreateVitalInput } from "@carebridge/validators";
+import type { CreateVitalInput } from "@carebridge/shared-types";
 import type { Vital, VitalType } from "@carebridge/shared-types";
 import { emitClinicalEvent } from "../events.js";
 

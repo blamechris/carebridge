@@ -4,7 +4,7 @@ import {
   cancelReasonSchema,
   cancelAppointmentSchema,
   rescheduleAppointmentSchema,
-} from "../scheduling.js";
+} from "../scheduling.schemas.js";
 
 describe("appointmentTypeSchema", () => {
   it.each(["follow_up", "new_patient", "procedure", "telehealth"])(
