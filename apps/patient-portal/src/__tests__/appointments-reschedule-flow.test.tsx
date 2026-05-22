@@ -7,7 +7,7 @@
  * atomic reschedule — called out as a follow-up in the PR body.
  */
 import React from "react";
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
 import { render, cleanup, screen, fireEvent, waitFor } from "@testing-library/react";
 
 import {
@@ -51,6 +51,18 @@ async function walkBookWizard() {
 }
 
 describe("AppointmentsPageInner", () => {
+  // Freeze the test clock to a moment BEFORE the fixture appointment so
+  // isUpcoming(row.end_time >= Date.now()) holds. Without this the suite
+  // silently rots once real wall-clock passes the fixture date — the row
+  // moves to the "past" tab where action buttons are intentionally hidden,
+  // and `getByRole("button", { name: /reschedule/i })` cannot find them.
+  beforeAll(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date("2026-04-20T00:00:00.000Z"));
+  });
+  afterAll(() => {
+    vi.useRealTimers();
+  });
   afterEach(() => cleanup());
 
   it("cancel flow: invokes onCancel with appointmentId and reason", async () => {
