@@ -80,16 +80,22 @@ const FAMILY_PARTICLES = new Set([
  *    the family group are absorbed into family so `Sarah de Klerk` →
  *    family=`de Klerk` and `Jan van der Berg` → family=`van der Berg`.
  *
- * Known tradeoff (#974)
- * ---------------------
+ * Known tradeoff (#974, #1027)
+ * ----------------------------
  * Anglo full-middle-name inputs like `Sarah Marie Jones` parse as
  * family=`Marie Jones`, given=`[Sarah]` — because we have no signal at
  * this layer to tell a middle-name from a Hispanic first-half-of-family.
  * The bare-initial guard above keeps `Sarah M. Jones` working, but
- * spelled-out middle names regress. Long-term fix is the structured
- * `name_family` / `name_given[]` columns on the users table tracked in
- * #972; until then, the test suite pins both shapes so a future edit
- * cannot silently flip the behaviour the other way.
+ * spelled-out middle names regress.
+ *
+ * The same applies to longer Anglo chains — whenever the penultimate
+ * token is not a bare initial, it is absorbed into family regardless of
+ * token count. So `John Robert Quincy Adams` parses as family=`Quincy
+ * Adams`, given=`[John, Robert]`. This is not a 3-token-only quirk.
+ *
+ * Long-term fix is the structured `name_family` / `name_given[]` columns
+ * on the users table tracked in #972; until then, the test suite pins
+ * representative cases so a future edit cannot silently flip behaviour.
  *
  * Hyphenated surnames (`Smith-Jones`) stay as one token and need no
  * special handling.
