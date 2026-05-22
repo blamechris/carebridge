@@ -145,4 +145,78 @@ describe("toFhirPractitioner (#388)", () => {
     expect(p.name?.[0]?.family).toBe("Quincy Adams");
     expect(p.name?.[0]?.given).toEqual(["John", "Robert"]);
   });
+
+  describe("structured name columns take precedence over parseName heuristic (#972)", () => {
+    it("name_family + name_given populate HumanName exactly, bypassing parseName", () => {
+      // Free-text "Sarah Marie Jones" would heuristic to family="Marie Jones".
+      // When the structured columns are populated, they win — Marie is the
+      // middle given name as the writer recorded.
+      const p = toFhirPractitioner(
+        makeUser({
+          name: "Sarah Marie Jones",
+          name_family: "Jones",
+          name_given: ["Sarah", "Marie"],
+        }),
+      );
+      expect(p.name?.[0]?.family).toBe("Jones");
+      expect(p.name?.[0]?.given).toEqual(["Sarah", "Marie"]);
+    });
+
+    it("falls back to parseName when name_family is null (unbackfilled row)", () => {
+      const p = toFhirPractitioner(
+        makeUser({
+          name: "Sarah Jones",
+          name_family: null,
+          name_given: null,
+        }),
+      );
+      // Heuristic two-token result.
+      expect(p.name?.[0]?.family).toBe("Jones");
+      expect(p.name?.[0]?.given).toEqual(["Sarah"]);
+    });
+
+    it("structured columns carry through name_prefix and name_suffix", () => {
+      const p = toFhirPractitioner(
+        makeUser({
+          name: "Dr. Sarah Jones, MD",
+          name_family: "Jones",
+          name_given: ["Sarah"],
+          name_prefix: "Dr.",
+          name_suffix: "MD",
+        }),
+      );
+      expect(p.name?.[0]?.family).toBe("Jones");
+      expect(p.name?.[0]?.given).toEqual(["Sarah"]);
+      expect(p.name?.[0]?.prefix).toEqual(["Dr."]);
+      expect(p.name?.[0]?.suffix).toEqual(["MD"]);
+    });
+
+    it("structured columns preserve particles and two-part surnames verbatim", () => {
+      // "Sarah de Klerk" → parseName produces family="de Klerk" via the
+      // particle heuristic. The structured path doesn't run the heuristic —
+      // the writer records family="de Klerk" directly.
+      const p = toFhirPractitioner(
+        makeUser({
+          name: "Sarah de Klerk",
+          name_family: "de Klerk",
+          name_given: ["Sarah"],
+        }),
+      );
+      expect(p.name?.[0]?.family).toBe("de Klerk");
+      expect(p.name?.[0]?.given).toEqual(["Sarah"]);
+    });
+
+    it("empty name_given array does not produce an empty `given` field", () => {
+      // Mononymic case via structured columns ("Plato" with name_given=[]).
+      const p = toFhirPractitioner(
+        makeUser({
+          name: "Plato",
+          name_family: "Plato",
+          name_given: [],
+        }),
+      );
+      expect(p.name?.[0]?.family).toBe("Plato");
+      expect(p.name?.[0]?.given).toBeUndefined();
+    });
+  });
 });
