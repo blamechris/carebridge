@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   parseFrequencyText,
   estimateDailyDose,
+  serializeFrequency,
+  deserializeFrequency,
   FREQUENCY_DOSES_PER_DAY,
   type MedFrequency,
 } from "../medication-frequency.js";
@@ -209,5 +211,73 @@ describe("estimateDailyDose with non-canonical qNh (#933)", () => {
     expect(
       estimateDailyDose(10, { kind: "qNh", n: Number.POSITIVE_INFINITY }),
     ).toBeNull();
+  });
+});
+
+describe("serializeFrequency / deserializeFrequency round-trip (#931)", () => {
+  it("canonical literals serialize to themselves", () => {
+    for (const f of [
+      "once",
+      "daily",
+      "bid",
+      "tid",
+      "qid",
+      "q2h",
+      "q3h",
+      "q4h",
+      "q6h",
+      "q8h",
+      "q12h",
+      "weekly",
+      "monthly",
+      "prn",
+    ] as const) {
+      expect(serializeFrequency(f)).toBe(f);
+      expect(deserializeFrequency(f)).toBe(f);
+    }
+  });
+
+  it("QNHoursFrequency serializes to 'qNh:<n>' and round-trips", () => {
+    expect(serializeFrequency({ kind: "qNh", n: 5 })).toBe("qNh:5");
+    expect(deserializeFrequency("qNh:5")).toEqual({ kind: "qNh", n: 5 });
+    expect(deserializeFrequency("qNh:10")).toEqual({ kind: "qNh", n: 10 });
+  });
+
+  it("null/undefined input passes through", () => {
+    expect(serializeFrequency(null)).toBeNull();
+    expect(deserializeFrequency(null)).toBeNull();
+    expect(deserializeFrequency(undefined)).toBeNull();
+    expect(deserializeFrequency("")).toBeNull();
+  });
+
+  it("unknown stored values return null so callers fall back to runtime parse", () => {
+    // A future schema migration or hand-edited row that introduces an
+    // unrecognized literal must not crash — callers fall through to
+    // parseFrequencyText(free-text) as the safety net.
+    expect(deserializeFrequency("hourly")).toBeNull();
+    expect(deserializeFrequency("q99h")).toBeNull(); // not canonical, not qNh:N format
+    expect(deserializeFrequency("qNh:99")).toBeNull(); // n out of range
+    expect(deserializeFrequency("qNh:0")).toBeNull();
+    expect(deserializeFrequency("qNh:abc")).toBeNull();
+  });
+
+  it("parseFrequencyText → serialize → deserialize round-trips", () => {
+    for (const input of [
+      "q4h",
+      "every 4 hours",
+      "BID",
+      "twice daily",
+      "PRN",
+      "as needed",
+      "stat",
+      "once a day",
+      "q5h", // non-canonical → QNHoursFrequency
+      "q10h",
+    ]) {
+      const parsed = parseFrequencyText(input);
+      const serialized = serializeFrequency(parsed);
+      const deserialized = deserializeFrequency(serialized);
+      expect(deserialized).toEqual(parsed);
+    }
   });
 });

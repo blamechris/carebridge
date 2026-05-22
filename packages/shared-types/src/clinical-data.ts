@@ -33,6 +33,14 @@ export interface Medication extends MutableRecord {
   dose_unit?: string;
   route?: MedRoute;
   frequency?: string;
+  /**
+   * Structured frequency derived from {@link frequency} at write time
+   * (#931). Carries either a canonical MedFrequency literal ('daily',
+   * 'bid', 'q4h', ...) or 'qNh:<n>' for non-canonical every-N-hours
+   * intervals. Undefined when the writer couldn't classify the free-
+   * text — rules then fall back to runtime parsing of `frequency`.
+   */
+  frequency_structured?: string;
   status: MedStatus;
   started_at?: string;
   ended_at?: string;

@@ -8,7 +8,11 @@
  */
 
 import type { FlagSeverity, FlagCategory, ClinicalEvent, RuleFlag } from "@carebridge/shared-types";
-import { parseFrequencyText, estimateDailyDose } from "@carebridge/medical-logic";
+import {
+  parseFrequencyText,
+  deserializeFrequency,
+  estimateDailyDose,
+} from "@carebridge/medical-logic";
 import { QTC_PATTERN } from "./drug-interactions.js";
 import { METFORMIN_PATTERN, NSAID_PATTERN } from "./shared-drug-patterns.js";
 import { getRecentPotassium, getRecentEGFR } from "./lab-units.js";
@@ -86,6 +90,13 @@ export interface PatientMedication {
   frequency: string | null;
   /** Optional PRN / hard-cap dose count per 24 h (not yet stored in DB). */
   max_doses_per_day?: number | null;
+  /**
+   * Persisted structured frequency from `medications.frequency_structured`
+   * (#931). When present, rules use this directly instead of re-parsing
+   * the free-text `frequency` column. Null when the writer couldn't
+   * classify the input — rule falls back to runtime parsing.
+   */
+  frequency_structured?: string | null;
   rxnorm_code: string | null;
   /**
    * ISO 8601 prescription start date. Populated from `medications.started_at`
@@ -1234,7 +1245,11 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
           // per-dose amount as the daily estimate) so chronic-suppressed
           // PRN tapers still flag, but tight interpretation would miss
           // "prednisone 10 mg BID" today.
-          const freq = parseFrequencyText(systemicSteroidDetail.frequency);
+          // Prefer the structured column populated at write time (#931);
+          // fall back to runtime parsing for unmigrated rows.
+          const freq =
+            deserializeFrequency(systemicSteroidDetail.frequency_structured) ??
+            parseFrequencyText(systemicSteroidDetail.frequency);
           const dailyEquiv =
             estimateDailyDose(
               perDoseEquiv,

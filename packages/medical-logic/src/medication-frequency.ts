@@ -193,6 +193,67 @@ export function parseFrequencyText(
 }
 
 /**
+ * Stable wire format for persisting {@link ParsedFrequency} to the
+ * `medications.frequency_structured` column (#931).
+ *
+ * - {@link MedFrequency} string literals serialize as themselves
+ *   ('daily', 'bid', 'q4h', ...).
+ * - {@link QNHoursFrequency} serializes as `'qNh:<n>'` (e.g. 'qNh:5'
+ *   for q5h). Distinct from canonical `qNh` strings ('q4h') so the
+ *   round-trip parser can distinguish them.
+ *
+ * Returns null for null input so callers can pipe the parser result
+ * straight through.
+ */
+export function serializeFrequency(
+  freq: ParsedFrequency | null,
+): string | null {
+  if (freq == null) return null;
+  if (typeof freq === "string") return freq;
+  return `qNh:${freq.n}`;
+}
+
+/**
+ * Inverse of {@link serializeFrequency}. Reads the wire format back
+ * into a {@link ParsedFrequency}. Unknown strings return null so the
+ * caller can fall back to runtime parsing of the free-text frequency
+ * column. (#931)
+ */
+export function deserializeFrequency(
+  stored: string | null | undefined,
+): ParsedFrequency | null {
+  if (!stored) return null;
+  const qNh = stored.match(/^qNh:(\d+)$/);
+  if (qNh) {
+    const n = Number(qNh[1]);
+    if (Number.isInteger(n) && n >= 1 && n <= 24) {
+      return { kind: "qNh", n };
+    }
+    return null;
+  }
+  const canonical: MedFrequency[] = [
+    "once",
+    "daily",
+    "bid",
+    "tid",
+    "qid",
+    "q2h",
+    "q3h",
+    "q4h",
+    "q6h",
+    "q8h",
+    "q12h",
+    "weekly",
+    "monthly",
+    "prn",
+  ];
+  if ((canonical as string[]).includes(stored)) {
+    return stored as MedFrequency;
+  }
+  return null;
+}
+
+/**
  * Estimate the implied daily-cumulative dose (mg-equivalent units the
  * caller passes in). Returns null when the frequency can't be parsed or
  * when PRN is the frequency and no max_doses_per_day is supplied — the

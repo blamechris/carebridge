@@ -916,6 +916,9 @@ export async function buildPatientContextForRules(
       // CROSS-STEROID-PCP-001 duration gate is bypassed and the flag
       // fires at prescription time. Null when the writer never recorded.
       chronic: m.chronic ?? null,
+      // Structured frequency from medications.frequency_structured (#931).
+      // When present, rules skip the runtime re-parse of `frequency`.
+      frequency_structured: m.frequency_structured ?? null,
     })),
     new_symptoms: newSymptoms,
     care_team_specialties: [], // Not needed for current rules, but available for future

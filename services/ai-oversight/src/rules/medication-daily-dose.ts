@@ -30,6 +30,7 @@ import type {
 } from "@carebridge/shared-types";
 import {
   parseFrequencyText,
+  deserializeFrequency,
   estimateDailyDose,
   getMedicationDoseLimit,
 } from "@carebridge/medical-logic";
@@ -234,7 +235,12 @@ export function checkMedicationDailyDose(context: PatientContext): RuleFlag[] {
   const limit = getMedicationDoseLimit(med.name);
   if (!limit) return flags;
 
-  const freq = parseFrequencyText(med.frequency);
+  // Prefer the structured column populated at write time (#931). Falls
+  // back to runtime parsing of the free-text frequency when the writer
+  // couldn't classify it, or when the row predates the structured column.
+  const freq =
+    deserializeFrequency(med.frequency_structured) ??
+    parseFrequencyText(med.frequency);
   const daily = estimateDailyDose(
     med.dose_amount,
     freq,

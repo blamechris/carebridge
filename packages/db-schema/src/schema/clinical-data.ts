@@ -12,6 +12,14 @@ export const medications = pgTable("medications", {
   route: text("route"),
   frequency: text("frequency"),
   /**
+   * Structured frequency derived from {@link frequency} at write time
+   * (#931). Carries either a canonical MedFrequency literal ('daily',
+   * 'bid', 'q4h', ...) or 'qNh:<n>' for non-canonical every-N-hours
+   * intervals. NULL when the writer couldn't classify the free-text
+   * input — rules then fall back to runtime parsing of `frequency`.
+   */
+  frequency_structured: text("frequency_structured"),
+  /**
    * Optional PRN / hard-cap dose count per 24 h. Populated when a
    * prescription carries an explicit cap (e.g. "morphine 10 mg q4h PRN,
    * max 4 doses/day"). Consumed by ai-oversight to bound PRN daily
