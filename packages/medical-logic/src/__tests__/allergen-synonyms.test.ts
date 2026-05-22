@@ -126,6 +126,46 @@ describe("ALLERGEN_SYNONYMS data sanity", () => {
     }
   });
 
+  describe("iodine vs iodinated-contrast canonicals (#934)", () => {
+    // PR #961 split `iodine` out from `iodinated contrast` so an "allergic
+    // to iodine" chart note doesn't trigger a critical contrast-CT flag.
+    // These assertions guard against accidental re-merging at the synonym
+    // layer.
+
+    it("Betadine resolves to iodine, not iodinated contrast", () => {
+      expect(normalizeAllergen("Betadine")).toBe("iodine");
+      expect(normalizeAllergen("povidone-iodine")).toBe("iodine");
+      expect(normalizeAllergen("povidone iodine")).toBe("iodine");
+    });
+
+    it("'iodine' free-text resolves to iodine, never to iodinated contrast", () => {
+      expect(normalizeAllergen("Iodine")).toBe("iodine");
+      expect(normalizeAllergen("Iodine")).not.toBe("iodinated contrast");
+      expect(normalizeAllergen("elemental iodine")).toBe("iodine");
+    });
+
+    it("expandAllergenAliases('Betadine') contains iodine aliases but not contrast aliases", () => {
+      const aliases = expandAllergenAliases("Betadine");
+      expect(aliases).toContain("iodine");
+      expect(aliases).toContain("povidone-iodine");
+      // Contrast-specific allergens must NOT bleed in.
+      expect(aliases).not.toContain("iohexol");
+      expect(aliases).not.toContain("omnipaque");
+      expect(aliases).not.toContain("iodinated contrast");
+    });
+
+    it("iodinated-contrast aliases stay in their own canonical", () => {
+      expect(normalizeAllergen("iohexol")).toBe("iodinated contrast");
+      expect(normalizeAllergen("Omnipaque")).toBe("iodinated contrast");
+      const contrastAliases = expandAllergenAliases("iohexol");
+      // Reciprocally: contrast aliases must NOT pull in elemental iodine /
+      // topical Betadine forms.
+      expect(contrastAliases).not.toContain("betadine");
+      expect(contrastAliases).not.toContain("povidone-iodine");
+      expect(contrastAliases).not.toContain("elemental iodine");
+    });
+  });
+
   it("aspirin/ASA folds into nsaid so cross-reactivity with ibuprofen still fires", () => {
     // Clinical reality (AERD): aspirin allergy implies risk for all NSAIDs.
     // We deliberately do NOT keep a separate `aspirin` canonical.
