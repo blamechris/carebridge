@@ -446,6 +446,9 @@ importers:
       '@carebridge/fhir-gateway':
         specifier: workspace:*
         version: link:../fhir-gateway
+      '@carebridge/logger':
+        specifier: workspace:*
+        version: link:../../packages/logger
       '@carebridge/messaging':
         specifier: workspace:*
         version: link:../messaging
