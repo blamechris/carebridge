@@ -39,8 +39,12 @@ describe("FHIR Observation vital unit propagation (#985)", () => {
       );
       expect(obs.valueQuantity?.value).toBe(37);
       expect(obs.valueQuantity?.code).toBe("Cel");
-      // unit display string preserves the stored form for human readability
-      // but the machine code must be UCUM-correct
+      // For recognised units the generator emits the UCUM atom in BOTH
+      // Quantity.unit and Quantity.code (single source of truth — Cel,
+      // not the input "°C"). For unrecognised units it falls back to
+      // value + unit only (the "preserves stored form" path); that
+      // contract is covered by the unknown-unit test below.
+      expect(obs.valueQuantity?.unit).toBe("Cel");
       expect(obs.valueQuantity?.code).not.toBe("[degF]");
     });
 
