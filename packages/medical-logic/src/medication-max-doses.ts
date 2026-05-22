@@ -79,12 +79,22 @@ export const MEDICATION_MAX_DAILY_DOSES: Record<string, MedicationDoseLimit> = {
   // Naproxen Rx (Naprosyn) caps at 1000 mg single / 1500 mg/day for acute use,
   // 1000 mg/day chronic. OTC Aleve (naproxen sodium 220 mg) is a separate
   // monograph capped at 660 mg/day — not applied here.
+  //
+  // Decision (#1028): the encoded ceiling is the looser ACUTE 1500 mg/day. A
+  // chronic prescription (RA, OA, ankylosing spondylitis) that exceeds the
+  // 1000 mg/day chronic ceiling but stays under 1500 mg/day will NOT flag
+  // here. This is a deliberate trade-off until use-context-aware lookup
+  // lands (see #927 — route/use-aware getMedicationDoseLimit), because
+  // lowering the encoded ceiling to 1000 mg/day would over-flag legitimate
+  // acute prescriptions (gout flare, post-op pain) with no signal to
+  // distinguish them at the rule layer today.
   naproxen: {
     displayName: "Naproxen",
     maxSingleDoseMg: 1000,
     warnSingleDoseMg: 500,
     maxDailyDoseMg: 1500,
-    source: "FDA prescription label (Naprosyn; adult PO naproxen, Rx 1500 mg/day acute)",
+    source:
+      "FDA prescription label (Naprosyn; adult PO naproxen, Rx 1500 mg/day acute — chronic-use 1000 mg/day ceiling NOT enforced here, pending use-context lookup #927)",
   },
   // Aspirin analgesic dosing — 4 g/day is the OTC monograph adult ceiling.
   // Low-dose Rx aspirin (81–325 mg/day) for antiplatelet / cardioprotection
