@@ -43,6 +43,13 @@ export interface Medication extends MutableRecord {
   ordering_provider_id?: string;
   encounter_id?: string;
   source_system?: string;
+  /**
+   * Prescriber-marked-chronic. When true, the CROSS-STEROID-PCP-001
+   * duration gate is bypassed and the flag fires at prescription time
+   * instead of waiting 28 days. For day-1-chronic courses (transplant,
+   * autoimmune, GVHD). See issue #1023.
+   */
+  chronic?: boolean;
 }
 
 export interface MedLog extends BaseRecord {

@@ -93,6 +93,13 @@ export interface PatientMedication {
    * rules should fail-open (don't rely on duration) in that case.
    */
   started_at?: string | null;
+  /**
+   * Prescriber-marked-chronic (#1023). When true, CROSS-STEROID-PCP-001
+   * fires at prescription time and the 28-day duration gate is bypassed.
+   * For day-1-chronic immunosuppression: transplant, autoimmune, GVHD.
+   * Null / undefined = unknown; rule falls back to duration-gate behaviour.
+   */
+  chronic?: boolean | null;
 }
 
 export interface PatientContext {
@@ -485,6 +492,30 @@ function steroidPcpDurationKnown(ctx: PatientContext): boolean {
   // Future-dated start (typo) is treated as unknown by the gate.
   const daysSinceStart = (refMs - startedMs) / 86_400_000;
   return daysSinceStart >= 0;
+}
+
+/**
+ * Telemetry helper: did the qualifying systemic corticosteroid in the
+ * context carry the prescriber-marked-chronic flag? Surfaced in flag
+ * metadata so downstream FP-rate analysis can separate prescriber-marked
+ * firings (transplant, autoimmune, GVHD) from duration-gate firings.
+ * (#1023)
+ */
+function steroidPcpChronicMarked(ctx: PatientContext): boolean {
+  const details = ctx.active_medications_detail;
+  if (!details) return false;
+  const CORTICOSTEROID_PATTERN =
+    /prednisone|prednisolone|methylprednisolone|medrol|solu-medrol|dexamethasone|decadron|hydrocortisone|solu-cortef|betamethasone|triamcinolone/i;
+  const TOPICAL_ROUTE_PATTERN =
+    /topical|ophthalmic|otic|intranasal|inhaled|inhalation|cream|ointment|gel|drops|spray/i;
+  return details.some((m) => {
+    if (m.chronic !== true) return false;
+    if (!CORTICOSTEROID_PATTERN.test(m.name)) return false;
+    const route = m.route?.toLowerCase() ?? "";
+    if (TOPICAL_ROUTE_PATTERN.test(route)) return false;
+    if (TOPICAL_ROUTE_PATTERN.test(m.name)) return false;
+    return true;
+  });
 }
 
 const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
@@ -1191,40 +1222,52 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
           if (dailyEquiv < 20) return false;
         }
 
-        // Duration gate (#940). IDSA/ATS require prednisone-equivalent
-        // >= 20 mg/day for >= 4 weeks before PCP prophylaxis is indicated.
-        // Short bursts (5–7 day tapers for asthma exacerbation, poison ivy,
-        // acute gout, COPD flare, etc.) routinely use 40–60 mg prednisone
-        // and would otherwise trip this rule with no real prophylaxis
-        // indication. Suppress fire when started_at is known and shows the
-        // course started < 28 days ago; fail-open (keep firing) when the
-        // writer didn't record a start date, so chronic steroid courses
-        // without start-date metadata still surface.
-        //
-        // Anchor to `ctx.event_timestamp` (not wall-clock) so replayed /
-        // backfilled / late-processed events evaluate deterministically —
-        // same pattern as the ONCO-VTE recency gate above. A start date in
-        // the future relative to the event (data-entry typo) is treated as
-        // unknown and falls through to fire (fail-open).
-        //
-        // #976 — also track whether the duration gate had data so the
-        // emitted flag carries `metadata.duration_known`. Downstream
-        // FP-rate analysis uses this to measure how often the rule fires
-        // on the fail-open path (started_at null / unparseable / future-
-        // dated) vs. the data-driven path.
-        const startedAt = systemicSteroidDetail.started_at;
-        if (startedAt) {
-          const startedMs = Date.parse(startedAt);
-          const refMs = ctx.event_timestamp
-            ? Date.parse(ctx.event_timestamp)
-            : Date.now();
-          if (Number.isFinite(startedMs) && Number.isFinite(refMs)) {
-            const daysSinceStart = (refMs - startedMs) / 86_400_000;
-            if (daysSinceStart >= 0 && daysSinceStart < 28) return false;
-            // duration_known is surfaced in flag metadata by
-            // buildSteroidPcpMetadata below; the gate logic above is the
-            // source of truth for whether started_at carried a usable
-            // value at evaluation time.
+        // Prescriber-marked-chronic short-circuit (#1023). Solid-organ
+        // transplant, autoimmune disease, GVHD, etc. are day-1-chronic —
+        // the prescriber knows immediately the course is indefinite.
+        // When `chronic === true`, skip the duration gate entirely so
+        // the PCP-prophylaxis flag fires at prescription time instead
+        // of waiting four weeks. The metadata surfaces this distinction
+        // (`chronic_marked: true`) so FP-rate analysis can separate
+        // prescriber-marked firings from duration-gate firings.
+        if (systemicSteroidDetail.chronic === true) {
+          // Fall through to the PCP-prophylaxis check below.
+        } else {
+          // Duration gate (#940). IDSA/ATS require prednisone-equivalent
+          // >= 20 mg/day for >= 4 weeks before PCP prophylaxis is indicated.
+          // Short bursts (5–7 day tapers for asthma exacerbation, poison ivy,
+          // acute gout, COPD flare, etc.) routinely use 40–60 mg prednisone
+          // and would otherwise trip this rule with no real prophylaxis
+          // indication. Suppress fire when started_at is known and shows the
+          // course started < 28 days ago; fail-open (keep firing) when the
+          // writer didn't record a start date, so chronic steroid courses
+          // without start-date metadata still surface.
+          //
+          // Anchor to `ctx.event_timestamp` (not wall-clock) so replayed /
+          // backfilled / late-processed events evaluate deterministically —
+          // same pattern as the ONCO-VTE recency gate above. A start date in
+          // the future relative to the event (data-entry typo) is treated as
+          // unknown and falls through to fire (fail-open).
+          //
+          // #976 — also track whether the duration gate had data so the
+          // emitted flag carries `metadata.duration_known`. Downstream
+          // FP-rate analysis uses this to measure how often the rule fires
+          // on the fail-open path (started_at null / unparseable / future-
+          // dated) vs. the data-driven path.
+          const startedAt = systemicSteroidDetail.started_at;
+          if (startedAt) {
+            const startedMs = Date.parse(startedAt);
+            const refMs = ctx.event_timestamp
+              ? Date.parse(ctx.event_timestamp)
+              : Date.now();
+            if (Number.isFinite(startedMs) && Number.isFinite(refMs)) {
+              const daysSinceStart = (refMs - startedMs) / 86_400_000;
+              if (daysSinceStart >= 0 && daysSinceStart < 28) return false;
+              // duration_known is surfaced in flag metadata by
+              // buildSteroidPcpMetadata below; the gate logic above is the
+              // source of truth for whether started_at carried a usable
+              // value at evaluation time.
+            }
           }
         }
       }
@@ -1251,6 +1294,11 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
     notify_specialties: ["infectious_disease", "pharmacy"],
     buildMetadata: (ctx: PatientContext) => ({
       duration_known: steroidPcpDurationKnown(ctx),
+      // #1023 — distinguish prescriber-marked-chronic firings from
+      // duration-gate firings. True only when a qualifying systemic
+      // corticosteroid in the context is explicitly marked chronic by
+      // the prescriber, regardless of started_at.
+      chronic_marked: steroidPcpChronicMarked(ctx),
     }),
   },
 

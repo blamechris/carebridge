@@ -149,6 +149,7 @@ export async function createMedication(input: CreateMedicationInput): Promise<Me
     rxnorm_code: input.rxnorm_code ?? null,
     ordering_provider_id: input.ordering_provider_id ?? null,
     encounter_id: input.encounter_id ?? null,
+    chronic: input.chronic ?? null,
     created_at: now,
     updated_at: now,
   };
@@ -180,6 +181,7 @@ export async function createMedication(input: CreateMedicationInput): Promise<Me
     rxnorm_code: input.rxnorm_code,
     ordering_provider_id: input.ordering_provider_id,
     encounter_id: input.encounter_id,
+    chronic: input.chronic,
     created_at: now,
     updated_at: now,
   };
@@ -222,6 +224,7 @@ export async function updateMedication(
   if (fields.rxnorm_code !== undefined) updates.rxnorm_code = fields.rxnorm_code;
   if (fields.ordering_provider_id !== undefined) updates.ordering_provider_id = fields.ordering_provider_id;
   if (fields.encounter_id !== undefined) updates.encounter_id = fields.encounter_id;
+  if (fields.chronic !== undefined) updates.chronic = fields.chronic;
 
   // Optimistic locking: when expectedUpdatedAt is provided, only update if the
   // row hasn't been modified since the caller last read it.
@@ -273,6 +276,7 @@ export async function updateMedication(
     ordering_provider_id: updated.ordering_provider_id ?? undefined,
     encounter_id: updated.encounter_id ?? undefined,
     source_system: updated.source_system ?? undefined,
+    chronic: updated.chronic ?? undefined,
     created_at: updated.created_at,
     updated_at: updated.updated_at,
   };
@@ -315,6 +319,7 @@ export async function getMedicationsByPatient(
     ordering_provider_id: row.ordering_provider_id ?? undefined,
     encounter_id: row.encounter_id ?? undefined,
     source_system: row.source_system ?? undefined,
+    chronic: row.chronic ?? undefined,
     created_at: row.created_at,
     updated_at: row.updated_at,
   }));

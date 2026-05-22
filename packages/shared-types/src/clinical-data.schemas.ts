@@ -55,6 +55,12 @@ export const createMedicationSchema = z.object({
   rxnorm_code: z.string().max(20).optional(),
   ordering_provider_id: z.string().uuid().optional(),
   encounter_id: z.string().uuid().optional(),
+  /**
+   * Prescriber-marked-chronic flag (#1023). Bypass the 28-day duration
+   * gate on CROSS-STEROID-PCP-001 — for day-1-chronic courses
+   * (transplant, autoimmune, GVHD).
+   */
+  chronic: z.boolean().optional(),
 });
 
 export const updateMedicationSchema = createMedicationSchema.partial().omit({ patient_id: true }).extend({

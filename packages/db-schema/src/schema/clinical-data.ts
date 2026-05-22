@@ -1,4 +1,4 @@
-import { pgTable, text, real, integer, index, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, real, integer, boolean, index, jsonb } from "drizzle-orm/pg-core";
 import { encryptedText, encryptedNumeric } from "../encryption.js";
 import { patients } from "./patients.js";
 
@@ -19,6 +19,13 @@ export const medications = pgTable("medications", {
    * the rule fails open. See issue #935.
    */
   max_doses_per_day: integer("max_doses_per_day"),
+  /**
+   * Prescriber-marked-chronic flag (#1023). When true, CROSS-STEROID-PCP-001
+   * fires immediately at prescription time instead of waiting for the
+   * 28-day duration gate. Used for solid-organ transplant, autoimmune,
+   * GVHD, and other day-1-chronic immunosuppression courses.
+   */
+  chronic: boolean("chronic"),
   status: text("status").notNull().default("active"),
   started_at: text("started_at"),
   ended_at: text("ended_at"),
