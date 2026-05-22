@@ -492,6 +492,27 @@ describe("MEDICATION_MAX_DAILY_DOSES reference data (#238)", () => {
   it("getMedicationDoseLimit returns undefined for unknown drugs", () => {
     expect(getMedicationDoseLimit("unobtanium")).toBeUndefined();
   });
+
+  it("getMedicationDoseLimit distinguishes diclofenac IR (Voltaren) vs ER (Voltaren XR) (#1041)", () => {
+    // IR resolves to the 150 mg/day ceiling.
+    const ir = getMedicationDoseLimit("Voltaren");
+    expect(ir?.displayName).toBe("Diclofenac");
+    expect(ir?.maxDailyDoseMg).toBe(150);
+
+    // ER (Voltaren XR) resolves to the stricter 100 mg/day ceiling.
+    const er = getMedicationDoseLimit("Voltaren XR");
+    expect(er?.displayName).toBe("Diclofenac ER");
+    expect(er?.maxDailyDoseMg).toBe(100);
+
+    // Brand variants and generic-er forms all hit the ER entry.
+    expect(getMedicationDoseLimit("Voltaren-XR")?.displayName).toBe("Diclofenac ER");
+    expect(getMedicationDoseLimit("diclofenac er")?.displayName).toBe("Diclofenac ER");
+    expect(getMedicationDoseLimit("Diclofenac XR")?.displayName).toBe("Diclofenac ER");
+    expect(getMedicationDoseLimit("diclofenac extended-release")?.displayName).toBe("Diclofenac ER");
+
+    // Strength-token strip still works for ER.
+    expect(getMedicationDoseLimit("Voltaren XR 100mg daily")?.displayName).toBe("Diclofenac ER");
+  });
 });
 
 // ─── validateLabResult ──────────────────────────────────────────
