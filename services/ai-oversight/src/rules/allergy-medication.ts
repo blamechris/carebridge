@@ -139,11 +139,13 @@ export function checkAllergyMedication(context: PatientContext): RuleFlag[] {
       // Strategy 1: Direct name match across ANY alias of the allergen.
       // A prescription for "penicillin VK" and an allergy recorded as
       // "PCN" must match — which they do once we expand PCN to
-      // [penicillin, pcn, amoxicillin, …]. Aliases shorter than 4 chars
-      // are matched with a word-boundary guard so "pcn" doesn't hit
-      // "pentoxifylline" / "norpace" (#920 review).
+      // [penicillin, pcn, amoxicillin, …]. Aliases up to 4 chars long
+      // are matched with a word-boundary guard so abbreviations like
+      // "pcn", "asa", "amox", "ampi", "apap" don't substring-hit
+      // unrelated drugs ("pentoxifylline", "amoxapine", "ampyra" —
+      // #920 review + #994).
       const directMatch = allergenAliases.some((alias) => {
-        if (alias.length < 4) {
+        if (alias.length <= 4) {
           const boundary = new RegExp(`\\b${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
           if (boundary.test(medLower)) return true;
         } else if (medLower.includes(alias)) {
