@@ -54,10 +54,13 @@ function slugForRuleId(name: string): string {
 }
 
 /**
- * CDC-calibrated defaults for the opioid / non-opioid critical-escalation
- * ratios. The active values are exported as
- * {@link OPIOID_CRITICAL_RATIO} / {@link NON_OPIOID_CRITICAL_RATIO} below
- * and may be tuned per-deployment via env vars (see {@link resolveRatio}).
+ * Default critical-escalation ratios. The opioid default (1.2×) is
+ * CDC-calibrated against the 2022 90 MME/day threshold; the non-opioid
+ * default (2.0×) reflects cumulative hepatic/renal/GI harm — not a CDC
+ * threshold (CDC's 90 MME guideline is opioid-only). Active values are
+ * exported as {@link OPIOID_CRITICAL_RATIO} / {@link NON_OPIOID_CRITICAL_RATIO}
+ * below and may be tuned per-deployment via env vars (see
+ * {@link resolveRatio}).
  */
 export const OPIOID_CRITICAL_RATIO_DEFAULT = 1.2;
 export const NON_OPIOID_CRITICAL_RATIO_DEFAULT = 2.0;
