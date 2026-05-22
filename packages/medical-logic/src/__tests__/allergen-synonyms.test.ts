@@ -156,6 +156,14 @@ describe("ALLERGEN_SYNONYMS data sanity", () => {
     // to iodine" chart note doesn't trigger a critical contrast-CT flag.
     // These assertions guard against accidental re-merging at the synonym
     // layer.
+    //
+    // Synonym-layer disjointness is only half the story — at the rule
+    // layer, iodine and iodinated-contrast remain *cross-reactive* with a
+    // downgraded warning severity (not critical). That separate guarantee
+    // is verified in:
+    //   services/ai-oversight/src/rules/iodine-cross-reactivity.test.ts
+    // Do not interpret the not-equal assertions below as "fully disjoint" —
+    // they only assert canonical-name separation, not clinical relationship.
 
     it("Betadine resolves to iodine, not iodinated contrast", () => {
       expect(normalizeAllergen("Betadine")).toBe("iodine");
