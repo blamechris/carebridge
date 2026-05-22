@@ -122,4 +122,16 @@ describe("toFhirPractitioner (#388)", () => {
     expect(p.name?.[0]?.family).toBe("Jones");
     expect(p.name?.[0]?.given).toEqual(["Sarah", "M."]);
   });
+
+  it("spelled-out Anglo middle name: 'Sarah Marie Jones' → family='Marie Jones' (#974 known tradeoff)", () => {
+    // Pinning test for the documented tradeoff: with no bare-initial
+    // signal, the penultimate token is treated as the first half of a
+    // two-part family. See parseName docstring. Long-term fix is the
+    // structured name_family / name_given[] columns tracked in #972 —
+    // until then, this test prevents silent behaviour flips on either
+    // side of the Anglo/Hispanic split.
+    const p = toFhirPractitioner(makeUser({ name: "Sarah Marie Jones" }));
+    expect(p.name?.[0]?.family).toBe("Marie Jones");
+    expect(p.name?.[0]?.given).toEqual(["Sarah"]);
+  });
 });
