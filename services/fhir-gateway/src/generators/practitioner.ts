@@ -61,19 +61,34 @@ const FAMILY_PARTICLES = new Set([
  * "Sarah M. Jones, MD"). FHIR consumers expect a structured split so they
  * can render `{given[0]} {family}` or `{family}, {given[0]}` to taste.
  *
- * Heuristic:
- *  1. Strip trailing credentials after a comma ("Jones, MD").
- *  2. Walk tokens from the right, accreting into `family` while tokens are
- *     either FAMILY_PARTICLES (de, del, van, von, bin, ibn, …) OR the last
- *     two non-particle tokens when there are ≥3 tokens total. This keeps
- *     Hispanic two-part surnames ("María García López" → family "García
- *     López") and particle-prefixed family names ("Sarah de Klerk" →
- *     family "de Klerk") intact.
- *  3. Hyphenated surnames ("Smith-Jones") stay as one token and need no
- *     special handling.
+ * Heuristic for ≥3-token names
+ * ----------------------------
+ * 1. If the penultimate token is a bare initial ("M" or "M."), treat the
+ *    name as Anglo `First Middle Last` — family is the last token, given
+ *    captures everything else.
+ * 2. Otherwise the penultimate is assumed to be the first half of a
+ *    two-part family (Hispanic / Portuguese pattern). This means
+ *    `María García López` → family=`García López`, given=`[María]`.
+ * 3. Particles (de, del, van, von, der, bin, ibn, …) immediately before
+ *    the family group are absorbed into family so `Sarah de Klerk` →
+ *    family=`de Klerk` and `Jan van der Berg` → family=`van der Berg`.
+ *
+ * Known tradeoff (#974)
+ * ---------------------
+ * Anglo full-middle-name inputs like `Sarah Marie Jones` parse as
+ * family=`Marie Jones`, given=`[Sarah]` — because we have no signal at
+ * this layer to tell a middle-name from a Hispanic first-half-of-family.
+ * The bare-initial guard above keeps `Sarah M. Jones` working, but
+ * spelled-out middle names regress. Long-term fix is the structured
+ * `name_family` / `name_given[]` columns on the users table tracked in
+ * #972; until then, the test suite pins both shapes so a future edit
+ * cannot silently flip the behaviour the other way.
+ *
+ * Hyphenated surnames (`Smith-Jones`) stay as one token and need no
+ * special handling.
  *
  * This is a heuristic; structured name fields on the users table are the
- * long-term fix (see issue #944 for the migration plan).
+ * long-term fix (see #972 for the migration plan).
  */
 function parseName(fullName: string): HumanName {
   // Strip any trailing ", MD" / ", RN" / ", PhD" credentials.
