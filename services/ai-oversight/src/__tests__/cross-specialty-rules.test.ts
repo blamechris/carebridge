@@ -490,6 +490,78 @@ describe("CROSS-ANTICOAG-NSAID-GIBLEED-001 — triple bleed risk (#263)", () => 
         ),
       ).toBeDefined();
     });
+
+    it("fires on K25.0 (acute gastric ulcer with hemorrhage) — #1029 acute-vs-chronic fix", () => {
+      const ctx = emptyCtx({
+        active_diagnosis_codes: ["K25.0"],
+        active_medications: ["Warfarin 5mg daily", "Ibuprofen 400mg PRN"],
+      });
+      expect(
+        checkCrossSpecialtyPatterns(ctx).find(
+          (f) => f.rule_id === "CROSS-ANTICOAG-NSAID-GIBLEED-001",
+        ),
+      ).toBeDefined();
+    });
+
+    it("fires on K26.2 (acute duodenal ulcer with hemorrhage) — #1029", () => {
+      const ctx = emptyCtx({
+        active_diagnosis_codes: ["K26.2"],
+        active_medications: ["Apixaban 5mg BID", "Naproxen 500mg BID"],
+      });
+      expect(
+        checkCrossSpecialtyPatterns(ctx).find(
+          (f) => f.rule_id === "CROSS-ANTICOAG-NSAID-GIBLEED-001",
+        ),
+      ).toBeDefined();
+    });
+
+    it("fires on K57.01 (diverticulosis of small intestine with bleeding) — #1034", () => {
+      const ctx = emptyCtx({
+        active_diagnosis_codes: ["K57.01"],
+        active_medications: ["Warfarin 5mg daily", "Aspirin 81mg daily"],
+      });
+      expect(
+        checkCrossSpecialtyPatterns(ctx).find(
+          (f) => f.rule_id === "CROSS-ANTICOAG-NSAID-GIBLEED-001",
+        ),
+      ).toBeDefined();
+    });
+
+    it("does NOT false-match on truncated K57.1 (incomplete code) — #1034", () => {
+      const ctx = emptyCtx({
+        active_diagnosis_codes: ["K57.1"],
+        active_medications: ["Apixaban 5mg BID", "Naproxen 500mg BID"],
+      });
+      expect(
+        checkCrossSpecialtyPatterns(ctx).find(
+          (f) => f.rule_id === "CROSS-ANTICOAG-NSAID-GIBLEED-001",
+        ),
+      ).toBeUndefined();
+    });
+
+    it("fires on 'peptic ulcer with bleeding' (gerund form) — #1031", () => {
+      const ctx = emptyCtx({
+        active_diagnoses: ["History of peptic ulcer with bleeding, treated 2022"],
+        active_medications: ["Warfarin 5mg daily", "Ibuprofen 400mg PRN"],
+      });
+      expect(
+        checkCrossSpecialtyPatterns(ctx).find(
+          (f) => f.rule_id === "CROSS-ANTICOAG-NSAID-GIBLEED-001",
+        ),
+      ).toBeDefined();
+    });
+
+    it("fires on 'peptic ulcer hemorrhaging' (-ing form on hemorrhage) — #1031", () => {
+      const ctx = emptyCtx({
+        active_diagnoses: ["Peptic ulcer hemorrhaging on admission"],
+        active_medications: ["Apixaban 5mg BID", "Naproxen 500mg BID"],
+      });
+      expect(
+        checkCrossSpecialtyPatterns(ctx).find(
+          (f) => f.rule_id === "CROSS-ANTICOAG-NSAID-GIBLEED-001",
+        ),
+      ).toBeDefined();
+    });
   });
 });
 

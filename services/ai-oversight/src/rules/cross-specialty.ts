@@ -1218,12 +1218,16 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       //
       // Codes that imply an active or prior hemorrhagic GI event:
       //  - K92.0/1/2  Hematemesis / Melena / GI hemorrhage unspecified
-      //  - K25-K28 .4 / .6  Gastric/duodenal/peptic/gastrojejunal ulcer
-      //    with hemorrhage (chronic / acute)
+      //  - K25-K28 .0/.2/.4/.6  Gastric/duodenal/peptic/gastrojejunal
+      //    ulcer with hemorrhage — acute (.0, .2) and chronic (.4, .6).
+      //    Acute bleeds are the more clinically urgent case (#1029).
       //  - I85.01 / I85.11  Esophageal varices with bleeding
-      //  - K57.x1 / K57.x3  Diverticular disease with bleeding
+      //  - K57.x1 / K57.x3  Diverticular disease with bleeding. The `x`
+      //    is the per-site sub-category digit (K57.01, K57.11, K57.41, …);
+      //    `[0-9]+[13]` requires at least one digit so the truncated
+      //    K57.1 / K57.3 don't false-match (#1034).
       const GI_BLEED_ICD10_PATTERN =
-        /^(K92\.[012]|K2[5-8]\.[46]|I85\.[01]1|K57\.[0-9]*[13])\b/;
+        /^(K92\.[012]|K2[5-8]\.[0246]|I85\.[01]1|K57\.[0-9]+[13])\b/;
       // Require bleed/hemorrhage/hematochezia context for "upper gi" / "lower
       // gi" mentions so imaging studies ("Lower GI series, normal 2023") and
       // generic symptom blurbs ("upper GI symptoms") don't trigger a
@@ -1231,12 +1235,27 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       //
       // `peptic ulcer` was previously a bare match — tightened in #971 to
       // require an adjacent bleed term so "Peptic ulcer disease, no bleed"
-      // no longer fires on the text path. Coded peptic-ulcer bleeds are
-      // still caught by the K25-K28 .4/.6 ICD-10 branch above. Variceal
-      // and angiodysplasia stay bare because the diagnosis text itself
-      // implies bleed risk in this clinical context.
-      const GI_BLEED_HISTORY_PATTERN =
-        /gi bleed|gastrointestinal bleed|\b[ul]gib\b|peptic ulcer[^,]*\b(?:bleed|hemorrhage|haemorrhage)\b|\b(?:bleed|hemorrhage|haemorrhage)\b[^,]*peptic ulcer|hematemesis|melena|hematochezia|(?:upper|lower)\s+gi\s+(?:bleed|hemorrhage|haemorrhage|hematemesis|melena|hematochezia)|diverticular bleed|angiodysplasia|variceal/i;
+      // no longer fires on the text path. The bleed token captures noun and
+      // gerund forms (`bleed`, `bleeds`, `bleeding`, `hemorrhage`,
+      // `hemorrhagic`, `hemorrhaging`) so "peptic ulcer with bleeding"
+      // matches (#1031). The `[^,]*` (no commas allowed) keeps the
+      // clause-local semantics that reject "Peptic ulcer disease, treated,
+      // no bleed". Comma-separated true-bleed cases ("Peptic ulcer,
+      // hemorrhage 2022") are caught by the K25-K28 .0/.2/.4/.6 ICD-10
+      // branch when coded. Variceal and angiodysplasia stay bare because
+      // the diagnosis text itself implies bleed risk in this clinical
+      // context.
+      const BLEED_TERM =
+        "(?:bleed(?:ing|s)?|hemorrhag(?:e|ic|ing)|haemorrhag(?:e|ic|ing))";
+      const GI_BLEED_HISTORY_PATTERN = new RegExp(
+        `gi bleed|gastrointestinal bleed|\\b[ul]gib\\b|` +
+        `peptic ulcer[^,]*\\b${BLEED_TERM}\\b|` +
+        `\\b${BLEED_TERM}\\b[^,]*peptic ulcer|` +
+        `hematemesis|melena|hematochezia|` +
+        `(?:upper|lower)\\s+gi\\s+(?:${BLEED_TERM}|hematemesis|melena|hematochezia)|` +
+        `diverticular bleed|angiodysplasia|variceal`,
+        "i",
+      );
       // Deliberately include aspirin here (not part of NSAID_PATTERN because
       // other NSAID rules care about prostaglandin / renal-profile risks
       // where aspirin kinetics differ). For GI-bleed risk in
