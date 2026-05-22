@@ -493,6 +493,56 @@ describe("CROSS-STEROID-PCP-001 — chronic corticosteroid without PCP prophylax
       );
       expect(flag).toBeUndefined();
     });
+
+    it("emits duration_known=false when started_at is an unparseable string (#1040)", () => {
+      // Date.parse("not-a-date") returns NaN; steroidPcpDurationKnown
+      // treats that as "duration unknown" so the flag still fires and
+      // the false branch is reflected in metadata. Pin this branch
+      // explicitly — PR #1022 covered the three other branches but not
+      // the unparseable-string path.
+      const ctx = emptyCtx({
+        active_medications: ["Prednisone 40mg daily"],
+        active_medications_detail: [
+          {
+            id: "m1",
+            name: "Prednisone",
+            dose_amount: 40,
+            dose_unit: "mg",
+            route: "oral",
+            frequency: "daily",
+            rxnorm_code: null,
+            started_at: "not-a-date",
+          },
+        ],
+        event_timestamp: "2026-01-01T00:00:00.000Z",
+      });
+      const flag = checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CROSS-STEROID-PCP-001",
+      );
+      expect(flag).toBeDefined();
+      expect(flag!.metadata).toEqual({ duration_known: false, chronic_marked: false });
+    });
+
+    it("non-PCP rule flags omit `metadata` entirely (spread-conditional contract) (#1040)", () => {
+      // CROSS-STEROID-PCP-001 sets buildMetadata; other rules do not.
+      // The emitter spread is `...(metadata !== undefined ? { metadata } : {})`,
+      // so a rule without buildMetadata must produce a flag where the
+      // `metadata` key is absent — not just undefined. Locking this in
+      // protects downstream consumers (and JSON serializers) that
+      // distinguish "missing key" from "explicit undefined".
+      const ctx: PatientContext = {
+        active_diagnoses: ["Pancreatic adenocarcinoma", "Deep vein thrombosis"],
+        active_diagnosis_codes: ["C25.9", "I82.401"],
+        active_medications: [],
+        new_symptoms: ["New onset severe headache"],
+        care_team_specialties: ["oncology", "hematology"],
+      };
+      const flag = checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "ONCO-VTE-NEURO-001",
+      );
+      expect(flag).toBeDefined();
+      expect(Object.prototype.hasOwnProperty.call(flag, "metadata")).toBe(false);
+    });
   });
 });
 
