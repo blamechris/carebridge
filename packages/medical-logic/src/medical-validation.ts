@@ -5,7 +5,10 @@
 
 import type { VitalType } from "@carebridge/shared-types";
 import { COMMON_LAB_TESTS } from "@carebridge/shared-types";
-import { getMedicationDoseLimit } from "./medication-max-doses.js";
+import {
+  getMedicationDoseLimit,
+  lookupComboBrand,
+} from "./medication-max-doses.js";
 
 export interface VitalRange {
   min: number;
@@ -303,6 +306,24 @@ export function validateMedicationDose(
 
   const unit = doseUnit?.toLowerCase();
   const limit = drugName ? getMedicationDoseLimit(drugName, route) : undefined;
+  const combo = drugName ? lookupComboBrand(drugName) : undefined;
+
+  // Combo-product disambiguation warning (#929). When the caller supplies
+  // a combo brand name (Percocet, Vicodin, Norco, Tylenol 3, etc.), the
+  // alias collapses to the opioid component because the opioid ceiling
+  // is the tighter guard. Anyone writing `dose_amount` intending the
+  // acetaminophen component would silently get a numerically-wrong
+  // validation. Emit a warning so the prescriber sees the disambiguation
+  // explicitly. The opioid-component ceiling still applies via `limit`.
+  if (combo && unit === "mg") {
+    warnings.push(
+      `"${drugName}" is a combination product (${combo.opioidComponent} ` +
+        `+ ${combo.nonOpioidComponent} ${combo.nonOpioidMgPerDose} mg per ` +
+        `dose unit). The encoded ${doseAmount} mg is being validated against ` +
+        `the ${combo.opioidComponent} ceiling — for per-component accuracy, ` +
+        `prescribe with the ingredient name instead of the brand.`,
+    );
+  }
 
   // Per-drug ceilings (issue #238). Only apply when the unit is mg — the
   // table's limits are expressed in milligrams; cross-unit comparisons
