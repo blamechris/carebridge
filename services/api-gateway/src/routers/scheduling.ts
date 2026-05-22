@@ -37,8 +37,15 @@ import {
   appointmentTypeSchema,
   cancelReasonSchema,
 } from "@carebridge/validators";
+import {
+  scheduleReminders,
+  cancelReminders,
+} from "@carebridge/scheduling";
+import { createLogger } from "@carebridge/logger";
 import type { Context } from "../context.js";
 import { assertCareTeamAccess } from "../middleware/rbac.js";
+
+const log = createLogger("scheduling");
 
 const t = initTRPC.context<Context>().create();
 
@@ -237,7 +244,10 @@ export const schedulingRbacRouter = t.router({
             throw new Error("Time slot conflicts with an existing appointment");
           }
 
-          const appointment = {
+          const appointment: typeof appointments.$inferInsert & {
+            reminder_24h_job_id?: string | null;
+            reminder_2h_job_id?: string | null;
+          } = {
             id: crypto.randomUUID(),
             patient_id: patientId,
             provider_id: input.providerId,
@@ -252,6 +262,31 @@ export const schedulingRbacRouter = t.router({
           };
 
           await tx.insert(appointments).values(appointment);
+
+          // Issue #333 reminder hooks (moved from services/scheduling/src/
+          // router.ts in #1006 — the previous router was dead, so reminders
+          // never actually fired). Failures here are non-fatal — reminders
+          // are nice-to-have and MUST NOT block appointment booking.
+          try {
+            const ids = await scheduleReminders(appointment);
+            if (ids.reminder_24h_job_id || ids.reminder_2h_job_id) {
+              await tx
+                .update(appointments)
+                .set({
+                  reminder_24h_job_id: ids.reminder_24h_job_id,
+                  reminder_2h_job_id: ids.reminder_2h_job_id,
+                })
+                .where(eq(appointments.id, appointment.id));
+              appointment.reminder_24h_job_id = ids.reminder_24h_job_id;
+              appointment.reminder_2h_job_id = ids.reminder_2h_job_id;
+            }
+          } catch (error) {
+            log.warn("Failed to schedule appointment reminders", {
+              appointmentId: appointment.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+
           return appointment;
         });
       }),
@@ -267,9 +302,15 @@ export const schedulingRbacRouter = t.router({
         // Load the appointment so we can run the access check against the
         // target patient record before mutating. Single select by primary
         // key — cheap and keeps the check server-authoritative (a tampered
-        // client can't supply its own patient_id).
+        // client can't supply its own patient_id). Also picks up the
+        // reminder job IDs so we can cancel the queued reminders after
+        // the row transitions to cancelled.
         const [existing] = await db
-          .select({ patient_id: appointments.patient_id })
+          .select({
+            patient_id: appointments.patient_id,
+            reminder_24h_job_id: appointments.reminder_24h_job_id,
+            reminder_2h_job_id: appointments.reminder_2h_job_id,
+          })
           .from(appointments)
           .where(eq(appointments.id, input.appointmentId))
           .limit(1);
@@ -290,9 +331,28 @@ export const schedulingRbacRouter = t.router({
             cancelled_at: now,
             cancelled_by: ctx.user.id,
             cancel_reason: input.reason,
+            reminder_24h_job_id: null,
+            reminder_2h_job_id: null,
             updated_at: now,
           })
           .where(eq(appointments.id, input.appointmentId));
+
+        // Issue #333 reminder cancellation (moved from the dead scheduling
+        // router in #1006). Best-effort — if BullMQ is unreachable or the
+        // job already fired, the reminder worker double-checks
+        // status === "cancelled" before emitting the notification.
+        try {
+          await cancelReminders({
+            reminder_24h_job_id: existing.reminder_24h_job_id,
+            reminder_2h_job_id: existing.reminder_2h_job_id,
+          });
+        } catch (error) {
+          log.warn("Failed to cancel appointment reminders", {
+            appointmentId: input.appointmentId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+
         return { success: true };
       }),
 
@@ -387,7 +447,7 @@ export const schedulingRbacRouter = t.router({
             );
           }
 
-          // 1. Cancel the original row.
+          // 1. Cancel the original row (also nulls reminder columns).
           await tx
             .update(appointments)
             .set({
@@ -395,12 +455,31 @@ export const schedulingRbacRouter = t.router({
               cancelled_at: now,
               cancelled_by: ctx.user.id,
               cancel_reason: input.reason,
+              reminder_24h_job_id: null,
+              reminder_2h_job_id: null,
               updated_at: now,
             })
             .where(eq(appointments.id, input.appointmentId));
 
+          // Cancel the original's queued reminders best-effort, BEFORE we
+          // commit and emit. Moved from the dead scheduling router in #1006.
+          try {
+            await cancelReminders({
+              reminder_24h_job_id: current.reminder_24h_job_id,
+              reminder_2h_job_id: current.reminder_2h_job_id,
+            });
+          } catch (error) {
+            log.warn("Failed to cancel reminders on reschedule", {
+              appointmentId: input.appointmentId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+
           // 2. Insert the new appointment.
-          const newAppt = {
+          const newAppt: typeof appointments.$inferInsert & {
+            reminder_24h_job_id?: string | null;
+            reminder_2h_job_id?: string | null;
+          } = {
             id: crypto.randomUUID(),
             patient_id: current.patient_id,
             provider_id: current.provider_id,
@@ -415,6 +494,27 @@ export const schedulingRbacRouter = t.router({
           };
 
           await tx.insert(appointments).values(newAppt);
+
+          // Schedule reminders for the new slot. Best-effort.
+          try {
+            const ids = await scheduleReminders(newAppt);
+            if (ids.reminder_24h_job_id || ids.reminder_2h_job_id) {
+              await tx
+                .update(appointments)
+                .set({
+                  reminder_24h_job_id: ids.reminder_24h_job_id,
+                  reminder_2h_job_id: ids.reminder_2h_job_id,
+                })
+                .where(eq(appointments.id, newAppt.id));
+              newAppt.reminder_24h_job_id = ids.reminder_24h_job_id;
+              newAppt.reminder_2h_job_id = ids.reminder_2h_job_id;
+            }
+          } catch (error) {
+            log.warn("Failed to schedule reminders on reschedule", {
+              appointmentId: newAppt.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
 
           return newAppt;
         });
