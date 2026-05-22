@@ -280,6 +280,60 @@ const DRUG_NAME_ALIASES: Record<string, string> = {
 };
 
 /**
+ * APAP (acetaminophen) content in mg per dose unit for combo opioid
+ * products (#926). The opioid component of these combos is captured by
+ * DRUG_NAME_ALIASES → opioid-canonical for the stricter single-dose
+ * opioid guard. The APAP component is silently ignored by that path
+ * because the alias collapses the name to a single canonical entry.
+ *
+ * This map carries the APAP mg per dose unit for the same brands, so a
+ * daily-rollup rule can sum APAP across a patient's whole medication
+ * list (combo opioids + plain acetaminophen) against the 4000 mg/day
+ * APAP cap.
+ *
+ * Values reflect the post-2014 FDA standard for combo APAP products
+ * (FDA capped combo APAP at 325 mg per dose unit; manufacturers
+ * generally landed on 300–325 mg). Per-formulation strengths vary
+ * (Percocet 5/325, 7.5/325, 10/325; Norco 5/325, 7.5/325, 10/325; etc.)
+ * but the APAP component is standardized within each brand family.
+ *
+ * Keys are lowercased brand strings; values are the mg of APAP per
+ * dose unit (tablet). Unknown brands return undefined and the caller
+ * treats the entry as APAP-free.
+ */
+export const COMBO_OPIOID_APAP_MG: Record<string, number> = {
+  percocet: 325,
+  roxicet: 325,
+  endocet: 325,
+  norco: 325,
+  vicodin: 300,
+  lortab: 325,
+  hydrocet: 325,
+  "tylenol 3": 300,
+  tylenol3: 300,
+  "tylenol 4": 300,
+  tylenol4: 300,
+  "tylenol with codeine": 300,
+  ultracet: 325, // tramadol 37.5 + APAP 325
+  darvocet: 325, // propoxyphene + APAP — discontinued but historical Rx
+};
+
+/**
+ * Look up the APAP content (mg per dose unit) for a combo opioid product.
+ * Accepts the same free-text input shape as {@link getMedicationDoseLimit}
+ * (case-insensitive, tolerates trailing strength / frequency tokens).
+ * Returns undefined when the drug isn't a known combo product, signalling
+ * "no APAP component to track" for that medication. (#926)
+ */
+export function getComboApapMg(drugName: string): number | undefined {
+  for (const key of candidatesFor(drugName)) {
+    const mg = COMBO_OPIOID_APAP_MG[key];
+    if (mg !== undefined) return mg;
+  }
+  return undefined;
+}
+
+/**
  * Strip trailing strength / route / frequency tokens from a free-text
  * drug name so entries like "Ibuprofen 600mg TID" or "Acetaminophen
  * 500mg PO q6h" still resolve to their canonical entry.

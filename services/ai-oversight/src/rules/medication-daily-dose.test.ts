@@ -514,6 +514,235 @@ describe("checkMedicationDailyDose (#235)", () => {
     });
   });
 
+  describe("cumulative APAP across combo opioids + plain acetaminophen (#926)", () => {
+    function multiMedCtx(meds: PatientMedication[]): PatientContext {
+      const triggerEvent: ClinicalEvent = {
+        id: "evt-apap-1",
+        type: "medication.created",
+        patient_id: "p-1",
+        timestamp: "2026-04-18T12:00:00.000Z",
+        data: {
+          resourceId: meds[0]!.id,
+          name: meds[0]!.name,
+          status: "active",
+        },
+      };
+      return {
+        active_diagnoses: [],
+        active_diagnosis_codes: [],
+        active_medications: meds.map((m) => m.name),
+        active_medications_detail: meds,
+        new_symptoms: [],
+        care_team_specialties: [],
+        trigger_event: triggerEvent,
+      };
+    }
+
+    it("Norco 5/325 q6h + Tylenol 650 mg TID → flags APAP cumulative", () => {
+      // Norco: 4 doses/day × 325 mg APAP = 1300 mg APAP/day
+      // Tylenol 650 mg TID: 3 × 650 = 1950 mg APAP/day
+      // Combined: ~3250 mg/day — at the 4000 cap (under, no flag)
+      // Bump Norco to Q4H (6 doses × 325 = 1950) → 1950 + 1950 = 3900 mg/day, still under
+      // Use Q3H to push it over: 8 × 325 = 2600 + 1950 = 4550 mg/day → flags
+      const meds: PatientMedication[] = [
+        {
+          id: "m-norco",
+          name: "Norco",
+          dose_amount: 5, // mg hydrocodone — opioid component
+          dose_unit: "mg",
+          route: "oral",
+          frequency: "q3h",
+          max_doses_per_day: null,
+          rxnorm_code: null,
+        },
+        {
+          id: "m-tylenol",
+          name: "Tylenol",
+          dose_amount: 650,
+          dose_unit: "mg",
+          route: "oral",
+          frequency: "tid",
+          max_doses_per_day: null,
+          rxnorm_code: null,
+        },
+      ];
+      const flags = checkMedicationDailyDose(multiMedCtx(meds));
+      const apap = flags.find((f) => f.rule_id === "MED-DAILY-OVER-APAP-COMBO");
+      expect(apap).toBeDefined();
+      expect(apap!.summary).toMatch(/APAP/);
+      expect(apap!.summary).toMatch(/4000 mg\/day/);
+    });
+
+    it("Percocet 10/325 q6h alone (single med) → no APAP combo flag (single-med per-drug flag covers it)", () => {
+      // Percocet 5 mg oxy × 4/day = under oxycodone cap; 325 × 4 = 1300 mg APAP — under
+      // Even at q4h: 6 × 325 = 1950 mg APAP/day — still under 4000
+      const meds: PatientMedication[] = [
+        {
+          id: "m-perc",
+          name: "Percocet",
+          dose_amount: 5,
+          dose_unit: "mg",
+          route: "oral",
+          frequency: "q6h",
+          max_doses_per_day: null,
+          rxnorm_code: null,
+        },
+      ];
+      const flags = checkMedicationDailyDose(multiMedCtx(meds));
+      const apap = flags.find((f) => f.rule_id === "MED-DAILY-OVER-APAP-COMBO");
+      expect(apap).toBeUndefined();
+    });
+
+    it("plain Tylenol alone over-cap → no APAP combo flag (per-drug rule already fires)", () => {
+      // 1500 mg Q4H = 9000 mg/day. The per-drug MED-DAILY-OVER-ACETAMINOPHEN
+      // already fires for this — emitting the combo flag would duplicate.
+      const meds: PatientMedication[] = [
+        {
+          id: "m-tylenol",
+          name: "Acetaminophen",
+          dose_amount: 1500,
+          dose_unit: "mg",
+          route: "oral",
+          frequency: "q4h",
+          max_doses_per_day: null,
+          rxnorm_code: null,
+        },
+      ];
+      const flags = checkMedicationDailyDose(multiMedCtx(meds));
+      const perDrug = flags.find((f) => f.rule_id?.startsWith("MED-DAILY-OVER-ACETAMINOPHEN"));
+      expect(perDrug).toBeDefined();
+      const apap = flags.find((f) => f.rule_id === "MED-DAILY-OVER-APAP-COMBO");
+      expect(apap).toBeUndefined();
+    });
+
+    it("Vicodin q4h + Tylenol 1000 q6h → cumulative APAP flags", () => {
+      // Vicodin 300 mg APAP × 6/day = 1800 mg
+      // Tylenol 1000 mg × 4/day = 4000 mg
+      // Total: 5800 mg/day — clearly flags critical (>2× cap? 5800/4000 = 1.45× → warning, not critical)
+      const meds: PatientMedication[] = [
+        {
+          id: "m-vic",
+          name: "Vicodin",
+          dose_amount: 5,
+          dose_unit: "mg",
+          route: "oral",
+          frequency: "q4h",
+          max_doses_per_day: null,
+          rxnorm_code: null,
+        },
+        {
+          id: "m-tylenol",
+          name: "Acetaminophen",
+          dose_amount: 1000,
+          dose_unit: "mg",
+          route: "oral",
+          frequency: "q6h",
+          max_doses_per_day: null,
+          rxnorm_code: null,
+        },
+      ];
+      const flags = checkMedicationDailyDose(multiMedCtx(meds));
+      const apap = flags.find((f) => f.rule_id === "MED-DAILY-OVER-APAP-COMBO");
+      expect(apap).toBeDefined();
+      expect(apap!.severity).toBe("warning"); // 1.45×, under critical 2× threshold
+      expect(apap!.rationale).toMatch(/Vicodin/);
+      expect(apap!.rationale).toMatch(/Acetaminophen/);
+    });
+
+    it("critical severity at ≥2× APAP cap (≥8000 mg/day)", () => {
+      const meds: PatientMedication[] = [
+        {
+          id: "m-perc",
+          name: "Percocet",
+          dose_amount: 5,
+          dose_unit: "mg",
+          route: "oral",
+          frequency: "q2h",
+          max_doses_per_day: null,
+          rxnorm_code: null,
+        },
+        {
+          id: "m-tylenol",
+          name: "Tylenol",
+          dose_amount: 1000,
+          dose_unit: "mg",
+          route: "oral",
+          frequency: "q3h",
+          max_doses_per_day: null,
+          rxnorm_code: null,
+        },
+      ];
+      // Percocet: 325 × 12 = 3900; Tylenol: 1000 × 8 = 8000; total 11900 mg
+      const flags = checkMedicationDailyDose(multiMedCtx(meds));
+      const apap = flags.find((f) => f.rule_id === "MED-DAILY-OVER-APAP-COMBO");
+      expect(apap).toBeDefined();
+      expect(apap!.severity).toBe("critical");
+    });
+
+    it("fail-open: unparseable frequency on combo opioid drops it from sum", () => {
+      const meds: PatientMedication[] = [
+        {
+          id: "m-norco",
+          name: "Norco",
+          dose_amount: 5,
+          dose_unit: "mg",
+          route: "oral",
+          frequency: "when patient asks",
+          max_doses_per_day: null,
+          rxnorm_code: null,
+        },
+        {
+          id: "m-tylenol",
+          name: "Tylenol",
+          dose_amount: 1000,
+          dose_unit: "mg",
+          route: "oral",
+          frequency: "q4h",
+          max_doses_per_day: null,
+          rxnorm_code: null,
+        },
+      ];
+      // Norco drops out; Tylenol: 1000 × 6 = 6000 mg/day → that fires
+      // the per-drug ACETAMINOPHEN flag but NOT the combo flag (single
+      // med after Norco dropped, so dedup against per-drug kicks in).
+      const flags = checkMedicationDailyDose(multiMedCtx(meds));
+      const apap = flags.find((f) => f.rule_id === "MED-DAILY-OVER-APAP-COMBO");
+      expect(apap).toBeUndefined();
+    });
+
+    it("non-APAP combo medication (oxycodone IR) does NOT contribute to APAP sum", () => {
+      // Plain oxycodone is opioid-only, no APAP component. Should be
+      // excluded from the APAP rollup entirely.
+      const meds: PatientMedication[] = [
+        {
+          id: "m-oxy",
+          name: "Oxycodone",
+          dose_amount: 10,
+          dose_unit: "mg",
+          route: "oral",
+          frequency: "q4h",
+          max_doses_per_day: null,
+          rxnorm_code: null,
+        },
+        {
+          id: "m-tylenol",
+          name: "Tylenol",
+          dose_amount: 500,
+          dose_unit: "mg",
+          route: "oral",
+          frequency: "q6h",
+          max_doses_per_day: null,
+          rxnorm_code: null,
+        },
+      ];
+      // Tylenol alone: 500 × 4 = 2000 mg/day, under cap. Oxycodone doesn't
+      // contribute. Result: no APAP flag.
+      const flags = checkMedicationDailyDose(multiMedCtx(meds));
+      const apap = flags.find((f) => f.rule_id === "MED-DAILY-OVER-APAP-COMBO");
+      expect(apap).toBeUndefined();
+    });
+  });
+
   describe("rule_id conventions", () => {
     it("daily flag rule_id starts with MED-DAILY-OVER-<DRUG>", () => {
       const flags = checkMedicationDailyDose(
