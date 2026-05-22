@@ -442,6 +442,18 @@ describe("MEDICATION_MAX_DAILY_DOSES reference data (#238)", () => {
     }
   });
 
+  it("naproxen source string flags the unenforced chronic ceiling (#1028)", () => {
+    // Encoded ceiling is the acute 1500 mg/day. The chronic 1000 mg/day
+    // ceiling on the same FDA label is intentionally NOT enforced until
+    // use-context-aware lookup (#927) lands. The source string must
+    // advertise that gap so a reviewer reading the entry can't be misled
+    // into treating 1500 mg/day as the chronic ceiling.
+    const naproxen = MEDICATION_MAX_DAILY_DOSES.naproxen!;
+    expect(naproxen.maxDailyDoseMg).toBe(1500);
+    expect(naproxen.source).toMatch(/chronic[- ]use 1000 mg\/day ceiling NOT enforced/i);
+    expect(naproxen.source).toMatch(/#927/);
+  });
+
   it("every limit's maxSingleDoseMg <= maxDailyDoseMg (internal consistency)", () => {
     for (const [drug, limit] of Object.entries(MEDICATION_MAX_DAILY_DOSES)) {
       if (
