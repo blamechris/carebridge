@@ -20,8 +20,12 @@ exception on UPDATE, DELETE, and TRUNCATE against the table:
   `0042_audit_log_truncate_revoke.sql`) catches TRUNCATE, which
   bypasses row-level triggers and would otherwise wipe the table.
 - The same migration `REVOKE`s `UPDATE, DELETE, TRUNCATE` on
-  `audit_log` from `PUBLIC` so any role newly granted broad table
-  privileges still cannot mutate the audit trail by default.
+  `audit_log` from the `PUBLIC` pseudo-role. This removes the implicit
+  grant PostgreSQL gives PUBLIC on new tables in many configurations.
+  It does NOT revoke privileges explicitly granted to named roles —
+  those callers still go through the trigger. The REVOKE is
+  defense-in-depth against future GRANTs to PUBLIC, not a replacement
+  for the trigger.
 
 This provides defense-in-depth tamper protection independent of
 application code.

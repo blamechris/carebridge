@@ -39,9 +39,12 @@ describe("migration 0042_audit_log_truncate_revoke (#995)", () => {
   });
 
   it("revokes UPDATE, DELETE, and TRUNCATE on audit_log from PUBLIC", () => {
-    // REVOKE is the second defense layer — even if a future migration
-    // misses the trigger or a role is granted broad permissions, the
-    // explicit REVOKE keeps the mutation paths closed by default.
+    // REVOKE FROM PUBLIC removes the implicit grant the PUBLIC
+    // pseudo-role has on new tables in many PostgreSQL configurations.
+    // It does NOT affect privileges explicitly granted to named roles —
+    // those callers still go through the trigger. Defense-in-depth
+    // against accidental future GRANTs to PUBLIC, not a replacement
+    // for the trigger.
     assert.match(
       sql,
       /REVOKE\s+[^;]*\bUPDATE\b[^;]*\bON\s+audit_log\b[^;]*\bFROM\s+PUBLIC\b/i,
@@ -59,14 +62,35 @@ describe("migration 0042_audit_log_truncate_revoke (#995)", () => {
     );
   });
 
-  it("reuses the existing prevent_audit_log_modification() function from 0012", () => {
+  it("reuses prevent_audit_log_modification() so all three mutation paths share one function", () => {
     // Avoid drift — the new trigger should call the same exception-raising
-    // function the row-level triggers use, so all three mutation paths
-    // produce the same error message.
+    // function the row-level triggers use so the function stays the
+    // single source of truth.
     assert.match(
       sql,
       /EXECUTE\s+FUNCTION\s+prevent_audit_log_modification\s*\(\s*\)/i,
-      "TRUNCATE trigger must call prevent_audit_log_modification() to match 0012's row triggers",
+      "TRUNCATE trigger must call prevent_audit_log_modification()",
+    );
+  });
+
+  it("redefines prevent_audit_log_modification() to report the actual operation via TG_OP", () => {
+    // Under 0012 the function raised "UPDATE/DELETE not permitted",
+    // which is misleading when a TRUNCATE attempt fires the new
+    // statement trigger. CREATE OR REPLACE FUNCTION with TG_OP makes
+    // the message accurate for every trigger that calls it.
+    assert.match(
+      sql,
+      /CREATE\s+OR\s+REPLACE\s+FUNCTION\s+prevent_audit_log_modification/i,
+      "migration must CREATE OR REPLACE the function so the new message is in effect",
+    );
+    // Body must contain both RAISE EXCEPTION and TG_OP — splitting into
+    // two checks avoids a regex that has to span the `;` inside the
+    // exception-message string literal.
+    assert.match(sql, /RAISE\s+EXCEPTION/i, "function body must RAISE EXCEPTION");
+    assert.match(
+      sql,
+      /TG_OP/,
+      "function body must reference TG_OP so the error message names the actual operation",
     );
   });
 });

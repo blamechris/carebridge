@@ -9,18 +9,33 @@
 --      without invoking either. A statement-level BEFORE TRUNCATE trigger
 --      catches this path.
 --
---   2. No REVOKE on UPDATE/DELETE/TRUNCATE — any role granted broad table
---      privileges could still attempt the operation. The trigger catches
---      the attempt but defense-in-depth wants the privilege removed too.
+--   2. PUBLIC privileges. The PUBLIC pseudo-role is granted privileges
+--      by default on newly-created tables in many PostgreSQL configs.
+--      Revoking UPDATE/DELETE/TRUNCATE from PUBLIC removes the implicit
+--      grant; the trigger still catches any role that has been
+--      explicitly granted those privileges. This is defense-in-depth
+--      against accidental future GRANTs to PUBLIC, not a substitute for
+--      the trigger.
 --
 -- This migration is additive: the row triggers from 0012 stay in place;
--- we add the TRUNCATE statement trigger and the REVOKE statements.
+-- we add the TRUNCATE statement trigger and the REVOKE-from-PUBLIC
+-- statements. The shared trigger function is redefined so its error
+-- message reports the actual operation (UPDATE / DELETE / TRUNCATE) via
+-- the TG_OP special variable — under the old definition a TRUNCATE
+-- attempt raised "UPDATE/DELETE not permitted" which misled debuggers.
 --
 -- Known limitation (not addressed here): the table owner can DROP TRIGGER
 -- to bypass enforcement. Mitigation requires running the application as a
 -- limited-privilege role distinct from the migration role — operational
 -- concern documented in docs/hipaa-retention.md, not enforceable inside a
 -- single migration.
+
+CREATE OR REPLACE FUNCTION prevent_audit_log_modification()
+RETURNS TRIGGER AS $$
+BEGIN
+  RAISE EXCEPTION 'audit_log is append-only; % not permitted', TG_OP;
+END;
+$$ LANGUAGE plpgsql;
 
 CREATE TRIGGER audit_log_no_truncate
   BEFORE TRUNCATE ON audit_log
