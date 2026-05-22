@@ -343,6 +343,10 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
         notify_specialties: ruleFlag.notify_specialties,
         trigger_event_ids: [event.id],
         status: "open",
+        // Forward structured telemetry to the clinical_flags row (#1039).
+        // Null/absent for rules that don't build metadata; included so
+        // FP-rate dashboards don't need to join review_jobs.rules_output.
+        ...(ruleFlag.metadata !== undefined ? { metadata: ruleFlag.metadata } : {}),
       });
       flagIds.push(flag.id);
     }

@@ -53,6 +53,12 @@ export interface ClinicalFlag extends BaseRecord {
   escalation_count?: number;
   /** ISO timestamp of the last escalation re-notification. */
   last_escalated_at?: string;
+  /**
+   * Rule-specific structured telemetry forwarded from {@link RuleFlag.metadata}
+   * at flag-creation time (#1039). Queryable per-flag for FP-rate
+   * dashboards. Null for LLM-path flags and historical rows pre-#1039.
+   */
+  metadata?: Record<string, unknown>;
 }
 
 // ─── Rule Engine Output ─────────────────────────────────────────
