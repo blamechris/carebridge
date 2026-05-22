@@ -23,6 +23,15 @@
 
 import type { FlagSeverity } from "@carebridge/shared-types";
 
+/**
+ * Shared iodinated-contrast medication pattern. Used by both the true
+ * iodinated-contrast cross-reactivity entry and the iodine-contrast
+ * advisory entry (#977). Keeping a single source prevents the two from
+ * drifting when a new contrast agent is added.
+ */
+const CONTRAST_MED_REGEX =
+  /contrast|iodinated|iohexol|iopamidol|iodixanol|ioversol|optiray|omnipaque|visipaque/i;
+
 export interface CrossReactivityEntry {
   allergenPattern: RegExp;
   medicationPattern: RegExp;
@@ -103,8 +112,17 @@ export const CROSS_REACTIVITY_MAP: readonly CrossReactivityEntry[] = [
     // True iodinated-contrast allergy (IV radiocontrast). Default severity
     // path (critical for severe/moderate charted allergies). Bare "iodine"
     // gets the next entry at warning severity.
-    allergenPattern: /contrast|iodinated|iohexol|iopamidol|iodixanol|ioversol|optiray|omnipaque|visipaque/i,
-    medicationPattern: /contrast|iodinated|iohexol|iopamidol|iodixanol|ioversol|optiray|omnipaque|visipaque/i,
+    //
+    // The allergenPattern matches just the canonical / multi-word forms
+    // because the rule consumer (services/ai-oversight/src/rules/
+    // allergy-medication.ts) tests against `allergenBlob`, which is
+    // `expandAllergenAliases(allergy.allergen).join(" ")`. Any allergy
+    // that normalises to the "iodinated contrast" canonical contributes
+    // "iodinated contrast", "iv contrast", and "contrast dye" to the blob
+    // (see packages/medical-logic/src/allergen-synonyms.ts), so a bare
+    // /contrast|iohexol|.../ enumeration here would be redundant.
+    allergenPattern: /iodinated\s+contrast|iv\s+contrast|contrast\s+dye/i,
+    medicationPattern: CONTRAST_MED_REGEX,
     class: "iodinated contrast",
   },
   {
@@ -114,7 +132,7 @@ export const CROSS_REACTIVITY_MAP: readonly CrossReactivityEntry[] = [
     // severityOverride; writer ignores it and raises a hard block, which
     // is the safer order-time default).
     allergenPattern: /\b(iodine|betadine|povidone[-\s]?iodine)\b/i,
-    medicationPattern: /contrast|iodinated|iohexol|iopamidol|iodixanol|ioversol|optiray|omnipaque|visipaque/i,
+    medicationPattern: CONTRAST_MED_REGEX,
     class: "iodine contrast advisory",
     severityOverride: "warning",
   },
