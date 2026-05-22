@@ -22,7 +22,6 @@
     "@carebridge/ai-oversight": "workspace:*",
     "@carebridge/notifications": "workspace:*",
     "@carebridge/logger": "workspace:*",
-    "@carebridge/messaging": "workspace:*",
     "@carebridge/scheduling": "workspace:*",
     "@carebridge/redis-config": "workspace:*",
     "@carebridge/fhir-gateway": "workspace:*",
