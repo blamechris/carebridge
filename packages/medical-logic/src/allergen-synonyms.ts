@@ -293,6 +293,15 @@ export const ALLERGEN_SYNONYMS: Record<string, string[]> = {
     "iodinated contrast",
     "iv contrast",
     "contrast dye",
+    // #1030 — Single-word chart entries. After PR #1012 simplified the
+    // iodinated-contrast cross-reactivity allergenPattern to canonical
+    // multi-word forms, these bare tokens lost their pre-#1012 fallback
+    // path. Adding them as aliases means a charted "iodinated" or
+    // "contrast" expands into the full canonical group and hits the
+    // simplified regex via allergenBlob.
+    "iodinated",
+    "contrast",
+    "radiocontrast",
     "iohexol",
     "omnipaque",
     "iopamidol",

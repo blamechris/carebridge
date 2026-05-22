@@ -203,6 +203,22 @@ describe("ALLERGEN_SYNONYMS data sanity", () => {
       expect(aliases).not.toContain("iohexol");
       expect(aliases).not.toContain("omnipaque");
     });
+
+    it("bare 'iodinated' / 'contrast' / 'radiocontrast' tokens resolve to iodinated contrast (#1030)", () => {
+      // After PR #1012 narrowed the iodinated-contrast allergenPattern,
+      // single-word chart entries lost their fallback. These aliases
+      // restore Strategy-2 coverage: a charted "iodinated" expands into
+      // the full canonical group via allergenBlob.
+      expect(normalizeAllergen("iodinated")).toBe("iodinated contrast");
+      expect(normalizeAllergen("Contrast")).toBe("iodinated contrast");
+      expect(normalizeAllergen("radiocontrast")).toBe("iodinated contrast");
+      const aliases = expandAllergenAliases("iodinated");
+      expect(aliases).toContain("iodinated contrast");
+      expect(aliases).toContain("iohexol");
+      // Reciprocally: must NOT cross into the iodine (Betadine) canonical.
+      expect(aliases).not.toContain("betadine");
+      expect(aliases).not.toContain("povidone-iodine");
+    });
   });
 
   it("aspirin/ASA folds into nsaid so cross-reactivity with ibuprofen still fires", () => {
