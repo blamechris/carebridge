@@ -70,6 +70,15 @@ export const NON_OPIOID_CRITICAL_RATIO_DEFAULT = 2.0;
 const STRICT_NUMERIC = /^\d+(?:\.\d+)?$/;
 
 /**
+ * Upper bound on critical-escalation ratio overrides (#1033). 10× is well
+ * above any clinically defensible setting — even hospice / palliative
+ * tuning (typically 2.0–3.0×) is comfortably below. The bound catches
+ * decimal-point typos like `OPIOID_CRITICAL_RATIO=120` (intended 1.20)
+ * that would silently disable critical escalation entirely.
+ */
+const MAX_RATIO_OVERRIDE = 10;
+
+/**
  * Resolve a per-deployment ratio override from an env var. Returns the
  * default when the env var is unset, empty, fails strict numeric parsing,
  * or is ≤ 1.0 (a ratio of 1.0 or below would fire critical on any
@@ -105,6 +114,17 @@ export function resolveRatio(envKey: string, defaultValue: number): number {
       envKey,
       raw,
       reason: "non-finite or ≤ 1.0",
+      fallback: defaultValue,
+    });
+    return defaultValue;
+  }
+  if (parsed > MAX_RATIO_OVERRIDE) {
+    // Likely decimal-point typo (e.g. 120 for 1.20). Silently accepting
+    // would effectively disable critical escalation.
+    log.warn("invalid_ratio_override", {
+      envKey,
+      raw,
+      reason: `> ${MAX_RATIO_OVERRIDE} (likely decimal-point typo)`,
       fallback: defaultValue,
     });
     return defaultValue;
