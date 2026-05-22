@@ -54,10 +54,13 @@ function slugForRuleId(name: string): string {
 }
 
 /**
- * CDC-calibrated defaults for the opioid / non-opioid critical-escalation
- * ratios. The active values are exported as
- * {@link OPIOID_CRITICAL_RATIO} / {@link NON_OPIOID_CRITICAL_RATIO} below
- * and may be tuned per-deployment via env vars (see {@link resolveRatio}).
+ * Default critical-escalation ratios. The opioid default (1.2×) is
+ * CDC-calibrated against the 2022 90 MME/day threshold; the non-opioid
+ * default (2.0×) reflects cumulative hepatic/renal/GI harm — not a CDC
+ * threshold (CDC's 90 MME guideline is opioid-only). Active values are
+ * exported as {@link OPIOID_CRITICAL_RATIO} / {@link NON_OPIOID_CRITICAL_RATIO}
+ * below and may be tuned per-deployment via env vars (see
+ * {@link resolveRatio}).
  */
 export const OPIOID_CRITICAL_RATIO_DEFAULT = 1.2;
 export const NON_OPIOID_CRITICAL_RATIO_DEFAULT = 2.0;
@@ -269,10 +272,17 @@ export function checkMedicationDailyDose(context: PatientContext): RuleFlag[] {
     const isOverridden = isOpioid
       ? isOpioidRatioOverridden()
       : isNonOpioidRatioOverridden();
+    // The opioid default (1.2×) is CDC-calibrated; the non-opioid default
+    // (2.0×) comes from the cumulative-harm rationale (hepatic / renal /
+    // GI over weeks) — not the CDC 90 MME guideline. Label them correctly
+    // so the audit trail doesn't falsely credit CDC for the non-opioid
+    // threshold (#1042).
+    const defaultRatio = isOpioid
+      ? OPIOID_CRITICAL_RATIO_DEFAULT
+      : NON_OPIOID_CRITICAL_RATIO_DEFAULT;
+    const defaultSource = isOpioid ? "CDC default" : "cumulative-harm default";
     const overrideNote = isOverridden
-      ? ` Active critical-escalation ratio: ${activeRatio}× (deployment override; CDC default ${
-          isOpioid ? OPIOID_CRITICAL_RATIO_DEFAULT : NON_OPIOID_CRITICAL_RATIO_DEFAULT
-        }×).`
+      ? ` Active critical-escalation ratio: ${activeRatio}× (deployment override; ${defaultSource} ${defaultRatio}×).`
       : "";
     flags.push({
       severity,
