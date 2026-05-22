@@ -1037,3 +1037,39 @@ describe("checkSystolicBP", () => {
     expect(checkSystolicBP(200)).toBe("critical");
   });
 });
+
+describe("isFentanylTransdermal (#1020)", () => {
+  it("matches Fentanyl patch with mcg/hr", async () => {
+    const { isFentanylTransdermal } = await import("../medication-max-doses.js");
+    expect(isFentanylTransdermal("Fentanyl transdermal patch", "mcg/hr")).toBe(true);
+    expect(isFentanylTransdermal("Duragesic", "mcg/hr")).toBe(true);
+    expect(isFentanylTransdermal("FENTANYL PATCH", "MCG/HR")).toBe(true);
+  });
+
+  it("accepts unit aliases mcg/h, ug/hr, μg/hr", async () => {
+    const { isFentanylTransdermal } = await import("../medication-max-doses.js");
+    expect(isFentanylTransdermal("Fentanyl patch", "mcg/h")).toBe(true);
+    expect(isFentanylTransdermal("Fentanyl patch", "ug/hr")).toBe(true);
+    expect(isFentanylTransdermal("Fentanyl patch", "μg/hr")).toBe(true);
+    expect(isFentanylTransdermal("Fentanyl patch", "mcg per hour")).toBe(true);
+  });
+
+  it("rejects IV fentanyl (mcg unit, no rate)", async () => {
+    const { isFentanylTransdermal } = await import("../medication-max-doses.js");
+    expect(isFentanylTransdermal("Fentanyl", "mcg")).toBe(false);
+    expect(isFentanylTransdermal("Fentanyl", "mg")).toBe(false);
+  });
+
+  it("rejects non-fentanyl drugs even with mcg/hr unit", async () => {
+    const { isFentanylTransdermal } = await import("../medication-max-doses.js");
+    expect(isFentanylTransdermal("Clonidine patch", "mcg/hr")).toBe(false);
+    expect(isFentanylTransdermal("Nitroglycerin patch", "mcg/hr")).toBe(false);
+  });
+
+  it("returns false for missing unit", async () => {
+    const { isFentanylTransdermal } = await import("../medication-max-doses.js");
+    expect(isFentanylTransdermal("Fentanyl patch", null)).toBe(false);
+    expect(isFentanylTransdermal("Fentanyl patch", undefined)).toBe(false);
+    expect(isFentanylTransdermal("Fentanyl patch", "")).toBe(false);
+  });
+});
