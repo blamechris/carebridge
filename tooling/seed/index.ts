@@ -153,6 +153,13 @@ async function seed() {
   ]);
 
   // Medications
+  //
+  // The fluoropyrimidine (capecitabine) and LMWH (enoxaparin) choices
+  // match current clinical practice for breast cancer + cancer-associated
+  // thrombosis (ASCO / ASH guidance prefers LMWH over warfarin for VTE
+  // in active cancer). Don't "fix" these back to docetaxel/paclitaxel/
+  // warfarin — the rule ONCO-VTE-NEURO-001 fires regardless of which
+  // chemo or anticoagulant is on board, and README.md tracks this list.
   await db.insert(schema.medications).values([
     {
       id: uuid(), patient_id: dvtPatientId, name: "Capecitabine", brand_name: "Xeloda",
