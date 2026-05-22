@@ -186,7 +186,7 @@ describe("DB-clock interval derivation in idempotency probe", () => {
     expect(intervalCall).toBeDefined();
   });
 
-  it("embeds the interval in a NOW() - N * interval '1 second' template", async () => {
+  it("embeds the interval in a NOW() - N * interval '1 second' template with ASCII quotes only", async () => {
     try {
       await processReviewJob(makeEvent());
     } catch {
@@ -202,9 +202,40 @@ describe("DB-clock interval derivation in idempotency probe", () => {
     );
 
     expect(intervalCall).toBeDefined();
-    expect(intervalCall!.strings.join("")).toContain("NOW()");
-    expect(intervalCall!.strings.join("")).toContain("interval");
-    expect(intervalCall!.strings.join("")).toContain("1 second");
+
+    // Exact byte assertion on each template segment. The sql tag splits at
+    // each interpolation, so the cutoff `NOW() - ${windowSec} * interval '1 second'`
+    // produces strings = ["NOW() - ", " * interval '1 second'"]. Substring
+    // matching ("1 second", "interval") passes whether the quotes are ASCII
+    // (U+0027) or curly (U+2018/U+2019), and the latter makes Postgres reject
+    // the literal — see #981 / #982.
+    expect(intervalCall!.strings[0]).toBe("NOW() - ");
+    expect(intervalCall!.strings[1]).toBe(" * interval '1 second'");
+  });
+
+  it("rendered SQL contains no non-ASCII characters (guard against smart-quote substitution)", async () => {
+    try {
+      await processReviewJob(makeEvent());
+    } catch {
+      // Downstream mocks may throw
+    }
+
+    const intervalCall = sqlTemplateCalls.find(
+      (call) =>
+        call.strings.some((s) => s.includes("NOW()")) &&
+        call.strings.some((s) => s.includes("interval")),
+    );
+    expect(intervalCall).toBeDefined();
+
+    const rendered = intervalCall!.strings.join("");
+    // Code point check — anything outside printable ASCII (0x20-0x7E) plus
+    // standard whitespace (\t \n \r) fails. Curly quotes U+2018/U+2019 land
+    // in the > 0x7E band and trip this guard.
+    const nonAscii = [...rendered].filter((ch) => {
+      const cp = ch.codePointAt(0)!;
+      return !(cp === 9 || cp === 10 || cp === 13 || (cp >= 32 && cp <= 126));
+    });
+    expect(nonAscii).toEqual([]);
   });
 
   it("interval seconds match IN_FLIGHT_WINDOW_MS / 1000 (no hardcoded drift)", () => {
