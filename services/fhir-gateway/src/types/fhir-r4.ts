@@ -111,11 +111,24 @@ export interface DoseAndRate {
   rateQuantity?: Quantity;
 }
 
+export interface Ratio {
+  numerator?: Quantity;
+  denominator?: Quantity;
+}
+
 export interface DosageInstruction {
   text?: string;
   route?: CodeableConcept;
   timing?: Timing;
   doseAndRate?: DoseAndRate[];
+  /**
+   * Upper bound on the cumulative dose administered over a period
+   * (e.g. "max 4 doses/day"). FHIR R4 Dosage.maxDosePerPeriod is a
+   * Ratio — numerator is the dose count or quantity, denominator is
+   * the time unit. Used by the daily-dose rule to bound PRN regimens
+   * via {@link extractMaxDosesPerDay}. (#935)
+   */
+  maxDosePerPeriod?: Ratio;
 }
 
 // ─── Patient resource ───────────────────────────────────────────

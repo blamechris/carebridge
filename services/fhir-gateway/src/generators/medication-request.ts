@@ -167,6 +167,25 @@ export function toFhirMedicationRequest(
     hasDosage = true;
   }
 
+  // Emit Dosage.maxDosePerPeriod when the prescription carries an explicit
+  // PRN ceiling — gives external EHRs the same daily-cap signal the
+  // ai-oversight daily-dose rule uses to bound PRN regimens (#935).
+  if (medication.max_doses_per_day != null) {
+    dosage.maxDosePerPeriod = {
+      numerator: {
+        value: medication.max_doses_per_day,
+        unit: "doses",
+      },
+      denominator: {
+        value: 1,
+        unit: "day",
+        system: "http://unitsofmeasure.org",
+        code: "d",
+      },
+    };
+    hasDosage = true;
+  }
+
   if (hasDosage) {
     const parts: string[] = [];
     if (medication.dose_amount != null && medication.dose_unit) {

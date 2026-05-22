@@ -61,6 +61,12 @@ export const createMedicationSchema = z.object({
    * (transplant, autoimmune, GVHD).
    */
   chronic: z.boolean().optional(),
+  /**
+   * Optional PRN / hard-cap dose count per 24 h (#935). Capped at 24
+   * because the dosing-cycle ceiling is q1h × 24h — anything above is
+   * either a unit error or an unbounded order.
+   */
+  max_doses_per_day: z.number().int().positive().max(24).optional(),
 });
 
 export const updateMedicationSchema = createMedicationSchema.partial().omit({ patient_id: true }).extend({
