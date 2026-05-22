@@ -372,6 +372,71 @@ describe("checkMedicationDailyDose (#235)", () => {
       process.env[envKey] = "10.5";
       expect(resolveRatio(envKey, 1.2)).toBe(1.2);
     });
+
+    describe("emits invalid_ratio_override warning on fallback (#1032)", () => {
+      // The safety promise of resolveRatio is that misconfiguration
+      // surfaces visibly — a future refactor accidentally dropping the
+      // log.warn call would silently de-tune critical escalation with
+      // every existing return-value test still green. Pin the warning
+      // emission and its structured fields explicitly.
+      //
+      // Logger writes warn/error lines to console.error (see
+      // packages/logger/src/index.ts), so spying on console.error captures
+      // the structured JSON line.
+      let errSpy: ReturnType<typeof vi.spyOn>;
+      beforeEach(() => {
+        errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      });
+      afterEach(() => {
+        errSpy.mockRestore();
+      });
+
+      it("non-strict-decimal input → warn with envKey/raw/reason/fallback fields", () => {
+        process.env[envKey] = "2.0x";
+        const returned = resolveRatio(envKey, 1.2);
+        expect(returned).toBe(1.2);
+
+        expect(errSpy).toHaveBeenCalledOnce();
+        const [line] = errSpy.mock.calls[0]!;
+        const entry = JSON.parse(line as string);
+        expect(entry.msg).toBe("invalid_ratio_override");
+        expect(entry.level).toBe("warn");
+        expect(entry.envKey).toBe(envKey);
+        expect(entry.raw).toBe("2.0x");
+        expect(entry.reason).toMatch(/strict decimal/);
+        expect(entry.fallback).toBe(1.2);
+      });
+
+      it("≤ 1.0 input → warn with non-finite-or-≤1 reason", () => {
+        process.env[envKey] = "0.5";
+        resolveRatio(envKey, 1.2);
+        expect(errSpy).toHaveBeenCalledOnce();
+        const entry = JSON.parse(errSpy.mock.calls[0]![0] as string);
+        expect(entry.msg).toBe("invalid_ratio_override");
+        expect(entry.envKey).toBe(envKey);
+        expect(entry.raw).toBe("0.5");
+        expect(entry.reason).toMatch(/non-finite or/);
+        expect(entry.fallback).toBe(1.2);
+      });
+
+      it("> MAX_RATIO_OVERRIDE input → warn with decimal-point-typo reason", () => {
+        process.env[envKey] = "120";
+        resolveRatio(envKey, 1.2);
+        expect(errSpy).toHaveBeenCalledOnce();
+        const entry = JSON.parse(errSpy.mock.calls[0]![0] as string);
+        expect(entry.msg).toBe("invalid_ratio_override");
+        expect(entry.envKey).toBe(envKey);
+        expect(entry.raw).toBe("120");
+        expect(entry.reason).toMatch(/decimal-point typo/);
+        expect(entry.fallback).toBe(1.2);
+      });
+
+      it("valid override does NOT emit a warning", () => {
+        process.env[envKey] = "1.5";
+        expect(resolveRatio(envKey, 1.2)).toBe(1.5);
+        expect(errSpy).not.toHaveBeenCalled();
+      });
+    });
   });
 
   describe("override rationale surfacing (#968)", () => {
