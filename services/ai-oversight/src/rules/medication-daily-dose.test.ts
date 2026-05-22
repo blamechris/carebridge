@@ -262,8 +262,17 @@ describe("checkMedicationDailyDose (#235)", () => {
 
   describe("resolveRatio — deployment override (#968)", () => {
     const envKey = "TEST_RATIO_OVERRIDE_968";
+    // Even though TEST_RATIO_OVERRIDE_968 is fixture-only and unlikely to
+    // be set in a developer shell, preserve and restore symmetrically with
+    // the override-rationale block below — keeps the pattern uniform so
+    // a future env-key rename doesn't quietly start clobbering dev state.
+    let prev: string | undefined;
+    beforeEach(() => {
+      prev = process.env[envKey];
+    });
     afterEach(() => {
-      delete process.env[envKey];
+      if (prev === undefined) delete process.env[envKey];
+      else process.env[envKey] = prev;
     });
 
     it("returns default when env var is unset", () => {
@@ -370,13 +379,21 @@ describe("checkMedicationDailyDose (#235)", () => {
     // override-note rendering we have to reload the module with the env
     // var pre-set. vi.resetModules + dynamic import keeps the override
     // contained to this test.
-    let prev: string | undefined;
+    //
+    // Preserve and restore BOTH opioid and non-opioid env vars (#1052) —
+    // earlier revisions only saved OPIOID and blasted whatever the
+    // developer had set in NON_OPIOID_CRITICAL_RATIO.
+    let prevOpioid: string | undefined;
+    let prevNonOpioid: string | undefined;
     beforeEach(() => {
-      prev = process.env.OPIOID_CRITICAL_RATIO;
+      prevOpioid = process.env.OPIOID_CRITICAL_RATIO;
+      prevNonOpioid = process.env.NON_OPIOID_CRITICAL_RATIO;
     });
     afterEach(() => {
-      if (prev === undefined) delete process.env.OPIOID_CRITICAL_RATIO;
-      else process.env.OPIOID_CRITICAL_RATIO = prev;
+      if (prevOpioid === undefined) delete process.env.OPIOID_CRITICAL_RATIO;
+      else process.env.OPIOID_CRITICAL_RATIO = prevOpioid;
+      if (prevNonOpioid === undefined) delete process.env.NON_OPIOID_CRITICAL_RATIO;
+      else process.env.NON_OPIOID_CRITICAL_RATIO = prevNonOpioid;
       vi.resetModules();
     });
 
@@ -418,8 +435,7 @@ describe("checkMedicationDailyDose (#235)", () => {
       expect(daily!.rationale).toMatch(/cumulative-harm default/);
       // The 'CDC default' string must NOT appear in non-opioid rationale.
       expect(daily!.rationale).not.toMatch(/CDC default/);
-      // Reset for subsequent tests in this describe block.
-      delete process.env.NON_OPIOID_CRITICAL_RATIO;
+      // afterEach handles env restoration for NON_OPIOID_CRITICAL_RATIO (#1052).
     });
 
     it("omits the override note when running at the default ratio", () => {
