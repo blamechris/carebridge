@@ -97,15 +97,23 @@ export const MEDICATION_MAX_DAILY_DOSES: Record<string, MedicationDoseLimit> = {
     maxDailyDoseMg: 4000,
     source: "FDA OTC monograph (adult analgesic aspirin, 4000 mg/day; antiplatelet Rx 81–325 mg is out of scope)",
   },
-  // Diclofenac IR (Voltaren) — 50 mg single / 150 mg/day. ER formulation
-  // (Voltaren XR) is a single 100 mg/day cap and is NOT encoded here; an
-  // ER prescription should resolve to a separate `diclofenac er` entry
-  // when formulation-aware lookup lands (issue #927).
+  // Diclofenac IR (Voltaren) — 50 mg single / 150 mg/day.
   diclofenac: {
     displayName: "Diclofenac",
     maxSingleDoseMg: 50,
     maxDailyDoseMg: 150,
     source: "FDA prescription label (Voltaren IR; adult PO diclofenac IR, Rx 150 mg/day)",
+  },
+  // Diclofenac ER (Voltaren XR) — FDA-labelled adult ceiling is 100 mg
+  // once-daily. Because the Rx is a once-daily regimen, the single-dose
+  // and daily ceilings coincide (both 100 mg). The 100 mg/day cap is
+  // stricter than the 150 mg/day IR cap, which is the formulation-aware
+  // distinction this entry exists for (#1041).
+  "diclofenac er": {
+    displayName: "Diclofenac ER",
+    maxSingleDoseMg: 100,
+    maxDailyDoseMg: 100,
+    source: "FDA prescription label (Voltaren XR; adult PO diclofenac ER, 100 mg once-daily — single = daily ceiling)",
   },
   meloxicam: {
     displayName: "Meloxicam",
@@ -193,9 +201,15 @@ const DRUG_NAME_ALIASES: Record<string, string> = {
   asa: "aspirin",
   bufferin: "aspirin",
   ecotrin: "aspirin",
-  // Diclofenac
+  // Diclofenac. IR vs ER resolves to separate entries because the ER
+  // ceiling (100 mg/day) is stricter than IR (150 mg/day) — #1041.
   voltaren: "diclofenac",
   cataflam: "diclofenac",
+  "voltaren xr": "diclofenac er",
+  "voltaren-xr": "diclofenac er",
+  "diclofenac xr": "diclofenac er",
+  "diclofenac extended-release": "diclofenac er",
+  "diclofenac extended release": "diclofenac er",
   // Meloxicam
   mobic: "meloxicam",
   // Celecoxib
