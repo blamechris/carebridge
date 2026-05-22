@@ -5,6 +5,8 @@ import type { Medication, MedLog, MedStatus } from "@carebridge/shared-types";
 import {
   CROSS_REACTIVITY_MAP,
   expandAllergenAliases,
+  parseFrequencyText,
+  serializeFrequency,
 } from "@carebridge/medical-logic";
 import { emitClinicalEvent } from "../events.js";
 
@@ -141,6 +143,11 @@ export async function createMedication(input: CreateMedicationInput): Promise<Me
     dose_unit: input.dose_unit ?? null,
     route: input.route ?? null,
     frequency: input.frequency ?? null,
+    // Pre-parse to the structured column at write time (#931). When the
+    // free-text frequency can't be classified, store null and let the
+    // rule fall back to runtime parsing — same fail-open behaviour as
+    // before the structured column existed.
+    frequency_structured: serializeFrequency(parseFrequencyText(input.frequency ?? null)),
     status: input.status ?? "active",
     started_at: input.started_at ?? null,
     ended_at: input.ended_at ?? null,
@@ -173,6 +180,8 @@ export async function createMedication(input: CreateMedicationInput): Promise<Me
     dose_unit: input.dose_unit,
     route: input.route,
     frequency: input.frequency,
+    frequency_structured:
+      serializeFrequency(parseFrequencyText(input.frequency ?? null)) ?? undefined,
     status: input.status ?? "active",
     started_at: input.started_at,
     ended_at: input.ended_at,
@@ -215,7 +224,11 @@ export async function updateMedication(
   if (fields.dose_amount !== undefined) updates.dose_amount = fields.dose_amount;
   if (fields.dose_unit !== undefined) updates.dose_unit = fields.dose_unit;
   if (fields.route !== undefined) updates.route = fields.route;
-  if (fields.frequency !== undefined) updates.frequency = fields.frequency;
+  if (fields.frequency !== undefined) {
+    updates.frequency = fields.frequency;
+    // Re-derive the structured column whenever the free-text changes (#931).
+    updates.frequency_structured = serializeFrequency(parseFrequencyText(fields.frequency));
+  }
   if (fields.status !== undefined) updates.status = fields.status;
   if (fields.started_at !== undefined) updates.started_at = fields.started_at;
   if (fields.ended_at !== undefined) updates.ended_at = fields.ended_at;
@@ -267,6 +280,7 @@ export async function updateMedication(
     dose_unit: updated.dose_unit ?? undefined,
     route: (updated.route as Medication["route"]) ?? undefined,
     frequency: updated.frequency ?? undefined,
+    frequency_structured: updated.frequency_structured ?? undefined,
     status: updated.status as MedStatus,
     started_at: updated.started_at ?? undefined,
     ended_at: updated.ended_at ?? undefined,
@@ -310,6 +324,7 @@ export async function getMedicationsByPatient(
     dose_unit: row.dose_unit ?? undefined,
     route: (row.route as Medication["route"]) ?? undefined,
     frequency: row.frequency ?? undefined,
+    frequency_structured: row.frequency_structured ?? undefined,
     status: row.status as MedStatus,
     started_at: row.started_at ?? undefined,
     ended_at: row.ended_at ?? undefined,

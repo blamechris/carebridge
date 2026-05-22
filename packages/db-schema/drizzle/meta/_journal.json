@@ -337,6 +337,13 @@
       "when": 1747929600000,
       "tag": "0043_medications_chronic_flag",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1747929660000,
+      "tag": "0044_medications_frequency_structured",
+      "breakpoints": true
     }
   ]
 }
