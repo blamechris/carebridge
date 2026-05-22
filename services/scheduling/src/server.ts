@@ -19,17 +19,25 @@ const worker = startReminderWorker();
 const REDIS_PING_TIMEOUT_MS = 2_000;
 
 async function checkRedis(): Promise<"connected" | "disconnected"> {
+  let timer: NodeJS.Timeout | undefined;
   try {
     const client = await worker.client;
     const result = await Promise.race([
       client.ping(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("timeout")), REDIS_PING_TIMEOUT_MS),
-      ),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("timeout")),
+          REDIS_PING_TIMEOUT_MS,
+        );
+      }),
     ]);
     return result === "PONG" ? "connected" : "disconnected";
   } catch {
     return "disconnected";
+  } finally {
+    // Cancel the timeout when ping resolves first so we don't leak a
+    // 2-second pending timer (and an unhandled-rejection) per /health hit.
+    if (timer) clearTimeout(timer);
   }
 }
 
