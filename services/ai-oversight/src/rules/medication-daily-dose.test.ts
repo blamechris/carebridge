@@ -343,6 +343,29 @@ describe("checkMedicationDailyDose (#235)", () => {
       expect(daily!.rationale).toMatch(
         new RegExp(`${OPIOID_CRITICAL_RATIO_DEFAULT}×`),
       );
+      // Opioid path correctly credits CDC as the default-source authority.
+      expect(daily!.rationale).toMatch(/CDC default/);
+    });
+
+    it("non-opioid override note credits cumulative-harm default (NOT CDC) (#1042)", async () => {
+      process.env.NON_OPIOID_CRITICAL_RATIO = "1.5";
+      vi.resetModules();
+      const fresh = await import("./medication-daily-dose.js");
+      // Acetaminophen 1000 mg q4h = 6000 mg/day, 1.5× the 4000 mg cap.
+      // At the override ratio of 1.5 this stays in the critical band; the
+      // rationale must mention the override but must NOT credit CDC for
+      // the non-opioid default (CDC's 90 MME guideline is opioid-only).
+      const flags = fresh.checkMedicationDailyDose(
+        makeCtx(makeMed({ name: "Acetaminophen", dose_amount: 1000, frequency: "q4h" })),
+      );
+      const daily = flags.find((f) => f.rule_id?.startsWith("MED-DAILY-OVER"));
+      expect(daily).toBeDefined();
+      expect(daily!.rationale).toMatch(/deployment override/);
+      expect(daily!.rationale).toMatch(/cumulative-harm default/);
+      // The 'CDC default' string must NOT appear in non-opioid rationale.
+      expect(daily!.rationale).not.toMatch(/CDC default/);
+      // Reset for subsequent tests in this describe block.
+      delete process.env.NON_OPIOID_CRITICAL_RATIO;
     });
 
     it("omits the override note when running at the default ratio", () => {
