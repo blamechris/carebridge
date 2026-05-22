@@ -1211,14 +1211,32 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
     id: "CROSS-ANTICOAG-NSAID-GIBLEED-001",
     name: "Anticoagulant + NSAID with prior GI bleed history",
     check: (ctx: PatientContext) => {
+      // #971 — Free-text matching is fundamentally fragile for a
+      // critical-severity rule. Anchor on ICD-10 codes first (the
+      // structured signal already populated by review-service.ts) and
+      // fall back to the text pattern for un-coded notes.
+      //
+      // Codes that imply an active or prior hemorrhagic GI event:
+      //  - K92.0/1/2  Hematemesis / Melena / GI hemorrhage unspecified
+      //  - K25-K28 .4 / .6  Gastric/duodenal/peptic/gastrojejunal ulcer
+      //    with hemorrhage (chronic / acute)
+      //  - I85.01 / I85.11  Esophageal varices with bleeding
+      //  - K57.x1 / K57.x3  Diverticular disease with bleeding
+      const GI_BLEED_ICD10_PATTERN =
+        /^(K92\.[012]|K2[5-8]\.[46]|I85\.[01]1|K57\.[0-9]*[13])\b/;
       // Require bleed/hemorrhage/hematochezia context for "upper gi" / "lower
       // gi" mentions so imaging studies ("Lower GI series, normal 2023") and
       // generic symptom blurbs ("upper GI symptoms") don't trigger a
-      // critical flag. Specific entities (peptic ulcer, variceal,
-      // angiodysplasia) stay bare because the diagnosis itself implies
-      // bleed risk in this clinical context.
+      // critical flag.
+      //
+      // `peptic ulcer` was previously a bare match — tightened in #971 to
+      // require an adjacent bleed term so "Peptic ulcer disease, no bleed"
+      // no longer fires on the text path. Coded peptic-ulcer bleeds are
+      // still caught by the K25-K28 .4/.6 ICD-10 branch above. Variceal
+      // and angiodysplasia stay bare because the diagnosis text itself
+      // implies bleed risk in this clinical context.
       const GI_BLEED_HISTORY_PATTERN =
-        /gi bleed|gastrointestinal bleed|peptic ulcer|hematemesis|melena|hematochezia|(?:upper|lower)\s+gi\s+(?:bleed|hemorrhage|haemorrhage|hematemesis|melena|hematochezia)|diverticular bleed|angiodysplasia|variceal/i;
+        /gi bleed|gastrointestinal bleed|\b[ul]gib\b|peptic ulcer[^,]*\b(?:bleed|hemorrhage|haemorrhage)\b|\b(?:bleed|hemorrhage|haemorrhage)\b[^,]*peptic ulcer|hematemesis|melena|hematochezia|(?:upper|lower)\s+gi\s+(?:bleed|hemorrhage|haemorrhage|hematemesis|melena|hematochezia)|diverticular bleed|angiodysplasia|variceal/i;
       // Deliberately include aspirin here (not part of NSAID_PATTERN because
       // other NSAID rules care about prostaglandin / renal-profile risks
       // where aspirin kinetics differ). For GI-bleed risk in
@@ -1234,10 +1252,13 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
         NSAID_OR_ASPIRIN.test(m),
       );
       if (!onNSAID) return false;
-      const hasGIBleedHistory = ctx.active_diagnoses.some((d) =>
+      const hasGIBleedByCode = ctx.active_diagnosis_codes.some((code) =>
+        GI_BLEED_ICD10_PATTERN.test(code),
+      );
+      if (hasGIBleedByCode) return true;
+      return ctx.active_diagnoses.some((d) =>
         GI_BLEED_HISTORY_PATTERN.test(d),
       );
-      return hasGIBleedHistory;
     },
     severity: "critical" as const,
     category: "cross-specialty" as const,
