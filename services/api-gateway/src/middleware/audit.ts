@@ -8,6 +8,7 @@ import {
 } from "@carebridge/db-schema";
 import { and, eq } from "drizzle-orm";
 import crypto from "node:crypto";
+import { recordAuditWriteFailure } from "./audit-failure.js";
 
 /** Map HTTP methods to human-readable actions. */
 function methodToAction(method: string): string {
@@ -322,7 +323,15 @@ export async function auditMiddleware(
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
-    // Audit logging should never crash the request cycle.
-    request.log.error({ err }, "Failed to write audit log entry");
+    // Audit logging should never crash the request cycle. Surface the
+    // failure via the shared structured-log helper so an outage / DB
+    // disconnect produces a stable `audit_write_failed` signal in the
+    // log stream (HIPAA §164.312(b) visibility, #996).
+    recordAuditWriteFailure(err, {
+      site: "audit.middleware",
+      userId,
+      patientId,
+      action,
+    });
   }
 }

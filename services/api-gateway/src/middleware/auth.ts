@@ -5,6 +5,7 @@ import { users, sessions, auditLog } from "@carebridge/db-schema";
 import { eq } from "drizzle-orm";
 import crypto from "node:crypto";
 import { verifyJWT, JWTError } from "@carebridge/auth";
+import { recordAuditWriteFailure } from "./audit-failure.js";
 
 /** Hardcoded dev users for local development without a seeded database. */
 const DEV_USERS: Record<string, User> = {
@@ -177,8 +178,16 @@ export async function authMiddleware(
         ip_address: request.ip,
         timestamp: new Date().toISOString(),
       })
-      .catch(() => {
-        // Audit logging must never block or crash the rejection flow.
+      .catch((err) => {
+        // Audit logging must never block or crash the rejection flow,
+        // but the failure must be observable — surfaces in the log
+        // stream as the stable `audit_write_failed` signal so an outage
+        // produces a real alert rather than silent loss (#996).
+        recordAuditWriteFailure(err, {
+          site: "auth.session_rejected_inactive",
+          userId: row.id,
+          action: "session_rejected_inactive",
+        });
       });
 
     _reply.code(401).send({ error: "Session expired" });

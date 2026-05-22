@@ -5,6 +5,7 @@ import { hasPermission } from "@carebridge/shared-types";
 import { getDb, careTeamAssignments, auditLog, emergencyAccess } from "@carebridge/db-schema";
 import { eq, and, isNull, gt } from "drizzle-orm";
 import crypto from "node:crypto";
+import { recordAuditWriteFailure } from "./audit-failure.js";
 
 /**
  * tRPC-side RBAC enforcement: throws `FORBIDDEN` when the user's role
@@ -271,8 +272,17 @@ export async function assertCareTeamAccess(
         ip_address: clientIp ?? "",
         timestamp: now,
       })
-      .catch(() => {
-        // Swallow — audit logging must never block access decisions.
+      .catch((err) => {
+        // Audit logging must never block access decisions, but the
+        // failure must be observable — log via the shared helper so
+        // an audit-write outage produces a `audit_write_failed`
+        // structured-log signal (HIPAA §164.312(b) visibility, #996).
+        recordAuditWriteFailure(err, {
+          site: "rbac.emergency_access_used",
+          userId,
+          patientId,
+          action: "emergency_access_used",
+        });
       });
 
     setCache(key, true);
