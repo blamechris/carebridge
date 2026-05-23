@@ -154,8 +154,8 @@ export interface GenerateOptions {
   privateKeyPath: string;
   /**
    * Override the kid. Defaults to a fresh UUID — fine for first-time
-   * setup. Rotations should pass the prior kid so server-side caches
-   * don't have to refetch the JWKS.
+   * setup. Rotations typically generate a NEW kid so the previous JWKS
+   * entry can be retained alongside the new one until Epic re-fetches.
    */
   kid?: string;
   /**
@@ -170,7 +170,7 @@ export interface GenerateOptions {
  * public JWK + kid for upload to open.epic.com.
  */
 export function generateKeypair(options: GenerateOptions): GeneratedKeyPair {
-  const kid = options.kid ?? randomUUIDv5Stable();
+  const kid = options.kid ?? generateKid();
   const generated =
     options.generator?.() ??
     (() => {
@@ -188,10 +188,19 @@ export function generateKeypair(options: GenerateOptions): GeneratedKeyPair {
     })();
 
   mkdirSync(dirname(options.privateKeyPath), { recursive: true });
-  writeFileSync(options.privateKeyPath, generated.privatePem, "utf8");
-  // Tighten permissions so the private key isn't world-readable. The
-  // openssl-generated default leaves 0644 on macOS — easy to leak via
-  // a misconfigured backup.
+  // Create the file with 0600 from the start. `writeFileSync` accepts a
+  // `mode` option that's applied at open() time, closing the race window
+  // where a separate chmod after writeFileSync would leave the key
+  // world-readable for the few syscalls in between. The `flag: "w"`
+  // matches the default but is explicit for the security audit trail.
+  writeFileSync(options.privateKeyPath, generated.privatePem, {
+    encoding: "utf8",
+    mode: 0o600,
+    flag: "w",
+  });
+  // Belt-and-braces: chmod after the write in case an existing file
+  // was overwritten and the new mode wasn't applied (older Node
+  // versions did NOT update mode on overwrite of an existing file).
   chmodSync(options.privateKeyPath, 0o600);
 
   const publicJwk = rsaPublicPemToJwk(generated.publicPem, kid);
@@ -204,10 +213,12 @@ export function generateKeypair(options: GenerateOptions): GeneratedKeyPair {
 }
 
 /**
- * Stable kid generator — uses crypto.randomUUID under the hood. Kept
- * factorable so tests can stub kid generation.
+ * Default kid generator — emits a fresh UUID v4 from crypto.randomUUID
+ * per invocation. Factored out so tests can stub kid generation for
+ * deterministic fixtures. The name was previously misleading; this is
+ * NOT a UUID v5 (no namespacing) and is NOT stable across invocations.
  */
-function randomUUIDv5Stable(): string {
+function generateKid(): string {
   return randomUUID();
 }
 

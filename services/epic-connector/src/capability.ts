@@ -31,13 +31,14 @@ export interface SmartConfiguration {
 }
 
 /**
- * Build the well-known URL for the given FHIR base URL. The well-known
- * doc lives at the server root, NOT under the FHIR base, so we strip
- * any /FHIR/R4 suffix before appending.
+ * Build the well-known URL for the given FHIR base URL. Per SMART App
+ * Launch §Discovery, the conformance document MAY be served from the
+ * FHIR base or from the server root — Epic's interconnect deployments
+ * serve it from the FHIR base, so we keep the path intact and just
+ * append `.well-known/smart-configuration`. Hosts that require root-
+ * level discovery can pass the root URL directly.
  */
 export function smartConfigurationUrl(fhirBaseUrl: string): string {
-  // Strip a trailing FHIR-version path segment if present, then append
-  // .well-known/smart-configuration per the spec.
   const trimmed = fhirBaseUrl.replace(/\/+$/, "");
   return `${trimmed}/.well-known/smart-configuration`;
 }

@@ -15,7 +15,6 @@ export {
 } from "./config.js";
 export {
   buildClientAssertion,
-  decodeAssertionForTest,
   type BuildAssertionArgs,
 } from "./jwt-assertion.js";
 export {

@@ -12,10 +12,11 @@
  *                               sandbox default when absent).
  *   EPIC_FHIR_BASE_URL        — FHIR R4 base URL for read operations.
  *   EPIC_PRIVATE_KEY_PATH     — Filesystem path to the RS384 private-key
- *                               PEM. Mutually exclusive with PEM env.
- *   EPIC_PRIVATE_KEY_PEM      — Inline PEM string. Takes precedence over
- *                               PATH only when PATH is absent — explicit
- *                               PATH preferred for ease of rotation.
+ *                               PEM. Takes precedence when set.
+ *   EPIC_PRIVATE_KEY_PEM      — Inline PEM string. Used only when
+ *                               EPIC_PRIVATE_KEY_PATH is unset. Setting
+ *                               both is allowed but PATH wins — explicit
+ *                               PATH is preferred for ease of rotation.
  *   EPIC_JWT_KID              — Key id matching the JWK uploaded at
  *                               open.epic.com. Required so Epic can
  *                               select the right public key when the

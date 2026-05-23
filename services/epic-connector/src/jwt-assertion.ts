@@ -90,8 +90,10 @@ export function buildClientAssertion(args: BuildAssertionArgs): string {
 }
 
 /**
- * Decode the JWT header + payload without verification. Test helper —
- * production code never inspects its own signed JWTs; Epic does that.
+ * Decode the JWT header + payload without verification. Internal test
+ * helper — intentionally NOT re-exported from the package entrypoint.
+ * Production code never inspects its own signed JWTs; Epic does that.
+ * Import from `./jwt-assertion.js` directly within tests.
  */
 export function decodeAssertionForTest(jwt: string): {
   header: Record<string, unknown>;

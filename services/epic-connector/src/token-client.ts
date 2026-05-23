@@ -117,14 +117,18 @@ export class EpicTokenClient {
 
     if (!response.ok) {
       const text = await response.text();
-      // Epic returns structured OAuth2 errors as JSON; preserve them in
-      // the log for debugging but throw a clean message upstream — the
-      // body may contain the assertion (echoed back), so the caller
-      // should not surface it to end users.
+      // Epic returns OAuth 2.0 error payloads as JSON with `error` /
+      // `error_description` fields. Parse those out and log ONLY the
+      // structured fields — never the raw body, which may echo back the
+      // client_assertion JWT (a credential that, if leaked to log
+      // collectors, can be replayed against Epic for the assertion's
+      // lifetime).
+      const errorFields = parseOAuthError(text);
       log.warn("Epic token request failed", {
         status: response.status,
         statusText: response.statusText,
-        bodyPrefix: text.slice(0, 200),
+        oauth_error: errorFields.error,
+        oauth_error_description: errorFields.error_description,
       });
       throw new Error(
         `Epic token endpoint returned ${response.status} ${response.statusText}`,
@@ -148,5 +152,29 @@ export class EpicTokenClient {
    */
   invalidate(): void {
     this.cached = null;
+  }
+}
+
+/**
+ * Best-effort parser for OAuth 2.0 error responses (RFC 6749 §5.2).
+ * Returns the structured `error` + `error_description` fields when the
+ * body is JSON; falls back to undefined when it isn't (so the caller
+ * doesn't accidentally log opaque token endpoint output).
+ */
+function parseOAuthError(body: string): {
+  error?: string;
+  error_description?: string;
+} {
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>;
+    return {
+      error: typeof parsed.error === "string" ? parsed.error : undefined,
+      error_description:
+        typeof parsed.error_description === "string"
+          ? parsed.error_description
+          : undefined,
+    };
+  } catch {
+    return {};
   }
 }
