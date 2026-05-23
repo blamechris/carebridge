@@ -11,6 +11,7 @@ import { fhirRbacRouter } from "./routers/fhir.js";
 import { notificationsRbacRouter } from "./routers/notifications.js";
 import { familyAccessRbacRouter } from "./routers/family-access.js";
 import { careTeamRbacRouter } from "./routers/care-team.js";
+import { epicSyncRbacRouter } from "./routers/epic-sync.js";
 
 export const appRouter = router({
   healthCheck: publicProcedure.query(() => {
@@ -32,6 +33,7 @@ export const appRouter = router({
   fhir: fhirRbacRouter,
   familyAccess: familyAccessRbacRouter,
   careTeam: careTeamRbacRouter,
+  epicSync: epicSyncRbacRouter,
 });
 
 export type AppRouter = typeof appRouter;

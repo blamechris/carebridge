@@ -19,6 +19,7 @@
     "@carebridge/clinical-data": "workspace:*",
     "@carebridge/clinical-notes": "workspace:*",
     "@carebridge/ai-oversight": "workspace:*",
+    "@carebridge/epic-connector": "workspace:*",
     "@carebridge/notifications": "workspace:*",
     "@carebridge/logger": "workspace:*",
     "@carebridge/scheduling": "workspace:*",

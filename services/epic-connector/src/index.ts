@@ -7,8 +7,10 @@
  *
  * #390 adds the typed FHIR R4 client + Epic→CareBridge converters.
  *
- * Follow-ups will add the sync worker (#391), App Launch (#392), and
- * outbound flag push (#393).
+ * #391 adds the BullMQ sync worker, persistence layer, clinical-event
+ * emission, and tRPC surface for sync orchestration / status.
+ *
+ * Follow-ups will add App Launch (#392) and outbound flag push (#393).
  */
 export { loadEpicConfig, type EpicConfig } from "./config.js";
 export {
@@ -61,3 +63,42 @@ export {
   type EpicLabResultRow,
   type EpicObservationConversion,
 } from "./converters.js";
+export {
+  runFullSync,
+  runIncrementalSync,
+  runSingleResourceSync,
+  SUPPORTED_RESOURCE_TYPES,
+  type SyncResourceType,
+  type SyncResult,
+  type SyncJobDeps,
+  type EmitFn,
+} from "./sync/sync-jobs.js";
+export {
+  getSyncState,
+  getAllSyncStatesForPatient,
+  listRecentFailures,
+  markRunning,
+  markOk,
+  markFailed,
+  type EpicSyncStateRow,
+  type EpicSyncStatusValue,
+} from "./sync/sync-state-repo.js";
+export {
+  persistPatient,
+  persistMedicationRequest,
+  persistMedicationStatement,
+  persistObservation,
+  persistCondition,
+  persistAllergy,
+  type PersistResult,
+} from "./sync/persistence.js";
+export {
+  startEpicSyncWorker,
+  getEpicSyncQueue,
+  enqueueFullSync,
+  enqueueIncrementalSync,
+  enqueueSingleResourceSync,
+  EPIC_SYNC_QUEUE_NAME,
+  type EpicSyncJobData,
+} from "./workers/sync-worker.js";
+export { epicSyncRouter, type EpicSyncRouter } from "./router.js";
