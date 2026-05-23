@@ -353,4 +353,270 @@ describe("Epic sync-jobs (#391)", () => {
       expect(searchedTypes).toContain(rt);
     }
   });
+
+  // ── #1094: Epic-specific search-param requirements ─────────────
+  // Epic's R4 sandbox rejects blanket `?patient=X` queries for
+  // Observation (needs `category`) and MedicationRequest (needs
+  // `status`). The sync-job fetch layer fans out so each request
+  // Epic sees carries the params it whitelists.
+
+  it("Observation fetch fans out across vital-signs and laboratory categories", async () => {
+    const client = makeFakeClient({
+      Observation: [{ resourceType: "Observation", id: "obs-1" }],
+    });
+    persistObservation.mockResolvedValue({
+      internalId: "obs-internal",
+      kind: "vital",
+      inserted: true,
+    });
+
+    await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "Observation",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    const observationCalls = (
+      client.searchAll as ReturnType<typeof vi.fn>
+    ).mock.calls.filter((c) => c[0] === "Observation");
+    expect(observationCalls).toHaveLength(2);
+    const categories = observationCalls.map((c) => c[1].category).sort();
+    expect(categories).toEqual(["laboratory", "vital-signs"]);
+    // Both calls must still carry `patient` so Epic scopes results.
+    for (const call of observationCalls) {
+      expect(call[1].patient).toBe(EPIC_PATIENT_FHIR_ID);
+    }
+  });
+
+  it("Observation fetch dedups resources that appear in multiple category fan-out responses", async () => {
+    // Same Observation id under both categories — defensive guard
+    // against Epic returning the same row for vital-signs and laboratory.
+    const sharedObservation = { resourceType: "Observation", id: "obs-shared" };
+    const client = {
+      readPatient: vi.fn(),
+      searchAll: vi.fn().mockImplementation(() =>
+        (async function* () {
+          yield sharedObservation;
+        })(),
+      ),
+    } as unknown as Parameters<typeof runFullSync>[1]["client"];
+
+    persistObservation.mockResolvedValue({
+      internalId: "obs-internal",
+      kind: "vital",
+      inserted: true,
+    });
+
+    const result = await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "Observation",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    // searchAll fires twice (fan-out), persistObservation should
+    // fire once because the duplicate is dropped before persistence.
+    expect(client.searchAll).toHaveBeenCalledTimes(2);
+    expect(persistObservation).toHaveBeenCalledTimes(1);
+    expect(result.imported).toBe(1);
+  });
+
+  it("MedicationRequest fetch defaults to status=active so Epic accepts the query", async () => {
+    const client = makeFakeClient({
+      MedicationRequest: [{ resourceType: "MedicationRequest", id: "med-1" }],
+    });
+    persistMedicationRequest.mockResolvedValue({
+      internalId: "med-internal",
+      kind: "medication",
+      inserted: true,
+    });
+
+    await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "MedicationRequest",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    const medCall = (
+      client.searchAll as ReturnType<typeof vi.fn>
+    ).mock.calls.find((c) => c[0] === "MedicationRequest");
+    expect(medCall).toBeDefined();
+    expect(medCall![1].status).toBe("active");
+    expect(medCall![1].patient).toBe(EPIC_PATIENT_FHIR_ID);
+  });
+
+  it("Observation fan-out swallows 'not authorized sub-resource' on individual categories", async () => {
+    // Simulate Epic rejecting vital-signs (app doesn't carry that scope)
+    // but accepting laboratory. Sync should still succeed for labs.
+    const client = {
+      readPatient: vi.fn(),
+      searchAll: vi.fn().mockImplementation((_resourceType: string, params: Record<string, string>) => {
+        if (params.category === "vital-signs") {
+          return (async function* () {
+            throw new Error(
+              "Epic FHIR request returned 400 Bad Request — Combination of parameters is not valid for any authorized sub-resource. No search was performed.",
+            );
+          })();
+        }
+        return (async function* () {
+          yield { resourceType: "Observation", id: "lab-1" };
+        })();
+      }),
+    } as unknown as Parameters<typeof runFullSync>[1]["client"];
+
+    persistObservation.mockResolvedValue({
+      internalId: "obs-internal",
+      kind: "lab",
+      inserted: true,
+    });
+
+    const result = await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "Observation",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    expect(client.searchAll).toHaveBeenCalledTimes(2);
+    expect(persistObservation).toHaveBeenCalledTimes(1);
+    expect(result.imported).toBe(1);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it("Observation fan-out re-throws errors that are NOT auth-scope failures", async () => {
+    // Network error, 5xx, malformed response — must NOT be swallowed.
+    const client = {
+      readPatient: vi.fn(),
+      searchAll: vi.fn().mockImplementation(() => {
+        throw new Error("connect ECONNREFUSED 127.0.0.1:443");
+      }),
+    } as unknown as Parameters<typeof runFullSync>[1]["client"];
+
+    const result = await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "Observation",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    // Fetch threw → resource_type marked failed in result.errors.
+    expect(result.errors.length).toBeGreaterThan(0);
+    expect(result.errors[0]).toContain("ECONNREFUSED");
+  });
+
+  it("Observation fan-out does NOT swallow Epic 400s that lack 'authorized sub-resource' (genuine request-shape errors)", async () => {
+    // Epic returns "Combination of parameters is not valid" for both
+    // scope-rejection (with "authorized sub-resource") AND for genuine
+    // request-shape problems (missing required params, unsupported
+    // search modifiers). The soft-skip MUST only swallow the former —
+    // dropping data because of a real shape bug would be silent corruption.
+    const client = {
+      readPatient: vi.fn(),
+      searchAll: vi.fn().mockImplementation(() =>
+        (async function* () {
+          throw new Error(
+            "Epic FHIR request returned 400 Bad Request — Combination of parameters is not valid. Unsupported search modifier on `_lastUpdated`.",
+          );
+        })(),
+      ),
+    } as unknown as Parameters<typeof runFullSync>[1]["client"];
+
+    const result = await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "Observation",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    // Surfaces as a per-resource-type error, NOT a silent skip.
+    expect(result.errors.length).toBeGreaterThan(0);
+    expect(result.errors[0]).toContain("Combination of parameters is not valid");
+    expect(result.errors[0]).not.toContain("authorized sub-resource");
+  });
+
+  it("MedicationRequest fan-out gracefully skips when scope isn't authorized", async () => {
+    const client = {
+      readPatient: vi.fn(),
+      searchAll: vi.fn().mockImplementation(() =>
+        (async function* () {
+          throw new Error(
+            "Epic FHIR request returned 400 Bad Request — Combination of parameters is not valid for any authorized sub-resource.",
+          );
+        })(),
+      ),
+    } as unknown as Parameters<typeof runFullSync>[1]["client"];
+
+    const result = await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "MedicationRequest",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    // Soft-skip means zero imports and zero errors — the
+    // resource_type ran successfully, it just had nothing to import.
+    expect(result.imported).toBe(0);
+    expect(result.errors).toHaveLength(0);
+    expect(persistMedicationRequest).not.toHaveBeenCalled();
+  });
+
+  it("Observation fan-out preserves the incremental watermark on every category call", async () => {
+    getSyncState.mockImplementation(async (_p, rt) =>
+      rt === "Observation"
+        ? {
+            patient_id: PATIENT_ID,
+            resource_type: "Observation",
+            last_fhir_lastupdated: "2026-04-01T00:00:00Z",
+            last_synced_at: "2026-04-01T00:00:00Z",
+            status: "ok",
+            resources_synced_count: 0,
+            error_count: 0,
+            last_error_message: null,
+            last_error_at: null,
+          }
+        : null,
+    );
+    persistPatient.mockResolvedValue({
+      internalId: PATIENT_ID,
+      kind: "patient",
+      inserted: false,
+    });
+    const client = makeFakeClient({});
+
+    await runIncrementalSync(
+      { patientId: PATIENT_ID, epicPatientFhirId: EPIC_PATIENT_FHIR_ID },
+      { client, emit },
+    );
+
+    const observationCalls = (
+      client.searchAll as ReturnType<typeof vi.fn>
+    ).mock.calls.filter((c) => c[0] === "Observation");
+    expect(observationCalls).toHaveLength(2);
+    for (const call of observationCalls) {
+      expect(call[1]._lastUpdated).toBe("gt2026-04-01T00:00:00Z");
+    }
+  });
 });
