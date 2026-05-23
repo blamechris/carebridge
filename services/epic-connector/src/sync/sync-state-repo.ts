@@ -133,6 +133,19 @@ export async function markFailed(args: {
   patientId: string;
   resourceType: EpicResourceType;
   errorMessage: string;
+  /**
+   * Soft-skipped sub-resources captured BEFORE the failing call
+   * (#1108). When the fan-out is partway through and a sibling call
+   * throws a genuine error, the earlier auth-scope soft-skips still
+   * need to surface — persisting them here means the operator sees
+   * both signals on the failed row instead of only the error.
+   *
+   * Only written to the row when non-empty (#1118): the common
+   * failure case (network down, token refresh fail, 500 on the first
+   * call) collects no skips, and writing `[]` would wipe the prior
+   * successful sync's recorded skips on the row.
+   */
+  skipped?: SkippedSubResourceRecord[];
 }): Promise<void> {
   const db = getDb();
   const now = new Date().toISOString();
@@ -140,6 +153,15 @@ export async function markFailed(args: {
   // status column to gigabytes. 1KiB is plenty for triage; full stack
   // traces live in the worker logs / DLQ.
   const truncated = args.errorMessage.slice(0, 1024);
+  const skipped = args.skipped ?? [];
+  // Only set skipped_sub_resources when there's actually new partial
+  // collection to record. Otherwise leave the column untouched so the
+  // prior run's value (often a successful sync's skipped scopes) is
+  // preserved (#1118).
+  const partialSkipFields = skipped.length > 0
+    ? { skipped_sub_resources: skipped }
+    : {};
+
   await db
     .insert(epicSyncState)
     .values({
@@ -150,6 +172,7 @@ export async function markFailed(args: {
       last_error_message: truncated,
       last_error_at: now,
       error_count: 1,
+      ...partialSkipFields,
     })
     .onConflictDoUpdate({
       target: [epicSyncState.patient_id, epicSyncState.resource_type],
@@ -159,6 +182,7 @@ export async function markFailed(args: {
         last_error_message: truncated,
         last_error_at: now,
         error_count: sql`epic_sync_state.error_count + 1`,
+        ...partialSkipFields,
       },
     });
 }

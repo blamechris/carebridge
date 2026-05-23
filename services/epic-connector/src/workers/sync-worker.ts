@@ -28,6 +28,8 @@ import {
   runIncrementalSync,
   runSingleResourceSync,
   type SyncResourceType,
+  type SyncResult,
+  type SkippedSubResource,
 } from "../sync/sync-jobs.js";
 
 const log = createLogger("epic-sync-worker");
@@ -199,27 +201,44 @@ export function startEpicSyncWorker(): Worker<EpicSyncJobData> | null {
   return worker;
 }
 
-function summarise(
-  results: Array<{
-    resource_type: string;
-    imported: number;
-    updated: number;
-    conflicts: number;
-    errors: string[];
-  }>,
-): {
+interface SyncSummary {
   imported: number;
   updated: number;
   conflicts: number;
   errors: number;
-} {
-  return results.reduce(
+  /** Count of soft-skipped sub-resource fetches across all resource types (#1107). */
+  skipped: number;
+  /** Per-skip detail for ops dashboards that want structured drill-down (#1107). */
+  skippedDetail: SkippedSubResource[];
+}
+
+/**
+ * Rolls up a per-resource-type `SyncResult[]` into the single object
+ * returned as the BullMQ job result and surfaced via `job.returnvalue`.
+ *
+ * `skipped` + `skippedDetail` (#1107) make sub-resource auth-scope
+ * issues visible from the BullMQ dashboard without cross-referencing
+ * the `epic_sync_state` Postgres column.
+ *
+ * Exported for unit testing — the worker callbacks invoke it directly.
+ */
+export function summarise(results: SyncResult[]): SyncSummary {
+  return results.reduce<SyncSummary>(
     (acc, r) => ({
       imported: acc.imported + r.imported,
       updated: acc.updated + r.updated,
       conflicts: acc.conflicts + r.conflicts,
       errors: acc.errors + r.errors.length,
+      skipped: acc.skipped + r.skipped.length,
+      skippedDetail: [...acc.skippedDetail, ...r.skipped],
     }),
-    { imported: 0, updated: 0, conflicts: 0, errors: 0 },
+    {
+      imported: 0,
+      updated: 0,
+      conflicts: 0,
+      errors: 0,
+      skipped: 0,
+      skippedDetail: [],
+    },
   );
 }

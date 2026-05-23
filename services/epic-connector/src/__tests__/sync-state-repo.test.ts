@@ -135,6 +135,60 @@ describe("epic_sync_state repo (#391)", () => {
     expect(values.error_count).toBe(1);
   });
 
+  it("markFailed does NOT write skipped_sub_resources when nothing partial was collected (#1118 — preserves prior successful sync's skipped data)", async () => {
+    db.willInsert();
+    await markFailed({
+      patientId: PATIENT_ID,
+      resourceType: "Observation",
+      errorMessage: "ECONNREFUSED",
+      // No skipped collected — most failure modes (network down, token
+      // refresh fail, 500 on the first call). Repo must leave the
+      // column untouched so a prior successful sync's recorded skips
+      // aren't wiped to [] by every subsequent failed run.
+    });
+    const values = db.insert.calls[0]!.chainArgs[0]![0] as Record<string, unknown>;
+    expect(values).not.toHaveProperty("skipped_sub_resources");
+    const setClause = db.insert.calls[0]!.chainArgs[1]![0] as { set: Record<string, unknown> };
+    expect(setClause.set).not.toHaveProperty("skipped_sub_resources");
+  });
+
+  it("markFailed does NOT write skipped_sub_resources when caller passes an explicit empty array (#1118)", async () => {
+    db.willInsert();
+    await markFailed({
+      patientId: PATIENT_ID,
+      resourceType: "Observation",
+      errorMessage: "ECONNREFUSED",
+      skipped: [],
+    });
+    const values = db.insert.calls[0]!.chainArgs[0]![0] as Record<string, unknown>;
+    expect(values).not.toHaveProperty("skipped_sub_resources");
+    const setClause = db.insert.calls[0]!.chainArgs[1]![0] as { set: Record<string, unknown> };
+    expect(setClause.set).not.toHaveProperty("skipped_sub_resources");
+  });
+
+  it("markFailed persists the partial soft-skipped array when provided (#1108)", async () => {
+    db.willInsert();
+    await markFailed({
+      patientId: PATIENT_ID,
+      resourceType: "Observation",
+      errorMessage: "ECONNREFUSED",
+      skipped: [
+        { filter: { category: "vital-signs" }, reason: "unauthorized" },
+      ],
+    });
+    const values = db.insert.calls[0]!.chainArgs[0]![0] as Record<string, unknown>;
+    expect(values.skipped_sub_resources).toEqual([
+      { filter: { category: "vital-signs" }, reason: "unauthorized" },
+    ]);
+    // onConflictDoUpdate `set` carries the latest skipped state so a
+    // re-run replaces stale data instead of merging it.
+    const setClause = db.insert.calls[0]!.chainArgs[1]![0] as { set: Record<string, unknown> };
+    expect(setClause.set.skipped_sub_resources).toEqual([
+      { filter: { category: "vital-signs" }, reason: "unauthorized" },
+    ]);
+    expect(setClause.set.status).toBe("failed");
+  });
+
   it("listRecentFailures filters status=failed and orders by last_error_at desc", async () => {
     db.willSelect([
       { patient_id: PATIENT_ID, resource_type: "Observation", status: "failed" },
