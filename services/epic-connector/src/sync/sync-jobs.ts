@@ -252,6 +252,78 @@ async function syncResourceType(
   return result;
 }
 
+/**
+ * Epic's R4 endpoint rejects `Observation?patient=X` without a `category`
+ * or `code` filter (400 with "Must have either code or category"). We
+ * fan out across the two categories the persistence layer cares about
+ * — vital-signs lands in `vitals`, laboratory lands in `lab_results`
+ * via observation-mapper.ts. Other categories (social-history, exam,
+ * etc.) aren't mapped to internal tables today, so omitting them isn't
+ * a data loss.
+ *
+ * Individual categories may 400 with "not authorized for this sub-resource"
+ * if the registered app doesn't carry that category's scope — see
+ * {@link isUnauthorizedSubResourceError}. Such failures are swallowed
+ * per category so a sync registered with only one of the two categories
+ * still imports what it's authorized for.
+ */
+const OBSERVATION_CATEGORY_FANOUT = ["vital-signs", "laboratory"] as const;
+
+/**
+ * Epic's R4 endpoint rejects `MedicationRequest?patient=X` without a
+ * `status` filter ("Combination of parameters is not valid"). Default
+ * to `active` since stopped/cancelled meds aren't clinically actionable
+ * for the AI oversight pipeline. Callers needing the full history can
+ * pass an override via the worker dispatch in a future iteration.
+ */
+const MEDICATION_REQUEST_DEFAULT_STATUS = "active";
+
+/**
+ * Detect Epic's "not authorized for this sub-resource" 400 response so the
+ * fan-out can skip categories the registered app doesn't carry the scope
+ * for. Epic emits this as a 400 with a 59022 code; we match on the human
+ * text since the error code is buried in an OperationOutcome JSON blob
+ * which the FHIR client surfaces as the trailing string of the Error.
+ */
+function isUnauthorizedSubResourceError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return (
+    err.message.includes("Combination of parameters is not valid") ||
+    err.message.includes("authorized sub-resource")
+  );
+}
+
+async function collectSearchOrSkipUnauthorized(
+  client: EpicFhirClient,
+  resourceType: SyncResourceType,
+  params: Record<string, string | undefined>,
+): Promise<FhirResource[] | null> {
+  const out: FhirResource[] = [];
+  try {
+    for await (const r of client.searchAll(resourceType, params)) {
+      out.push(r);
+    }
+    return out;
+  } catch (err) {
+    if (isUnauthorizedSubResourceError(err)) {
+      log.warn(
+        "Epic sync — skipping unauthorized sub-resource (registered scopes don't cover this filter)",
+        {
+          resourceType,
+          params: Object.entries(params)
+            .filter(([k]) => k !== "patient")
+            .reduce<Record<string, string | undefined>>((acc, [k, v]) => {
+              acc[k] = v;
+              return acc;
+            }, {}),
+        },
+      );
+      return null;
+    }
+    throw err;
+  }
+}
+
 async function fetchResources(
   args: SyncOneArgs,
   client: EpicFhirClient,
@@ -261,14 +333,53 @@ async function fetchResources(
     return [await client.readPatient(args.epicPatientFhirId)];
   }
 
+  const patient = args.epicPatientFhirId ?? args.patientId;
   const lastUpdated = args.watermark ? `gt${args.watermark}` : undefined;
-  const params: Record<string, string | undefined> = {
-    patient: args.epicPatientFhirId ?? args.patientId,
+  const baseParams: Record<string, string | undefined> = {
+    patient,
     _lastUpdated: lastUpdated,
   };
 
+  // Observation: fan out per category so Epic accepts each request.
+  // Dedup by resource.id in the rare case the same observation shows
+  // up under multiple categories (defensive — should not happen for
+  // vital-signs vs laboratory).
+  if (args.resourceType === "Observation") {
+    const seen = new Set<string>();
+    const out: FhirResource[] = [];
+    for (const category of OBSERVATION_CATEGORY_FANOUT) {
+      const params = { ...baseParams, category };
+      const batch = await collectSearchOrSkipUnauthorized(
+        client,
+        args.resourceType,
+        params,
+      );
+      if (batch === null) continue;
+      for (const r of batch) {
+        if (r.id && seen.has(r.id)) continue;
+        if (r.id) seen.add(r.id);
+        out.push(r);
+      }
+    }
+    return out;
+  }
+
+  // MedicationRequest: Epic requires `status` for unfiltered patient
+  // queries. Some app registrations (Order Template Medication only,
+  // for example) won't accept any `?patient=X` query — fail soft so
+  // the rest of the sync still runs.
+  if (args.resourceType === "MedicationRequest") {
+    const params = { ...baseParams, status: MEDICATION_REQUEST_DEFAULT_STATUS };
+    const batch = await collectSearchOrSkipUnauthorized(
+      client,
+      args.resourceType,
+      params,
+    );
+    return batch ?? [];
+  }
+
   const resources: FhirResource[] = [];
-  for await (const r of client.searchAll(args.resourceType, params)) {
+  for await (const r of client.searchAll(args.resourceType, baseParams)) {
     resources.push(r);
   }
   return resources;
