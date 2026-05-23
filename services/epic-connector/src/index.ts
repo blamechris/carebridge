@@ -102,3 +102,43 @@ export {
   type EpicSyncJobData,
 } from "./workers/sync-worker.js";
 export { epicSyncRouter, type EpicSyncRouter } from "./router.js";
+export {
+  generatePkcePair,
+  verifyChallenge,
+  type PkcePair,
+} from "./app-launch/pkce.js";
+export {
+  buildAuthorizeUrl,
+  DEFAULT_APP_LAUNCH_SCOPES,
+  type AuthorizeUrlArgs,
+} from "./app-launch/authorize.js";
+export {
+  exchangeAuthorizationCode,
+  decodeIdTokenUnsafe,
+  extractPractitionerId,
+  type AppLaunchTokenResponse,
+  type ExchangeArgs,
+} from "./app-launch/token-exchange.js";
+export {
+  InMemoryLaunchStateStore,
+  RedisLaunchStateStore,
+  type LaunchStateStore,
+  type LaunchState,
+  type RedisLike,
+} from "./app-launch/state-store.js";
+export {
+  beginLaunch,
+  completeLaunch,
+  type BeginLaunchArgs,
+  type BeginLaunchResult,
+  type CompleteLaunchArgs,
+  type CompleteLaunchResult,
+} from "./app-launch/launch-service.js";
+export {
+  upsertEpicConnection,
+  getConnectionsForUser,
+  getConnection,
+  deleteConnection,
+  type EpicConnectionUpsert,
+  type EpicConnectionRow,
+} from "./app-launch/connection-repo.js";
