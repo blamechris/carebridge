@@ -1,6 +1,6 @@
 import { initTRPC, TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { getDb } from "@carebridge/db-schema";
+import { getDb, hmacForIndex } from "@carebridge/db-schema";
 import {
   fhirResources,
   auditLog,
@@ -44,6 +44,10 @@ import {
   mapFhirConditionToRow,
   type InboundCondition,
 } from "./condition-mapper.js";
+import {
+  mapFhirPatientToRow,
+  type InboundPatient,
+} from "./patient-mapper.js";
 
 const logger = createLogger("fhir-gateway");
 
@@ -197,11 +201,16 @@ export const fhirGatewayRouter = t.router({
       materialize: z.boolean().optional().default(false),
       /**
        * Patient id to associate materialised medication rows with.
-       * Required when `materialize: true` — the FHIR
-       * MedicationRequest.subject reference may carry a Patient/{id}
-       * pointing at the external EHR's id, which is not the same as
-       * the internal patients.id. Caller (api-gateway RBAC wrapper)
-       * is responsible for the cross-system reconciliation.
+       * Required when `materialize: true` AND the bundle contains
+       * MedicationRequest/MedicationStatement entries — the FHIR
+       * subject reference may carry a Patient/{id} pointing at the
+       * external EHR's id, which is not the same as the internal
+       * patients.id. Caller (api-gateway RBAC wrapper) is responsible
+       * for the cross-system reconciliation.
+       *
+       * NOT required for Patient resource materialisation (#337) —
+       * the Patient resource itself defines the patient identity, so
+       * the materialiser mints a fresh internal id at write time.
        *
        * Ignored when `materialize: false`.
        */
@@ -214,6 +223,7 @@ export const fhirGatewayRouter = t.router({
       let imported = 0;
       let materializedMedications = 0;
       let materializedDiagnoses = 0;
+      let materializedPatients = 0;
       for (const entry of entries) {
         if (!entry.resource) continue;
         const sanitized = sanitizeResourceStrings(entry.resource) as Record<string, unknown>;
@@ -227,11 +237,12 @@ export const fhirGatewayRouter = t.router({
         // HIPAA § 164.312(b) audit completeness goal.
         // Per Copilot review on PR #378.
         //
-        // When `materialize: true` (#1066), the same transaction also
-        // inserts a `medications` row for MedicationRequest /
-        // MedicationStatement entries so the raw-FHIR write and the
-        // materialised row are guaranteed atomic — a crash mid-import
-        // can't leave one without the other.
+        // When `materialize: true` (#1066, #337), the same transaction
+        // also inserts a `medications` row for MedicationRequest /
+        // MedicationStatement entries and a `patients` row for Patient
+        // entries, so the raw-FHIR write and the materialised row are
+        // guaranteed atomic — a crash mid-import can't leave one without
+        // the other.
         await db.transaction(async (tx) => {
           await tx.insert(fhirResources).values({
             id: crypto.randomUUID(),
@@ -326,6 +337,38 @@ export const fhirGatewayRouter = t.router({
               }
             }
           }
+
+          // Patient materialisation (#337). Unlike medications, Patient
+          // resources do NOT need an external `input.patient_id` — the
+          // FHIR Patient resource IS the patient identity, so we mint a
+          // fresh internal id on insert. The mapper returns null for
+          // unmappable entries (active=false, no name AND no MRN);
+          // those skip silently and the raw FHIR row is still imported.
+          if (input.materialize && resourceType === "Patient") {
+            const patientRow = mapFhirPatientToRow(
+              sanitized as unknown as InboundPatient,
+            );
+            if (patientRow) {
+              await tx.insert(patients).values({
+                id: crypto.randomUUID(),
+                name: patientRow.name,
+                // HMAC indexes for searchable encrypted columns. Mirrors
+                // the patient-records create path so a materialised
+                // import and a manual create produce structurally
+                // identical rows.
+                name_hmac: hmacForIndex(patientRow.name),
+                date_of_birth: patientRow.date_of_birth,
+                biological_sex: patientRow.biological_sex,
+                mrn: patientRow.mrn,
+                mrn_hmac: patientRow.mrn
+                  ? hmacForIndex(patientRow.mrn)
+                  : null,
+                created_at: now,
+                updated_at: now,
+              });
+              materializedPatients++;
+            }
+          }
         });
 
         imported++;
@@ -334,6 +377,7 @@ export const fhirGatewayRouter = t.router({
         imported,
         materialized_medications: materializedMedications,
         materialized_diagnoses: materializedDiagnoses,
+        materialized_patients: materializedPatients,
       };
     }),
 
