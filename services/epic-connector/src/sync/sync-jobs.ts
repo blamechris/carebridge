@@ -49,6 +49,10 @@ import {
   markOk,
   markRunning,
 } from "./sync-state-repo.js";
+import {
+  getObservationCategories,
+  getMedicationRequestStatus,
+} from "./fanout-config.js";
 import type { FhirResource } from "../fhir-types.js";
 
 const log = createLogger("epic-sync-jobs");
@@ -295,17 +299,10 @@ async function syncResourceType(
  * {@link isUnauthorizedSubResourceError}. Such failures are swallowed
  * per category so a sync registered with only one of the two categories
  * still imports what it's authorized for.
+ *
+ * The default set + status are overridable per deployment via env
+ * (#1098) — see {@link ../fanout-config}.
  */
-const OBSERVATION_CATEGORY_FANOUT = ["vital-signs", "laboratory"] as const;
-
-/**
- * Epic's R4 endpoint rejects `MedicationRequest?patient=X` without a
- * `status` filter ("Combination of parameters is not valid"). Default
- * to `active` since stopped/cancelled meds aren't clinically actionable
- * for the AI oversight pipeline. Callers needing the full history can
- * pass an override via the worker dispatch in a future iteration.
- */
-const MEDICATION_REQUEST_DEFAULT_STATUS = "active";
 
 /** Epic error code for "Combination of parameters is not valid for any
  *  authorized sub-resource. No search was performed." This 400 means
@@ -428,7 +425,7 @@ async function fetchResources(
     const seen = new Set<string>();
     const out: FhirResource[] = [];
     const skipped: SkippedSubResource[] = [];
-    for (const category of OBSERVATION_CATEGORY_FANOUT) {
+    for (const category of getObservationCategories()) {
       const params = { ...baseParams, category };
       const outcome = await collectSearchOrSkipUnauthorized(
         client,
@@ -453,7 +450,7 @@ async function fetchResources(
   // for example) won't accept any `?patient=X` query — fail soft so
   // the rest of the sync still runs.
   if (args.resourceType === "MedicationRequest") {
-    const params = { ...baseParams, status: MEDICATION_REQUEST_DEFAULT_STATUS };
+    const params = { ...baseParams, status: getMedicationRequestStatus() };
     const outcome = await collectSearchOrSkipUnauthorized(
       client,
       args.resourceType,

@@ -47,6 +47,30 @@ const token = await client.getAccessToken();
 The token client caches the response and refreshes 60s before expiry.
 Call `client.invalidate()` after a 401 to force a fresh assertion.
 
+## Sync fan-out overrides (#1098)
+
+Epic enforces per-resource search-parameter restrictions, so the sync
+worker fans out across a small set of values for `Observation` and
+`MedicationRequest`. The defaults match CareBridge's MVP (what the
+persistence layer maps + what the AI oversight pipeline acts on); a
+tenant whose workflow needs other categories/statuses can override
+without a code change.
+
+| Env var | Default | Notes |
+|---|---|---|
+| `EPIC_OBSERVATION_CATEGORIES` | `vital-signs,laboratory` | Comma-separated FHIR observation-category codes. Whitespace trimmed; empty segments and duplicates dropped. All-empty or whitespace-only values fall back to the default (silently disabling Observation sync is worse than refusing the misconfig). |
+| `EPIC_MEDICATION_REQUEST_STATUS` | `active` | Single FHIR MedicationRequest status. Multi-status fan-out is tracked in #1105. |
+
+Examples:
+
+```bash
+# Primary-care tenant — adds social history and exam findings
+EPIC_OBSERVATION_CATEGORIES=vital-signs,laboratory,social-history,exam
+
+# Med-rec tenant — wants completed/stopped MedicationRequest history
+EPIC_MEDICATION_REQUEST_STATUS=completed
+```
+
 ## Test
 
 ```bash
