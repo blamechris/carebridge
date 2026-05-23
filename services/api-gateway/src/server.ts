@@ -13,6 +13,7 @@ import { makeAcceptInviteRateLimitHook } from "./middleware/accept-invite-rate-l
 import { makePatientReadRateLimitHook } from "./middleware/patient-read-rate-limit.js";
 import { makeFhirExportRateLimitHook } from "./middleware/fhir-export-rate-limit.js";
 import { registerNotificationSSE } from "./routes/notifications-sse.js";
+import { registerFhirRestRoutes } from "./routes/fhir-rest.js";
 import { handleAuthMe } from "./handlers/auth-me.js";
 import { redactUrlIds } from "@carebridge/phi-sanitizer";
 import { startBackgroundWorkers } from "./workers.js";
@@ -228,6 +229,12 @@ async function main() {
 
   // --- SSE notification stream ---
   registerNotificationSSE(server);
+
+  // --- FHIR R4 REST API surface (#394) ---
+  // External-facing standards-compliant endpoints under /fhir/* — exists
+  // alongside the internal /trpc/* surface for EHR / HIE / third-party
+  // FHIR clients (Epic, HIEs, SMART apps). Read-only on first ship.
+  registerFhirRestRoutes(server);
 
   // --- Health check ---
   server.get("/health", async () => {
