@@ -17,6 +17,7 @@
     "epic:keygen": "tsx src/bin/keygen.ts"
   },
   "dependencies": {
+    "@carebridge/fhir-gateway": "workspace:*",
     "@carebridge/logger": "workspace:*",
     "zod": "^3.24.0"
   },

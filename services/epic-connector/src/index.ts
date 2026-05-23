@@ -5,8 +5,10 @@
  * assertion, OAuth2 client-credentials token exchange, expiry-aware
  * caching, and SMART configuration discovery.
  *
- * Follow-ups will add the typed FHIR client (#390), sync worker (#391),
- * App Launch (#392), and outbound flag push (#393).
+ * #390 adds the typed FHIR R4 client + Epic→CareBridge converters.
+ *
+ * Follow-ups will add the sync worker (#391), App Launch (#392), and
+ * outbound flag push (#393).
  */
 export { loadEpicConfig, type EpicConfig } from "./config.js";
 export {
@@ -34,3 +36,28 @@ export {
   type PublicJwk,
   type GenerateOptions,
 } from "./keygen.js";
+export {
+  EpicFhirClient,
+  type EpicFhirClientOptions,
+  type EpicResourceType,
+} from "./fhir-client.js";
+export type {
+  FhirBundle,
+  FhirBundleEntry,
+  FhirBundleLink,
+  FhirResource,
+  EpicSearchParams,
+  OperationOutcome,
+} from "./fhir-types.js";
+export {
+  EPIC_SOURCE_SYSTEM_TAG,
+  epicPatientToRow,
+  epicMedicationRequestToRow,
+  epicMedicationStatementToRow,
+  epicObservationToRow,
+  epicConditionToRow,
+  epicAllergyToRow,
+  type EpicDiagnosisRow,
+  type EpicLabResultRow,
+  type EpicObservationConversion,
+} from "./converters.js";
