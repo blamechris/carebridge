@@ -40,6 +40,10 @@ import {
   type InboundMedicationRequest,
   type InboundMedicationStatement,
 } from "./medication-mapper.js";
+import {
+  mapFhirConditionToRow,
+  type InboundCondition,
+} from "./condition-mapper.js";
 
 const logger = createLogger("fhir-gateway");
 
@@ -209,6 +213,7 @@ export const fhirGatewayRouter = t.router({
       const entries = input.bundle.entry ?? [];
       let imported = 0;
       let materializedMedications = 0;
+      let materializedDiagnoses = 0;
       for (const entry of entries) {
         if (!entry.resource) continue;
         const sanitized = sanitizeResourceStrings(entry.resource) as Record<string, unknown>;
@@ -258,48 +263,78 @@ export const fhirGatewayRouter = t.router({
             timestamp: now,
           });
 
-          // Optional materialisation pass (#1066). The mapper is pure
-          // and returns null for unmappable entries (missing name,
-          // entered-in-error status) — those skip silently.
+          // Optional materialisation pass (#1066, #337). The mappers
+          // are pure and return null for unmappable entries (missing
+          // name/code, entered-in-error status) — those skip silently.
           if (input.materialize && input.patient_id) {
-            let row: ReturnType<typeof mapMedicationRequestToRow> = null;
+            let medRow: ReturnType<typeof mapMedicationRequestToRow> = null;
             if (resourceType === "MedicationRequest") {
-              row = mapMedicationRequestToRow(
+              medRow = mapMedicationRequestToRow(
                 sanitized as unknown as InboundMedicationRequest,
                 input.patient_id,
               );
             } else if (resourceType === "MedicationStatement") {
-              row = mapMedicationStatementToRow(
+              medRow = mapMedicationStatementToRow(
                 sanitized as unknown as InboundMedicationStatement,
                 input.patient_id,
               );
             }
-            if (row) {
+            if (medRow) {
               await tx.insert(medications).values({
                 id: crypto.randomUUID(),
-                patient_id: row.patient_id,
-                name: row.name,
-                dose_amount: row.dose_amount,
-                dose_unit: row.dose_unit,
-                route: row.route,
-                frequency: row.frequency,
-                max_doses_per_day: row.max_doses_per_day,
-                status: row.status,
-                started_at: row.started_at,
-                prescribed_by: row.prescribed_by,
-                rxnorm_code: row.rxnorm_code,
-                source_system: row.source_system ?? input.source_system,
+                patient_id: medRow.patient_id,
+                name: medRow.name,
+                dose_amount: medRow.dose_amount,
+                dose_unit: medRow.dose_unit,
+                route: medRow.route,
+                frequency: medRow.frequency,
+                max_doses_per_day: medRow.max_doses_per_day,
+                status: medRow.status,
+                started_at: medRow.started_at,
+                prescribed_by: medRow.prescribed_by,
+                rxnorm_code: medRow.rxnorm_code,
+                source_system: medRow.source_system ?? input.source_system,
                 created_at: now,
                 updated_at: now,
               });
               materializedMedications++;
+            }
+
+            // Condition → diagnoses materialisation (#337).
+            if (resourceType === "Condition") {
+              const dxRow = mapFhirConditionToRow(
+                sanitized as unknown as InboundCondition,
+                input.patient_id,
+              );
+              if (dxRow) {
+                await tx.insert(diagnoses).values({
+                  id: crypto.randomUUID(),
+                  patient_id: dxRow.patient_id,
+                  icd10_code: dxRow.icd10_code,
+                  snomed_code: dxRow.snomed_code,
+                  description: dxRow.description,
+                  status: dxRow.status,
+                  onset_date: dxRow.onset_date,
+                  resolved_date: dxRow.resolved_date,
+                  diagnosed_by: dxRow.diagnosed_by,
+                  // Honour the external EHR's recordedDate when present
+                  // so the imported row keeps provenance; otherwise
+                  // use the import wall-clock.
+                  created_at: dxRow.recorded_at ?? now,
+                });
+                materializedDiagnoses++;
+              }
             }
           }
         });
 
         imported++;
       }
-      return { imported, materialized_medications: materializedMedications };
+      return {
+        imported,
+        materialized_medications: materializedMedications,
+        materialized_diagnoses: materializedDiagnoses,
+      };
     }),
 
   getByPatient: protectedProcedure
