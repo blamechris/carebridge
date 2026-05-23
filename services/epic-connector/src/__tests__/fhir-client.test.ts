@@ -495,6 +495,73 @@ describe("EpicFhirClient (#390)", () => {
     expect(err.hasIssueCode("59022")).toBe(true);
   });
 
+  it("client.createResource against a 2xx with OperationOutcome body throws EpicFhirError with status=201 Created (#1101)", async () => {
+    // POST resource creation expected-success status is 201 — the
+    // synthetic error should report that, not the 200 default that the
+    // read path uses. Locks the per-call-site context in.
+    const oo: OperationOutcome = {
+      resourceType: "OperationOutcome",
+      issue: [
+        {
+          severity: "error",
+          code: "business-rule",
+          details: {
+            text: "Resource conflict",
+            coding: [{ system: "epic", code: "59022" }],
+          },
+        },
+      ],
+    };
+    const { client } = setup([jsonResponse(oo, { status: 201 })]);
+    let thrown: unknown;
+    try {
+      await client.createResource("Flag", {
+        resourceType: "Flag",
+        status: "active",
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(EpicFhirError);
+    const err = thrown as EpicFhirError;
+    expect(err.status).toBe(201);
+    expect(err.statusText).toBe("Created");
+    expect(err.hasIssueCode("59022")).toBe(true);
+  });
+
+  it("client.updateResource against a 2xx with OperationOutcome body throws EpicFhirError with status=200 OK (#1101)", async () => {
+    // PUT expected-success status is 200 OK in the typical Epic case.
+    const oo: OperationOutcome = {
+      resourceType: "OperationOutcome",
+      issue: [
+        {
+          severity: "error",
+          code: "conflict",
+          details: {
+            text: "Version mismatch",
+            coding: [{ system: "epic", code: "59108" }],
+          },
+        },
+      ],
+    };
+    const { client } = setup([jsonResponse(oo, { status: 200 })]);
+    let thrown: unknown;
+    try {
+      await client.updateResource("Flag", "flag-1", {
+        resourceType: "Flag",
+        id: "flag-1",
+        status: "inactive",
+      });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(EpicFhirError);
+    const err = thrown as EpicFhirError;
+    expect(err.status).toBe(200);
+    expect(err.statusText).toBe("OK");
+    expect(err.hasIssueCode("59108")).toBe(true);
+  });
+
   it("throws EpicFhirError with parsed OperationOutcome after exhausting 5xx retries", async () => {
     const oo: OperationOutcome = {
       resourceType: "OperationOutcome",

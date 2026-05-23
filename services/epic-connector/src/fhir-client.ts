@@ -181,7 +181,10 @@ export class EpicFhirClient {
       `${resourceType}/${encodeURIComponent(id)}`,
     );
     if (resource.resourceType === "OperationOutcome") {
-      throw operationOutcomeError(resource as OperationOutcome);
+      // read() expects 200 OK on success; pass it explicitly so the
+      // synthetic EpicFhirError reports a contextually accurate status
+      // instead of the always-200 placeholder (#1123).
+      throw operationOutcomeError(resource as OperationOutcome, 200, "OK");
     }
     return resource as T;
   }
@@ -269,7 +272,10 @@ export class EpicFhirClient {
       resp !== null &&
       (resp as { resourceType?: string }).resourceType === "OperationOutcome"
     ) {
-      throw operationOutcomeError(resp as OperationOutcome);
+      // POST resource creation typically returns 201 Created on success
+      // — report that on the synthetic error instead of the 200 default
+      // so log/dashboard consumers see honest status data (#1123).
+      throw operationOutcomeError(resp as OperationOutcome, 201, "Created");
     }
     return resp as TResp;
   }
@@ -302,7 +308,11 @@ export class EpicFhirClient {
       resp !== null &&
       (resp as { resourceType?: string }).resourceType === "OperationOutcome"
     ) {
-      throw operationOutcomeError(resp as OperationOutcome);
+      // PUT typically returns 200 OK on success (some Epic deployments
+      // return 201 Created when the put creates a new resource). Use
+      // 200 as the per-call default; full plumb of the real wire
+      // status lives in #1123.
+      throw operationOutcomeError(resp as OperationOutcome, 200, "OK");
     }
     return resp as TResp;
   }
@@ -508,22 +518,33 @@ async function safeReadBody(response: Response): Promise<string> {
 /**
  * Build an EpicFhirError from an OperationOutcome returned in a 2xx
  * response body (#1101). FHIR allows servers to indicate semantic
- * failure on an HTTP 200 by returning an OperationOutcome instead of
- * the requested resource — Epic does this for /Patient/[id] on a
- * deleted patient, certain create/update edge cases, etc. Returning
- * EpicFhirError (not a plain Error) means downstream
- * `err.hasIssueCode("59022")` works for the 200-with-OO case the
- * same way it works for the 4xx-with-OO case.
+ * failure on a successful HTTP status by returning an OperationOutcome
+ * instead of the requested resource — Epic does this for /Patient/[id]
+ * on a deleted patient, certain create/update edge cases, etc.
+ * Returning EpicFhirError (not a plain Error) means downstream
+ * `err.hasIssueCode("59022")` works for the 2xx-with-OO case the same
+ * way it works for the 4xx-with-OO case.
+ *
+ * Status/statusText are the OPERATION'S expected success codes
+ * (200 OK for read/update, 201 Created for create) — passed by the
+ * caller because `requestWithRetry` discards the underlying Response
+ * after parsing. A full plumb of the real wire status lives in
+ * #1123; the per-caller default is honest about operation context
+ * (read → 200, create → 201) and removes the "always 200" misreport.
  */
-function operationOutcomeError(outcome: OperationOutcome): EpicFhirError {
+function operationOutcomeError(
+  outcome: OperationOutcome,
+  status: number,
+  statusText: string,
+): EpicFhirError {
   const issue = outcome.issue?.[0];
   const detail =
     issue?.diagnostics ?? issue?.details?.text ?? "no diagnostics";
   const message = `Epic returned OperationOutcome: ${issue?.code ?? "unknown"} — ${detail}`;
   return new EpicFhirError(
     message,
-    200,
-    "OK",
+    status,
+    statusText,
     JSON.stringify(outcome).slice(0, 500),
     outcome,
   );
