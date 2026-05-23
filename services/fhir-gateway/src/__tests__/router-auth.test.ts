@@ -120,9 +120,14 @@ describe("fhirGatewayRouter raw auth (defense-in-depth)", () => {
         source_system: "unit-test",
         user_id: adminUser.id,
       });
-      // `materialize` defaults to false (#1066), so the result also
-      // reports `materialized_medications: 0` alongside `imported`.
-      expect(result).toEqual({ imported: 1, materialized_medications: 0 });
+      // `materialize` defaults to false (#1066, #337), so the result
+      // also reports `materialized_medications: 0` and
+      // `materialized_diagnoses: 0` alongside `imported`.
+      expect(result).toEqual({
+        imported: 1,
+        materialized_medications: 0,
+        materialized_diagnoses: 0,
+      });
       // fhir_resources insert + audit_log insert = 2 inserts per resource
       expect(insertMock).toHaveBeenCalledTimes(2);
     });
