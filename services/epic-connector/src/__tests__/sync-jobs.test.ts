@@ -866,6 +866,115 @@ describe("Epic sync-jobs (#391)", () => {
     expect(result.errors).toHaveLength(0);
   });
 
+  // ── #1097: surface soft-skipped sub-resources on SyncResult ─────
+  // Operators need to see which Epic scopes were refused, distinct
+  // from "this resource type had no data." Soft-skipped fetches now
+  // populate `result.skipped[]` and flow into the persisted
+  // `epic_sync_state.skipped_sub_resources` column via markOk.
+
+  it("SyncResult.skipped[] records every soft-skipped Observation category", async () => {
+    const client = {
+      readPatient: vi.fn(),
+      searchAll: vi
+        .fn()
+        .mockImplementation((_rt: string, params: Record<string, string>) => {
+          if (params.category === "vital-signs") {
+            return (async function* () {
+              throw new Error(
+                "Epic FHIR request returned 400 Bad Request — Combination of parameters is not valid for any authorized sub-resource.",
+              );
+            })();
+          }
+          return (async function* () {
+            yield { resourceType: "Observation", id: "lab-1" };
+          })();
+        }),
+    } as unknown as Parameters<typeof runFullSync>[1]["client"];
+
+    persistObservation.mockResolvedValue({
+      internalId: "obs-internal",
+      kind: "lab",
+      inserted: true,
+    });
+
+    const result = await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "Observation",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0]).toMatchObject({
+      resource_type: "Observation",
+      reason: "unauthorized",
+      filter: { category: "vital-signs" },
+    });
+    // PHI hygiene: the `patient` Epic ID must NEVER appear in the
+    // surfaced filter (this row may be exposed via tRPC to the portal).
+    expect(result.skipped[0]!.filter).not.toHaveProperty("patient");
+    expect(result.imported).toBe(1);
+  });
+
+  it("SyncResult.skipped[] is empty when nothing was soft-skipped", async () => {
+    const client = makeFakeClient({
+      Condition: [{ resourceType: "Condition", id: "cond-1" }],
+    });
+    persistCondition.mockResolvedValue({
+      internalId: "internal",
+      kind: "diagnosis",
+      inserted: true,
+    });
+
+    const result = await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "Condition",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    expect(result.skipped).toEqual([]);
+  });
+
+  it("skipped[] flows into markOk so it lands on epic_sync_state", async () => {
+    const client = {
+      readPatient: vi.fn(),
+      searchAll: vi.fn().mockImplementation(() =>
+        (async function* () {
+          throw new Error(
+            "Epic FHIR request returned 400 Bad Request — Combination of parameters is not valid for any authorized sub-resource.",
+          );
+        })(),
+      ),
+    } as unknown as Parameters<typeof runFullSync>[1]["client"];
+
+    await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "MedicationRequest",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    expect(markOk).toHaveBeenCalledOnce();
+    const markOkArgs = markOk.mock.calls[0]![0] as {
+      skipped?: Array<{ filter: Record<string, string>; reason: string }>;
+    };
+    expect(markOkArgs.skipped).toHaveLength(1);
+    expect(markOkArgs.skipped![0]).toEqual({
+      filter: { status: "active" },
+      reason: "unauthorized",
+    });
+  });
+
   // #1099 acceptance #4: documented placeholder for multi-status fan-out
   it.skip(
     "MedicationRequest fan-out supports multi-status override (active + on-hold + completed) — future",

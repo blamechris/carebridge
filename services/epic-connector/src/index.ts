@@ -78,6 +78,7 @@ export {
   type SyncResult,
   type SyncJobDeps,
   type EmitFn,
+  type SkippedSubResource,
 } from "./sync/sync-jobs.js";
 export {
   getSyncState,
@@ -88,6 +89,7 @@ export {
   markFailed,
   type EpicSyncStateRow,
   type EpicSyncStatusValue,
+  type SkippedSubResourceRecord,
 } from "./sync/sync-state-repo.js";
 export {
   persistPatient,

@@ -76,6 +76,23 @@ export interface SyncJobDeps {
   emit: EmitFn;
 }
 
+/**
+ * Sub-resource fetch that Epic rejected as unauthorized for the
+ * registered scopes. Recorded on the SyncResult so admin tooling can
+ * distinguish "scope registered but no data" from "scope not registered
+ * — Epic refused to even run the search."
+ *
+ * `filter` carries the search params we sent EXCLUDING the patient id
+ * (PHI hygiene — Epic FHIR ids aren't strict HIPAA PHI but treating
+ * them conservatively is the safer default for surfacing this field
+ * via tRPC to the clinician portal).
+ */
+export interface SkippedSubResource {
+  resource_type: SyncResourceType;
+  filter: Record<string, string>;
+  reason: "unauthorized";
+}
+
 export interface SyncResult {
   patient_id: string;
   resource_type: SyncResourceType;
@@ -83,6 +100,8 @@ export interface SyncResult {
   updated: number;
   conflicts: number;
   errors: string[];
+  /** Sub-resource searches Epic refused (scope mismatch); not a sync failure. */
+  skipped: SkippedSubResource[];
 }
 
 /**
@@ -180,11 +199,13 @@ async function syncResourceType(
     updated: 0,
     conflicts: 0,
     errors: [],
+    skipped: [],
   };
   let highWatermark: string | null = args.watermark;
 
   try {
-    const resources = await fetchResources(args, deps.client);
+    const { resources, skipped } = await fetchResources(args, deps.client);
+    result.skipped = skipped;
 
     for (const resource of resources) {
       try {
@@ -237,6 +258,10 @@ async function syncResourceType(
       resourceType: args.resourceType,
       highWatermark,
       importedCount: result.imported,
+      // Persist sub-resources Epic refused so the clinician portal can
+      // distinguish "no data because patient has none" from "no data
+      // because scope X wasn't registered" (#1097).
+      skipped: result.skipped.map(({ filter, reason }) => ({ filter, reason })),
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -319,44 +344,64 @@ function isUnauthorizedSubResourceError(err: unknown): boolean {
   return false;
 }
 
+/** Strip undefined values + the `patient` PHI field for safe external surfacing. */
+function sanitizeFilterForReport(
+  params: Record<string, string | undefined>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(params)) {
+    if (k === "patient") continue;
+    if (typeof v === "string") out[k] = v;
+  }
+  return out;
+}
+
+type SearchOutcome =
+  | { kind: "resources"; resources: FhirResource[] }
+  | { kind: "skipped"; entry: SkippedSubResource };
+
 async function collectSearchOrSkipUnauthorized(
   client: EpicFhirClient,
   resourceType: SyncResourceType,
   params: Record<string, string | undefined>,
-): Promise<FhirResource[] | null> {
+): Promise<SearchOutcome> {
   const out: FhirResource[] = [];
   try {
     for await (const r of client.searchAll(resourceType, params)) {
       out.push(r);
     }
-    return out;
+    return { kind: "resources", resources: out };
   } catch (err) {
     if (isUnauthorizedSubResourceError(err)) {
+      const filter = sanitizeFilterForReport(params);
       log.warn(
         "Epic sync — skipping unauthorized sub-resource (registered scopes don't cover this filter)",
-        {
-          resourceType,
-          params: Object.entries(params)
-            .filter(([k]) => k !== "patient")
-            .reduce<Record<string, string | undefined>>((acc, [k, v]) => {
-              acc[k] = v;
-              return acc;
-            }, {}),
-        },
+        { resourceType, params: filter },
       );
-      return null;
+      return {
+        kind: "skipped",
+        entry: { resource_type: resourceType, filter, reason: "unauthorized" },
+      };
     }
     throw err;
   }
 }
 
+interface FetchResult {
+  resources: FhirResource[];
+  skipped: SkippedSubResource[];
+}
+
 async function fetchResources(
   args: SyncOneArgs,
   client: EpicFhirClient,
-): Promise<FhirResource[]> {
+): Promise<FetchResult> {
   if (args.resourceType === "Patient") {
-    if (!args.epicPatientFhirId) return [];
-    return [await client.readPatient(args.epicPatientFhirId)];
+    if (!args.epicPatientFhirId) return { resources: [], skipped: [] };
+    return {
+      resources: [await client.readPatient(args.epicPatientFhirId)],
+      skipped: [],
+    };
   }
 
   const patient = args.epicPatientFhirId ?? args.patientId;
@@ -373,21 +418,25 @@ async function fetchResources(
   if (args.resourceType === "Observation") {
     const seen = new Set<string>();
     const out: FhirResource[] = [];
+    const skipped: SkippedSubResource[] = [];
     for (const category of OBSERVATION_CATEGORY_FANOUT) {
       const params = { ...baseParams, category };
-      const batch = await collectSearchOrSkipUnauthorized(
+      const outcome = await collectSearchOrSkipUnauthorized(
         client,
         args.resourceType,
         params,
       );
-      if (batch === null) continue;
-      for (const r of batch) {
+      if (outcome.kind === "skipped") {
+        skipped.push(outcome.entry);
+        continue;
+      }
+      for (const r of outcome.resources) {
         if (r.id && seen.has(r.id)) continue;
         if (r.id) seen.add(r.id);
         out.push(r);
       }
     }
-    return out;
+    return { resources: out, skipped };
   }
 
   // MedicationRequest: Epic requires `status` for unfiltered patient
@@ -396,19 +445,22 @@ async function fetchResources(
   // the rest of the sync still runs.
   if (args.resourceType === "MedicationRequest") {
     const params = { ...baseParams, status: MEDICATION_REQUEST_DEFAULT_STATUS };
-    const batch = await collectSearchOrSkipUnauthorized(
+    const outcome = await collectSearchOrSkipUnauthorized(
       client,
       args.resourceType,
       params,
     );
-    return batch ?? [];
+    if (outcome.kind === "skipped") {
+      return { resources: [], skipped: [outcome.entry] };
+    }
+    return { resources: outcome.resources, skipped: [] };
   }
 
   const resources: FhirResource[] = [];
   for await (const r of client.searchAll(args.resourceType, baseParams)) {
     resources.push(r);
   }
-  return resources;
+  return { resources, skipped: [] };
 }
 
 async function persistOne(

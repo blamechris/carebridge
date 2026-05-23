@@ -94,6 +94,31 @@ describe("epic_sync_state repo (#391)", () => {
     expect(values.status).toBe("ok");
     expect(values.last_fhir_lastupdated).toBe("2026-05-20T12:00:00Z");
     expect(values.resources_synced_count).toBe(7);
+    // #1097: defaults to empty array when caller doesn't pass `skipped`.
+    expect(values.skipped_sub_resources).toEqual([]);
+  });
+
+  it("markOk persists the skipped sub-resources array when provided (#1097)", async () => {
+    db.willInsert();
+    await markOk({
+      patientId: PATIENT_ID,
+      resourceType: "Observation",
+      highWatermark: null,
+      importedCount: 3,
+      skipped: [
+        { filter: { category: "vital-signs" }, reason: "unauthorized" },
+      ],
+    });
+    const values = db.insert.calls[0]!.chainArgs[0]![0] as Record<string, unknown>;
+    expect(values.skipped_sub_resources).toEqual([
+      { filter: { category: "vital-signs" }, reason: "unauthorized" },
+    ]);
+    // onConflictDoUpdate `set` also carries the latest skipped state so
+    // re-runs replace stale entries instead of merging them.
+    const setClause = db.insert.calls[0]!.chainArgs[1]![0] as { set: Record<string, unknown> };
+    expect(setClause.set.skipped_sub_resources).toEqual([
+      { filter: { category: "vital-signs" }, reason: "unauthorized" },
+    ]);
   });
 
   it("markFailed truncates very long error messages to 1KiB", async () => {
