@@ -22,6 +22,11 @@ import type { EpicResourceType } from "../fhir-client.js";
 
 export type EpicSyncStatusValue = "pending" | "running" | "ok" | "failed";
 
+export interface SkippedSubResourceRecord {
+  filter: Record<string, string>;
+  reason: "unauthorized";
+}
+
 export interface EpicSyncStateRow {
   patient_id: string;
   resource_type: EpicResourceType;
@@ -32,6 +37,8 @@ export interface EpicSyncStateRow {
   error_count: number;
   last_error_message: string | null;
   last_error_at: string | null;
+  /** Sub-resource fetches Epic refused on the most recent batch (#1097). */
+  skipped_sub_resources: SkippedSubResourceRecord[];
 }
 
 export async function getSyncState(
@@ -89,9 +96,16 @@ export async function markOk(args: {
   highWatermark: string | null;
   /** Number of resources successfully imported on this pull. */
   importedCount: number;
+  /**
+   * Sub-resources Epic refused on this batch (#1097). Replaces the
+   * previous value so the column reflects the latest run only —
+   * historical drift lives in BullMQ job logs, not here.
+   */
+  skipped?: SkippedSubResourceRecord[];
 }): Promise<void> {
   const db = getDb();
   const now = new Date().toISOString();
+  const skipped = args.skipped ?? [];
   await db
     .insert(epicSyncState)
     .values({
@@ -101,6 +115,7 @@ export async function markOk(args: {
       last_synced_at: now,
       last_fhir_lastupdated: args.highWatermark,
       resources_synced_count: args.importedCount,
+      skipped_sub_resources: skipped,
     })
     .onConflictDoUpdate({
       target: [epicSyncState.patient_id, epicSyncState.resource_type],
@@ -109,6 +124,7 @@ export async function markOk(args: {
         last_synced_at: now,
         last_fhir_lastupdated: args.highWatermark ?? sql`epic_sync_state.last_fhir_lastupdated`,
         resources_synced_count: sql`epic_sync_state.resources_synced_count + ${args.importedCount}`,
+        skipped_sub_resources: skipped,
       },
     });
 }

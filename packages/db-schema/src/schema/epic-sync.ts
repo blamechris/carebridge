@@ -1,4 +1,4 @@
-import { pgTable, text, integer, primaryKey, index } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, jsonb, primaryKey, index } from "drizzle-orm/pg-core";
 import { patients } from "./patients.js";
 
 /**
@@ -34,6 +34,14 @@ export const epicSyncState = pgTable(
     error_count: integer("error_count").notNull().default(0),
     last_error_message: text("last_error_message"),
     last_error_at: text("last_error_at"),
+    // #1097: Most recent batch's sub-resource fetches that Epic refused
+    // with 400 "not authorized for this sub-resource" (code 59022).
+    // Each entry shape: { filter: Record<string,string>, reason: "unauthorized" }.
+    // Empty array = nothing soft-skipped this run.
+    skipped_sub_resources: jsonb("skipped_sub_resources")
+      .notNull()
+      .default([])
+      .$type<Array<{ filter: Record<string, string>; reason: "unauthorized" }>>(),
   },
   (table) => [
     primaryKey({ columns: [table.patient_id, table.resource_type] }),
