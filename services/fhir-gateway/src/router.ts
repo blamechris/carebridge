@@ -48,6 +48,12 @@ import {
   mapFhirPatientToRow,
   type InboundPatient,
 } from "./patient-mapper.js";
+import {
+  classifyObservationCategory,
+  mapFhirObservationToVitalRow,
+  mapFhirObservationToLabResultRow,
+  type InboundObservation,
+} from "./observation-mapper.js";
 
 const logger = createLogger("fhir-gateway");
 
@@ -187,32 +193,36 @@ export const fhirGatewayRouter = t.router({
       user_id: z.string(),
       bundle_id: z.string().optional(),
       /**
-       * Opt-in materialisation flag (#1066). When true, inbound
-       * MedicationRequest and MedicationStatement resources are
-       * additionally mapped to internal `medications` rows so the
-       * ai-oversight rule engine (which reads `medications` not
-       * `fhir_resources`) sees external dosing detail —
-       * Dosage.doseQuantity, Dosage.maxDosePerPeriod, route, status.
+       * Opt-in materialisation flag (#1066, extended by #337). When
+       * true, inbound clinical resources are additionally mapped to
+       * the internal structured tables the ai-oversight rule engine
+       * reads (`medications`, `vitals`, `lab_results`) — not just
+       * persisted as raw FHIR in `fhir_resources`.
+       *
+       * Resource type → target table:
+       *   - MedicationRequest / MedicationStatement → medications
+       *   - Observation (category=vital-signs)      → vitals
+       *   - Observation (category=laboratory)       → lab_results
        *
        * Default false to preserve the raw-FHIR-only contract the
-       * endpoint advertises today; callers that want the FHIR row to
-       * drive the rule engine must explicitly opt in.
+       * endpoint advertises today; callers that want the FHIR rows
+       * to drive the rule engine must explicitly opt in.
        */
       materialize: z.boolean().optional().default(false),
       /**
-       * Patient id to associate materialised medication rows with.
-       * Required when `materialize: true` AND the bundle contains
-       * MedicationRequest/MedicationStatement entries — the FHIR
-       * subject reference may carry a Patient/{id} pointing at the
-       * external EHR's id, which is not the same as the internal
-       * patients.id. Caller (api-gateway RBAC wrapper) is responsible
-       * for the cross-system reconciliation.
+       * Patient id to associate materialised rows with. Required when
+       * `materialize: true` AND the bundle contains resources whose
+       * subject reference may carry an external Patient/{id} that is
+       * not the same as the internal patients.id (Medication*, Observation,
+       * Condition, AllergyIntolerance). Caller (api-gateway RBAC
+       * wrapper) is responsible for cross-system reconciliation.
        *
        * NOT required for Patient resource materialisation (#337) —
        * the Patient resource itself defines the patient identity, so
        * the materialiser mints a fresh internal id at write time.
        *
-       * Ignored when `materialize: false`.
+       * Applies to every materialised target (medications, vitals,
+       * lab_results, diagnoses). Ignored when `materialize: false`.
        */
       patient_id: z.string().optional(),
     }))
@@ -224,6 +234,8 @@ export const fhirGatewayRouter = t.router({
       let materializedMedications = 0;
       let materializedDiagnoses = 0;
       let materializedPatients = 0;
+      let materializedVitals = 0;
+      let materializedLabResults = 0;
       for (const entry of entries) {
         if (!entry.resource) continue;
         const sanitized = sanitizeResourceStrings(entry.resource) as Record<string, unknown>;
@@ -369,6 +381,73 @@ export const fhirGatewayRouter = t.router({
               materializedPatients++;
             }
           }
+
+          // Observation routing (#337). The same FHIR resource type
+          // fans out to two internal tables based on category:
+          //   - vital-signs → `vitals`
+          //   - laboratory  → `lab_results` (via a synthetic
+          //                  `lab_panels` row anchoring panel_id)
+          // Resources with no recognised category fall through
+          // unmaterialised — the raw_fhir row is still persisted
+          // above so no data is dropped silently.
+          if (input.materialize && resourceType === "Observation" && input.patient_id) {
+            const obs = sanitized as unknown as InboundObservation;
+            const category = classifyObservationCategory(obs);
+            if (category === "vital-signs") {
+              const vitalRow = mapFhirObservationToVitalRow(
+                obs,
+                input.patient_id,
+              );
+              if (vitalRow) {
+                await tx.insert(vitals).values({
+                  id: crypto.randomUUID(),
+                  patient_id: vitalRow.patient_id,
+                  recorded_at: vitalRow.recorded_at,
+                  type: vitalRow.type,
+                  loinc_code: vitalRow.loinc_code,
+                  value_primary: vitalRow.value_primary,
+                  value_secondary: vitalRow.value_secondary,
+                  unit: vitalRow.unit,
+                  source_system: vitalRow.source_system ?? input.source_system,
+                  created_at: now,
+                });
+                materializedVitals++;
+              }
+            } else if (category === "laboratory") {
+              const labRow = mapFhirObservationToLabResultRow(obs);
+              if (labRow) {
+                // lab_results.panel_id is NOT NULL — every imported
+                // lab Observation needs a sidecar lab_panels row.
+                // We create one per Observation here; future work
+                // could batch peer Observations under a single
+                // panel (e.g. a CBC panel arriving as 11 separate
+                // Observations with a shared encounter).
+                const panelId = crypto.randomUUID();
+                await tx.insert(labPanels).values({
+                  id: panelId,
+                  patient_id: input.patient_id,
+                  panel_name: labRow.test_name,
+                  collected_at: labRow.recorded_at,
+                  reported_at: labRow.recorded_at,
+                  source_system: input.source_system,
+                  created_at: now,
+                });
+                await tx.insert(labResults).values({
+                  id: crypto.randomUUID(),
+                  panel_id: panelId,
+                  test_name: labRow.test_name,
+                  test_code: labRow.test_code,
+                  value: labRow.value,
+                  unit: labRow.unit,
+                  reference_low: labRow.reference_low,
+                  reference_high: labRow.reference_high,
+                  flag: labRow.flag,
+                  created_at: labRow.recorded_at,
+                });
+                materializedLabResults++;
+              }
+            }
+          }
         });
 
         imported++;
@@ -378,6 +457,8 @@ export const fhirGatewayRouter = t.router({
         materialized_medications: materializedMedications,
         materialized_diagnoses: materializedDiagnoses,
         materialized_patients: materializedPatients,
+        materialized_vitals: materializedVitals,
+        materialized_lab_results: materializedLabResults,
       };
     }),
 

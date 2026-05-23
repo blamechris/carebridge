@@ -121,12 +121,14 @@ describe("fhirGatewayRouter raw auth (defense-in-depth)", () => {
         user_id: adminUser.id,
       });
       // `materialize` defaults to false (#1066, #337), so the result
-      // also reports all materialised counters at 0 alongside `imported`.
+      // reports 0 for every materialised-row count alongside `imported`.
       expect(result).toEqual({
         imported: 1,
         materialized_medications: 0,
         materialized_diagnoses: 0,
         materialized_patients: 0,
+        materialized_vitals: 0,
+        materialized_lab_results: 0,
       });
       // fhir_resources insert + audit_log insert = 2 inserts per resource
       expect(insertMock).toHaveBeenCalledTimes(2);
