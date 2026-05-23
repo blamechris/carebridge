@@ -418,6 +418,38 @@ describe("validateMedicationDose — per-drug ceilings (#238)", () => {
   });
 });
 
+// ─── validateMedicationDose — route-aware ceilings (#927) ──────
+
+describe("validateMedicationDose — route-aware (#927)", () => {
+  it("errors on IV morphine 20 mg (above 10 mg IV single-dose cap)", () => {
+    const result = validateMedicationDose(20, "mg", "morphine", "IV");
+    expect(result.valid).toBe(false);
+    expect(result.errors[0]).toMatch(/Morphine/);
+    expect(result.errors[0]).toMatch(/IV/);
+  });
+
+  it("accepts PO morphine 20 mg (below 30 mg PO single-dose cap)", () => {
+    const result = validateMedicationDose(20, "mg", "morphine", "oral");
+    expect(result.valid).toBe(true);
+  });
+
+  it("uses PO ceiling when route is omitted (backward compat)", () => {
+    const result = validateMedicationDose(20, "mg", "morphine");
+    expect(result.valid).toBe(true);
+  });
+
+  it("errors on SC hydromorphone 3 mg (above 2 mg SC single-dose cap)", () => {
+    const result = validateMedicationDose(3, "mg", "hydromorphone", "subcutaneous");
+    expect(result.valid).toBe(false);
+    expect(result.errors[0]).toMatch(/Hydromorphone/);
+  });
+
+  it("accepts PO hydromorphone 4 mg (PO cap)", () => {
+    const result = validateMedicationDose(4, "mg", "hydromorphone", "oral");
+    expect(result.valid).toBe(true);
+  });
+});
+
 // ─── MEDICATION_MAX_DAILY_DOSES data sanity ─────────────────────
 
 describe("MEDICATION_MAX_DAILY_DOSES reference data (#238)", () => {

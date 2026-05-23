@@ -247,7 +247,7 @@ export function checkMedicationDailyDose(context: PatientContext): RuleFlag[] {
   const unit = (med.dose_unit ?? "").toLowerCase();
   if (unit !== "mg") return flags;
 
-  const limit = getMedicationDoseLimit(med.name);
+  const limit = getMedicationDoseLimit(med.name, med.route);
   if (!limit) return flags;
 
   // Prefer the structured column populated at write time (#931). Falls

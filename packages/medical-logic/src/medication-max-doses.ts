@@ -8,20 +8,37 @@
  * Scope:
  *  - Acetaminophen, ibuprofen, naproxen, aspirin, diclofenac, meloxicam,
  *    celecoxib — NSAID / analgesic ceilings.
- *  - Morphine, oxycodone, hydrocodone, codeine, tramadol — oral opioid
- *    ceilings keyed off CDC MME guidance (90 MME/day is the elevated-risk
- *    threshold; most per-day caps in this table are calibrated to that).
- *
- * Out of scope (handled in follow-ups):
- *  - Route-specific caps (IV morphine vs PO morphine have very different
- *    safe ceilings). All values here are PO unless noted.
- *  - Transdermal fentanyl patches (expressed as mcg/hr, not mg) — the MME
- *    conversion requires route-aware handling.
- *  - Daily-cumulative summation across multiple prescriptions (issue #235).
+ *  - Morphine, oxycodone, hydrocodone, codeine, tramadol, hydromorphone —
+ *    opioid ceilings keyed off CDC MME guidance (90 MME/day is the
+ *    elevated-risk threshold; PO caps in this table are calibrated to that).
+ *  - Route-specific opioid ceilings (#927): morphine and hydromorphone have
+ *    IV/SC overrides; PO remains the default when no route is supplied.
+ *  - Transdermal fentanyl uses a separate mcg/hr → MME conversion path
+ *    (see {@link isFentanylTransdermal}) — not modelled in this table.
  *
  * All values are adult dosing. Pediatric weight-based dosing is handled by
  * weight-based-dosing.ts.
  */
+
+import type { MedRoute } from "@carebridge/shared-types";
+
+/**
+ * Per-route override for a {@link MedicationDoseLimit}. Sparse: only the
+ * fields that differ from the base (PO) entry need to be supplied; lookup
+ * merges the override onto the base.
+ */
+export type DoseLimitRouteOverride = Partial<
+  Pick<
+    MedicationDoseLimit,
+    | "displayName"
+    | "maxSingleDoseMg"
+    | "warnSingleDoseMg"
+    | "maxDailyDoseMg"
+    | "mmeFactor"
+    | "source"
+    | "citation"
+  >
+>;
 
 export interface MedicationDoseLimit {
   /** Human-readable canonical name used in validation messages. */
@@ -56,6 +73,21 @@ export interface MedicationDoseLimit {
    * `source` when omitted. (#1026)
    */
   citation?: string;
+  /**
+   * Per-route overrides (#927). Each key is a {@link MedRoute}; the value
+   * is a sparse override of the base entry's fields. Used by
+   * {@link getMedicationDoseLimit} when the caller supplies a route — the
+   * override is merged on top of the base entry (which is treated as the
+   * PO default).
+   *
+   * Only the opioids that have clinically meaningful route-specific
+   * ceilings carry this map: IV/SC morphine, IV/SC hydromorphone. IV
+   * fentanyl is treated separately because its concentration depends on
+   * the bag-rate path covered by #1021. Other drugs in this table are
+   * PO-only therapeutically (NSAIDs, oral opioids without parenteral
+   * formulations) and omit the field.
+   */
+  byRoute?: Partial<Record<MedRoute, DoseLimitRouteOverride>>;
 }
 
 /**
@@ -173,6 +205,11 @@ export const MEDICATION_MAX_DAILY_DOSES: Record<string, MedicationDoseLimit> = {
   // CareBridge enforces on adult, chronic-pain prescriptions. IV/IM/
   // transdermal routes have different conversion factors and are out of
   // scope (issue #927).
+  // Morphine has clinically distinct PO and parenteral ceilings (#927).
+  // Base entry is PO; byRoute carries IV / SC / IM overrides keyed off the
+  // CDC 2022 MME conversion (1 mg IV/IM/SC morphine = 3 PO MME). The
+  // IV single-dose cap of 10 mg covers acute-care titration; the daily
+  // cap of 30 mg IV maps to the same 90-MME-equivalent ceiling as PO.
   morphine: {
     displayName: "Morphine (PO)",
     maxSingleDoseMg: 30,
@@ -181,6 +218,77 @@ export const MEDICATION_MAX_DAILY_DOSES: Record<string, MedicationDoseLimit> = {
     source: "CDC 2022 opioid guideline",
     citation:
       "CDC 2022 opioid prescribing guideline (adult chronic-pain MME ceiling, PO)",
+    byRoute: {
+      IV: {
+        displayName: "Morphine (IV)",
+        maxSingleDoseMg: 10,
+        maxDailyDoseMg: 30,
+        mmeFactor: 3.0,
+        source: "CDC 2022 opioid guideline (IV)",
+        citation:
+          "CDC 2022 opioid prescribing guideline (adult MME ceiling, IV; 1 mg IV = 3 PO MME)",
+      },
+      IM: {
+        displayName: "Morphine (IM)",
+        maxSingleDoseMg: 10,
+        maxDailyDoseMg: 30,
+        mmeFactor: 3.0,
+        source: "CDC 2022 opioid guideline (IM)",
+        citation:
+          "CDC 2022 opioid prescribing guideline (adult MME ceiling, IM; 1 mg IM = 3 PO MME)",
+      },
+      subcutaneous: {
+        displayName: "Morphine (SC)",
+        maxSingleDoseMg: 10,
+        maxDailyDoseMg: 30,
+        mmeFactor: 3.0,
+        source: "CDC 2022 opioid guideline (SC)",
+        citation:
+          "CDC 2022 opioid prescribing guideline (adult MME ceiling, SC; 1 mg SC = 3 PO MME)",
+      },
+    },
+  },
+  // Hydromorphone (Dilaudid). PO baseline plus parenteral overrides per
+  // CDC MME table: 4 PO MME / mg, 20 IV-IM-SC MME / mg. PO 4 mg / 22.5
+  // mg/day matches the 90-MME chronic-pain ceiling; IV / SC 2 mg single,
+  // 4.5 mg/day matches the same 90-MME equivalent (4.5 × 20 = 90 MME).
+  hydromorphone: {
+    displayName: "Hydromorphone (PO)",
+    maxSingleDoseMg: 4,
+    maxDailyDoseMg: 22.5,
+    mmeFactor: 4.0,
+    source: "CDC 2022 opioid guideline",
+    citation:
+      "CDC 2022 opioid prescribing guideline (adult chronic-pain MME ceiling, PO; 22.5 mg × 4 MME = 90 MME)",
+    byRoute: {
+      IV: {
+        displayName: "Hydromorphone (IV)",
+        maxSingleDoseMg: 2,
+        maxDailyDoseMg: 4.5,
+        mmeFactor: 20.0,
+        source: "CDC 2022 opioid guideline (IV)",
+        citation:
+          "CDC 2022 opioid prescribing guideline (adult MME ceiling, IV; 1 mg IV = 20 PO MME)",
+      },
+      IM: {
+        displayName: "Hydromorphone (IM)",
+        maxSingleDoseMg: 2,
+        maxDailyDoseMg: 4.5,
+        mmeFactor: 20.0,
+        source: "CDC 2022 opioid guideline (IM)",
+        citation:
+          "CDC 2022 opioid prescribing guideline (adult MME ceiling, IM; 1 mg IM = 20 PO MME)",
+      },
+      subcutaneous: {
+        displayName: "Hydromorphone (SC)",
+        maxSingleDoseMg: 2,
+        maxDailyDoseMg: 4.5,
+        mmeFactor: 20.0,
+        source: "CDC 2022 opioid guideline (SC)",
+        citation:
+          "CDC 2022 opioid prescribing guideline (adult MME ceiling, SC; 1 mg SC = 20 PO MME)",
+      },
+    },
   },
   oxycodone: {
     displayName: "Oxycodone (PO)",
@@ -266,6 +374,8 @@ const DRUG_NAME_ALIASES: Record<string, string> = {
   mscontin: "morphine",
   roxanol: "morphine",
   kadian: "morphine",
+  dilaudid: "hydromorphone",
+  exalgo: "hydromorphone",
   oxycontin: "oxycodone",
   percocet: "oxycodone", // oxycodone + APAP; opioid is the tighter guard
   roxicodone: "oxycodone",
@@ -403,15 +513,35 @@ function candidatesFor(drugName: string): string[] {
  * generics, brand aliases (case-insensitive), and names with trailing
  * strength / frequency tokens stripped. Returns undefined when the
  * drug is unknown — callers should fall back to a generic ceiling.
+ *
+ * When `route` is supplied and the resolved entry carries a matching
+ * `byRoute` override, the override is merged on top of the base entry
+ * (#927). PO is the default — omitting `route` or passing `"oral"`
+ * returns the base PO ceiling unchanged. Unknown routes (no override
+ * registered for the drug) also fall back to the base entry, since the
+ * therapeutic ceiling for an unmodelled route is safer-stricter PO than
+ * silently dropping the per-drug guard.
  */
 export function getMedicationDoseLimit(
   drugName: string,
+  route?: MedRoute | string | null,
 ): MedicationDoseLimit | undefined {
+  let base: MedicationDoseLimit | undefined;
   for (const key of candidatesFor(drugName)) {
     const direct = MEDICATION_MAX_DAILY_DOSES[key];
-    if (direct) return direct;
+    if (direct) {
+      base = direct;
+      break;
+    }
     const canonical = DRUG_NAME_ALIASES[key];
-    if (canonical) return MEDICATION_MAX_DAILY_DOSES[canonical];
+    if (canonical) {
+      base = MEDICATION_MAX_DAILY_DOSES[canonical];
+      break;
+    }
   }
-  return undefined;
+  if (!base) return undefined;
+  if (!route || route === "oral") return base;
+  const override = base.byRoute?.[route as MedRoute];
+  if (!override) return base;
+  return { ...base, ...override };
 }
