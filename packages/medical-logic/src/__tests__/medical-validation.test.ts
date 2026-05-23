@@ -450,6 +450,75 @@ describe("validateMedicationDose — route-aware (#927)", () => {
   });
 });
 
+// ─── validateMedicationDose — combo-product disambiguation (#929) ──
+
+describe("validateMedicationDose — combo-product disambiguation (#929)", () => {
+  it("Percocet 5 mg passes opioid ceiling but warns it's a combo", () => {
+    const result = validateMedicationDose(5, "mg", "Percocet");
+    expect(result.valid).toBe(true);
+    expect(
+      result.warnings.some((w) =>
+        w.match(/combination product.*oxycodone.*acetaminophen/),
+      ),
+    ).toBe(true);
+  });
+
+  it("Vicodin 5 mg warns it's hydrocodone + APAP combo", () => {
+    const result = validateMedicationDose(5, "mg", "Vicodin");
+    expect(
+      result.warnings.some(
+        (w) =>
+          w.includes("hydrocodone") &&
+          w.includes("acetaminophen") &&
+          w.includes("300 mg"),
+      ),
+    ).toBe(true);
+  });
+
+  it("Norco warns and resolves to hydrocodone opioid ceiling", () => {
+    const result = validateMedicationDose(15, "mg", "Norco");
+    // Hydrocodone single ceiling is 10 mg — 15 mg errors on the opioid
+    // component AND warns it's a combo product.
+    expect(result.valid).toBe(false);
+    expect(result.errors[0]).toMatch(/Hydrocodone/);
+    expect(
+      result.warnings.some((w) => w.includes("combination product")),
+    ).toBe(true);
+  });
+
+  it("Tylenol 3 warns it's codeine + APAP", () => {
+    const result = validateMedicationDose(30, "mg", "Tylenol 3");
+    expect(
+      result.warnings.some(
+        (w) => w.includes("codeine") && w.includes("acetaminophen"),
+      ),
+    ).toBe(true);
+  });
+
+  it("Single-ingredient acetaminophen does NOT trigger combo warning", () => {
+    const result = validateMedicationDose(500, "mg", "acetaminophen");
+    expect(
+      result.warnings.some((w) => w.includes("combination product")),
+    ).toBe(false);
+  });
+
+  it("Single-ingredient oxycodone (OxyContin) does NOT trigger combo warning", () => {
+    const result = validateMedicationDose(10, "mg", "OxyContin");
+    expect(
+      result.warnings.some((w) => w.includes("combination product")),
+    ).toBe(false);
+  });
+
+  it("Combo warning is suppressed when unit is not mg", () => {
+    // mcg-unit on a combo brand: numerically nonsensical, but the
+    // combo warning would mislead the prescriber. Skip when unit isn't mg.
+    const result = validateMedicationDose(500, "mcg", "Percocet");
+    expect(
+      result.warnings.some((w) => w.includes("combination product")),
+    ).toBe(false);
+  });
+});
+
 // ─── MEDICATION_MAX_DAILY_DOSES data sanity ─────────────────────
 
 describe("MEDICATION_MAX_DAILY_DOSES reference data (#238)", () => {

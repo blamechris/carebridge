@@ -378,6 +378,11 @@ export const MEDICATION_MAX_DAILY_DOSES: Record<string, MedicationDoseLimit> = {
  * Brand → generic aliases. Combo products (e.g. Percocet = oxycodone +
  * acetaminophen) are aliased to the opioid component — the more tightly
  * bounded drug — so the lookup returns the stricter of the two caps.
+ *
+ * Combo brands ALSO appear in {@link COMBO_OPIOID_APAP_MG} (for the APAP
+ * roll-up rule in #926) and are surfaced as
+ * {@link ComboBrandInfo} via {@link lookupComboBrand} so the prescriber
+ * sees an explicit disambiguation warning at validation time (#929).
  */
 const DRUG_NAME_ALIASES: Record<string, string> = {
   // Acetaminophen
@@ -482,6 +487,64 @@ export function getComboApapMg(drugName: string): number | undefined {
   for (const key of candidatesFor(drugName)) {
     const mg = COMBO_OPIOID_APAP_MG[key];
     if (mg !== undefined) return mg;
+  }
+  return undefined;
+}
+
+/**
+ * Combo-product identification (#929).
+ *
+ * Combo brands (Percocet, Vicodin, Norco, Tylenol 3/4, Ultracet, etc.)
+ * pack two ingredients into a single dose unit — typically an opioid +
+ * acetaminophen. The medications schema stores ONE `dose_amount` /
+ * `dose_unit`, so the encoded number can refer to either component.
+ *
+ * The historical behaviour aliased combo brands to their opioid
+ * component because the opioid ceiling is the tighter guard. That is
+ * still the right thing to do for safety, but callers who write
+ * `dose_amount` intending the APAP component (a real prescriber error
+ * surface) would get a silently-mis-validated record.
+ *
+ * `lookupComboBrand` exposes the combo information so:
+ *  - {@link validateMedicationDose} can warn that the brand is a combo
+ *    product and the encoded mg is being interpreted as the opioid
+ *    component;
+ *  - APAP cumulative checks (#926) can read the non-opioid mg without
+ *    having to grep the alias table.
+ */
+export interface ComboBrandInfo {
+  /** Canonicalised brand key (lowercase) that matched the input. */
+  brand: string;
+  /** Opioid canonical name — same as DRUG_NAME_ALIASES[brand]. */
+  opioidComponent: string;
+  /**
+   * Non-opioid co-ingredient. All currently-encoded combo brands pair
+   * an opioid with acetaminophen; future combos (e.g. ibuprofen +
+   * hydrocodone) would land here.
+   */
+  nonOpioidComponent: string;
+  /** Non-opioid mg per dose unit (from COMBO_OPIOID_APAP_MG). */
+  nonOpioidMgPerDose: number;
+}
+
+/**
+ * Look up combo-product information for a free-text drug name. Returns
+ * undefined when the input is a single-ingredient drug or unknown.
+ * Combo brands are identified by intersecting DRUG_NAME_ALIASES and
+ * COMBO_OPIOID_APAP_MG — anything present in both is a combo.
+ */
+export function lookupComboBrand(drugName: string): ComboBrandInfo | undefined {
+  for (const key of candidatesFor(drugName)) {
+    const opioid = DRUG_NAME_ALIASES[key];
+    const nonOpioidMg = COMBO_OPIOID_APAP_MG[key];
+    if (opioid && nonOpioidMg !== undefined) {
+      return {
+        brand: key,
+        opioidComponent: opioid,
+        nonOpioidComponent: "acetaminophen",
+        nonOpioidMgPerDose: nonOpioidMg,
+      };
+    }
   }
   return undefined;
 }
