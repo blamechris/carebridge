@@ -129,6 +129,7 @@ describe("fhirGatewayRouter raw auth (defense-in-depth)", () => {
         materialized_patients: 0,
         materialized_vitals: 0,
         materialized_lab_results: 0,
+        materialized_allergies: 0,
       });
       // fhir_resources insert + audit_log insert = 2 inserts per resource
       expect(insertMock).toHaveBeenCalledTimes(2);

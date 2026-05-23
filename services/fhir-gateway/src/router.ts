@@ -54,6 +54,10 @@ import {
   mapFhirObservationToLabResultRow,
   type InboundObservation,
 } from "./observation-mapper.js";
+import {
+  mapFhirAllergyIntoleranceToRow,
+  type InboundAllergyIntolerance,
+} from "./allergy-mapper.js";
 
 const logger = createLogger("fhir-gateway");
 
@@ -236,6 +240,7 @@ export const fhirGatewayRouter = t.router({
       let materializedPatients = 0;
       let materializedVitals = 0;
       let materializedLabResults = 0;
+      let materializedAllergies = 0;
       for (const entry of entries) {
         if (!entry.resource) continue;
         const sanitized = sanitizeResourceStrings(entry.resource) as Record<string, unknown>;
@@ -321,6 +326,31 @@ export const fhirGatewayRouter = t.router({
                 updated_at: now,
               });
               materializedMedications++;
+            }
+
+            // (#337) Materialise AllergyIntolerance into the
+            // `allergies` table so the ai-oversight allergy-medication
+            // rules (which read `allergies`, not `fhir_resources`)
+            // see external allergen + reaction detail.
+            if (resourceType === "AllergyIntolerance") {
+              const allergyRow = mapFhirAllergyIntoleranceToRow(
+                sanitized as unknown as InboundAllergyIntolerance,
+                input.patient_id,
+              );
+              if (allergyRow) {
+                await tx.insert(allergies).values({
+                  id: crypto.randomUUID(),
+                  patient_id: allergyRow.patient_id,
+                  allergen: allergyRow.allergen,
+                  snomed_code: allergyRow.snomed_code,
+                  rxnorm_code: allergyRow.rxnorm_code,
+                  reaction: allergyRow.reaction,
+                  severity: allergyRow.severity,
+                  verification_status: allergyRow.verification_status,
+                  created_at: now,
+                });
+                materializedAllergies++;
+              }
             }
 
             // Condition → diagnoses materialisation (#337).
@@ -459,6 +489,7 @@ export const fhirGatewayRouter = t.router({
         materialized_patients: materializedPatients,
         materialized_vitals: materializedVitals,
         materialized_lab_results: materializedLabResults,
+        materialized_allergies: materializedAllergies,
       };
     }),
 
