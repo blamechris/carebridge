@@ -24,8 +24,9 @@
  *     default (silently disabling Observation sync is worse than
  *     refusing the misconfig).
  *   EPIC_MEDICATION_REQUEST_STATUS    — Single FHIR MedicationRequest
- *     status code. Multi-status fan-out lives in #1105 (skipped test
- *     placeholder in sync-jobs.test.ts).
+ *     status code. Multi-status fan-out implementation is tracked
+ *     under #1114; the related `it.skip` test-placeholder cleanup
+ *     is tracked under #1105.
  */
 
 export const DEFAULT_OBSERVATION_CATEGORIES: readonly string[] = [

@@ -301,7 +301,8 @@ async function syncResourceType(
  * still imports what it's authorized for.
  *
  * The default set + status are overridable per deployment via env
- * (#1098) — see {@link ../fanout-config}.
+ * (#1098) — see {@link getObservationCategories} and
+ * {@link getMedicationRequestStatus}.
  */
 
 /** Epic error code for "Combination of parameters is not valid for any

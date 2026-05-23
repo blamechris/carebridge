@@ -59,7 +59,9 @@ without a code change.
 | Env var | Default | Notes |
 |---|---|---|
 | `EPIC_OBSERVATION_CATEGORIES` | `vital-signs,laboratory` | Comma-separated FHIR observation-category codes. Whitespace trimmed; empty segments and duplicates dropped. All-empty or whitespace-only values fall back to the default (silently disabling Observation sync is worse than refusing the misconfig). |
-| `EPIC_MEDICATION_REQUEST_STATUS` | `active` | Single FHIR MedicationRequest status. Multi-status fan-out is tracked in #1105. |
+| `EPIC_MEDICATION_REQUEST_STATUS` | `active` | Single FHIR MedicationRequest status. Multi-status fan-out implementation is tracked under #1114 (#1105 covers the related test-placeholder cleanup). |
+
+> **Note:** widening either set fetches more from Epic, but the CareBridge persistence layer today only maps `Observation.category` ∈ `{vital-signs, laboratory}` (→ `vitals`/`lab_results`) and `MedicationRequest.status = "active"` (→ AI oversight pipeline). Categories or statuses outside that set are fetched and counted in `SyncResult` but won't appear in internal tables — useful for surfacing scope/auth issues via `skipped_sub_resources` (#1097), not for end-user data display, until the matching persistence work lands.
 
 Examples:
 
