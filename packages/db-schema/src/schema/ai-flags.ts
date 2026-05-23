@@ -37,6 +37,19 @@ export const clinicalFlags = pgTable("clinical_flags", {
    * Null for LLM-path flags and historical rows pre-#1039.
    */
   metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+  /**
+   * Outbound Epic FHIR Flag id (#393). Populated once this flag has
+   * been successfully POSTed to Epic; NULL otherwise. Subsequent status
+   * changes (acknowledge / resolve / dismiss) PUT to this id rather
+   * than re-creating the resource on Epic.
+   */
+  epic_flag_id: text("epic_flag_id"),
+  /** Epic org `iss` the flag was pushed to. */
+  epic_org_iss: text("epic_org_iss"),
+  /** Wall-clock time of the last successful push. */
+  epic_pushed_at: text("epic_pushed_at"),
+  /** Most-recent push error (truncated to 1KiB). NULL on success. */
+  epic_push_error: text("epic_push_error"),
   created_at: text("created_at").notNull(),
 }, (table) => [
   index("idx_flags_patient").on(table.patient_id, table.status),
@@ -48,6 +61,7 @@ export const clinicalFlags = pgTable("clinical_flags", {
     table.escalation_count,
   ),
   index("idx_flags_trigger_event_ids").using("gin", sql`trigger_event_ids jsonb_path_ops`),
+  index("idx_clinical_flags_epic_flag_id").on(table.epic_flag_id),
   uniqueIndex("idx_flags_open_rule_dedup")
     .on(table.patient_id, table.rule_id)
     .where(sql`status = 'open' AND rule_id IS NOT NULL`),

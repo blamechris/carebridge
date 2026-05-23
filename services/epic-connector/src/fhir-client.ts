@@ -146,21 +146,98 @@ export class EpicFhirClient {
       ? pathOrUrl
       : joinUrl(this.config.fhirBaseUrl, pathOrUrl);
 
-    return this.requestWithRetry<T>(url, /* didRefreshAuth */ false, 0);
+    return this.requestWithRetry<T>(
+      { url, method: "GET" },
+      /* didRefreshAuth */ false,
+      0,
+    );
+  }
+
+  /**
+   * POST a new FHIR resource to Epic. Used by the outbound flag-push
+   * worker (#393) and any other write surface. The returned resource
+   * is what Epic stored — typically the same payload echoed back with
+   * `id` and `meta.versionId` populated.
+   */
+  async createResource<TBody extends FhirResource, TResp = TBody>(
+    resourceType: EpicResourceType | "Flag",
+    body: TBody,
+  ): Promise<TResp> {
+    const url = joinUrl(this.config.fhirBaseUrl, resourceType);
+    const resp = await this.requestWithRetry<TResp | OperationOutcome>(
+      {
+        url,
+        method: "POST",
+        contentType: "application/fhir+json",
+        body: JSON.stringify(body),
+      },
+      false,
+      0,
+    );
+    if (
+      typeof resp === "object" &&
+      resp !== null &&
+      (resp as { resourceType?: string }).resourceType === "OperationOutcome"
+    ) {
+      throw operationOutcomeError(resp as OperationOutcome);
+    }
+    return resp as TResp;
+  }
+
+  /**
+   * PUT an existing FHIR resource on Epic (update by id). The resource
+   * body MUST carry `id` matching the URL path or Epic rejects.
+   */
+  async updateResource<TBody extends FhirResource, TResp = TBody>(
+    resourceType: EpicResourceType | "Flag",
+    id: string,
+    body: TBody,
+  ): Promise<TResp> {
+    const url = joinUrl(
+      this.config.fhirBaseUrl,
+      `${resourceType}/${encodeURIComponent(id)}`,
+    );
+    const resp = await this.requestWithRetry<TResp | OperationOutcome>(
+      {
+        url,
+        method: "PUT",
+        contentType: "application/fhir+json",
+        body: JSON.stringify(body),
+      },
+      false,
+      0,
+    );
+    if (
+      typeof resp === "object" &&
+      resp !== null &&
+      (resp as { resourceType?: string }).resourceType === "OperationOutcome"
+    ) {
+      throw operationOutcomeError(resp as OperationOutcome);
+    }
+    return resp as TResp;
   }
 
   private async requestWithRetry<T>(
-    url: string,
+    args: {
+      url: string;
+      method: "GET" | "POST" | "PUT" | "DELETE";
+      contentType?: string;
+      body?: string;
+    },
     didRefreshAuth: boolean,
     attempt: number,
   ): Promise<T> {
     const token = await this.tokens.getAccessToken();
-    const response = await this.opts.fetchImpl(url, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/fhir+json",
-      },
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/fhir+json",
+    };
+    if (args.contentType) headers["Content-Type"] = args.contentType;
+
+    const response = await this.opts.fetchImpl(args.url, {
+      method: args.method,
+      headers,
+      ...(args.body !== undefined ? { body: args.body } : {}),
     });
 
     if (response.status === 401 && !didRefreshAuth) {
@@ -169,10 +246,10 @@ export class EpicFhirClient {
       // to the caller — repeated 401s mean credentials are misregistered
       // and retrying just hammers Epic's token endpoint.
       log.warn("Epic returned 401 — invalidating token and retrying once", {
-        url,
+        url: args.url,
       });
       this.tokens.invalidate();
-      return this.requestWithRetry<T>(url, true, attempt);
+      return this.requestWithRetry<T>(args, true, attempt);
     }
 
     if (response.status === 429 || response.status >= 500) {
@@ -195,7 +272,7 @@ export class EpicFhirClient {
         delayMs: delay,
       });
       await this.opts.sleep(delay);
-      return this.requestWithRetry<T>(url, didRefreshAuth, attempt + 1);
+      return this.requestWithRetry<T>(args, didRefreshAuth, attempt + 1);
     }
 
     if (!response.ok) {
@@ -206,6 +283,8 @@ export class EpicFhirClient {
       );
     }
 
+    // 204 No Content (rare for FHIR but possible on PUT with Prefer: minimal)
+    if (response.status === 204) return undefined as T;
     return (await response.json()) as T;
   }
 
