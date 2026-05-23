@@ -14,3 +14,4 @@ export * from "./fhir.js";
 export * from "./family-access.js";
 export * from "./allergy-overrides.js";
 export * from "./epic-sync.js";
+export * from "./epic-user-connections.js";

@@ -12,6 +12,7 @@ import { notificationsRbacRouter } from "./routers/notifications.js";
 import { familyAccessRbacRouter } from "./routers/family-access.js";
 import { careTeamRbacRouter } from "./routers/care-team.js";
 import { epicSyncRbacRouter } from "./routers/epic-sync.js";
+import { epicAuthRbacRouter } from "./routers/epic-auth.js";
 
 export const appRouter = router({
   healthCheck: publicProcedure.query(() => {
@@ -34,6 +35,7 @@ export const appRouter = router({
   familyAccess: familyAccessRbacRouter,
   careTeam: careTeamRbacRouter,
   epicSync: epicSyncRbacRouter,
+  epicAuth: epicAuthRbacRouter,
 });
 
 export type AppRouter = typeof appRouter;

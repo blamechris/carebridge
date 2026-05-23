@@ -14,6 +14,7 @@ import { makePatientReadRateLimitHook } from "./middleware/patient-read-rate-lim
 import { makeFhirExportRateLimitHook } from "./middleware/fhir-export-rate-limit.js";
 import { registerNotificationSSE } from "./routes/notifications-sse.js";
 import { registerFhirRestRoutes } from "./routes/fhir-rest.js";
+import { registerEpicAuthRoutes } from "./routes/epic-auth.js";
 import { handleAuthMe } from "./handlers/auth-me.js";
 import { redactUrlIds } from "@carebridge/phi-sanitizer";
 import { startBackgroundWorkers } from "./workers.js";
@@ -235,6 +236,13 @@ async function main() {
   // alongside the internal /trpc/* surface for EHR / HIE / third-party
   // FHIR clients (Epic, HIEs, SMART apps). Read-only on first ship.
   registerFhirRestRoutes(server);
+
+  // --- Epic SMART App Launch (#392) ---
+  // GET /auth/epic/authorize + /auth/epic/callback. The route module
+  // checks EPIC_CLIENT_ID + EPIC_APP_LAUNCH_REDIRECT_URI at startup —
+  // if either is unset, registration is a no-op so local dev without
+  // Epic credentials keeps booting unchanged.
+  registerEpicAuthRoutes(server);
 
   // --- Health check ---
   server.get("/health", async () => {
