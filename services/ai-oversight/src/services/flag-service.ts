@@ -16,6 +16,10 @@ import {
   recordFlagResolved,
 } from "./shadow-metrics.js";
 import { emitNotificationEvent } from "@carebridge/notifications";
+import {
+  enqueueEpicFlagPushCreate,
+  enqueueEpicFlagPushUpdate,
+} from "@carebridge/epic-connector";
 
 // 24 hours in milliseconds — window for LLM flag deduplication
 const LLM_DEDUP_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -185,6 +189,11 @@ export async function createFlag(
     created_at: now,
   });
 
+  // Push to Epic as a FHIR Flag resource (#393). The enqueue is a
+  // no-op when EPIC_CLIENT_ID isn't configured, so this is safe to
+  // call unconditionally — local dev without Epic creds just skips it.
+  await enqueueEpicFlagPushCreate(id);
+
   return record as ClinicalFlag;
 }
 
@@ -206,6 +215,8 @@ export async function acknowledgeFlag(
       acknowledged_at: now,
     })
     .where(eq(clinicalFlags.id, flagId));
+
+  await enqueueEpicFlagPushUpdate(flagId);
 }
 
 /**
@@ -234,6 +245,8 @@ export async function resolveFlag(
     rule_id: rows[0]?.rule_id ?? undefined,
     source: rows[0]?.source as ClinicalFlag["source"] | undefined,
   });
+
+  await enqueueEpicFlagPushUpdate(flagId);
 }
 
 /**
@@ -262,6 +275,8 @@ export async function dismissFlag(
     rule_id: rows[0]?.rule_id ?? undefined,
     source: rows[0]?.source as ClinicalFlag["source"] | undefined,
   });
+
+  await enqueueEpicFlagPushUpdate(flagId);
 }
 
 /**

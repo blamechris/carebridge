@@ -379,6 +379,13 @@
       "when": 1747929960000,
       "tag": "0049_epic_user_connections",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1747930020000,
+      "tag": "0050_clinical_flags_epic_push",
+      "breakpoints": true
     }
   ]
 }

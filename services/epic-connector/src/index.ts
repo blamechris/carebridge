@@ -142,3 +142,29 @@ export {
   type EpicConnectionUpsert,
   type EpicConnectionRow,
 } from "./app-launch/connection-repo.js";
+export {
+  buildFhirFlag,
+  flagSeverityCoding,
+  mapFlagStatusToFhir,
+  CAREBRIDGE_FLAG_SEVERITY_SYSTEM,
+  FHIR_FLAG_CATEGORY_SYSTEM,
+  RATIONALE_EXTENSION_URL,
+  SUGGESTED_ACTION_EXTENSION_URL,
+  RULE_ID_EXTENSION_URL,
+  type FhirFlag,
+  type BuildFhirFlagArgs,
+} from "./outbound/flag-generator.js";
+export {
+  pushFlagToEpic,
+  pushFlagStatusUpdate,
+  type FlagPushDeps,
+  type FlagPushResult,
+} from "./outbound/flag-push.js";
+export {
+  startEpicOutboundFlagWorker,
+  enqueueEpicFlagPushCreate,
+  enqueueEpicFlagPushUpdate,
+  isEpicOutboundEnabled,
+  EPIC_OUTBOUND_FLAGS_QUEUE_NAME,
+  type EpicOutboundFlagJobData,
+} from "./workers/outbound-flag-worker.js";

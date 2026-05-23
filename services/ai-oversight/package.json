@@ -29,6 +29,7 @@
     "@carebridge/db-schema": "workspace:*",
     "@carebridge/medical-logic": "workspace:*",
     "@carebridge/ai-prompts": "workspace:*",
+    "@carebridge/epic-connector": "workspace:*",
     "@anthropic-ai/sdk": "^0.39.0",
     "bullmq": "^5.30.0",
     "drizzle-orm": "^0.38.0",
