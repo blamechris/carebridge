@@ -53,6 +53,7 @@ import {
   getObservationCategories,
   getMedicationRequestStatus,
 } from "./fanout-config.js";
+import { EPIC_ERROR_CODES } from "../epic-error-codes.js";
 import type { FhirResource } from "../fhir-types.js";
 
 const log = createLogger("epic-sync-jobs");
@@ -313,13 +314,6 @@ async function syncResourceType(
  * {@link getMedicationRequestStatus}.
  */
 
-/** Epic error code for "Combination of parameters is not valid for any
- *  authorized sub-resource. No search was performed." This 400 means
- *  the registered app doesn't carry the scope for the request's filter
- *  combination — distinct from a malformed request, which gets 59108
- *  ("A required element is missing"). */
-const EPIC_UNAUTHORIZED_SUB_RESOURCE_CODE = "59022";
-
 /**
  * Detect Epic's "not authorized for this sub-resource" 400 response so the
  * fan-out can skip categories the registered app doesn't carry the scope
@@ -327,7 +321,8 @@ const EPIC_UNAUTHORIZED_SUB_RESOURCE_CODE = "59022";
  *
  * Preferred: structured check on the parsed OperationOutcome's coding
  * (`details.coding[].code === "59022"`) — proper FHIR-spec match that
- * survives Epic rewording the human text.
+ * survives Epic rewording the human text. After #1102 the literal lives
+ * in {@link EPIC_ERROR_CODES.UNAUTHORIZED_SUB_RESOURCE}.
  *
  * Fallback: substring match on `"authorized sub-resource"` in the Error
  * message — covers cases where Epic returns a non-OperationOutcome body
@@ -340,7 +335,7 @@ const EPIC_UNAUTHORIZED_SUB_RESOURCE_CODE = "59022";
 function isUnauthorizedSubResourceError(err: unknown): boolean {
   if (
     err instanceof EpicFhirError &&
-    err.hasIssueCode(EPIC_UNAUTHORIZED_SUB_RESOURCE_CODE)
+    err.hasIssueCode(EPIC_ERROR_CODES.UNAUTHORIZED_SUB_RESOURCE)
   ) {
     return true;
   }

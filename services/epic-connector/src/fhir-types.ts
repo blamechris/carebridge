@@ -58,7 +58,14 @@ export interface FhirResource {
  */
 export interface OperationOutcomeIssueCoding {
   system?: string;
-  code?: string;
+  /**
+   * Required by Epic convention (#1104): Epic always emits a code on
+   * its OperationOutcome coding entries, and structured hasIssueCode
+   * checks rely on it. `tryParseOperationOutcome` rejects payloads
+   * with a coding entry missing `code` rather than promoting a
+   * half-valid OperationOutcome that downstream callers might trust.
+   */
+  code: string;
   display?: string;
 }
 

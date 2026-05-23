@@ -45,6 +45,10 @@ export {
   type EpicResourceType,
 } from "./fhir-client.js";
 export {
+  EPIC_ERROR_CODES,
+  type EpicErrorCode,
+} from "./epic-error-codes.js";
+export {
   operationOutcomeHasIssueCode,
 } from "./fhir-types.js";
 export type {

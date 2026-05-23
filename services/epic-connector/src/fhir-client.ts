@@ -73,24 +73,48 @@ export class EpicFhirError extends Error {
   }
 }
 
+/**
+ * Promote a raw Epic response body to a typed OperationOutcome, or
+ * return undefined if it doesn't pass our structural trust checks
+ * (#1103, #1104). The trust boundary matters: downstream
+ * `hasIssueCode()` calls iterate `issue[*].details.coding[*]` and
+ * compare `code`; if we accept a half-shaped payload, those checks
+ * either silently misreport or throw on iteration.
+ *
+ * Promotion requires ALL of:
+ *   1. JSON parses to a plain object (not "string" / number / array / null)
+ *   2. resourceType === "OperationOutcome"
+ *   3. Array.isArray(issue)
+ *   4. every issue.details.coding[*] has a `code` string
+ *
+ * If any check fails, return undefined and let the caller fall back
+ * to the raw body string in the Error message.
+ */
 function tryParseOperationOutcome(
   body: string,
 ): OperationOutcome | undefined {
   if (!body) return undefined;
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(body) as unknown;
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      (parsed as { resourceType?: string }).resourceType === "OperationOutcome"
-    ) {
-      return parsed as OperationOutcome;
-    }
+    parsed = JSON.parse(body);
   } catch {
-    // Non-JSON body (HTML error page, plain text) — caller falls back
-    // to the raw string in the Error message.
+    return undefined;
   }
-  return undefined;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return undefined;
+  }
+  const candidate = parsed as Record<string, unknown>;
+  if (candidate.resourceType !== "OperationOutcome") return undefined;
+  if (!Array.isArray(candidate.issue)) return undefined;
+  for (const issue of candidate.issue as Array<{ details?: { coding?: Array<{ code?: unknown }> } }>) {
+    const coding = issue?.details?.coding;
+    if (!coding) continue;
+    if (!Array.isArray(coding)) return undefined;
+    for (const c of coding) {
+      if (typeof c?.code !== "string") return undefined;
+    }
+  }
+  return parsed as OperationOutcome;
 }
 
 export interface EpicFhirClientOptions {
@@ -481,12 +505,27 @@ async function safeReadBody(response: Response): Promise<string> {
   }
 }
 
-function operationOutcomeError(outcome: OperationOutcome): Error {
+/**
+ * Build an EpicFhirError from an OperationOutcome returned in a 2xx
+ * response body (#1101). FHIR allows servers to indicate semantic
+ * failure on an HTTP 200 by returning an OperationOutcome instead of
+ * the requested resource — Epic does this for /Patient/[id] on a
+ * deleted patient, certain create/update edge cases, etc. Returning
+ * EpicFhirError (not a plain Error) means downstream
+ * `err.hasIssueCode("59022")` works for the 200-with-OO case the
+ * same way it works for the 4xx-with-OO case.
+ */
+function operationOutcomeError(outcome: OperationOutcome): EpicFhirError {
   const issue = outcome.issue?.[0];
   const detail =
     issue?.diagnostics ?? issue?.details?.text ?? "no diagnostics";
-  return new Error(
-    `Epic returned OperationOutcome: ${issue?.code ?? "unknown"} — ${detail}`,
+  const message = `Epic returned OperationOutcome: ${issue?.code ?? "unknown"} — ${detail}`;
+  return new EpicFhirError(
+    message,
+    200,
+    "OK",
+    JSON.stringify(outcome).slice(0, 500),
+    outcome,
   );
 }
 

@@ -284,15 +284,15 @@ describe("EpicFhirClient (#390)", () => {
     expect(err.message).toContain("400");
   });
 
-  it("EpicFhirError.hasIssueCode returns false (no throw) when OperationOutcome.issue is malformed", async () => {
+  it("tryParseOperationOutcome rejects shapes where issue is not an array (#1103); hasIssueCode still safely returns false", async () => {
     // Epic edge proxies occasionally return OperationOutcome-shaped
-    // JSON with a partial / null `issue` field. The error-handling
-    // path must be defensive: hasIssueCode should return false, not
-    // crash on `outcome.issue` being non-iterable.
+    // JSON with a partial / null `issue` field. With the tightened
+    // parser (#1103) such payloads are NOT promoted to a typed
+    // OperationOutcome — `err.operationOutcome` stays undefined and
+    // the sync-jobs substring fallback handles them.
     const malformed = {
       resourceType: "OperationOutcome",
-      // issue intentionally not an array
-      issue: null,
+      issue: null, // not an array → parser rejects
     };
     const { client } = setup([
       new Response(JSON.stringify(malformed), {
@@ -308,8 +308,7 @@ describe("EpicFhirClient (#390)", () => {
     }
     expect(thrown).toBeInstanceOf(EpicFhirError);
     const err = thrown as EpicFhirError;
-    expect(err.operationOutcome).toBeDefined();
-    // Must NOT throw on malformed shape — should just return false.
+    expect(err.operationOutcome).toBeUndefined();
     expect(() => err.hasIssueCode("59022")).not.toThrow();
     expect(err.hasIssueCode("59022")).toBe(false);
   });
@@ -332,6 +331,168 @@ describe("EpicFhirClient (#390)", () => {
     expect(err.operationOutcome).toBeUndefined();
     expect(err.body).toContain("502 Bad Gateway");
     expect(err.hasIssueCode("59022")).toBe(false);
+  });
+
+  // ── #1103: tryParseOperationOutcome edge-case rejection ─────────
+  // The parser is the trust boundary between raw Epic bodies and typed
+  // OperationOutcome data downstream consumers `hasIssueCode()` against.
+  // If the parser accepts a malformed shape, `hasIssueCode` would
+  // either silently misreport or throw on iteration. After tightening
+  // (#1103, #1104) the parser only promotes payloads that pass these
+  // structural checks:
+  //   1. JSON parses to a plain object (not "string" / number / array / null)
+  //   2. resourceType === "OperationOutcome"
+  //   3. Array.isArray(issue)
+  //   4. every issue.details.coding[*] has a `code` string
+
+  it("tryParseOperationOutcome rejects valid-JSON string body (not an object)", async () => {
+    const { client } = setup([
+      new Response('"just a string"', {
+        status: 400,
+        headers: { "Content-Type": "application/fhir+json" },
+      }),
+    ]);
+    let thrown: unknown;
+    try { await client.read("Patient", "p-1"); } catch (err) { thrown = err; }
+    expect((thrown as EpicFhirError).operationOutcome).toBeUndefined();
+  });
+
+  it("tryParseOperationOutcome rejects valid-JSON array body (not an object)", async () => {
+    const { client } = setup([
+      new Response("[1,2,3]", {
+        status: 400,
+        headers: { "Content-Type": "application/fhir+json" },
+      }),
+    ]);
+    let thrown: unknown;
+    try { await client.read("Patient", "p-1"); } catch (err) { thrown = err; }
+    expect((thrown as EpicFhirError).operationOutcome).toBeUndefined();
+  });
+
+  it("tryParseOperationOutcome rejects valid-JSON null body", async () => {
+    const { client } = setup([
+      new Response("null", {
+        status: 400,
+        headers: { "Content-Type": "application/fhir+json" },
+      }),
+    ]);
+    let thrown: unknown;
+    try { await client.read("Patient", "p-1"); } catch (err) { thrown = err; }
+    expect((thrown as EpicFhirError).operationOutcome).toBeUndefined();
+  });
+
+  it("tryParseOperationOutcome rejects object without resourceType", async () => {
+    const { client } = setup([
+      new Response(JSON.stringify({ issue: [] }), {
+        status: 400,
+        headers: { "Content-Type": "application/fhir+json" },
+      }),
+    ]);
+    let thrown: unknown;
+    try { await client.read("Patient", "p-1"); } catch (err) { thrown = err; }
+    expect((thrown as EpicFhirError).operationOutcome).toBeUndefined();
+  });
+
+  it("tryParseOperationOutcome rejects object with resourceType !== OperationOutcome", async () => {
+    const { client } = setup([
+      new Response(JSON.stringify({ resourceType: "Patient", id: "p-1" }), {
+        status: 400,
+        headers: { "Content-Type": "application/fhir+json" },
+      }),
+    ]);
+    let thrown: unknown;
+    try { await client.read("Patient", "p-1"); } catch (err) { thrown = err; }
+    expect((thrown as EpicFhirError).operationOutcome).toBeUndefined();
+  });
+
+  // ── #1104: tightened OperationOutcomeIssueCoding.code ───────────
+  // Epic always emits a `code` on its coding entries; if a payload
+  // lacks one in any coding, that signals the response isn't from
+  // Epic (or Epic edge proxy mangled it). Reject rather than promote
+  // a half-valid OperationOutcome that future hasIssueCode() callers
+  // might rely on.
+
+  it("tryParseOperationOutcome rejects OperationOutcome where any coding entry lacks `code` (#1104)", async () => {
+    const malformed = {
+      resourceType: "OperationOutcome",
+      issue: [
+        {
+          severity: "fatal",
+          code: "invalid",
+          details: {
+            coding: [
+              { system: "urn:oid:1.2.840.114350.1.13.0.1.7.2.657369" /* code: missing */ },
+            ],
+          },
+        },
+      ],
+    };
+    const { client } = setup([
+      new Response(JSON.stringify(malformed), {
+        status: 400,
+        headers: { "Content-Type": "application/fhir+json" },
+      }),
+    ]);
+    let thrown: unknown;
+    try { await client.read("Patient", "p-1"); } catch (err) { thrown = err; }
+    expect((thrown as EpicFhirError).operationOutcome).toBeUndefined();
+  });
+
+  it("tryParseOperationOutcome accepts an OperationOutcome whose issue has no coding at all (details.text-only)", async () => {
+    // No coding to validate → the #1104 guard doesn't apply; payload
+    // is still a structurally valid OperationOutcome.
+    const valid = {
+      resourceType: "OperationOutcome",
+      issue: [
+        {
+          severity: "fatal",
+          code: "invalid",
+          details: { text: "Some Epic error" },
+        },
+      ],
+    };
+    const { client } = setup([
+      new Response(JSON.stringify(valid), {
+        status: 400,
+        headers: { "Content-Type": "application/fhir+json" },
+      }),
+    ]);
+    let thrown: unknown;
+    try { await client.read("Patient", "p-1"); } catch (err) { thrown = err; }
+    expect((thrown as EpicFhirError).operationOutcome).toBeDefined();
+    expect((thrown as EpicFhirError).hasIssueCode("59022")).toBe(false);
+  });
+
+  // ── #1101: operationOutcomeError throws EpicFhirError ───────────
+  // Pre-#1101, `client.read()` against a 200 response with an
+  // OperationOutcome body threw a plain Error — defeating the whole
+  // structured-error story for the read/create/update paths.
+  // After #1101 it throws EpicFhirError with operationOutcome
+  // populated, so the same hasIssueCode() check works for 2xx-with-OO
+  // responses as for 4xx-with-OO responses.
+
+  it("client.read against a 200 with OperationOutcome body throws EpicFhirError (#1101)", async () => {
+    const oo: OperationOutcome = {
+      resourceType: "OperationOutcome",
+      issue: [
+        {
+          severity: "fatal",
+          code: "not-found",
+          details: {
+            text: "Resource not found",
+            coding: [{ system: "epic", code: "59022" }],
+          },
+        },
+      ],
+    };
+    const { client } = setup([jsonResponse(oo, { status: 200 })]);
+    let thrown: unknown;
+    try { await client.read("Patient", "missing-id"); } catch (err) { thrown = err; }
+    expect(thrown).toBeInstanceOf(EpicFhirError);
+    const err = thrown as EpicFhirError;
+    expect(err.status).toBe(200);
+    expect(err.operationOutcome).toBeDefined();
+    expect(err.hasIssueCode("59022")).toBe(true);
   });
 
   it("throws EpicFhirError with parsed OperationOutcome after exhausting 5xx retries", async () => {
