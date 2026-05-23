@@ -58,6 +58,11 @@ import {
   mapFhirAllergyIntoleranceToRow,
   type InboundAllergyIntolerance,
 } from "./allergy-mapper.js";
+import {
+  mapFhirDiagnosticReportToRow,
+  indexBundleObservations,
+  type InboundDiagnosticReport,
+} from "./diagnostic-report-mapper.js";
 
 const logger = createLogger("fhir-gateway");
 
@@ -200,13 +205,18 @@ export const fhirGatewayRouter = t.router({
        * Opt-in materialisation flag (#1066, extended by #337). When
        * true, inbound clinical resources are additionally mapped to
        * the internal structured tables the ai-oversight rule engine
-       * reads (`medications`, `vitals`, `lab_results`) — not just
-       * persisted as raw FHIR in `fhir_resources`.
+       * reads — not just persisted as raw FHIR in `fhir_resources`.
        *
        * Resource type → target table:
-       *   - MedicationRequest / MedicationStatement → medications
-       *   - Observation (category=vital-signs)      → vitals
-       *   - Observation (category=laboratory)       → lab_results
+       *   - Patient                                  → patients
+       *   - MedicationRequest / MedicationStatement  → medications
+       *   - Observation (category=vital-signs)       → vitals
+       *   - Observation (category=laboratory)        → lab_results
+       *   - Condition                                → diagnoses
+       *   - AllergyIntolerance                       → allergies
+       *   - DiagnosticReport                         → lab_panels
+       *     (+ child lab_results rows resolved from referenced
+       *     Observation entries in the same bundle)
        *
        * Default false to preserve the raw-FHIR-only contract the
        * endpoint advertises today; callers that want the FHIR rows
@@ -218,8 +228,9 @@ export const fhirGatewayRouter = t.router({
        * `materialize: true` AND the bundle contains resources whose
        * subject reference may carry an external Patient/{id} that is
        * not the same as the internal patients.id (Medication*, Observation,
-       * Condition, AllergyIntolerance). Caller (api-gateway RBAC
-       * wrapper) is responsible for cross-system reconciliation.
+       * Condition, AllergyIntolerance, DiagnosticReport). Caller
+       * (api-gateway RBAC wrapper) is responsible for cross-system
+       * reconciliation.
        *
        * NOT required for Patient resource materialisation (#337) —
        * the Patient resource itself defines the patient identity, so
@@ -241,6 +252,27 @@ export const fhirGatewayRouter = t.router({
       let materializedVitals = 0;
       let materializedLabResults = 0;
       let materializedAllergies = 0;
+      let materializedLabPanels = 0;
+
+      // Pre-index Observation entries from the bundle so DiagnosticReport
+      // materialisation (#337) can resolve `result[]` references that
+      // point either at typed Observation/{id} refs or bundle-local
+      // urn:uuid:{...} pointers. Built once per bundle rather than per
+      // entry so reference resolution is O(n) over the whole bundle and
+      // robust to entry ordering.
+      const observationIndex = input.materialize
+        ? indexBundleObservations(
+            entries
+              .filter((e) => e.resource)
+              .map((e) => ({
+                fullUrl: e.fullUrl,
+                resource: e.resource as unknown as {
+                  resourceType?: string;
+                  id?: string;
+                },
+              })),
+          )
+        : new Map();
       for (const entry of entries) {
         if (!entry.resource) continue;
         const sanitized = sanitizeResourceStrings(entry.resource) as Record<string, unknown>;
@@ -478,6 +510,54 @@ export const fhirGatewayRouter = t.router({
               }
             }
           }
+
+          // DiagnosticReport → lab_panels + lab_results (#337). Same
+          // transaction as the raw FHIR + audit insert so the parent
+          // row and its child results commit or roll back as a unit.
+          // Resolves child Observation references via the bundle-wide
+          // observationIndex built before the loop.
+          if (
+            input.materialize &&
+            resourceType === "DiagnosticReport" &&
+            input.patient_id
+          ) {
+            const mapped = mapFhirDiagnosticReportToRow(
+              sanitized as unknown as InboundDiagnosticReport,
+              input.patient_id,
+              observationIndex,
+            );
+            if (mapped) {
+              const panelId = crypto.randomUUID();
+              await tx.insert(labPanels).values({
+                id: panelId,
+                patient_id: mapped.panel.patient_id,
+                panel_name: mapped.panel.panel_name,
+                ordered_by: mapped.panel.ordered_by,
+                collected_at: mapped.panel.collected_at,
+                reported_at: mapped.panel.reported_at,
+                ordering_provider_id: mapped.panel.ordering_provider_id,
+                source_system:
+                  mapped.panel.source_system ?? input.source_system,
+                created_at: now,
+              });
+              materializedLabPanels++;
+              for (const r of mapped.results) {
+                await tx.insert(labResults).values({
+                  id: crypto.randomUUID(),
+                  panel_id: panelId,
+                  test_name: r.test_name,
+                  test_code: r.test_code,
+                  value: r.value,
+                  unit: r.unit,
+                  reference_low: r.reference_low,
+                  reference_high: r.reference_high,
+                  flag: r.flag,
+                  created_at: now,
+                });
+                materializedLabResults++;
+              }
+            }
+          }
         });
 
         imported++;
@@ -490,6 +570,7 @@ export const fhirGatewayRouter = t.router({
         materialized_vitals: materializedVitals,
         materialized_lab_results: materializedLabResults,
         materialized_allergies: materializedAllergies,
+        materialized_lab_panels: materializedLabPanels,
       };
     }),
 
