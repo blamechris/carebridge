@@ -29,6 +29,7 @@ import {
   runSingleResourceSync,
   type SyncResourceType,
   type SyncResult,
+  type SkippedSubResource,
 } from "../sync/sync-jobs.js";
 
 const log = createLogger("epic-sync-worker");
@@ -200,12 +201,6 @@ export function startEpicSyncWorker(): Worker<EpicSyncJobData> | null {
   return worker;
 }
 
-interface SkippedDetail {
-  resource_type: string;
-  filter: Record<string, string>;
-  reason: string;
-}
-
 interface SyncSummary {
   imported: number;
   updated: number;
@@ -214,7 +209,7 @@ interface SyncSummary {
   /** Count of soft-skipped sub-resource fetches across all resource types (#1107). */
   skipped: number;
   /** Per-skip detail for ops dashboards that want structured drill-down (#1107). */
-  skippedDetail: SkippedDetail[];
+  skippedDetail: SkippedSubResource[];
 }
 
 /**
