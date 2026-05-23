@@ -1,0 +1,260 @@
+/**
+ * Unit tests for EpicFhirClient (#390).
+ *
+ * All tests run offline — fetch is mocked, sleep is a no-op so backoff
+ * doesn't burn wall-clock time. The integration test against
+ * fhir.epic.com is intentionally not in CI; it runs locally when the
+ * caller has registered credentials.
+ */
+import { describe, it, expect, beforeAll, vi } from "vitest";
+import { generateKeyPairSync } from "node:crypto";
+import { EpicFhirClient } from "../fhir-client.js";
+import { EpicTokenClient } from "../token-client.js";
+import type { EpicConfig } from "../config.js";
+import type { FhirBundle, FhirResource } from "../fhir-types.js";
+
+function makeConfig(privatePem: string): EpicConfig {
+  return {
+    clientId: "test-client-id",
+    tokenUrl: "https://fhir.epic.com/interconnect-fhir-oauth/oauth2/token",
+    fhirBaseUrl: "https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4/",
+    privateKeyPem: privatePem,
+    jwtKid: "test-kid",
+  };
+}
+
+function makeTokenResponse() {
+  return new Response(
+    JSON.stringify({
+      access_token: "fake-token",
+      expires_in: 3600,
+      token_type: "Bearer",
+      scope: "system/*.read",
+    }),
+    { status: 200, headers: { "Content-Type": "application/json" } },
+  );
+}
+
+function jsonResponse<T>(body: T, init: ResponseInit = { status: 200 }): Response {
+  return new Response(JSON.stringify(body), {
+    ...init,
+    headers: { "Content-Type": "application/fhir+json", ...(init.headers ?? {}) },
+  });
+}
+
+function bundleOf(
+  resources: FhirResource[],
+  links: { relation: string; url: string }[] = [],
+): FhirBundle {
+  return {
+    resourceType: "Bundle",
+    type: "searchset",
+    total: resources.length,
+    link: links,
+    entry: resources.map((r) => ({ resource: r })),
+  };
+}
+
+describe("EpicFhirClient (#390)", () => {
+  let privatePem: string;
+
+  beforeAll(() => {
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    privatePem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+  });
+
+  function setup(responses: Array<Response | (() => Response)>) {
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => {
+      if (url.endsWith("/token")) return makeTokenResponse();
+      const next = responses.shift();
+      if (!next) throw new Error(`unexpected fetch: ${url}`);
+      return typeof next === "function" ? next() : next;
+    });
+    const config = makeConfig(privatePem);
+    const tokens = new EpicTokenClient(config, fetchMock);
+    const sleepMock = vi.fn().mockResolvedValue(undefined);
+    const client = new EpicFhirClient(config, tokens, {
+      fetchImpl: fetchMock,
+      sleep: sleepMock,
+      backoffBaseMs: 1,
+    });
+    return { client, fetchMock, sleepMock, tokens };
+  }
+
+  it("read() sends Authorization Bearer and returns the resource", async () => {
+    const { client, fetchMock } = setup([
+      jsonResponse<FhirResource>({ resourceType: "Patient", id: "p-1" }),
+    ]);
+    const patient = await client.read("Patient", "p-1");
+    expect(patient).toEqual({ resourceType: "Patient", id: "p-1" });
+
+    // First call is token; second is the FHIR request
+    const [url, init] = fetchMock.mock.calls[1]!;
+    expect(url).toBe(
+      "https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4/Patient/p-1",
+    );
+    expect(init.headers.Authorization).toBe("Bearer fake-token");
+    expect(init.headers.Accept).toBe("application/fhir+json");
+  });
+
+  it("read() throws when the server returns an OperationOutcome", async () => {
+    const { client } = setup([
+      jsonResponse({
+        resourceType: "OperationOutcome",
+        issue: [{ severity: "error", code: "not-found", diagnostics: "no such patient" }],
+      }),
+    ]);
+    await expect(client.read("Patient", "missing")).rejects.toThrow(
+      /OperationOutcome: not-found — no such patient/,
+    );
+  });
+
+  it("search() encodes params and returns the bundle", async () => {
+    const bundle = bundleOf([{ resourceType: "Observation", id: "obs-1" }]);
+    const { client, fetchMock } = setup([jsonResponse(bundle)]);
+
+    const result = await client.search("Observation", {
+      patient: "p-1",
+      category: "vital-signs",
+    });
+    expect(result.entry?.[0]?.resource?.id).toBe("obs-1");
+    const [url] = fetchMock.mock.calls[1]!;
+    expect(url).toContain("Observation?");
+    expect(url).toContain("patient=p-1");
+    expect(url).toContain("category=vital-signs");
+  });
+
+  it("searchAll() walks Bundle.link rel=next to exhaust pages", async () => {
+    const page1 = bundleOf(
+      [
+        { resourceType: "Observation", id: "obs-1" },
+        { resourceType: "Observation", id: "obs-2" },
+      ],
+      [{ relation: "next", url: "https://fhir.epic.com/api/page2" }],
+    );
+    const page2 = bundleOf([{ resourceType: "Observation", id: "obs-3" }]);
+    const { client, fetchMock } = setup([jsonResponse(page1), jsonResponse(page2)]);
+
+    const ids: string[] = [];
+    for await (const obs of client.searchAll("Observation", { patient: "p-1" })) {
+      ids.push(obs.id!);
+    }
+    expect(ids).toEqual(["obs-1", "obs-2", "obs-3"]);
+    // Token fetch + initial search + follow next link
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[2]![0]).toBe("https://fhir.epic.com/api/page2");
+  });
+
+  it("retries once on 401 after invalidating the cached token", async () => {
+    const { client, fetchMock, tokens } = setup([
+      jsonResponse({}, { status: 401 }),
+      jsonResponse<FhirResource>({ resourceType: "Patient", id: "p-1" }),
+    ]);
+    const invalidateSpy = vi.spyOn(tokens, "invalidate");
+
+    const patient = await client.read("Patient", "p-1");
+    expect(patient.id).toBe("p-1");
+    expect(invalidateSpy).toHaveBeenCalledOnce();
+    // Token (1) + first 401 (2) + retried token (3) + retried success (4)
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("does NOT retry-loop on persistent 401 — surfaces the error", async () => {
+    const { client } = setup([
+      jsonResponse({}, { status: 401 }),
+      jsonResponse({}, { status: 401 }),
+    ]);
+    await expect(client.read("Patient", "p-1")).rejects.toThrow(/401/);
+  });
+
+  it("respects Retry-After (seconds) on 429 and retries", async () => {
+    const { client, fetchMock, sleepMock } = setup([
+      jsonResponse({}, { status: 429, headers: { "Retry-After": "2" } }),
+      jsonResponse<FhirResource>({ resourceType: "Patient", id: "p-1" }),
+    ]);
+
+    const patient = await client.read("Patient", "p-1");
+    expect(patient.id).toBe("p-1");
+    expect(sleepMock).toHaveBeenCalledOnce();
+    expect(sleepMock.mock.calls[0]![0]).toBe(2000);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("exponentially backs off on 5xx and gives up after maxRetries", async () => {
+    // 4 failed responses = 1 initial + 3 retries; maxRetries=3 means
+    // attempts 0,1,2,3 fail then throw.
+    const responses = Array.from({ length: 4 }, () =>
+      jsonResponse({}, { status: 503 }),
+    );
+    const { client, sleepMock } = setup(responses);
+
+    await expect(client.read("Patient", "p-1")).rejects.toThrow(/4 attempts.*503/);
+    // Sleep called 3 times (between attempts 0→1, 1→2, 2→3)
+    expect(sleepMock).toHaveBeenCalledTimes(3);
+    // backoffBase=1, expBackoff = 1, 2, 4 (+jitter up to 1ms each)
+    expect(sleepMock.mock.calls[0]![0]).toBeGreaterThanOrEqual(1);
+    expect(sleepMock.mock.calls[1]![0]).toBeGreaterThanOrEqual(2);
+    expect(sleepMock.mock.calls[2]![0]).toBeGreaterThanOrEqual(4);
+  });
+
+  it("recovers from a single 503 by retrying", async () => {
+    const { client, fetchMock } = setup([
+      jsonResponse({}, { status: 503 }),
+      jsonResponse<FhirResource>({ resourceType: "Patient", id: "p-1" }),
+    ]);
+
+    const patient = await client.read("Patient", "p-1");
+    expect(patient.id).toBe("p-1");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("surfaces 4xx (non-401, non-429) errors immediately with body prefix", async () => {
+    const { client } = setup([
+      new Response("malformed search param", { status: 400 }),
+    ]);
+    await expect(client.read("Patient", "p-1")).rejects.toThrow(
+      /400.*malformed search param/,
+    );
+  });
+
+  // Typed wrappers — sanity checks that params end up on the URL
+  it("searchObservations() emits expected URL params", async () => {
+    const { client, fetchMock } = setup([jsonResponse(bundleOf([]))]);
+    await client.searchObservations({
+      patient: "p-1",
+      category: "laboratory",
+      _lastUpdated: "gt2026-01-01",
+      _count: 50,
+    });
+    const url = fetchMock.mock.calls[1]![0] as string;
+    expect(url).toContain("patient=p-1");
+    expect(url).toContain("category=laboratory");
+    expect(url).toContain("_lastUpdated=gt2026-01-01");
+    expect(url).toContain("_count=50");
+  });
+
+  it("searchEncounters() includes _sort=-date", async () => {
+    const { client, fetchMock } = setup([jsonResponse(bundleOf([]))]);
+    await client.searchEncounters({ patient: "p-1", _sort: "-date" });
+    const url = fetchMock.mock.calls[1]![0] as string;
+    expect(url).toContain("_sort=-date");
+  });
+
+  it("treats absolute URLs (Bundle.link.url) verbatim", async () => {
+    // Page 1 link.next points to a different host (Epic may return
+    // absolute URLs with the FHIR base baked in)
+    const page1 = bundleOf(
+      [{ resourceType: "Patient", id: "p-1" }],
+      [{ relation: "next", url: "https://epic.example.com/explicit-next-url" }],
+    );
+    const page2 = bundleOf([{ resourceType: "Patient", id: "p-2" }]);
+    const { client, fetchMock } = setup([jsonResponse(page1), jsonResponse(page2)]);
+
+    for await (const _ of client.searchAll("Patient")) {
+      // no-op — we just need to drive the iterator
+    }
+    expect(fetchMock.mock.calls[2]![0]).toBe(
+      "https://epic.example.com/explicit-next-url",
+    );
+  });
+});
