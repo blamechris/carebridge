@@ -40,9 +40,13 @@ export {
 } from "./keygen.js";
 export {
   EpicFhirClient,
+  EpicFhirError,
   type EpicFhirClientOptions,
   type EpicResourceType,
 } from "./fhir-client.js";
+export {
+  operationOutcomeHasIssueCode,
+} from "./fhir-types.js";
 export type {
   FhirBundle,
   FhirBundleEntry,
@@ -50,6 +54,8 @@ export type {
   FhirResource,
   EpicSearchParams,
   OperationOutcome,
+  OperationOutcomeIssue,
+  OperationOutcomeIssueCoding,
 } from "./fhir-types.js";
 export {
   EPIC_SOURCE_SYSTEM_TAG,

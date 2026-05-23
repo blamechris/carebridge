@@ -24,8 +24,71 @@ import type {
   FhirResource,
   OperationOutcome,
 } from "./fhir-types.js";
+import { operationOutcomeHasIssueCode } from "./fhir-types.js";
 
 const log = createLogger("epic-fhir-client");
+
+/**
+ * Typed error thrown by the Epic FHIR client on non-2xx responses.
+ *
+ * Carries the parsed OperationOutcome alongside the original Error
+ * message so downstream consumers can discriminate failure categories
+ * structurally (preferred) rather than substring-matching the
+ * message (fragile, see #1096).
+ *
+ * Epic error codes the connector currently reasons about:
+ *
+ *   "59022"  Combination of parameters is not valid for any authorized
+ *            sub-resource. Used by sync-jobs.ts to soft-skip categories
+ *            the registered app doesn't carry a scope for.
+ *
+ *   "59108"  A required element is missing (e.g. Observation without
+ *            category or code). Indicates a request-shape bug, NOT
+ *            a scope issue — must surface, not be swallowed.
+ *
+ * `body` keeps the raw response text for diagnostic logging when the
+ * response wasn't parseable as an OperationOutcome (e.g. Epic returned
+ * an HTML 502 page from a fronting proxy).
+ */
+export class EpicFhirError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly statusText: string,
+    public readonly body: string,
+    public readonly operationOutcome?: OperationOutcome,
+  ) {
+    super(message);
+    this.name = "EpicFhirError";
+  }
+
+  /** Structured check: does any issue carry `details.coding[].code === code`? */
+  hasIssueCode(code: string): boolean {
+    return this.operationOutcome
+      ? operationOutcomeHasIssueCode(this.operationOutcome, code)
+      : false;
+  }
+}
+
+function tryParseOperationOutcome(
+  body: string,
+): OperationOutcome | undefined {
+  if (!body) return undefined;
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      (parsed as { resourceType?: string }).resourceType === "OperationOutcome"
+    ) {
+      return parsed as OperationOutcome;
+    }
+  } catch {
+    // Non-JSON body (HTML error page, plain text) — caller falls back
+    // to the raw string in the Error message.
+  }
+  return undefined;
+}
 
 export interface EpicFhirClientOptions {
   /** Maximum retry attempts on transient (429/5xx) errors. Default: 3. */
@@ -255,9 +318,13 @@ export class EpicFhirClient {
     if (response.status === 429 || response.status >= 500) {
       if (attempt >= this.opts.maxRetries) {
         const body = await safeReadBody(response);
-        throw new Error(
+        throw new EpicFhirError(
           `Epic FHIR request failed after ${attempt + 1} attempts: ` +
             `${response.status} ${response.statusText}${body ? ` — ${body}` : ""}`,
+          response.status,
+          response.statusText,
+          body,
+          tryParseOperationOutcome(body),
         );
       }
       const delay = backoffDelay({
@@ -277,9 +344,13 @@ export class EpicFhirClient {
 
     if (!response.ok) {
       const body = await safeReadBody(response);
-      throw new Error(
+      throw new EpicFhirError(
         `Epic FHIR request returned ${response.status} ${response.statusText}` +
           (body ? ` — ${body}` : ""),
+        response.status,
+        response.statusText,
+        body,
+        tryParseOperationOutcome(body),
       );
     }
 

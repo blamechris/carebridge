@@ -8,10 +8,10 @@
  */
 import { describe, it, expect, beforeAll, vi } from "vitest";
 import { generateKeyPairSync } from "node:crypto";
-import { EpicFhirClient } from "../fhir-client.js";
+import { EpicFhirClient, EpicFhirError } from "../fhir-client.js";
 import { EpicTokenClient } from "../token-client.js";
 import type { EpicConfig } from "../config.js";
-import type { FhirBundle, FhirResource } from "../fhir-types.js";
+import type { FhirBundle, FhirResource, OperationOutcome } from "../fhir-types.js";
 
 function makeConfig(privatePem: string): EpicConfig {
   return {
@@ -238,6 +238,103 @@ describe("EpicFhirClient (#390)", () => {
     await client.searchEncounters({ patient: "p-1", _sort: "-date" });
     const url = fetchMock.mock.calls[1]![0] as string;
     expect(url).toContain("_sort=-date");
+  });
+
+  // ── #1096 / #1099: structured error surface ───────────────────────
+  // requestWithRetry now throws EpicFhirError instead of plain Error
+  // so downstream code can check `err.hasIssueCode("59022")` rather
+  // than substring-matching the message.
+
+  it("throws EpicFhirError with parsed OperationOutcome on 4xx with FHIR body", async () => {
+    const oo: OperationOutcome = {
+      resourceType: "OperationOutcome",
+      issue: [
+        {
+          severity: "fatal",
+          code: "invalid",
+          details: {
+            text: "Combination of parameters is not valid for any authorized sub-resource. No search was performed.",
+            coding: [
+              {
+                system: "urn:oid:1.2.840.114350.1.13.0.1.7.2.657369",
+                code: "59022",
+                display:
+                  "Combination of parameters is not valid for any authorized sub-resource.",
+              },
+            ],
+          },
+        },
+      ],
+    };
+    const { client } = setup([jsonResponse(oo, { status: 400 })]);
+    let thrown: unknown;
+    try {
+      await client.read("Patient", "p-1");
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(EpicFhirError);
+    const err = thrown as EpicFhirError;
+    expect(err.status).toBe(400);
+    expect(err.operationOutcome).toBeDefined();
+    expect(err.hasIssueCode("59022")).toBe(true);
+    expect(err.hasIssueCode("59108")).toBe(false);
+    // Message still carries the body so existing log/error consumers
+    // that read `err.message` keep working.
+    expect(err.message).toContain("400");
+  });
+
+  it("throws EpicFhirError without operationOutcome when the 4xx body is not JSON", async () => {
+    // Epic edge proxies sometimes return HTML / plain text instead of
+    // a FHIR OperationOutcome — the typed error must still construct
+    // (body retained, operationOutcome undefined, hasIssueCode false).
+    const { client } = setup([
+      new Response("<html>502 Bad Gateway</html>", { status: 400 }),
+    ]);
+    let thrown: unknown;
+    try {
+      await client.read("Patient", "p-1");
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(EpicFhirError);
+    const err = thrown as EpicFhirError;
+    expect(err.operationOutcome).toBeUndefined();
+    expect(err.body).toContain("502 Bad Gateway");
+    expect(err.hasIssueCode("59022")).toBe(false);
+  });
+
+  it("throws EpicFhirError with parsed OperationOutcome after exhausting 5xx retries", async () => {
+    const oo: OperationOutcome = {
+      resourceType: "OperationOutcome",
+      issue: [
+        {
+          severity: "fatal",
+          code: "exception",
+          details: {
+            text: "Internal server error",
+            coding: [{ code: "INTERNAL" }],
+          },
+        },
+      ],
+    };
+    const { client } = setup([
+      jsonResponse(oo, { status: 503 }),
+      jsonResponse(oo, { status: 503 }),
+      jsonResponse(oo, { status: 503 }),
+      jsonResponse(oo, { status: 503 }),
+    ]);
+    let thrown: unknown;
+    try {
+      await client.read("Patient", "p-1");
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(EpicFhirError);
+    const err = thrown as EpicFhirError;
+    expect(err.status).toBe(503);
+    expect(err.operationOutcome).toBeDefined();
+    expect(err.hasIssueCode("INTERNAL")).toBe(true);
   });
 
   it("treats absolute URLs (Bundle.link.url) verbatim", async () => {
