@@ -208,8 +208,11 @@ async function syncResourceType(
   let highWatermark: string | null = args.watermark;
 
   try {
-    const { resources, skipped } = await fetchResources(args, deps.client);
-    result.skipped = skipped;
+    // fetchResources pushes into result.skipped as it goes, so a
+    // sibling fan-out throw mid-way (#1108) doesn't drop the partial
+    // skipped collection — the catch block below persists what was
+    // captured before the failure.
+    const resources = await fetchResources(args, deps.client, result.skipped);
 
     for (const resource of resources) {
       try {
@@ -278,6 +281,11 @@ async function syncResourceType(
       patientId: args.patientId,
       resourceType: args.resourceType,
       errorMessage: message,
+      // Persist whatever soft-skips were collected before the throw
+      // (#1108) so the auth-scope signal survives a partial-failure
+      // sync and is visible in the epic_sync_state row alongside the
+      // error status.
+      skipped: result.skipped.map(({ filter, reason }) => ({ filter, reason })),
     });
     result.errors.push(message);
   }
@@ -394,21 +402,25 @@ async function collectSearchOrSkipUnauthorized(
   }
 }
 
-interface FetchResult {
-  resources: FhirResource[];
-  skipped: SkippedSubResource[];
-}
-
+/**
+ * Fetch the FHIR resources for one (patient, resource_type) pair.
+ *
+ * `skippedOut` is mutated as soft-skips are collected (#1108) — pushing
+ * to a caller-owned array means partial collection survives a throw
+ * partway through the fan-out, so a sibling fan-out call that fails
+ * with a genuine error (ECONNREFUSED, 500, etc.) doesn't discard the
+ * earlier auth-scope signals. The outer try/catch in
+ * `syncResourceType` reads from the same array to persist whatever
+ * was collected before the failure.
+ */
 async function fetchResources(
   args: SyncOneArgs,
   client: EpicFhirClient,
-): Promise<FetchResult> {
+  skippedOut: SkippedSubResource[],
+): Promise<FhirResource[]> {
   if (args.resourceType === "Patient") {
-    if (!args.epicPatientFhirId) return { resources: [], skipped: [] };
-    return {
-      resources: [await client.readPatient(args.epicPatientFhirId)],
-      skipped: [],
-    };
+    if (!args.epicPatientFhirId) return [];
+    return [await client.readPatient(args.epicPatientFhirId)];
   }
 
   const patient = args.epicPatientFhirId ?? args.patientId;
@@ -425,7 +437,6 @@ async function fetchResources(
   if (args.resourceType === "Observation") {
     const seen = new Set<string>();
     const out: FhirResource[] = [];
-    const skipped: SkippedSubResource[] = [];
     for (const category of getObservationCategories()) {
       const params = { ...baseParams, category };
       const outcome = await collectSearchOrSkipUnauthorized(
@@ -434,7 +445,7 @@ async function fetchResources(
         params,
       );
       if (outcome.kind === "skipped") {
-        skipped.push(outcome.entry);
+        skippedOut.push(outcome.entry);
         continue;
       }
       for (const r of outcome.resources) {
@@ -443,7 +454,7 @@ async function fetchResources(
         out.push(r);
       }
     }
-    return { resources: out, skipped };
+    return out;
   }
 
   // MedicationRequest: Epic requires `status` for unfiltered patient
@@ -458,16 +469,17 @@ async function fetchResources(
       params,
     );
     if (outcome.kind === "skipped") {
-      return { resources: [], skipped: [outcome.entry] };
+      skippedOut.push(outcome.entry);
+      return [];
     }
-    return { resources: outcome.resources, skipped: [] };
+    return outcome.resources;
   }
 
   const resources: FhirResource[] = [];
   for await (const r of client.searchAll(args.resourceType, baseParams)) {
     resources.push(r);
   }
-  return { resources, skipped: [] };
+  return resources;
 }
 
 async function persistOne(

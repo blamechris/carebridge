@@ -133,6 +133,31 @@ describe("epic_sync_state repo (#391)", () => {
     expect((values.last_error_message as string).length).toBe(1024);
     expect(values.status).toBe("failed");
     expect(values.error_count).toBe(1);
+    // #1108: defaults to empty array when caller doesn't pass `skipped`.
+    expect(values.skipped_sub_resources).toEqual([]);
+  });
+
+  it("markFailed persists the partial soft-skipped array when provided (#1108)", async () => {
+    db.willInsert();
+    await markFailed({
+      patientId: PATIENT_ID,
+      resourceType: "Observation",
+      errorMessage: "ECONNREFUSED",
+      skipped: [
+        { filter: { category: "vital-signs" }, reason: "unauthorized" },
+      ],
+    });
+    const values = db.insert.calls[0]!.chainArgs[0]![0] as Record<string, unknown>;
+    expect(values.skipped_sub_resources).toEqual([
+      { filter: { category: "vital-signs" }, reason: "unauthorized" },
+    ]);
+    // onConflictDoUpdate `set` carries the latest skipped state so a
+    // re-run replaces stale data instead of merging it.
+    const setClause = db.insert.calls[0]!.chainArgs[1]![0] as { set: Record<string, unknown> };
+    expect(setClause.set.skipped_sub_resources).toEqual([
+      { filter: { category: "vital-signs" }, reason: "unauthorized" },
+    ]);
+    expect(setClause.set.status).toBe("failed");
   });
 
   it("listRecentFailures filters status=failed and orders by last_error_at desc", async () => {

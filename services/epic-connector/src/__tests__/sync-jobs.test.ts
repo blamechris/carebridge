@@ -269,6 +269,9 @@ describe("Epic sync-jobs (#391)", () => {
       patientId: PATIENT_ID,
       resourceType: "Condition",
       errorMessage: "network down",
+      // No partial soft-skips were collected before the throw (Condition
+      // doesn't fan out), so the skipped array is empty.
+      skipped: [],
     });
     expect(result.errors).toContain("network down");
   });
@@ -1013,6 +1016,75 @@ describe("Epic sync-jobs (#391)", () => {
     expect(filter).toEqual({ category: "vital-signs" });
     expect(filter).not.toHaveProperty("_lastUpdated");
     expect(filter).not.toHaveProperty("patient");
+  });
+
+  // ── #1108: partial-skipped survives a sibling-throw ─────────────
+  // Before this fix, `fetchResources` returned `{ resources, skipped }`
+  // and the caller assigned `result.skipped = skipped` only on the happy
+  // path. If the first Observation category soft-skipped but the second
+  // category threw a genuine error, the skipped signal was discarded
+  // when the outer try/catch ran `markFailed()`. Now `fetchResources`
+  // mutates the result's skipped array as it goes, so partial collection
+  // survives the throw and is persisted alongside the failure status.
+
+  it("first-category soft-skip + second-category genuine error → result.skipped + markFailed both carry the partial soft-skip", async () => {
+    const client = {
+      readPatient: vi.fn(),
+      searchAll: vi
+        .fn()
+        .mockImplementation((_rt: string, params: Record<string, string>) => {
+          if (params.category === "vital-signs") {
+            return (async function* () {
+              throw new Error(
+                "Epic FHIR request returned 400 Bad Request — Combination of parameters is not valid for any authorized sub-resource.",
+              );
+            })();
+          }
+          if (params.category === "laboratory") {
+            return (async function* () {
+              throw new Error(
+                "Epic FHIR request returned 500 Internal Server Error — ECONNREFUSED",
+              );
+            })();
+          }
+          return (async function* () {})();
+        }),
+    } as unknown as Parameters<typeof runFullSync>[1]["client"];
+
+    const result = await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "Observation",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    // result.skipped captured the vital-signs soft-skip even though
+    // laboratory's throw aborted the fan-out before completion.
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0]).toMatchObject({
+      resource_type: "Observation",
+      reason: "unauthorized",
+      filter: { category: "vital-signs" },
+    });
+
+    // markFailed received the partial skipped so it lands on the
+    // epic_sync_state row — operator gets the auth-scope signal even
+    // when the sync as a whole failed.
+    expect(markFailed).toHaveBeenCalledOnce();
+    const markFailedArgs = markFailed.mock.calls[0]![0] as {
+      skipped?: Array<{ filter: Record<string, string>; reason: string }>;
+      errorMessage: string;
+    };
+    expect(markFailedArgs.skipped).toEqual([
+      { filter: { category: "vital-signs" }, reason: "unauthorized" },
+    ]);
+    expect(markFailedArgs.errorMessage).toMatch(/ECONNREFUSED/);
+
+    // markOk must NOT have been called on the failure path.
+    expect(markOk).not.toHaveBeenCalled();
   });
 
   // #1099 acceptance #4: documented placeholder for multi-status fan-out

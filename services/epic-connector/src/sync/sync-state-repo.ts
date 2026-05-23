@@ -133,6 +133,15 @@ export async function markFailed(args: {
   patientId: string;
   resourceType: EpicResourceType;
   errorMessage: string;
+  /**
+   * Soft-skipped sub-resources captured BEFORE the failing call
+   * (#1108). When the fan-out is partway through and a sibling call
+   * throws a genuine error, the earlier auth-scope soft-skips still
+   * need to surface — persisting them here means the operator sees
+   * both signals on the failed row instead of only the error.
+   * Defaults to empty when caller has nothing to record.
+   */
+  skipped?: SkippedSubResourceRecord[];
 }): Promise<void> {
   const db = getDb();
   const now = new Date().toISOString();
@@ -140,6 +149,7 @@ export async function markFailed(args: {
   // status column to gigabytes. 1KiB is plenty for triage; full stack
   // traces live in the worker logs / DLQ.
   const truncated = args.errorMessage.slice(0, 1024);
+  const skipped = args.skipped ?? [];
   await db
     .insert(epicSyncState)
     .values({
@@ -150,6 +160,7 @@ export async function markFailed(args: {
       last_error_message: truncated,
       last_error_at: now,
       error_count: 1,
+      skipped_sub_resources: skipped,
     })
     .onConflictDoUpdate({
       target: [epicSyncState.patient_id, epicSyncState.resource_type],
@@ -159,6 +170,7 @@ export async function markFailed(args: {
         last_error_message: truncated,
         last_error_at: now,
         error_count: sql`epic_sync_state.error_count + 1`,
+        skipped_sub_resources: skipped,
       },
     });
 }
