@@ -81,11 +81,17 @@ export interface OperationOutcome {
  * True iff `outcome.issue[*].details.coding[*].code` contains the given code.
  * Use this to discriminate Epic failure categories structurally — see
  * the table in {@link EpicFhirError} for the codes the connector cares about.
+ *
+ * Defensive against malformed payloads: returns `false` (not throws) when
+ * `outcome.issue` is missing, null, or not an array. Epic's edge proxies
+ * occasionally return OperationOutcome-shaped JSON with a partial / null
+ * `issue` field, and the error-handling path must NOT itself crash.
  */
 export function operationOutcomeHasIssueCode(
   outcome: OperationOutcome,
   code: string,
 ): boolean {
+  if (!Array.isArray(outcome.issue)) return false;
   for (const issue of outcome.issue) {
     for (const c of issue.details?.coding ?? []) {
       if (c.code === code) return true;

@@ -46,15 +46,18 @@ const log = createLogger("epic-fhir-client");
  *            category or code). Indicates a request-shape bug, NOT
  *            a scope issue — must surface, not be swallowed.
  *
- * `body` keeps the raw response text for diagnostic logging when the
- * response wasn't parseable as an OperationOutcome (e.g. Epic returned
- * an HTML 502 page from a fronting proxy).
+ * `body` keeps a truncated snippet (first 500 chars via {@link safeReadBody})
+ * of the raw response text for diagnostic logging when the response wasn't
+ * parseable as an OperationOutcome (e.g. Epic returned an HTML 502 page
+ * from a fronting proxy). NOT the full payload — callers needing the
+ * complete body must re-fetch.
  */
 export class EpicFhirError extends Error {
   constructor(
     message: string,
     public readonly status: number,
     public readonly statusText: string,
+    /** Truncated body snippet (≤500 chars). Do NOT assume full payload. */
     public readonly body: string,
     public readonly operationOutcome?: OperationOutcome,
   ) {

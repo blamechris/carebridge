@@ -284,6 +284,36 @@ describe("EpicFhirClient (#390)", () => {
     expect(err.message).toContain("400");
   });
 
+  it("EpicFhirError.hasIssueCode returns false (no throw) when OperationOutcome.issue is malformed", async () => {
+    // Epic edge proxies occasionally return OperationOutcome-shaped
+    // JSON with a partial / null `issue` field. The error-handling
+    // path must be defensive: hasIssueCode should return false, not
+    // crash on `outcome.issue` being non-iterable.
+    const malformed = {
+      resourceType: "OperationOutcome",
+      // issue intentionally not an array
+      issue: null,
+    };
+    const { client } = setup([
+      new Response(JSON.stringify(malformed), {
+        status: 400,
+        headers: { "Content-Type": "application/fhir+json" },
+      }),
+    ]);
+    let thrown: unknown;
+    try {
+      await client.read("Patient", "p-1");
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(EpicFhirError);
+    const err = thrown as EpicFhirError;
+    expect(err.operationOutcome).toBeDefined();
+    // Must NOT throw on malformed shape — should just return false.
+    expect(() => err.hasIssueCode("59022")).not.toThrow();
+    expect(err.hasIssueCode("59022")).toBe(false);
+  });
+
   it("throws EpicFhirError without operationOutcome when the 4xx body is not JSON", async () => {
     // Epic edge proxies sometimes return HTML / plain text instead of
     // a FHIR OperationOutcome — the typed error must still construct
