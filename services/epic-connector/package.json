@@ -1,0 +1,30 @@
+{
+  "name": "@carebridge/epic-connector",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "bin": {
+    "carebridge-epic-keygen": "dist/bin/keygen.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "test": "vitest run",
+    "epic:keygen": "tsx src/bin/keygen.ts"
+  },
+  "dependencies": {
+    "@carebridge/logger": "workspace:*",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@carebridge/test-utils": "workspace:*",
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "vitest": "^3.0.0"
+  }
+}
