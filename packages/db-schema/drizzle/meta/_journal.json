@@ -372,6 +372,13 @@
       "when": 1747929900000,
       "tag": "0048_epic_sync_state",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1747929960000,
+      "tag": "0049_epic_user_connections",
+      "breakpoints": true
     }
   ]
 }
