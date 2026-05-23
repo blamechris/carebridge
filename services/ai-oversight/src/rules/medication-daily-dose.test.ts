@@ -21,6 +21,7 @@ function makeMed(
     frequency: overrides.frequency ?? "q2h",
     max_doses_per_day: overrides.max_doses_per_day ?? null,
     rxnorm_code: overrides.rxnorm_code ?? null,
+    concentration_mg_per_ml: overrides.concentration_mg_per_ml ?? null,
   };
 }
 
@@ -867,6 +868,163 @@ describe("checkMedicationDailyDose (#235)", () => {
       );
       expect(
         flags.find((f) => f.rule_id === "MED-DAILY-OVER-FENTANYL-TRANSDERMAL"),
+      ).toBeUndefined();
+    });
+  });
+
+  describe("continuous infusion mL/hr (#1021)", () => {
+    it("morphine IV gtt 2 mg/hr (48 mg/day, 1.6× the 30 mg IV cap) → critical", () => {
+      const flags = checkMedicationDailyDose(
+        makeCtx(
+          makeMed({
+            name: "Morphine 1 mg/mL IV gtt",
+            dose_amount: 2,
+            dose_unit: "mL/hr",
+            route: "IV",
+            frequency: "continuous",
+            concentration_mg_per_ml: 1,
+          }),
+        ),
+      );
+      const flag = flags.find((f) =>
+        f.rule_id.includes("MED-DAILY-OVER-MORPHINE-INFUSION"),
+      );
+      expect(flag).toBeDefined();
+      expect(flag!.severity).toBe("critical");
+      expect(flag!.summary).toMatch(/48/);
+      expect(flag!.summary).toMatch(/30/);
+    });
+
+    it("hydromorphone PCA 0.5 mL/hr × 0.2 mg/mL (2.4 mg/day, < 4.5 mg IV cap) → no flag", () => {
+      const flags = checkMedicationDailyDose(
+        makeCtx(
+          makeMed({
+            name: "Hydromorphone 0.2 mg/mL PCA",
+            dose_amount: 0.5,
+            dose_unit: "mL/hr",
+            route: "IV",
+            frequency: "continuous",
+            concentration_mg_per_ml: 0.2,
+          }),
+        ),
+      );
+      expect(
+        flags.find((f) => f.rule_id.includes("INFUSION")),
+      ).toBeUndefined();
+    });
+
+    it("hydromorphone PCA 2 mL/hr × 0.2 mg/mL (9.6 mg/day, 2.1× 4.5 mg IV cap) → critical", () => {
+      const flags = checkMedicationDailyDose(
+        makeCtx(
+          makeMed({
+            name: "Hydromorphone 0.2 mg/mL PCA",
+            dose_amount: 2,
+            dose_unit: "mL/hr",
+            route: "IV",
+            frequency: "continuous",
+            concentration_mg_per_ml: 0.2,
+          }),
+        ),
+      );
+      const flag = flags.find((f) =>
+        f.rule_id.includes("MED-DAILY-OVER-HYDROMORPHONE-INFUSION"),
+      );
+      expect(flag).toBeDefined();
+      expect(flag!.severity).toBe("critical");
+    });
+
+    it("fentanyl IV 10 mL/hr × 0.05 mg/mL (12 mg/day, 2.4× 5 mg IV cap) → critical", () => {
+      const flags = checkMedicationDailyDose(
+        makeCtx(
+          makeMed({
+            name: "Fentanyl 50 mcg/mL bag",
+            dose_amount: 10,
+            dose_unit: "mL/hr",
+            route: "IV",
+            frequency: "continuous",
+            concentration_mg_per_ml: 0.05,
+          }),
+        ),
+      );
+      const flag = flags.find((f) =>
+        f.rule_id.includes("MED-DAILY-OVER-FENTANYL-INFUSION"),
+      );
+      expect(flag).toBeDefined();
+      expect(flag!.severity).toBe("critical");
+    });
+
+    it("fentanyl IV under-cap: 2 mL/hr × 0.05 mg/mL (2.4 mg/day, under 5 mg) → no flag", () => {
+      const flags = checkMedicationDailyDose(
+        makeCtx(
+          makeMed({
+            name: "Fentanyl 50 mcg/mL bag",
+            dose_amount: 2,
+            dose_unit: "mL/hr",
+            route: "IV",
+            frequency: "continuous",
+            concentration_mg_per_ml: 0.05,
+          }),
+        ),
+      );
+      expect(
+        flags.find((f) => f.rule_id.includes("INFUSION")),
+      ).toBeUndefined();
+    });
+
+    it("morphine IV gtt with inline concentration in name (no field) — parses 1 mg/mL", () => {
+      const flags = checkMedicationDailyDose(
+        makeCtx(
+          makeMed({
+            name: "Morphine 1 mg/mL IV gtt",
+            dose_amount: 2,
+            dose_unit: "mL/hr",
+            route: "IV",
+            frequency: "continuous",
+            // concentration_mg_per_ml omitted — must parse from name
+          }),
+        ),
+      );
+      const flag = flags.find((f) =>
+        f.rule_id.includes("MED-DAILY-OVER-MORPHINE-INFUSION"),
+      );
+      expect(flag).toBeDefined();
+    });
+
+    it("fail-open: no concentration field and no inline mg/mL in name → no flag", () => {
+      const flags = checkMedicationDailyDose(
+        makeCtx(
+          makeMed({
+            name: "Morphine IV gtt",
+            dose_amount: 2,
+            dose_unit: "mL/hr",
+            route: "IV",
+            frequency: "continuous",
+            // no concentration in field or name
+          }),
+        ),
+      );
+      expect(
+        flags.find((f) => f.rule_id.includes("INFUSION")),
+      ).toBeUndefined();
+    });
+
+    it("non-mL/hr unit on infusion-named drug does not trigger infusion path", () => {
+      // 10 mg q1h is still a discrete-dose order — should hit the regular
+      // mg path, not the mL/hr path. Sanity check that the unit gate works.
+      const flags = checkMedicationDailyDose(
+        makeCtx(
+          makeMed({
+            name: "Morphine 1 mg/mL IV gtt",
+            dose_amount: 10,
+            dose_unit: "mg",
+            route: "IV",
+            frequency: "q1h",
+            concentration_mg_per_ml: 1,
+          }),
+        ),
+      );
+      expect(
+        flags.find((f) => f.rule_id.includes("INFUSION")),
       ).toBeUndefined();
     });
   });

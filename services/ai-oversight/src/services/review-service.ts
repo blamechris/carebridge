@@ -923,6 +923,11 @@ export async function buildPatientContextForRules(
       // Structured frequency from medications.frequency_structured (#931).
       // When present, rules skip the runtime re-parse of `frequency`.
       frequency_structured: m.frequency_structured ?? null,
+      // Drug concentration in mg/mL for continuous-infusion orders (#1021).
+      // Daily-dose rule reads this to convert mL/hr → mg/day; null when the
+      // prescription is non-infusion or the writer encoded concentration
+      // inline in the name string instead.
+      concentration_mg_per_ml: m.concentration_mg_per_ml ?? null,
     })),
     new_symptoms: newSymptoms,
     care_team_specialties: [], // Not needed for current rules, but available for future

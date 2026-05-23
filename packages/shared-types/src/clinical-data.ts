@@ -59,6 +59,15 @@ export interface Medication extends MutableRecord {
    */
   chronic?: boolean;
   /**
+   * Drug concentration in mg/mL — required for continuous-infusion
+   * orders presented as a flow rate (mL/hr). Consumed by the daily-dose
+   * rule to convert mL/hr → mg/day via:
+   *   mg/day = (mL/hr) × concentration_mg_per_ml × 24
+   * Free-text name parsing remains the fallback when this field is
+   * absent. See issue #1021.
+   */
+  concentration_mg_per_ml?: number;
+  /**
    * Optional PRN / hard-cap dose count per 24 h. Populated when a
    * prescription carries an explicit cap (e.g. "morphine 10 mg q4h PRN,
    * max 4 doses/day"). Consumed by the ai-oversight daily-dose rule via

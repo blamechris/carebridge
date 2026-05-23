@@ -158,6 +158,7 @@ export async function createMedication(input: CreateMedicationInput): Promise<Me
     ordering_provider_id: input.ordering_provider_id ?? null,
     encounter_id: input.encounter_id ?? null,
     chronic: input.chronic ?? null,
+    concentration_mg_per_ml: input.concentration_mg_per_ml ?? null,
     created_at: now,
     updated_at: now,
   };
@@ -193,6 +194,7 @@ export async function createMedication(input: CreateMedicationInput): Promise<Me
     ordering_provider_id: input.ordering_provider_id,
     encounter_id: input.encounter_id,
     chronic: input.chronic,
+    concentration_mg_per_ml: input.concentration_mg_per_ml,
     created_at: now,
     updated_at: now,
   };
@@ -241,6 +243,8 @@ export async function updateMedication(
   if (fields.ordering_provider_id !== undefined) updates.ordering_provider_id = fields.ordering_provider_id;
   if (fields.encounter_id !== undefined) updates.encounter_id = fields.encounter_id;
   if (fields.chronic !== undefined) updates.chronic = fields.chronic;
+  if (fields.concentration_mg_per_ml !== undefined)
+    updates.concentration_mg_per_ml = fields.concentration_mg_per_ml;
 
   // Optimistic locking: when expectedUpdatedAt is provided, only update if the
   // row hasn't been modified since the caller last read it.
@@ -295,6 +299,7 @@ export async function updateMedication(
     encounter_id: updated.encounter_id ?? undefined,
     source_system: updated.source_system ?? undefined,
     chronic: updated.chronic ?? undefined,
+    concentration_mg_per_ml: updated.concentration_mg_per_ml ?? undefined,
     created_at: updated.created_at,
     updated_at: updated.updated_at,
   };
@@ -340,6 +345,7 @@ export async function getMedicationsByPatient(
     encounter_id: row.encounter_id ?? undefined,
     source_system: row.source_system ?? undefined,
     chronic: row.chronic ?? undefined,
+    concentration_mg_per_ml: row.concentration_mg_per_ml ?? undefined,
     created_at: row.created_at,
     updated_at: row.updated_at,
   }));

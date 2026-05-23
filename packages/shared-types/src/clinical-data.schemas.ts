@@ -67,6 +67,13 @@ export const createMedicationSchema = z.object({
    * either a unit error or an unbounded order.
    */
   max_doses_per_day: z.number().int().positive().max(24).optional(),
+  /**
+   * Drug concentration in mg/mL for continuous-infusion orders (#1021).
+   * Required only when dose_unit is "mL/hr"; otherwise optional.
+   * Positive number; capped at 1000 mg/mL as a sanity ceiling (no
+   * clinically plausible IV/SC drug exceeds this).
+   */
+  concentration_mg_per_ml: z.number().positive().max(1000).optional(),
 });
 
 export const updateMedicationSchema = createMedicationSchema.partial().omit({ patient_id: true }).extend({

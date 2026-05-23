@@ -34,6 +34,15 @@ export const medications = pgTable("medications", {
    * GVHD, and other day-1-chronic immunosuppression courses.
    */
   chronic: boolean("chronic"),
+  /**
+   * Drug concentration in mg/mL — required for continuous-infusion orders
+   * (mL/hr presentation) so the daily-dose rule can convert to mg/day
+   * (#1021). NULL when the prescription is not an infusion or the
+   * concentration is encoded inline in the drug name string instead
+   * ("Morphine 1 mg/mL IV gtt"). Free-text name parsing remains the
+   * fallback when this column is NULL.
+   */
+  concentration_mg_per_ml: real("concentration_mg_per_ml"),
   status: text("status").notNull().default("active"),
   started_at: text("started_at"),
   ended_at: text("ended_at"),
