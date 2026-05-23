@@ -49,15 +49,55 @@ export interface FhirResource {
  * FHIR `OperationOutcome` shape — Epic returns these instead of a
  * resource Bundle when a request fails. We surface the `diagnostics`
  * field in thrown error messages for debugging.
+ *
+ * Epic-specific: `details.coding[]` carries the Epic error code we
+ * use for structured failure detection (e.g. `code: "59022"` for
+ * "Combination of parameters is not valid for any authorized
+ * sub-resource"). Generic FHIR clients ignore coding; we read it to
+ * tell scope-rejection 400s from genuine request-shape 400s.
  */
+export interface OperationOutcomeIssueCoding {
+  system?: string;
+  code?: string;
+  display?: string;
+}
+
+export interface OperationOutcomeIssue {
+  severity: "fatal" | "error" | "warning" | "information";
+  code: string;
+  diagnostics?: string;
+  details?: {
+    text?: string;
+    coding?: OperationOutcomeIssueCoding[];
+  };
+}
+
 export interface OperationOutcome {
   resourceType: "OperationOutcome";
-  issue: Array<{
-    severity: "fatal" | "error" | "warning" | "information";
-    code: string;
-    diagnostics?: string;
-    details?: { text?: string };
-  }>;
+  issue: OperationOutcomeIssue[];
+}
+
+/**
+ * True iff `outcome.issue[*].details.coding[*].code` contains the given code.
+ * Use this to discriminate Epic failure categories structurally — see
+ * the table in {@link EpicFhirError} for the codes the connector cares about.
+ *
+ * Defensive against malformed payloads: returns `false` (not throws) when
+ * `outcome.issue` is missing, null, or not an array. Epic's edge proxies
+ * occasionally return OperationOutcome-shaped JSON with a partial / null
+ * `issue` field, and the error-handling path must NOT itself crash.
+ */
+export function operationOutcomeHasIssueCode(
+  outcome: OperationOutcome,
+  code: string,
+): boolean {
+  if (!Array.isArray(outcome.issue)) return false;
+  for (const issue of outcome.issue) {
+    for (const c of issue.details?.coding ?? []) {
+      if (c.code === code) return true;
+    }
+  }
+  return false;
 }
 
 export type EpicSearchParams = Record<

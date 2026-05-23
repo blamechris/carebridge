@@ -29,7 +29,11 @@ import type {
   ClinicalEvent,
   ClinicalEventType,
 } from "@carebridge/shared-types";
-import { EpicFhirClient, type EpicResourceType } from "../fhir-client.js";
+import {
+  EpicFhirClient,
+  EpicFhirError,
+  type EpicResourceType,
+} from "../fhir-client.js";
 import { EPIC_SOURCE_SYSTEM_TAG } from "../converters.js";
 import {
   persistAllergy,
@@ -278,24 +282,41 @@ const OBSERVATION_CATEGORY_FANOUT = ["vital-signs", "laboratory"] as const;
  */
 const MEDICATION_REQUEST_DEFAULT_STATUS = "active";
 
+/** Epic error code for "Combination of parameters is not valid for any
+ *  authorized sub-resource. No search was performed." This 400 means
+ *  the registered app doesn't carry the scope for the request's filter
+ *  combination — distinct from a malformed request, which gets 59108
+ *  ("A required element is missing"). */
+const EPIC_UNAUTHORIZED_SUB_RESOURCE_CODE = "59022";
+
 /**
  * Detect Epic's "not authorized for this sub-resource" 400 response so the
  * fan-out can skip categories the registered app doesn't carry the scope
- * for. Epic emits this as a 400 with a 59022 code; we match on the human
- * text since the error code is buried in an OperationOutcome JSON blob
- * which the FHIR client surfaces as the trailing string of the Error.
+ * for, while still surfacing genuine request-shape bugs.
  *
- * Match on the specific "authorized sub-resource" phrase rather than the
- * looser "Combination of parameters is not valid" prefix — the prefix
- * also appears in Epic 400s for genuine request-shape problems (missing
- * required params, unsupported search modifiers), which the soft-skip
- * MUST NOT swallow or we'd silently drop data on a real bug. Structured
- * detection via OperationOutcome.issue.details.coding[].code = "59022"
- * is tracked as a follow-up — see issue #1096.
+ * Preferred: structured check on the parsed OperationOutcome's coding
+ * (`details.coding[].code === "59022"`) — proper FHIR-spec match that
+ * survives Epic rewording the human text.
+ *
+ * Fallback: substring match on `"authorized sub-resource"` in the Error
+ * message — covers cases where Epic returns a non-OperationOutcome body
+ * (HTML 502 from a fronting proxy, plain text from an edge layer) but
+ * the substring still appears verbatim. We deliberately use the more
+ * specific phrase here — the looser "Combination of parameters is not
+ * valid" prefix also fires for genuine request-shape errors (e.g. 59108
+ * "missing required element") and MUST NOT be swallowed.
  */
 function isUnauthorizedSubResourceError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  return err.message.includes("authorized sub-resource");
+  if (
+    err instanceof EpicFhirError &&
+    err.hasIssueCode(EPIC_UNAUTHORIZED_SUB_RESOURCE_CODE)
+  ) {
+    return true;
+  }
+  if (err instanceof Error && err.message.includes("authorized sub-resource")) {
+    return true;
+  }
+  return false;
 }
 
 async function collectSearchOrSkipUnauthorized(

@@ -7,6 +7,8 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ClinicalEvent } from "@carebridge/shared-types";
+import { EpicFhirError } from "../fhir-client.js";
+import type { OperationOutcome } from "../fhir-types.js";
 
 // ── Mock persistence ─────────────────────────────────────────────
 const persistPatient = vi.fn();
@@ -619,4 +621,261 @@ describe("Epic sync-jobs (#391)", () => {
       expect(call[1]._lastUpdated).toBe("gt2026-04-01T00:00:00Z");
     }
   });
+
+  // ── #1096 / #1099: structured detection + error-shape coverage ──
+  // The fhir-client now throws EpicFhirError carrying the parsed
+  // OperationOutcome. isUnauthorizedSubResourceError prefers structured
+  // detection on `details.coding[].code === "59022"` over substring
+  // matching the human text. Tests below cover BOTH the structured
+  // path (new) and the substring fallback (legacy safety net).
+
+  function epicAuthScopeError(): EpicFhirError {
+    const oo: OperationOutcome = {
+      resourceType: "OperationOutcome",
+      issue: [
+        {
+          severity: "fatal",
+          code: "invalid",
+          details: {
+            text: "Combination of parameters is not valid for any authorized sub-resource. No search was performed.",
+            coding: [{ code: "59022" }],
+          },
+        },
+      ],
+    };
+    return new EpicFhirError(
+      "Epic FHIR request returned 400 Bad Request — Combination of parameters is not valid for any authorized sub-resource.",
+      400,
+      "Bad Request",
+      JSON.stringify(oo),
+      oo,
+    );
+  }
+
+  function epicMissingElementError(): EpicFhirError {
+    const oo: OperationOutcome = {
+      resourceType: "OperationOutcome",
+      issue: [
+        {
+          severity: "fatal",
+          code: "required",
+          details: {
+            text: "A required element is missing.",
+            coding: [{ code: "59108" }],
+          },
+        },
+      ],
+    };
+    return new EpicFhirError(
+      "Epic FHIR request returned 400 Bad Request — A required element is missing.",
+      400,
+      "Bad Request",
+      JSON.stringify(oo),
+      oo,
+    );
+  }
+
+  it("structured detection: EpicFhirError with code 59022 → soft-skipped", async () => {
+    const client = {
+      readPatient: vi.fn(),
+      searchAll: vi.fn().mockImplementation(() =>
+        (async function* () {
+          throw epicAuthScopeError();
+        })(),
+      ),
+    } as unknown as Parameters<typeof runFullSync>[1]["client"];
+
+    const result = await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "MedicationRequest",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    expect(result.imported).toBe(0);
+    expect(result.errors).toHaveLength(0);
+    expect(persistMedicationRequest).not.toHaveBeenCalled();
+  });
+
+  it("structured detection: EpicFhirError with code 59108 (missing element) → NOT swallowed", async () => {
+    // 59108 means the request shape is bad (e.g. Observation without
+    // category) — that's a real bug in the caller, not a scope issue.
+    // Soft-skip MUST NOT swallow it or we'd silently lose data after
+    // a future fhir-client refactor breaks param construction.
+    const client = {
+      readPatient: vi.fn(),
+      searchAll: vi.fn().mockImplementation(() =>
+        (async function* () {
+          throw epicMissingElementError();
+        })(),
+      ),
+    } as unknown as Parameters<typeof runFullSync>[1]["client"];
+
+    const result = await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "Observation",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    expect(result.errors.length).toBeGreaterThan(0);
+    expect(result.errors[0]).toContain("A required element is missing");
+  });
+
+  it("substring fallback: EpicFhirError without parsed OO but message says 'authorized sub-resource' → soft-skipped", async () => {
+    // Real-world fallback: Epic edge proxy returns the auth-scope
+    // error as a non-JSON body (HTML/plain text). The OperationOutcome
+    // parse fails, but the substring is still in the Error message.
+    const fallback = new EpicFhirError(
+      "Epic FHIR request returned 400 Bad Request — Combination of parameters is not valid for any authorized sub-resource.",
+      400,
+      "Bad Request",
+      "non-json body",
+      undefined,
+    );
+    const client = {
+      readPatient: vi.fn(),
+      searchAll: vi.fn().mockImplementation(() =>
+        (async function* () {
+          throw fallback;
+        })(),
+      ),
+    } as unknown as Parameters<typeof runFullSync>[1]["client"];
+
+    const result = await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "MedicationRequest",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    expect(result.imported).toBe(0);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  // #1099 acceptance #1: lock-in for the operationOutcomeError() shape
+  it("substring fallback: 'Epic returned OperationOutcome:' shape with auth-scope text → soft-skipped", async () => {
+    // fhir-client's operationOutcomeError() helper produces this
+    // alternate shape: "Epic returned OperationOutcome: invalid — <text>".
+    // It's currently emitted from createResource/updateResource and
+    // from read() on an OperationOutcome response. The soft-skip must
+    // match this shape too so future code that catches this Error form
+    // gets the same skip behavior.
+    const client = {
+      readPatient: vi.fn(),
+      searchAll: vi.fn().mockImplementation(() =>
+        (async function* () {
+          throw new Error(
+            "Epic returned OperationOutcome: invalid — Combination of parameters is not valid for any authorized sub-resource. No search was performed.",
+          );
+        })(),
+      ),
+    } as unknown as Parameters<typeof runFullSync>[1]["client"];
+
+    const result = await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "MedicationRequest",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    expect(result.imported).toBe(0);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  // #1099 acceptance #2: dedup invariant with non-trivial overlap
+  it("Observation dedup correctly merges [A,B] + [B,C] → [A,B,C]", async () => {
+    const client = {
+      readPatient: vi.fn(),
+      searchAll: vi.fn().mockImplementation((_rt: string, params: Record<string, string>) => {
+        if (params.category === "vital-signs") {
+          return (async function* () {
+            yield { resourceType: "Observation", id: "A" };
+            yield { resourceType: "Observation", id: "B" };
+          })();
+        }
+        // laboratory
+        return (async function* () {
+          yield { resourceType: "Observation", id: "B" };
+          yield { resourceType: "Observation", id: "C" };
+        })();
+      }),
+    } as unknown as Parameters<typeof runFullSync>[1]["client"];
+
+    persistObservation.mockResolvedValue({
+      internalId: "internal",
+      kind: "vital",
+      inserted: true,
+    });
+
+    const result = await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "Observation",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    // 3 unique observations persisted (A, B, C) — not 4.
+    expect(persistObservation).toHaveBeenCalledTimes(3);
+    const persistedIds = persistObservation.mock.calls
+      .map((c) => (c[0] as { id: string }).id)
+      .sort();
+    expect(persistedIds).toEqual(["A", "B", "C"]);
+    expect(result.imported).toBe(3);
+  });
+
+  // #1099 acceptance #3: synchronous-throw soft-skip case
+  it("soft-skip works when EpicFhirError is thrown SYNCHRONOUSLY from searchAll (not just from inside the generator)", async () => {
+    // Earlier soft-skip tests throw from inside the async generator
+    // body. Some fetch wrappers throw synchronously *before* returning
+    // the iterable — this test locks in that the wrapping catch in
+    // collectSearchOrSkipUnauthorized covers BOTH call paths.
+    const client = {
+      readPatient: vi.fn(),
+      searchAll: vi.fn().mockImplementation(() => {
+        throw epicAuthScopeError();
+      }),
+    } as unknown as Parameters<typeof runFullSync>[1]["client"];
+
+    const result = await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "MedicationRequest",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    expect(result.imported).toBe(0);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  // #1099 acceptance #4: documented placeholder for multi-status fan-out
+  it.skip(
+    "MedicationRequest fan-out supports multi-status override (active + on-hold + completed) — future",
+    async () => {
+      // When the worker dispatch grows a `medication_request_statuses?:
+      // string[]` override, this test should drive the fan-out across
+      // each status as a separate searchAll call. Today the default is
+      // hardcoded to "active" and there's no per-job override channel
+      // — see issue #1097 for the related sync_result signalling work.
+      expect(false).toBe(true);
+    },
+  );
 });
