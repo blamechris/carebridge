@@ -284,13 +284,18 @@ const MEDICATION_REQUEST_DEFAULT_STATUS = "active";
  * for. Epic emits this as a 400 with a 59022 code; we match on the human
  * text since the error code is buried in an OperationOutcome JSON blob
  * which the FHIR client surfaces as the trailing string of the Error.
+ *
+ * Match on the specific "authorized sub-resource" phrase rather than the
+ * looser "Combination of parameters is not valid" prefix — the prefix
+ * also appears in Epic 400s for genuine request-shape problems (missing
+ * required params, unsupported search modifiers), which the soft-skip
+ * MUST NOT swallow or we'd silently drop data on a real bug. Structured
+ * detection via OperationOutcome.issue.details.coding[].code = "59022"
+ * is tracked as a follow-up — see issue #1096.
  */
 function isUnauthorizedSubResourceError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
-  return (
-    err.message.includes("Combination of parameters is not valid") ||
-    err.message.includes("authorized sub-resource")
-  );
+  return err.message.includes("authorized sub-resource");
 }
 
 async function collectSearchOrSkipUnauthorized(

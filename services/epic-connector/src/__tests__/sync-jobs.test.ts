@@ -521,6 +521,39 @@ describe("Epic sync-jobs (#391)", () => {
     expect(result.errors[0]).toContain("ECONNREFUSED");
   });
 
+  it("Observation fan-out does NOT swallow Epic 400s that lack 'authorized sub-resource' (genuine request-shape errors)", async () => {
+    // Epic returns "Combination of parameters is not valid" for both
+    // scope-rejection (with "authorized sub-resource") AND for genuine
+    // request-shape problems (missing required params, unsupported
+    // search modifiers). The soft-skip MUST only swallow the former —
+    // dropping data because of a real shape bug would be silent corruption.
+    const client = {
+      readPatient: vi.fn(),
+      searchAll: vi.fn().mockImplementation(() =>
+        (async function* () {
+          throw new Error(
+            "Epic FHIR request returned 400 Bad Request — Combination of parameters is not valid. Unsupported search modifier on `_lastUpdated`.",
+          );
+        })(),
+      ),
+    } as unknown as Parameters<typeof runFullSync>[1]["client"];
+
+    const result = await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "Observation",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    // Surfaces as a per-resource-type error, NOT a silent skip.
+    expect(result.errors.length).toBeGreaterThan(0);
+    expect(result.errors[0]).toContain("Combination of parameters is not valid");
+    expect(result.errors[0]).not.toContain("authorized sub-resource");
+  });
+
   it("MedicationRequest fan-out gracefully skips when scope isn't authorized", async () => {
     const client = {
       readPatient: vi.fn(),
