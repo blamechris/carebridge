@@ -630,6 +630,9 @@ importers:
 
   services/epic-connector:
     dependencies:
+      '@carebridge/fhir-gateway':
+        specifier: workspace:*
+        version: link:../fhir-gateway
       '@carebridge/logger':
         specifier: workspace:*
         version: link:../../packages/logger
