@@ -47,6 +47,32 @@ const token = await client.getAccessToken();
 The token client caches the response and refreshes 60s before expiry.
 Call `client.invalidate()` after a 401 to force a fresh assertion.
 
+## Sync fan-out overrides (#1098)
+
+Epic enforces per-resource search-parameter restrictions, so the sync
+worker fans out across a small set of values for `Observation` and
+`MedicationRequest`. The defaults match CareBridge's MVP (what the
+persistence layer maps + what the AI oversight pipeline acts on); a
+tenant whose workflow needs other categories/statuses can override
+without a code change.
+
+| Env var | Default | Notes |
+|---|---|---|
+| `EPIC_OBSERVATION_CATEGORIES` | `vital-signs,laboratory` | Comma-separated FHIR observation-category codes. Whitespace trimmed; empty segments and duplicates dropped. All-empty or whitespace-only values fall back to the default (silently disabling Observation sync is worse than refusing the misconfig). |
+| `EPIC_MEDICATION_REQUEST_STATUS` | `active` | Single FHIR MedicationRequest status. Multi-status fan-out implementation is tracked under #1114 (#1105 covers the related test-placeholder cleanup). |
+
+> **Note:** widening either set fetches more from Epic, but the CareBridge persistence layer today only maps `Observation.category` ∈ `{vital-signs, laboratory}` (→ `vitals`/`lab_results`) and `MedicationRequest.status = "active"` (→ AI oversight pipeline). Categories or statuses outside that set are fetched and counted in `SyncResult` but won't appear in internal tables — useful for surfacing scope/auth issues via `skipped_sub_resources` (#1097), not for end-user data display, until the matching persistence work lands.
+
+Examples:
+
+```bash
+# Primary-care tenant — adds social history and exam findings
+EPIC_OBSERVATION_CATEGORIES=vital-signs,laboratory,social-history,exam
+
+# Med-rec tenant — wants completed/stopped MedicationRequest history
+EPIC_MEDICATION_REQUEST_STATUS=completed
+```
+
 ## Test
 
 ```bash
