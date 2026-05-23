@@ -344,13 +344,22 @@ function isUnauthorizedSubResourceError(err: unknown): boolean {
   return false;
 }
 
-/** Strip undefined values + the `patient` PHI field for safe external surfacing. */
+/**
+ * Strip undefined values, the `patient` PHI field, and FHIR control
+ * params (`_lastUpdated`, etc.) for safe external surfacing.
+ *
+ * Control params (underscore-prefixed) are run-specific watermarks
+ * that would make `skipped_sub_resources` high-cardinality across
+ * incremental syncs — defeating the cross-patient aggregation signal
+ * the column is meant to provide.
+ */
 function sanitizeFilterForReport(
   params: Record<string, string | undefined>,
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(params)) {
     if (k === "patient") continue;
+    if (k.startsWith("_")) continue;
     if (typeof v === "string") out[k] = v;
   }
   return out;

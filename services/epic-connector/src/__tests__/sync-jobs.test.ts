@@ -975,6 +975,46 @@ describe("Epic sync-jobs (#391)", () => {
     });
   });
 
+  it("sanitizeFilterForReport strips _lastUpdated (and other underscore-prefixed control params) so the surfaced filter stays stable across incremental syncs", async () => {
+    const client = {
+      readPatient: vi.fn(),
+      searchAll: vi
+        .fn()
+        .mockImplementation((_rt: string, params: Record<string, string>) => {
+          if (params.category === "vital-signs") {
+            return (async function* () {
+              throw new Error(
+                "Epic FHIR request returned 400 Bad Request — Combination of parameters is not valid for any authorized sub-resource.",
+              );
+            })();
+          }
+          return (async function* () {
+            // empty
+          })();
+        }),
+    } as unknown as Parameters<typeof runFullSync>[1]["client"];
+
+    const result = await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "Observation",
+        // Watermark set → fetchResources injects `_lastUpdated=gt<...>`
+        // into baseParams. Without sanitization, that timestamp would
+        // leak into every persisted/surfaced filter and explode
+        // `skipped_sub_resources` cardinality across runs.
+        watermark: "2026-05-22T10:00:00Z",
+      },
+      { client, emit },
+    );
+
+    expect(result.skipped).toHaveLength(1);
+    const filter = result.skipped[0]!.filter;
+    expect(filter).toEqual({ category: "vital-signs" });
+    expect(filter).not.toHaveProperty("_lastUpdated");
+    expect(filter).not.toHaveProperty("patient");
+  });
+
   // #1099 acceptance #4: documented placeholder for multi-status fan-out
   it.skip(
     "MedicationRequest fan-out supports multi-status override (active + on-hold + completed) — future",
