@@ -134,6 +134,8 @@ function createChainProxy(
     "groupBy",
     "having",
     "offset",
+    "onConflictDoUpdate",
+    "onConflictDoNothing",
   ] as const;
 
   for (const name of chainNames) {

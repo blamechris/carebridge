@@ -425,6 +425,9 @@ importers:
       '@carebridge/db-schema':
         specifier: workspace:*
         version: link:../../packages/db-schema
+      '@carebridge/epic-connector':
+        specifier: workspace:*
+        version: link:../epic-connector
       '@carebridge/fhir-gateway':
         specifier: workspace:*
         version: link:../fhir-gateway
@@ -630,12 +633,33 @@ importers:
 
   services/epic-connector:
     dependencies:
+      '@carebridge/db-schema':
+        specifier: workspace:*
+        version: link:../../packages/db-schema
       '@carebridge/fhir-gateway':
         specifier: workspace:*
         version: link:../fhir-gateway
       '@carebridge/logger':
         specifier: workspace:*
         version: link:../../packages/logger
+      '@carebridge/outbox':
+        specifier: workspace:*
+        version: link:../../packages/outbox
+      '@carebridge/redis-config':
+        specifier: workspace:*
+        version: link:../../packages/redis-config
+      '@carebridge/shared-types':
+        specifier: workspace:*
+        version: link:../../packages/shared-types
+      '@trpc/server':
+        specifier: ^11.0.0
+        version: 11.16.0(typescript@5.9.3)
+      bullmq:
+        specifier: ^5.30.0
+        version: 5.74.1
+      drizzle-orm:
+        specifier: ^0.38.0
+        version: 0.38.4(@types/react@19.2.14)(postgres@3.4.9)(react@19.2.5)
       zod:
         specifier: ^3.24.0
         version: 3.25.76

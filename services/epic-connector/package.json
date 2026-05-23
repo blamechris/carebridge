@@ -17,8 +17,15 @@
     "epic:keygen": "tsx src/bin/keygen.ts"
   },
   "dependencies": {
+    "@carebridge/db-schema": "workspace:*",
     "@carebridge/fhir-gateway": "workspace:*",
     "@carebridge/logger": "workspace:*",
+    "@carebridge/outbox": "workspace:*",
+    "@carebridge/redis-config": "workspace:*",
+    "@carebridge/shared-types": "workspace:*",
+    "@trpc/server": "^11.0.0",
+    "bullmq": "^5.30.0",
+    "drizzle-orm": "^0.38.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
