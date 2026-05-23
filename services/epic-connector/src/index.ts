@@ -92,6 +92,17 @@ export {
   type SkippedSubResourceRecord,
 } from "./sync/sync-state-repo.js";
 export {
+  loadFanoutConfig,
+  getFanoutConfig,
+  getObservationCategories,
+  getMedicationRequestStatus,
+  DEFAULT_OBSERVATION_CATEGORIES,
+  DEFAULT_MEDICATION_REQUEST_STATUS,
+  VALID_OBSERVATION_CATEGORIES,
+  VALID_MEDICATION_REQUEST_STATUSES,
+  type FanoutConfig,
+} from "./sync/fanout-config.js";
+export {
   persistPatient,
   persistMedicationRequest,
   persistMedicationStatement,
