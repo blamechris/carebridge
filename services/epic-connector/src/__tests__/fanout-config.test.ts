@@ -268,4 +268,17 @@ describe("getFanoutConfig caching (#1112)", () => {
     expect(getObservationCategories()).toBe(cfg.observationCategories);
     expect(getMedicationRequestStatus()).toBe(cfg.medicationRequestStatus);
   });
+
+  it("the cached config is deeply frozen — mutation attempts throw", () => {
+    const cfg = getFanoutConfig();
+    expect(Object.isFrozen(cfg)).toBe(true);
+    expect(Object.isFrozen(cfg.observationCategories)).toBe(true);
+    expect(() => {
+      (cfg.observationCategories as string[]).push("foo");
+    }).toThrow(TypeError);
+    expect(() => {
+      (cfg as { medicationRequestStatus: string }).medicationRequestStatus =
+        "stopped";
+    }).toThrow(TypeError);
+  });
 });

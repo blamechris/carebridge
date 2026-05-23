@@ -81,8 +81,8 @@ export const DEFAULT_OBSERVATION_CATEGORIES: readonly string[] = [
 export const DEFAULT_MEDICATION_REQUEST_STATUS = "active";
 
 export interface FanoutConfig {
-  observationCategories: string[];
-  medicationRequestStatus: string;
+  readonly observationCategories: readonly string[];
+  readonly medicationRequestStatus: string;
 }
 
 interface ParseResult<T> {
@@ -188,10 +188,19 @@ let cached: FanoutConfig | null = null;
 
 /**
  * Returns the resolved fan-out config, loading + caching on first
- * access. Subsequent calls in the same process reuse the cached value.
+ * access. Subsequent calls in the same process reuse the cached
+ * value. The returned object and its array are frozen so a consumer
+ * doing `getFanoutConfig().observationCategories.push(...)` can't
+ * silently mutate the process-wide config and bypass validation.
  */
 export function getFanoutConfig(): FanoutConfig {
-  if (cached === null) cached = loadFanoutConfig();
+  if (cached === null) {
+    const fresh = loadFanoutConfig();
+    cached = Object.freeze({
+      observationCategories: Object.freeze([...fresh.observationCategories]),
+      medicationRequestStatus: fresh.medicationRequestStatus,
+    });
+  }
   return cached;
 }
 
@@ -203,7 +212,7 @@ export function resetFanoutConfigCacheForTests(): void {
   cached = null;
 }
 
-export function getObservationCategories(): string[] {
+export function getObservationCategories(): readonly string[] {
   return getFanoutConfig().observationCategories;
 }
 
