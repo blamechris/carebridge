@@ -34,6 +34,12 @@ import {
 } from "./generators/index.js";
 import { fhirBundleSchema } from "./schemas/bundle.js";
 import { sanitizeFreeText } from "@carebridge/phi-sanitizer";
+import {
+  mapMedicationRequestToRow,
+  mapMedicationStatementToRow,
+  type InboundMedicationRequest,
+  type InboundMedicationStatement,
+} from "./medication-mapper.js";
 
 const logger = createLogger("fhir-gateway");
 
@@ -172,12 +178,37 @@ export const fhirGatewayRouter = t.router({
        */
       user_id: z.string(),
       bundle_id: z.string().optional(),
+      /**
+       * Opt-in materialisation flag (#1066). When true, inbound
+       * MedicationRequest and MedicationStatement resources are
+       * additionally mapped to internal `medications` rows so the
+       * ai-oversight rule engine (which reads `medications` not
+       * `fhir_resources`) sees external dosing detail —
+       * Dosage.doseQuantity, Dosage.maxDosePerPeriod, route, status.
+       *
+       * Default false to preserve the raw-FHIR-only contract the
+       * endpoint advertises today; callers that want the FHIR row to
+       * drive the rule engine must explicitly opt in.
+       */
+      materialize: z.boolean().optional().default(false),
+      /**
+       * Patient id to associate materialised medication rows with.
+       * Required when `materialize: true` — the FHIR
+       * MedicationRequest.subject reference may carry a Patient/{id}
+       * pointing at the external EHR's id, which is not the same as
+       * the internal patients.id. Caller (api-gateway RBAC wrapper)
+       * is responsible for the cross-system reconciliation.
+       *
+       * Ignored when `materialize: false`.
+       */
+      patient_id: z.string().optional(),
     }))
     .mutation(async ({ input }) => {
       const db = getDb();
       const now = new Date().toISOString();
       const entries = input.bundle.entry ?? [];
       let imported = 0;
+      let materializedMedications = 0;
       for (const entry of entries) {
         if (!entry.resource) continue;
         const sanitized = sanitizeResourceStrings(entry.resource) as Record<string, unknown>;
@@ -190,6 +221,12 @@ export const fhirGatewayRouter = t.router({
         // imported PHI in fhir_resources with no audit row, defeating the
         // HIPAA § 164.312(b) audit completeness goal.
         // Per Copilot review on PR #378.
+        //
+        // When `materialize: true` (#1066), the same transaction also
+        // inserts a `medications` row for MedicationRequest /
+        // MedicationStatement entries so the raw-FHIR write and the
+        // materialised row are guaranteed atomic — a crash mid-import
+        // can't leave one without the other.
         await db.transaction(async (tx) => {
           await tx.insert(fhirResources).values({
             id: crypto.randomUUID(),
@@ -220,11 +257,49 @@ export const fhirGatewayRouter = t.router({
             ip_address: null,
             timestamp: now,
           });
+
+          // Optional materialisation pass (#1066). The mapper is pure
+          // and returns null for unmappable entries (missing name,
+          // entered-in-error status) — those skip silently.
+          if (input.materialize && input.patient_id) {
+            let row: ReturnType<typeof mapMedicationRequestToRow> = null;
+            if (resourceType === "MedicationRequest") {
+              row = mapMedicationRequestToRow(
+                sanitized as unknown as InboundMedicationRequest,
+                input.patient_id,
+              );
+            } else if (resourceType === "MedicationStatement") {
+              row = mapMedicationStatementToRow(
+                sanitized as unknown as InboundMedicationStatement,
+                input.patient_id,
+              );
+            }
+            if (row) {
+              await tx.insert(medications).values({
+                id: crypto.randomUUID(),
+                patient_id: row.patient_id,
+                name: row.name,
+                dose_amount: row.dose_amount,
+                dose_unit: row.dose_unit,
+                route: row.route,
+                frequency: row.frequency,
+                max_doses_per_day: row.max_doses_per_day,
+                status: row.status,
+                started_at: row.started_at,
+                prescribed_by: row.prescribed_by,
+                rxnorm_code: row.rxnorm_code,
+                source_system: row.source_system ?? input.source_system,
+                created_at: now,
+                updated_at: now,
+              });
+              materializedMedications++;
+            }
+          }
         });
 
         imported++;
       }
-      return { imported };
+      return { imported, materialized_medications: materializedMedications };
     }),
 
   getByPatient: protectedProcedure

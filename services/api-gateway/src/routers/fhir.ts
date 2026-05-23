@@ -83,6 +83,21 @@ export const fhirRbacRouter = t.router({
         bundle: fhirBundleSchema,
         source_system: z.string(),
         bundle_id: z.string().optional(),
+        /**
+         * Opt-in: materialise inbound MedicationRequest /
+         * MedicationStatement resources into internal `medications`
+         * rows so the ai-oversight rule engine sees external dosing
+         * detail. See #1066. Default false — preserve existing
+         * raw-FHIR-only contract.
+         */
+        materialize: z.boolean().optional(),
+        /**
+         * Internal patient id to associate materialised rows with.
+         * Required when `materialize: true`. Caller is responsible
+         * for resolving the external EHR's Patient.id to the
+         * CareBridge patients.id before invoking importBundle.
+         */
+        patient_id: z.string().optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
