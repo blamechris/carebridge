@@ -470,6 +470,78 @@ describe("EpicTokenClient (#389)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it("dedupes duplicate scopes when computing the cache key (#1164)", async () => {
+    // ["a", "a"] and ["a"] are semantically identical scope requests —
+    // Epic issues the same token for both — and must therefore share a
+    // cache slot. Without dedupe the duplicate-input variant lands in a
+    // distinct Map key and forces a needless re-fetch.
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(tokenResponse({ access_token: "single-token" }))
+      .mockResolvedValueOnce(tokenResponse({ access_token: "should-not-fetch" }));
+    const client = new EpicTokenClient(makeConfig(privatePem), fetchMock);
+
+    const first = await client.getAccessToken(["system/Patient.read"]);
+    const second = await client.getAccessToken([
+      "system/Patient.read",
+      "system/Patient.read",
+    ]);
+
+    expect(first).toBe("single-token");
+    // Cached hit — duplicate variant resolves the same key.
+    expect(second).toBe("single-token");
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("coalesces concurrent callers when one passes duplicate scopes (#1164)", async () => {
+    // Concurrent calls with ["x"] and ["x", "x"] must share the same
+    // in-flight slot so a single network round-trip serves both callers.
+    let resolveFetch: (response: Response) => void;
+    const pendingResponse = new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    });
+    const fetchMock = vi.fn().mockImplementation(() => pendingResponse);
+    const client = new EpicTokenClient(makeConfig(privatePem), fetchMock);
+
+    const plainCall = client.getAccessToken(["system/Patient.read"]);
+    const dupeCall = client.getAccessToken([
+      "system/Patient.read",
+      "system/Patient.read",
+    ]);
+
+    resolveFetch!(tokenResponse({ access_token: "shared-token" }));
+
+    expect(await plainCall).toBe("shared-token");
+    expect(await dupeCall).toBe("shared-token");
+    // Single fetch despite two distinct-looking input arrays.
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("normalizes order + dedupe together so equivalent scope sets share a key (#1164)", async () => {
+    // ["b", "a", "a"] and ["a", "b"] are the same scope set — order and
+    // dedupe combined must collapse them to a single cache + in-flight
+    // slot.
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(tokenResponse({ access_token: "ordered-token" }))
+      .mockResolvedValueOnce(tokenResponse({ access_token: "should-not-fetch" }));
+    const client = new EpicTokenClient(makeConfig(privatePem), fetchMock);
+
+    const first = await client.getAccessToken([
+      "system/Observation.read",
+      "system/Patient.read",
+      "system/Patient.read",
+    ]);
+    const second = await client.getAccessToken([
+      "system/Patient.read",
+      "system/Observation.read",
+    ]);
+
+    expect(first).toBe("ordered-token");
+    expect(second).toBe("ordered-token");
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("clears the in-flight promise when the token request fails (#1089)", async () => {
     // After a fetch failure, the in-flight promise must be cleared so a
     // retry can issue a fresh request — otherwise every subsequent
