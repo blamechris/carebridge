@@ -156,7 +156,7 @@ type ProcedureRow = Parameters<typeof toFhirProcedure>[0];
 function makeProcedure(): ProcedureRow {
   return {
     id: "p1",
-    patient_id: "pat1",
+    patient_id: "p1",
     name: "Appendectomy",
     cpt_code: "44970",
     icd10_codes: ["K35.80"],

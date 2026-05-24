@@ -47,7 +47,7 @@ const token = await client.getAccessToken();
 The token client caches the response and refreshes 60s before expiry.
 Call `client.invalidate()` after a 401 to force a fresh assertion.
 
-## Sync fan-out overrides (#1098)
+## Sync fan-out overrides (#1098, #1114)
 
 Epic enforces per-resource search-parameter restrictions, so the sync
 worker fans out across a small set of values for `Observation` and
@@ -59,9 +59,11 @@ without a code change.
 | Env var | Default | Notes |
 |---|---|---|
 | `EPIC_OBSERVATION_CATEGORIES` | `vital-signs,laboratory` | Comma-separated FHIR R4 observation-category codes. Whitespace trimmed; empty segments and duplicates dropped. Unknown codes (not in `vital-signs`, `imaging`, `laboratory`, `procedure`, `survey`, `exam`, `therapy`, `activity`, `social-history`) are dropped with a `log.warn`. All-empty / all-invalid overrides fall back to the default with a `log.warn` (silently disabling Observation sync is worse than refusing the misconfig). |
-| `EPIC_MEDICATION_REQUEST_STATUS` | `active` | Single FHIR R4 MedicationRequest status. Unknown values (not in `active`, `on-hold`, `cancelled`, `completed`, `entered-in-error`, `stopped`, `draft`, `unknown`) fall back to the default with a `log.warn`. Multi-status fan-out implementation is tracked under #1114 (#1105 covers the related test-placeholder cleanup). |
+| `EPIC_MEDICATION_REQUEST_STATUS` | `active` | Comma-separated FHIR R4 MedicationRequest statuses (#1114). A single value (e.g. `active`) is still accepted — that's the pre-#1114 shape and existing deployments keep working unchanged. Whitespace trimmed; empty segments and duplicates dropped. Unknown values (not in `active`, `on-hold`, `cancelled`, `completed`, `entered-in-error`, `stopped`, `draft`, `unknown`) are dropped with a `log.warn`. All-empty / all-invalid overrides fall back to the default with a `log.warn`. Each status produces one Epic search; results are deduplicated by `resource.id`, and a per-status unauthorized-scope rejection is recorded in `SyncResult.skipped[]` without aborting the sibling statuses (same shape as the Observation per-category soft-skip). |
 
 The resolved config is parsed + cached once at first access (#1112) — env changes after boot do not take effect without restart. `getFanoutConfig()` returns a frozen object so consumers can't mutate the cached arrays. `loadFanoutConfig(env)` is exposed on the package root for admin tooling that needs to evaluate an explicit env map without touching the cache. `resetFanoutConfigCacheForTests()` is intentionally NOT on the package root (test-only) — import it via the deep path `@carebridge/epic-connector/sync/fanout-config.js` from in-package tests.
+
+The package exports both `getMedicationRequestStatuses()` (plural, returns `string[]`) and `getMedicationRequestStatus()` (singular, back-compat — returns the first element). New code should call the plural helper.
 
 > **Note:** widening either set fetches more from Epic, but the CareBridge persistence layer today only maps `Observation.category` ∈ `{vital-signs, laboratory}` (→ `vitals`/`lab_results`) and `MedicationRequest.status = "active"` (→ AI oversight pipeline). Categories or statuses outside that set are fetched and counted in `SyncResult` but won't appear in internal tables — useful for surfacing scope/auth issues via `skipped_sub_resources` (#1097), not for end-user data display, until the matching persistence work lands.
 
@@ -73,6 +75,9 @@ EPIC_OBSERVATION_CATEGORIES=vital-signs,laboratory,social-history,exam
 
 # Med-rec tenant — wants completed/stopped MedicationRequest history
 EPIC_MEDICATION_REQUEST_STATUS=completed
+
+# Hospital discharge-planning tenant — multi-status fan-out (#1114)
+EPIC_MEDICATION_REQUEST_STATUS=active,on-hold,completed
 ```
 
 ## Test
