@@ -333,4 +333,18 @@ describe("isUcumAllowed", () => {
     expect(isUcumAllowed("scoop")).toBe(false);
     expect(isUcumAllowed("")).toBe(false);
   });
+
+  it("accepts clinical case-variants restored by #1148 (mirror of toDoseQuantity)", () => {
+    // Predicate must stay aligned with toDoseQuantity — anything the
+    // emitter encodes as system+code MUST be reported allowed here, or
+    // callers gating on `isUcumAllowed` get a different verdict than
+    // what shows up in the emitted FHIR Quantity. Covers the new
+    // CLINICAL_CASE_ALIASES branch in isUcumAllowed.
+    expect(isUcumAllowed("G")).toBe(true); // gram, not gauss
+    expect(isUcumAllowed("KG")).toBe(true);
+    expect(isUcumAllowed("mEq")).toBe(true);
+    expect(isUcumAllowed("mEq/L")).toBe(true);
+    expect(isUcumAllowed("mg/Kg")).toBe(true);
+    expect(isUcumAllowed("Mg/Kg")).toBe(true);
+  });
 });

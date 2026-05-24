@@ -142,8 +142,8 @@ const NON_UCUM_TO_UCUM_CODE: Record<string, string> = Object.assign(
  * always wins. Keys preserve their original casing; values are canonical
  * UCUM codes (case-sensitive). Conservative — only entries where the
  * case-variant is unambiguously clinical: clinicians never mean magnetic
- * flux density when typing "G" in a dose_unit field, and never mean a
- * pico-Tesla equivalent when typing "KG".
+ * flux density (gauss / kilo-gauss) when typing "G" or "KG" in a
+ * dose_unit field.
  *
  * Null-prototype object (same `Object.create(null)` pattern as the main
  * alias table) to keep `medications.dose_unit` free-text input from
