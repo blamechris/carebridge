@@ -64,15 +64,27 @@ interface CachedToken {
  * separately per (clientId, tokenUrl) pair.
  */
 export class EpicTokenClient {
-  private cached: CachedToken | null = null;
   /**
-   * In-flight token request. Concurrent {@link getAccessToken} callers
-   * that arrive while a fetch is outstanding await the same promise
-   * instead of each kicking off their own request (#1089). Cleared as
-   * soon as the request settles (success or failure) so the cache /
-   * retry path takes over for subsequent callers.
+   * Per-scope cached tokens (#1144). Keyed by a normalized (sorted,
+   * space-joined) scopes string so concurrent callers asking for
+   * different scope sets never share a cache entry — otherwise a
+   * caller that requested ["system/Patient.read", "system/Observation.read"]
+   * could be served a narrower token cached from an earlier
+   * single-scope fetch and then fail mid-call when reading an
+   * Observation. Sorting before join means ["a","b"] and ["b","a"]
+   * map to the same key.
    */
-  private inFlight: Promise<TokenResponse> | null = null;
+  private cached: Map<string, CachedToken> = new Map();
+  /**
+   * Per-scope in-flight token requests (#1144). Keyed the same way as
+   * {@link cached}: concurrent callers asking for the same scope set
+   * (in any order) coalesce on a shared promise (#1089); callers
+   * asking for a DIFFERENT scope set each get their own fetch and
+   * their own correctly-scoped token. Cleared as soon as each request
+   * settles (success or failure) so the cache / retry path takes over
+   * for subsequent callers.
+   */
+  private inFlight: Map<string, Promise<TokenResponse>> = new Map();
   /**
    * Monotonic generation counter (#1143). Incremented every time
    * {@link invalidate} is called so any fetch already running when
@@ -80,7 +92,10 @@ export class EpicTokenClient {
    * overwrite the cache (which a successful retry may have already
    * populated with a fresh token). Each fetch captures the generation
    * it was started under and only writes back to `cached` / `inFlight`
-   * if that generation is still current.
+   * if that generation is still current. With per-scope keying (#1144)
+   * the generation guard still operates globally — bumping it on
+   * invalidate() invalidates EVERY in-flight fetch across every scope
+   * key, which is correct since invalidate() clears all entries.
    */
   private generation = 0;
 
@@ -93,25 +108,46 @@ export class EpicTokenClient {
   ) {}
 
   /**
+   * Normalize a scope set to a stable cache key. Sorting before join
+   * means callers passing the same scopes in different orders share a
+   * single cache + in-flight slot (#1144). Empty arrays produce an
+   * empty string, which is a valid Map key distinct from any non-empty
+   * scope set — matching pre-existing behaviour that passes the empty
+   * string through as the `scope` form field.
+   */
+  private normalizeScopes(scopes: readonly string[]): string {
+    return [...scopes].sort().join(" ");
+  }
+
+  /**
    * Return a usable access token. Uses the cached value when it has
    * more than REFRESH_BUFFER_SEC of lifetime left; otherwise requests
    * a fresh one. Concurrent callers that arrive while a fetch is
-   * outstanding coalesce on a shared in-flight promise (#1089) so a
-   * burst of N callers issues a single network round-trip.
+   * outstanding AND requested the same scope set coalesce on a shared
+   * in-flight promise (#1089, #1144) so a burst of N same-scope
+   * callers issues a single network round-trip. Concurrent callers
+   * with DIFFERENT scope sets each get their own correctly-scoped
+   * fetch — coalescing across scope sets would silently hand a caller
+   * a token missing scopes it explicitly asked for.
    */
   async getAccessToken(scopes: string[] = DEFAULT_SYSTEM_SCOPES): Promise<string> {
-    if (this.cached) {
-      const remainingMs = this.cached.expiresAtMs - this.nowMs();
+    const key = this.normalizeScopes(scopes);
+
+    const cachedEntry = this.cached.get(key);
+    if (cachedEntry) {
+      const remainingMs = cachedEntry.expiresAtMs - this.nowMs();
       if (remainingMs > REFRESH_BUFFER_SEC * 1000) {
-        return this.cached.response.access_token;
+        return cachedEntry.response.access_token;
       }
     }
 
-    // If a refresh is already in flight, every concurrent caller awaits
-    // the same promise. The first caller to enter this branch sets
-    // `inFlight`; later callers in the same tick observe it and join.
-    if (this.inFlight) {
-      const parsed = await this.inFlight;
+    // If a refresh is already in flight for THIS scope key, every
+    // concurrent caller asking for the same scopes awaits the same
+    // promise. Different-scope callers fall through to start their own
+    // fetch below.
+    const existingInFlight = this.inFlight.get(key);
+    if (existingInFlight) {
+      const parsed = await existingInFlight;
       return parsed.access_token;
     }
 
@@ -121,8 +157,8 @@ export class EpicTokenClient {
     // have advanced; fetchToken() checks that and refuses to write
     // back stale results to either the cache or the in-flight slot.
     const myGen = this.generation;
-    const pending = this.fetchToken(scopes, issuedAtMs, myGen);
-    this.inFlight = pending;
+    const pending = this.fetchToken(scopes, issuedAtMs, myGen, key);
+    this.inFlight.set(key, pending);
     try {
       const parsed = await pending;
       return parsed.access_token;
@@ -131,8 +167,8 @@ export class EpicTokenClient {
       // invalidate() ran while we were awaiting, the slot has already
       // been cleared (or a newer fetch from the same generation has
       // populated it) and we must not stomp on the newer state.
-      if (this.generation === myGen && this.inFlight === pending) {
-        this.inFlight = null;
+      if (this.generation === myGen && this.inFlight.get(key) === pending) {
+        this.inFlight.delete(key);
       }
     }
   }
@@ -140,12 +176,15 @@ export class EpicTokenClient {
   /**
    * Internal fetch helper. Extracted so the in-flight slot can be
    * tracked as a single `Promise<TokenResponse>` regardless of the
-   * scope override or issued-at timestamp.
+   * scope override or issued-at timestamp. The `key` argument is the
+   * pre-computed normalized scope key (#1144) used to write the
+   * cache entry on success.
    */
   private async fetchToken(
     scopes: string[],
     issuedAtMs: number,
     startedAtGen: number,
+    key: string,
   ): Promise<TokenResponse> {
     const assertion = buildClientAssertion({
       clientId: this.config.clientId,
@@ -196,33 +235,40 @@ export class EpicTokenClient {
     // Only write back to the cache if our generation is still current
     // (#1143). If invalidate() fired while we were awaiting fetch /
     // response.json(), our result is stale — a subsequent retry may
-    // already have populated `cached` with a fresh token and we must
-    // not stomp on it.
+    // already have populated `cached` with a fresh token for THIS
+    // scope key (#1144) and we must not stomp on it. Per-key writes
+    // also mean a late, stale wide-scope fetch cannot pollute the
+    // unrelated narrow-scope cache entry.
     if (this.generation === startedAtGen) {
-      this.cached = {
+      this.cached.set(key, {
         response: parsed,
         expiresAtMs: issuedAtMs + parsed.expires_in * 1000,
-      };
+      });
     }
     return parsed;
   }
 
   /**
-   * Drop the cached token AND any in-flight refresh promise. Forces
-   * the next {@link getAccessToken} call to request a fresh one.
+   * Drop ALL cached tokens (every scope key) AND every in-flight
+   * refresh promise. Forces the next {@link getAccessToken} call to
+   * request a fresh one regardless of which scope set it asks for.
    * Useful when the FHIR client receives a 401 (token revoked / org
    * rotated keys) and wants to retry once with a fresh assertion
-   * before failing. Clearing the in-flight reference too (#1089)
-   * prevents a stale-credential refresh from satisfying the retry.
+   * before failing. Clearing the in-flight references too (#1089)
+   * prevents a stale-credential refresh from satisfying the retry,
+   * and clearing across every scope key (#1144) prevents a different-
+   * scope cache entry from outliving a credential rotation.
    */
   invalidate(): void {
-    this.cached = null;
-    this.inFlight = null;
+    this.cached.clear();
+    this.inFlight.clear();
     // Bump the generation so any fetch that is already in flight when
     // invalidate() fires will see `this.generation !== startedAtGen`
     // when it tries to write its result back. That prevents the dropped
     // promise from overwriting a fresh token that a subsequent retry
-    // may have already cached (#1143).
+    // may have already cached (#1143). The generation is global, not
+    // per-scope-key — invalidate() really does invalidate every
+    // outstanding fetch across every scope set.
     this.generation += 1;
   }
 }
