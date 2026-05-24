@@ -153,6 +153,41 @@ indistinguishable from one added the plain way.
   the `VALIDATE` migration as a follow-up issue at the time you
   merge the `NOT VALID` one.
 
+### FK-specific note: reduced lock level
+
+`ADD CONSTRAINT ... FOREIGN KEY` is the one exception to the
+`ACCESS EXCLUSIVE` rule. Per the
+[Postgres 16 ALTER TABLE docs](https://www.postgresql.org/docs/16/sql-altertable.html):
+
+> Although most forms of ADD _table_constraint_ require an ACCESS
+> EXCLUSIVE lock, ADD FOREIGN KEY requires only a SHARE ROW EXCLUSIVE
+> lock. Note that ADD FOREIGN KEY also acquires a SHARE ROW EXCLUSIVE
+> lock on the referenced table, in addition to the lock on the table
+> on which the constraint is declared.
+
+In practice this means:
+
+- `ALTER TABLE child ADD CONSTRAINT ... FOREIGN KEY (parent_id) REFERENCES parent (id) NOT VALID`
+  blocks other writers (`SHARE ROW EXCLUSIVE` conflicts with itself
+  and with `ROW EXCLUSIVE`-holding statements like concurrent DDL
+  and `VACUUM FULL`) **but does not block plain reads or row-level
+  INSERT/UPDATE/DELETE**, which use weaker `ROW SHARE` /
+  `ROW EXCLUSIVE` locks. A CHECK constraint added the same way
+  would freeze the table.
+- The two-step rollout is still required when the column is
+  populated: add `NOT VALID`, backfill any orphan rows that don't
+  resolve to a parent, then `VALIDATE CONSTRAINT`. `VALIDATE` takes
+  the same `SHARE UPDATE EXCLUSIVE` as for CHECK (plus a `ROW SHARE`
+  on the referenced table), so it does not block reads or writes.
+- New INSERTs and UPDATEs are FK-checked from the moment the
+  `NOT VALID` constraint lands — only pre-existing rows are
+  unvalidated.
+
+No worked example yet because the repo has no FK-on-populated-column
+migration to point at. The pattern is documented here so the next
+person reaching for it knows the lock floor is lower than the CHECK
+case above.
+
 ### NOT NULL on a populated column
 
 Plain `ALTER TABLE ... ALTER COLUMN x SET NOT NULL` is the same trap
