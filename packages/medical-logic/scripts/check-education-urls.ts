@@ -4,8 +4,9 @@
  * Walks every `links[*].url` in DIAGNOSIS_EDUCATION_TABLE +
  * MEDICATION_EDUCATION_TABLE and HEADs each one. Health-domain CDNs
  * (notably the Cloudflare front in front of `heart.org`) sometimes reject
- * HEAD with 405, so we fall back to a GET on 405. Followed redirects up
- * to 5 hops count as PASS.
+ * HEAD with 405, so we fall back to a GET on 405. Redirect-following is
+ * delegated to Node fetch's default cap (~20 hops via `redirect: "follow"`);
+ * once the chain resolves, the final status is what we classify.
  *
  * Designed to be driven by `.github/workflows/patient-education-url-check.yml`
  * on the first of every month. Not part of CI — live HTTP would be flaky.
@@ -23,7 +24,6 @@ import {
 } from "../src/patient-education.js";
 
 const TIMEOUT_MS = 10_000;
-const MAX_REDIRECTS = 5;
 
 export interface UrlCheckResult {
   url: string;
@@ -38,10 +38,11 @@ export interface UrlCheckResult {
 
 /**
  * Decide whether a status code counts as PASS. 2xx is the obvious yes;
- * 3xx only reaches this function when redirects are exhausted (fetch
- * follows them by default, but we cap at MAX_REDIRECTS), so a leftover
- * 3xx is treated as a redirect-loop failure. 405 is the sentinel for
- * "HEAD not supported — caller should retry with GET".
+ * a 3xx only reaches this function when Node fetch returns one without
+ * following it — either a non-redirect 3xx response, or a redirect loop
+ * that exceeded fetch's default cap (~20 hops). Either way we treat it
+ * as a failure. 405 is the sentinel for "HEAD not supported — caller
+ * should retry with GET".
  */
 export function classifyStatus(status: number): "pass" | "retry-with-get" | "fail" {
   if (status >= 200 && status < 300) return "pass";
