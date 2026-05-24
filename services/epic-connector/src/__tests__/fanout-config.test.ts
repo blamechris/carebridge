@@ -477,10 +477,14 @@ describe("FanoutConfig.medicationRequestStatus — deprecated singular field (#1
     // deprecation marker tend to become permanent.
     const here = dirname(fileURLToPath(import.meta.url));
     const sourcePath = resolve(here, "..", "sync", "fanout-config.ts");
-    const src = readFileSync(sourcePath, "utf8");
-    // Find the FanoutConfig interface body.
+    // Normalise CRLF→LF so the regex below isn't sensitive to whether
+    // the checkout used `core.autocrlf=true` on Windows (#1153 review).
+    const src = readFileSync(sourcePath, "utf8").replace(/\r\n/g, "\n");
+    // Find the FanoutConfig interface body. The opener match is
+    // whitespace-tolerant so a future `prettier`/`tsc` reflow that
+    // adds/removes spaces around the brace doesn't break the regex.
     const ifaceMatch = src.match(
-      /export interface FanoutConfig \{([\s\S]*?)\n\}/,
+      /export\s+interface\s+FanoutConfig\s*\{([\s\S]*?)\n\}/,
     );
     expect(ifaceMatch, "FanoutConfig interface not found").not.toBeNull();
     const body = ifaceMatch![1]!;
