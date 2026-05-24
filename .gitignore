@@ -6,3 +6,10 @@ dist/
 .env.local
 *.tsbuildinfo
 .claude/worktrees/
+
+# Local-only Epic-sandbox probe scripts (hit live Epic creds and reference
+# test-patient IDs — keep out of git).
+services/epic-connector/scripts/
+
+# Claude Code runtime state — local-only.
+.claude/*.lock
