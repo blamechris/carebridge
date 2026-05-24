@@ -7,38 +7,13 @@
  */
 
 import type { diagnoses } from "@carebridge/db-schema";
-import type { Coding, Meta } from "../types/fhir-r4.js";
+import type { FhirCondition, FhirRequiredCoding } from "../types/fhir-r4.js";
 import { US_CORE_CONDITION } from "./us-core-profiles.js";
 
 type Diagnosis = typeof diagnoses.$inferSelect;
 
 // Local alias: Condition codings are always fully populated.
-type FhirCoding = Required<Pick<Coding, "system" | "code">> & Pick<Coding, "display">;
-
-interface FhirCondition {
-  resourceType: "Condition";
-  id: string;
-  meta?: Meta;
-  clinicalStatus: {
-    coding: FhirCoding[];
-  };
-  verificationStatus: {
-    coding: FhirCoding[];
-  };
-  code: {
-    coding: FhirCoding[];
-    text: string;
-  };
-  subject: {
-    reference: string;
-  };
-  onsetDateTime?: string;
-  abatementDateTime?: string;
-  recordedDate?: string;
-  recorder?: {
-    reference: string;
-  };
-}
+type FhirCoding = FhirRequiredCoding;
 
 const CLINICAL_STATUS_SYSTEM =
   "http://terminology.hl7.org/CodeSystem/condition-clinical";
