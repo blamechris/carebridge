@@ -809,6 +809,14 @@ export const fhirGatewayRouter = t.router({
           // select() on users pulls password_hash, mfa_secret, and
           // recovery_codes into memory for zero downstream use and risks
           // surfacing them via heap dumps or incidental logging.
+          //
+          // `npi` + `nucc_code` (#947) drive the US Core Practitioner
+          // identifier slice and qualification coding respectively, and
+          // gate `meta.profile = us-core-practitioner`. Omitting them
+          // from this projection would silently disable US Core Practitioner
+          // conformance for the bundle-export path while
+          // `toFhirPractitioner` continues to claim support — exactly
+          // the false-conformance failure the PR explicitly avoids.
           const providerRows = await db
             .select({
               id: users.id,
@@ -816,6 +824,8 @@ export const fhirGatewayRouter = t.router({
               role: users.role,
               specialty: users.specialty,
               email: users.email,
+              npi: users.npi,
+              nucc_code: users.nucc_code,
             })
             .from(users)
             .where(inArray(users.id, Array.from(providerIds)));
