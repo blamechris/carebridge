@@ -264,7 +264,18 @@ Pattern B based on the data shape.
   path is Pattern B with the violators left as a known historical
   artefact; the constraint enforces correctness going forward but
   cannot be `VALIDATE`d until every violating row ages out under the
-  7-year retention window.
+  7-year retention window. **Caveat:** the aging-out described above
+  presumes the archival job in
+  [`hipaa-retention.md`](./hipaa-retention.md#archival-plan-future-work)
+  is moving 1-to-7-year-old rows out of the primary table. That job
+  is **not yet implemented** ("The archival job is not yet implemented.
+  Until it ships, all audit log records remain in the primary table.").
+  Until it ships, a violating row never ages out and a `NOT VALID`
+  constraint on `audit_log` is effectively permanent in that state —
+  enforcement on new writes is unconditional, but the constraint will
+  never validate. Plan accordingly: either gate the `NOT VALID`
+  migration on the archival job shipping first, or accept the
+  permanent `NOT VALID` state and document it on the constraint.
 - Drizzle migrations live in `packages/db-schema/drizzle/`. Both
   migrations in a Pattern B pair should follow the existing
   `NNNN_short_name.sql` numbering and reuse the
