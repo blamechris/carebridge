@@ -95,6 +95,17 @@ export const DEFAULT_MEDICATION_REQUEST_STATUS: string =
 
 export interface FanoutConfig {
   readonly observationCategories: readonly string[];
+  /**
+   * Back-compat alias for the pre-#1114 singular field (#1147). Equal
+   * to `medicationRequestStatuses[0]`, falling back to
+   * {@link DEFAULT_MEDICATION_REQUEST_STATUS} if the plural array is
+   * empty. Retained as a deprecated shim so downstream consumers that
+   * destructure `cfg.medicationRequestStatus` keep compiling; new code
+   * should read the plural array.
+   * @deprecated Use `medicationRequestStatuses` (plural) instead.
+   *   Returns the first element of that array.
+   */
+  readonly medicationRequestStatus: string;
   readonly medicationRequestStatuses: readonly string[];
 }
 
@@ -260,6 +271,12 @@ export function parseFanoutConfig(
   return {
     config: {
       observationCategories: cats.value,
+      // Back-compat singular alias (#1147): first element of the
+      // plural array, or DEFAULT_MEDICATION_REQUEST_STATUS if the
+      // array somehow ends up empty (defensive — parse logic above
+      // already guarantees a non-empty fallback).
+      medicationRequestStatus:
+        statuses.value[0] ?? DEFAULT_MEDICATION_REQUEST_STATUS,
       medicationRequestStatuses: statuses.value,
     },
     warnings,
@@ -292,11 +309,15 @@ let cached: FanoutConfig | null = null;
 export function getFanoutConfig(): FanoutConfig {
   if (cached === null) {
     const fresh = loadFanoutConfig();
+    const frozenStatuses = Object.freeze([...fresh.medicationRequestStatuses]);
     cached = Object.freeze({
       observationCategories: Object.freeze([...fresh.observationCategories]),
-      medicationRequestStatuses: Object.freeze([
-        ...fresh.medicationRequestStatuses,
-      ]),
+      // Back-compat singular alias (#1147) — mirrors the value already
+      // populated by `loadFanoutConfig`, kept here so the cached
+      // frozen instance carries the same shape as the parsed one.
+      medicationRequestStatus:
+        frozenStatuses[0] ?? DEFAULT_MEDICATION_REQUEST_STATUS,
+      medicationRequestStatuses: frozenStatuses,
     });
   }
   return cached;

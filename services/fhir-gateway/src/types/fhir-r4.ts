@@ -234,3 +234,99 @@ export interface FhirDocumentReference {
   author?: Reference[];
   content: DocumentReferenceContent[];
 }
+
+// ─── Observation resource ───────────────────────────────────────
+export interface ObservationReferenceRange {
+  low?: Quantity;
+  high?: Quantity;
+}
+
+export interface FhirObservation {
+  resourceType: "Observation";
+  id?: string;
+  meta?: Meta;
+  status: "final" | "preliminary" | "registered" | "amended";
+  category?: CodeableConcept[];
+  code: CodeableConcept;
+  subject?: Reference;
+  effectiveDateTime?: string;
+  valueQuantity?: Quantity;
+  component?: ObservationComponent[];
+  referenceRange?: ObservationReferenceRange[];
+}
+
+// ─── Condition resource ─────────────────────────────────────────
+/**
+ * Local coding shape used by Condition / AllergyIntolerance generators:
+ * Condition and AllergyIntolerance codings are always emitted with both
+ * `system` and `code` populated (display is optional).
+ */
+export type FhirRequiredCoding = Required<Pick<Coding, "system" | "code">> &
+  Pick<Coding, "display">;
+
+export interface FhirCondition {
+  resourceType: "Condition";
+  id: string;
+  meta?: Meta;
+  clinicalStatus: {
+    coding: FhirRequiredCoding[];
+  };
+  verificationStatus: {
+    coding: FhirRequiredCoding[];
+  };
+  code: {
+    coding: FhirRequiredCoding[];
+    text: string;
+  };
+  subject: {
+    reference: string;
+  };
+  onsetDateTime?: string;
+  abatementDateTime?: string;
+  recordedDate?: string;
+  recorder?: {
+    reference: string;
+  };
+}
+
+// ─── AllergyIntolerance resource ────────────────────────────────
+export type FhirAllergyCategory =
+  | "food"
+  | "medication"
+  | "environment"
+  | "biologic";
+
+export interface FhirAllergyReaction {
+  substance?: {
+    coding: FhirRequiredCoding[];
+    text: string;
+  };
+  manifestation: {
+    coding: FhirRequiredCoding[];
+    text: string;
+  }[];
+  severity?: "mild" | "moderate" | "severe";
+}
+
+export interface FhirAllergyIntolerance {
+  resourceType: "AllergyIntolerance";
+  id: string;
+  meta?: Meta;
+  clinicalStatus: {
+    coding: FhirRequiredCoding[];
+  };
+  verificationStatus: {
+    coding: FhirRequiredCoding[];
+  };
+  category?: FhirAllergyCategory[];
+  code: {
+    coding: FhirRequiredCoding[];
+    text: string;
+  };
+  patient: {
+    reference: string;
+  };
+  recordedDate?: string;
+  criticality?: "low" | "high" | "unable-to-assess";
+  reaction?: FhirAllergyReaction[];
+}

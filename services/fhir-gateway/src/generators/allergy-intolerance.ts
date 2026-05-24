@@ -7,50 +7,19 @@
  */
 
 import type { allergies } from "@carebridge/db-schema";
-import type { Coding, Meta } from "../types/fhir-r4.js";
+import type {
+  FhirAllergyCategory,
+  FhirAllergyIntolerance,
+  FhirAllergyReaction,
+  FhirRequiredCoding,
+} from "../types/fhir-r4.js";
 import { US_CORE_ALLERGY_INTOLERANCE } from "./us-core-profiles.js";
 
 type Allergy = typeof allergies.$inferSelect;
 
 // Local alias: AllergyIntolerance codings are always fully populated.
-type FhirCoding = Required<Pick<Coding, "system" | "code">> & Pick<Coding, "display">;
-
-interface FhirReaction {
-  substance?: {
-    coding: FhirCoding[];
-    text: string;
-  };
-  manifestation: {
-    coding: FhirCoding[];
-    text: string;
-  }[];
-  severity?: "mild" | "moderate" | "severe";
-}
-
-type FhirAllergyCategory = "food" | "medication" | "environment" | "biologic";
-
-interface FhirAllergyIntolerance {
-  resourceType: "AllergyIntolerance";
-  id: string;
-  meta?: Meta;
-  clinicalStatus: {
-    coding: FhirCoding[];
-  };
-  verificationStatus: {
-    coding: FhirCoding[];
-  };
-  category?: FhirAllergyCategory[];
-  code: {
-    coding: FhirCoding[];
-    text: string;
-  };
-  patient: {
-    reference: string;
-  };
-  recordedDate?: string;
-  criticality?: "low" | "high" | "unable-to-assess";
-  reaction?: FhirReaction[];
-}
+type FhirCoding = FhirRequiredCoding;
+type FhirReaction = FhirAllergyReaction;
 
 const CLINICAL_STATUS_SYSTEM =
   "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical";
