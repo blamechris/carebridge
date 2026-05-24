@@ -10,8 +10,31 @@
  */
 
 import type { users } from "@carebridge/db-schema";
-import type { FhirPractitioner, HumanName } from "../types/fhir-r4.js";
+import type {
+  FhirPractitioner,
+  HumanName,
+  Identifier,
+  PractitionerQualification,
+} from "../types/fhir-r4.js";
 import { CAREBRIDGE_IDENTIFIER_BASE } from "./identifiers.js";
+import { US_CORE_PRACTITIONER } from "./us-core-profiles.js";
+
+/**
+ * Registered identifier system for the US National Provider Identifier
+ * (#947). This is the canonical URL that US Core Practitioner expects
+ * for the primary clinician identifier; using anything else (including
+ * our locally-scoped CareBridge namespace) does NOT satisfy the
+ * profile's identifier slice.
+ */
+export const US_NPI_IDENTIFIER_SYSTEM = "http://hl7.org/fhir/sid/us-npi";
+
+/**
+ * Registered code system for the NUCC Health Care Provider Taxonomy
+ * (#947). When a user row has a `nucc_code` populated, the generator
+ * attaches a coding to `qualification.code` so downstream consumers can
+ * map specialties without parsing the free-text `specialty` column.
+ */
+export const NUCC_TAXONOMY_SYSTEM = "http://nucc.org/provider-taxonomy";
 
 // Re-exported for backward compatibility with consumers that imported
 // CAREBRIDGE_IDENTIFIER_BASE from this module before #969 lifted the
@@ -193,30 +216,72 @@ function buildPractitionerName(user: UserRow): HumanName {
 }
 
 export function toFhirPractitioner(user: UserRow): FhirPractitioner {
+  // US Core Practitioner identifier slice (#947): when the user row
+  // carries an NPI we emit it first with the registered `us-npi`
+  // system so the primary identifier satisfies the profile. The
+  // existing internal `/user-id` identifier stays as a secondary entry
+  // so local lookups (audit join, internal references) keep working.
+  const identifier: Identifier[] = [];
+  if (user.npi) {
+    identifier.push({
+      system: US_NPI_IDENTIFIER_SYSTEM,
+      value: user.npi,
+    });
+  }
+  identifier.push({
+    system: `${CAREBRIDGE_IDENTIFIER_BASE}/user-id`,
+    value: user.id,
+  });
+
+  // Qualification / specialty. If the row has a NUCC taxonomy code we
+  // attach a `coding` alongside the free-text specialty so consumers
+  // can map specialties without parsing English. Without a NUCC code
+  // we keep the legacy text-only shape — emitting an unverified code
+  // is worse for interop than emitting none.
+  let qualification: PractitionerQualification[] | undefined;
+  if (user.specialty || user.nucc_code) {
+    const code: PractitionerQualification["code"] = {};
+    if (user.specialty) {
+      code.text = user.specialty;
+    }
+    if (user.nucc_code) {
+      code.coding = [
+        {
+          system: NUCC_TAXONOMY_SYSTEM,
+          code: user.nucc_code,
+        },
+      ];
+    }
+    qualification = [{ code }];
+  }
+
   const resource: FhirPractitioner = {
     resourceType: "Practitioner",
     id: user.id,
-    identifier: [
-      {
-        system: `${CAREBRIDGE_IDENTIFIER_BASE}/user-id`,
-        value: user.id,
-      },
-    ],
+    identifier,
     name: [buildPractitionerName(user)],
   };
 
-  // Qualification / specialty — surfaced as a text-only CodeableConcept.
-  // We intentionally avoid emitting a NUCC taxonomy code unless the
-  // internal table starts storing a coded value; a wrong code is worse
-  // for interop than an absent one.
-  if (user.specialty) {
-    resource.qualification = [
-      {
-        code: {
-          text: user.specialty,
-        },
-      },
-    ];
+  // US Core Practitioner conformance gate (#947).
+  //
+  // The profile requires at least one identifier with a registered
+  // system AND SHOULD carry a NUCC qualification coding. We declare
+  // `meta.profile` only when both signals are present on the row —
+  // emitting it without them would be a false conformance claim that
+  // downstream validators would flag.
+  //
+  // Rows with neither signal continue to emit the pre-#947 shape: no
+  // meta.profile, internal-namespace identifier, text-only
+  // qualification. That keeps existing consumers and the
+  // unbackfilled-row case backward compatible.
+  if (user.npi && user.nucc_code) {
+    resource.meta = {
+      profile: [US_CORE_PRACTITIONER],
+    };
+  }
+
+  if (qualification) {
+    resource.qualification = qualification;
   }
 
   return resource;

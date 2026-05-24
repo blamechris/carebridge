@@ -7,7 +7,10 @@
  * block, swapping the URL, or forgetting to update a new generator — fails
  * loudly rather than shipping a silently non-conformant export.
  *
- * Practitioner is intentionally excluded — see issue #947.
+ * Practitioner declares `us-core-practitioner` per-row only when both
+ * NPI and NUCC qualification coding are present (#947); coverage for
+ * the both-present and both-absent cases lives in practitioner.test.ts
+ * since the gate is row-shape dependent rather than blanket.
  * MedicationStatement is intentionally excluded — US Core 5+ deprecated the
  * profile and no canonical URL exists; documented in us-core-profiles.ts.
  */
@@ -33,6 +36,7 @@ import {
   US_CORE_LABORATORY_RESULT,
   US_CORE_ENCOUNTER,
   US_CORE_PROCEDURE,
+  US_CORE_PRACTITIONER,
 } from "../generators/us-core-profiles.js";
 import type { Vital, LabResult } from "@carebridge/shared-types";
 
@@ -279,9 +283,16 @@ describe("US Core meta.profile (#938)", () => {
         US_CORE_LABORATORY_RESULT,
         US_CORE_ENCOUNTER,
         US_CORE_PROCEDURE,
+        US_CORE_PRACTITIONER,
       ]) {
         expect(url.startsWith(base)).toBe(true);
       }
+    });
+
+    it("US_CORE_PRACTITIONER resolves to the canonical us-core-practitioner URL", () => {
+      expect(US_CORE_PRACTITIONER).toBe(
+        "http://hl7.org/fhir/us/core/StructureDefinition/us-core-practitioner",
+      );
     });
   });
 });

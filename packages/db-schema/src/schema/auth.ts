@@ -28,6 +28,24 @@ export const users = pgTable("users", {
   patient_id: text("patient_id"), // links patient users to their patient record
   specialty: text("specialty"),
   department: text("department"),
+  /**
+   * National Provider Identifier (#947). 10-digit string assigned by CMS;
+   * stored as text to preserve any leading zeros and avoid integer
+   * coercion. Nullable — only clinical-role rows that have been linked
+   * to an NPPES record populate this. The FHIR Practitioner generator
+   * emits it as `identifier[]` entry with system
+   * `http://hl7.org/fhir/sid/us-npi` when present.
+   */
+  npi: text("npi"),
+  /**
+   * NUCC Health Care Provider Taxonomy code (#947). Free-form 10-char
+   * code such as "207RC0000X" (Cardiologist - Clinical Cardiac
+   * Electrophysiology). When populated, the FHIR Practitioner generator
+   * attaches a `coding` entry to `qualification.code` alongside the
+   * existing free-text `specialty`. Nullable; absent NUCC keeps the
+   * text-only behaviour.
+   */
+  nucc_code: text("nucc_code"),
   is_active: boolean("is_active").notNull().default(true),
   mfa_secret: encryptedText("mfa_secret"), // encrypted TOTP secret, null if MFA not set up
   mfa_enabled: boolean("mfa_enabled").default(false),

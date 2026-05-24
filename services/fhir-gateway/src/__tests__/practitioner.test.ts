@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { toFhirPractitioner, isClinicalRole } from "../generators/practitioner.js";
+import {
+  toFhirPractitioner,
+  isClinicalRole,
+  US_NPI_IDENTIFIER_SYSTEM,
+  NUCC_TAXONOMY_SYSTEM,
+} from "../generators/practitioner.js";
 import { CAREBRIDGE_IDENTIFIER_BASE } from "../generators/identifiers.js";
+import { US_CORE_PRACTITIONER } from "../generators/us-core-profiles.js";
 
 type User = Parameters<typeof toFhirPractitioner>[0];
 
@@ -18,6 +24,8 @@ function makeUser(overrides: Partial<User> = {}): User {
     mfa_secret: null,
     mfa_enabled: false,
     recovery_codes: null,
+    npi: null,
+    nucc_code: null,
     created_at: "2026-01-01T00:00:00.000Z",
     updated_at: "2026-01-01T00:00:00.000Z",
     ...overrides,
@@ -217,6 +225,146 @@ describe("toFhirPractitioner (#388)", () => {
       );
       expect(p.name?.[0]?.family).toBe("Plato");
       expect(p.name?.[0]?.given).toBeUndefined();
+    });
+  });
+
+  describe("US Core Practitioner conformance (#947)", () => {
+    // Fake but plausible identifiers — never use a real provider's NPI.
+    const FAKE_NPI = "1234567890";
+    const FAKE_NUCC = "207RC0000X"; // Cardiologist, Clinical Cardiac Electrophysiology
+
+    it("with NPI + NUCC + specialty emits meta.profile = us-core-practitioner", () => {
+      const p = toFhirPractitioner(
+        makeUser({
+          npi: FAKE_NPI,
+          nucc_code: FAKE_NUCC,
+          specialty: "Clinical Cardiac Electrophysiology",
+        }),
+      );
+      expect(p.meta?.profile).toEqual([US_CORE_PRACTITIONER]);
+      expect(p.meta?.profile?.[0]).toBe(
+        "http://hl7.org/fhir/us/core/StructureDefinition/us-core-practitioner",
+      );
+    });
+
+    it("with NPI present, NPI identifier comes first with registered us-npi system", () => {
+      const p = toFhirPractitioner(
+        makeUser({
+          id: "prov-123",
+          npi: FAKE_NPI,
+          nucc_code: FAKE_NUCC,
+        }),
+      );
+      expect(p.identifier?.[0]?.system).toBe(US_NPI_IDENTIFIER_SYSTEM);
+      expect(p.identifier?.[0]?.system).toBe("http://hl7.org/fhir/sid/us-npi");
+      expect(p.identifier?.[0]?.value).toBe(FAKE_NPI);
+      // The internal user-id identifier is preserved for local lookups.
+      expect(p.identifier?.[1]?.system).toBe(
+        `${CAREBRIDGE_IDENTIFIER_BASE}/user-id`,
+      );
+      expect(p.identifier?.[1]?.value).toBe("prov-123");
+    });
+
+    it("with NUCC code, qualification carries NUCC coding alongside text", () => {
+      const p = toFhirPractitioner(
+        makeUser({
+          npi: FAKE_NPI,
+          nucc_code: FAKE_NUCC,
+          specialty: "Clinical Cardiac Electrophysiology",
+        }),
+      );
+      expect(p.qualification?.[0]?.code?.text).toBe(
+        "Clinical Cardiac Electrophysiology",
+      );
+      expect(p.qualification?.[0]?.code?.coding).toEqual([
+        {
+          system: NUCC_TAXONOMY_SYSTEM,
+          code: FAKE_NUCC,
+        },
+      ]);
+      expect(p.qualification?.[0]?.code?.coding?.[0]?.system).toBe(
+        "http://nucc.org/provider-taxonomy",
+      );
+    });
+
+    it("with NUCC code but no specialty, qualification has coding only (no text)", () => {
+      const p = toFhirPractitioner(
+        makeUser({
+          npi: FAKE_NPI,
+          nucc_code: FAKE_NUCC,
+          specialty: null,
+        }),
+      );
+      expect(p.qualification?.[0]?.code?.coding?.[0]?.code).toBe(FAKE_NUCC);
+      expect(p.qualification?.[0]?.code?.text).toBeUndefined();
+    });
+
+    it("without NPI and without NUCC: no meta.profile, urn-only identifier, text-only qualification", () => {
+      const p = toFhirPractitioner(
+        makeUser({
+          id: "prov-7",
+          npi: null,
+          nucc_code: null,
+          specialty: "Oncology",
+        }),
+      );
+      // No conformance claim.
+      expect(p.meta).toBeUndefined();
+      // Internal identifier only.
+      expect(p.identifier).toHaveLength(1);
+      expect(p.identifier?.[0]?.system).toBe(
+        `${CAREBRIDGE_IDENTIFIER_BASE}/user-id`,
+      );
+      expect(p.identifier?.[0]?.value).toBe("prov-7");
+      // Qualification stays text-only — pre-#947 behaviour.
+      expect(p.qualification?.[0]?.code?.text).toBe("Oncology");
+      expect(p.qualification?.[0]?.code?.coding).toBeUndefined();
+    });
+
+    it("NPI without NUCC: no meta.profile (gate requires both)", () => {
+      // Even with a registered identifier, we don't claim conformance
+      // until the NUCC qualification slice is also satisfied. Asserting
+      // the profile here would still fail downstream validators.
+      const p = toFhirPractitioner(
+        makeUser({
+          npi: FAKE_NPI,
+          nucc_code: null,
+          specialty: "Oncology",
+        }),
+      );
+      expect(p.meta).toBeUndefined();
+      // But the NPI identifier IS emitted regardless — it's a real
+      // registered identifier and useful for consumers even without
+      // the profile claim.
+      expect(p.identifier?.[0]?.system).toBe(US_NPI_IDENTIFIER_SYSTEM);
+    });
+
+    it("NUCC without NPI: no meta.profile (gate requires both)", () => {
+      const p = toFhirPractitioner(
+        makeUser({
+          npi: null,
+          nucc_code: FAKE_NUCC,
+          specialty: "Oncology",
+        }),
+      );
+      expect(p.meta).toBeUndefined();
+      // NUCC coding is still emitted — useful even without conformance.
+      expect(p.qualification?.[0]?.code?.coding?.[0]?.code).toBe(FAKE_NUCC);
+      // Only internal identifier, no NPI.
+      expect(p.identifier).toHaveLength(1);
+      expect(p.identifier?.[0]?.system).toBe(
+        `${CAREBRIDGE_IDENTIFIER_BASE}/user-id`,
+      );
+    });
+
+    it("omits qualification entirely when specialty AND nucc_code are both null", () => {
+      const p = toFhirPractitioner(
+        makeUser({
+          specialty: null,
+          nucc_code: null,
+        }),
+      );
+      expect(p.qualification).toBeUndefined();
     });
   });
 });
