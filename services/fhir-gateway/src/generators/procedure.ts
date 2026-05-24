@@ -9,6 +9,7 @@
 
 import type { procedures } from "@carebridge/db-schema";
 import type { FhirProcedure } from "../types/fhir-r4.js";
+import { US_CORE_PROCEDURE } from "./us-core-profiles.js";
 
 type ProcedureRow = typeof procedures.$inferSelect;
 
@@ -57,6 +58,9 @@ export function toFhirProcedure(
   const resource: FhirProcedure = {
     resourceType: "Procedure",
     id: procedure.id,
+    meta: {
+      profile: [US_CORE_PROCEDURE],
+    },
     status: mapProcedureStatus(procedure.status),
     subject: {
       reference: `Patient/${patientId}`,

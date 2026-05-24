@@ -30,8 +30,10 @@ const {
   resetFanoutConfigCacheForTests,
   getObservationCategories,
   getMedicationRequestStatus,
+  getMedicationRequestStatuses,
   DEFAULT_OBSERVATION_CATEGORIES,
   DEFAULT_MEDICATION_REQUEST_STATUS,
+  DEFAULT_MEDICATION_REQUEST_STATUSES,
   VALID_OBSERVATION_CATEGORIES,
   VALID_MEDICATION_REQUEST_STATUSES,
 } = await import("../sync/fanout-config.js");
@@ -180,41 +182,79 @@ describe("loadFanoutConfig — Observation code-set validation (#1110)", () => {
   });
 });
 
-describe("loadFanoutConfig — MedicationRequest status (#1098, #1110, #1111)", () => {
-  it("returns the MVP default 'active' when env is unset", () => {
-    expect(loadFanoutConfig({}).medicationRequestStatus).toBe("active");
+describe("loadFanoutConfig — MedicationRequest status (#1098, #1110, #1111, #1114)", () => {
+  it("returns the MVP default ['active'] when env is unset", () => {
+    expect(loadFanoutConfig({}).medicationRequestStatuses).toEqual(["active"]);
   });
 
-  it("DEFAULT_MEDICATION_REQUEST_STATUS matches the documented MVP value", () => {
+  it("DEFAULT_MEDICATION_REQUEST_STATUSES matches the documented MVP set", () => {
+    expect(DEFAULT_MEDICATION_REQUEST_STATUSES).toEqual(["active"]);
+  });
+
+  it("DEFAULT_MEDICATION_REQUEST_STATUS (singular) is back-compat alias for the first default", () => {
+    // Back-compat: singular constant is retained so downstream consumers
+    // pinned to the pre-#1114 export keep compiling.
     expect(DEFAULT_MEDICATION_REQUEST_STATUS).toBe("active");
   });
 
-  it("uses the EPIC_MEDICATION_REQUEST_STATUS override when set to a valid code", () => {
+  it("uses the EPIC_MEDICATION_REQUEST_STATUS override as a single-value list when set to a valid code", () => {
     expect(
       loadFanoutConfig({ EPIC_MEDICATION_REQUEST_STATUS: "on-hold" })
-        .medicationRequestStatus,
-    ).toBe("on-hold");
+        .medicationRequestStatuses,
+    ).toEqual(["on-hold"]);
   });
 
-  it("trims whitespace around the override", () => {
+  it("parses a comma-separated multi-status override (#1114)", () => {
+    expect(
+      loadFanoutConfig({
+        EPIC_MEDICATION_REQUEST_STATUS: "active,on-hold,completed",
+      }).medicationRequestStatuses,
+    ).toEqual(["active", "on-hold", "completed"]);
+  });
+
+  it("trims whitespace around the override (single value)", () => {
     expect(
       loadFanoutConfig({
         EPIC_MEDICATION_REQUEST_STATUS: "  completed  ",
-      }).medicationRequestStatus,
-    ).toBe("completed");
+      }).medicationRequestStatuses,
+    ).toEqual(["completed"]);
+  });
+
+  it("trims whitespace around comma-separated entries (#1114)", () => {
+    expect(
+      loadFanoutConfig({
+        EPIC_MEDICATION_REQUEST_STATUS: " active , on-hold , completed ",
+      }).medicationRequestStatuses,
+    ).toEqual(["active", "on-hold", "completed"]);
+  });
+
+  it("drops empty segments (trailing comma, double comma) (#1114)", () => {
+    expect(
+      loadFanoutConfig({
+        EPIC_MEDICATION_REQUEST_STATUS: "active,,on-hold,",
+      }).medicationRequestStatuses,
+    ).toEqual(["active", "on-hold"]);
+  });
+
+  it("deduplicates repeated statuses (#1114)", () => {
+    expect(
+      loadFanoutConfig({
+        EPIC_MEDICATION_REQUEST_STATUS: "active,active,on-hold",
+      }).medicationRequestStatuses,
+    ).toEqual(["active", "on-hold"]);
   });
 
   it("warns and falls back when env is the empty string", () => {
     const cfg = loadFanoutConfig({ EPIC_MEDICATION_REQUEST_STATUS: "" });
-    expect(cfg.medicationRequestStatus).toBe("active");
+    expect(cfg.medicationRequestStatuses).toEqual(["active"]);
     expect(warnSpy).toHaveBeenCalledOnce();
     const [msg] = warnSpy.mock.calls[0]!;
-    expect(msg).toMatch(/EPIC_MEDICATION_REQUEST_STATUS.*empty/);
+    expect(msg).toMatch(/EPIC_MEDICATION_REQUEST_STATUS/);
   });
 
-  it("warns and falls back when env is only whitespace", () => {
-    const cfg = loadFanoutConfig({ EPIC_MEDICATION_REQUEST_STATUS: "   " });
-    expect(cfg.medicationRequestStatus).toBe("active");
+  it("warns and falls back when env is only whitespace/commas", () => {
+    const cfg = loadFanoutConfig({ EPIC_MEDICATION_REQUEST_STATUS: "   ,  ,  " });
+    expect(cfg.medicationRequestStatuses).toEqual(["active"]);
     expect(warnSpy).toHaveBeenCalledOnce();
   });
 
@@ -222,23 +262,47 @@ describe("loadFanoutConfig — MedicationRequest status (#1098, #1110, #1111)", 
     const cfg = loadFanoutConfig({
       EPIC_MEDICATION_REQUEST_STATUS: "in-progress",
     });
-    expect(cfg.medicationRequestStatus).toBe("active");
+    expect(cfg.medicationRequestStatuses).toEqual(["active"]);
     expect(warnSpy).toHaveBeenCalledOnce();
     const [msg, meta] = warnSpy.mock.calls[0]!;
     expect(msg).toMatch(/not a known FHIR medication-request-status/);
     expect(meta).toMatchObject({
-      raw: "in-progress",
-      fallback: "active",
+      invalidCodes: ["in-progress"],
+      fallback: ["active"],
     });
   });
 
-  it("accepts all 8 valid FHIR medication-request-status codes", () => {
+  it("drops unknown codes from a partial misconfig but keeps the valid ones (#1114)", () => {
+    const cfg = loadFanoutConfig({
+      EPIC_MEDICATION_REQUEST_STATUS: "active,in-progress,on-hold,foo",
+    });
+    expect(cfg.medicationRequestStatuses).toEqual(["active", "on-hold"]);
+    expect(warnSpy).toHaveBeenCalledOnce();
+    const [msg, meta] = warnSpy.mock.calls[0]!;
+    expect(msg).toMatch(/unknown FHIR medication-request-status/);
+    expect(meta).toMatchObject({
+      invalidCodes: ["in-progress", "foo"],
+      kept: ["active", "on-hold"],
+    });
+  });
+
+  it("falls back to defaults when ALL codes are unknown (#1114)", () => {
+    const cfg = loadFanoutConfig({
+      EPIC_MEDICATION_REQUEST_STATUS: "foo,bar,baz",
+    });
+    expect(cfg.medicationRequestStatuses).toEqual(["active"]);
+    expect(warnSpy).toHaveBeenCalledOnce();
+    const [, meta] = warnSpy.mock.calls[0]!;
+    expect(meta).toMatchObject({ invalidCodes: ["foo", "bar", "baz"] });
+  });
+
+  it("accepts all 8 valid FHIR medication-request-status codes individually", () => {
     for (const status of VALID_MEDICATION_REQUEST_STATUSES) {
       warnSpy.mockClear();
       const cfg = loadFanoutConfig({
         EPIC_MEDICATION_REQUEST_STATUS: status,
       });
-      expect(cfg.medicationRequestStatus).toBe(status);
+      expect(cfg.medicationRequestStatuses).toEqual([status]);
       expect(warnSpy).not.toHaveBeenCalled();
     }
   });
@@ -281,8 +345,8 @@ describe("parseFanoutConfig — pure-eval mode (#1116)", () => {
     });
     expect(warnings[1]!.msg).toMatch(/not a known FHIR medication-request-status/);
     expect(warnings[1]!.meta).toMatchObject({
-      raw: "in-progress",
-      fallback: "active",
+      invalidCodes: ["in-progress"],
+      fallback: ["active"],
     });
   });
 
@@ -316,22 +380,30 @@ describe("getFanoutConfig caching (#1112)", () => {
     expect(second).toEqual(first);
   });
 
-  it("getObservationCategories / getMedicationRequestStatus read from the cache", () => {
+  it("getObservationCategories / getMedicationRequestStatuses read from the cache", () => {
     const cfg = getFanoutConfig();
     expect(getObservationCategories()).toBe(cfg.observationCategories);
-    expect(getMedicationRequestStatus()).toBe(cfg.medicationRequestStatus);
+    expect(getMedicationRequestStatuses()).toBe(cfg.medicationRequestStatuses);
+  });
+
+  it("getMedicationRequestStatus (singular, back-compat) returns the first element of the plural list", () => {
+    // Singular helper is retained as a thin wrapper for downstream
+    // consumers pinned to the pre-#1114 API. New code should call the
+    // plural helper.
+    const cfg = getFanoutConfig();
+    expect(getMedicationRequestStatus()).toBe(cfg.medicationRequestStatuses[0]);
   });
 
   it("the cached config is deeply frozen — mutation attempts throw", () => {
     const cfg = getFanoutConfig();
     expect(Object.isFrozen(cfg)).toBe(true);
     expect(Object.isFrozen(cfg.observationCategories)).toBe(true);
+    expect(Object.isFrozen(cfg.medicationRequestStatuses)).toBe(true);
     expect(() => {
       (cfg.observationCategories as string[]).push("foo");
     }).toThrow(TypeError);
     expect(() => {
-      (cfg as { medicationRequestStatus: string }).medicationRequestStatus =
-        "stopped";
+      (cfg.medicationRequestStatuses as string[]).push("stopped");
     }).toThrow(TypeError);
   });
 });
