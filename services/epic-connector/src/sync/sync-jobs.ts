@@ -421,6 +421,16 @@ export function describeMissingElement(err: unknown): string {
 const FHIR_ELEMENT_PATH = /^[A-Z][A-Za-z]+(\.[a-z][A-Za-z]+)+$/;
 
 /**
+ * Max allowed length for a path-shaped diagnostic to forward into
+ * persisted clinician-visible state. Real FHIR element paths are short
+ * (`MedicationRequest.dosageInstruction.doseAndRate.doseQuantity.value`
+ * is ~64 chars); 80 is generous headroom without being a meaningful
+ * exfil channel. Layered on top of the 1KiB row-level cap in
+ * {@link markFailed} per Copilot review on PR #1142.
+ */
+const FHIR_ELEMENT_PATH_MAX_LEN = 80;
+
+/**
  * Defense-in-depth sanitizer for the missing-element diagnostic before
  * it lands in clinician-visible persisted state (#1132).
  *
@@ -430,7 +440,8 @@ const FHIR_ELEMENT_PATH = /^[A-Z][A-Za-z]+(\.[a-z][A-Za-z]+)+$/;
  * {@link markFailed} is a backstop, but the persisted `last_error_message`
  * is surfaced to clinicians via the portal — so we layer a stricter
  * structural gate on top: if the diagnostic doesn't match the
- * `Resource.element[.subElement]` shape, treat it as untrusted free-form
+ * `Resource.element[.subElement]` shape (or is longer than
+ * {@link FHIR_ELEMENT_PATH_MAX_LEN}), treat it as untrusted free-form
  * content and fall back to a non-revealing placeholder. Callers must
  * route the FULL diagnostic to logs (where it's bounded by audit-log
  * retention) so dev/operator debugging is unaffected.
@@ -438,8 +449,12 @@ const FHIR_ELEMENT_PATH = /^[A-Z][A-Za-z]+(\.[a-z][A-Za-z]+)+$/;
  * Picked Option A (allow-list pattern) over Option B (length cap)
  * because Epic's 59108 sub-code structurally promises a path — the
  * allow-list is the narrower, more defensive assertion of that promise.
+ * The 80-char inner cap is a belt-and-suspenders addition on top of the
+ * regex (Copilot review on PR #1142): regex-matching but unexpectedly
+ * long inputs are also dropped.
  */
 export function sanitizeMissingElementForPersistence(raw: string): string {
+  if (raw.length > FHIR_ELEMENT_PATH_MAX_LEN) return "missing element (see logs)";
   return FHIR_ELEMENT_PATH.test(raw) ? raw : "missing element (see logs)";
 }
 

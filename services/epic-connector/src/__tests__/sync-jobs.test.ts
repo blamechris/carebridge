@@ -1094,9 +1094,12 @@ describe("Epic sync-jobs (#391)", () => {
     // is surfaced via clinician-portal tRPC — so if a future Epic
     // schema drift ever puts free-form text in `diagnostics` (potentially
     // PHI-adjacent or just operator-confusing), the sanitization gate
-    // must drop it and substitute a non-revealing placeholder. The
-    // FULL diagnostic still goes to `log.error` for dev debugging —
-    // verified by the "diagnostic" payload field on the log call.
+    // must drop it and substitute a non-revealing placeholder. This
+    // test asserts ONLY the persistence side (markFailed.errorMessage).
+    // The full diagnostic still going to `log.error` is verified by
+    // code inspection at `sync-jobs.ts` (the `diagnostic` payload
+    // field on the log call) — the module-level logger isn't mocked
+    // in this file so we don't spy on it here.
     const rawDiagnostic =
       "Some free-form NOT-a-path text that should never reach clinicians";
     const client = {
@@ -1180,6 +1183,20 @@ describe("Epic sync-jobs (#391)", () => {
         "patient John Doe MRN 12345 missing field",
       ),
     ).toBe(fallback);
+
+    // Regex-matching but unexpectedly long inputs are also dropped
+    // by the 80-char inner cap (defense-in-depth on top of the 1KiB
+    // row-level cap in markFailed, per Copilot review on PR #1142).
+    // Construct a path-shaped string > 80 chars: "Resource." (9) +
+    // 80x "a" = 89 chars total — the local FHIR_ELEMENT_PATH regex
+    // would match (uppercase root + lowercase-start segment + only
+    // A-Za-z), so the cap is what drops it.
+    const tooLongPath = `Resource.${"a".repeat(80)}`;
+    expect(tooLongPath.length).toBeGreaterThan(80);
+    // Cross-check that the input IS path-shaped — i.e. the only
+    // reason it's rejected is the length cap, not the regex.
+    expect(/^[A-Z][A-Za-z]+(\.[a-z][A-Za-z]+)+$/.test(tooLongPath)).toBe(true);
+    expect(sanitizeMissingElementForPersistence(tooLongPath)).toBe(fallback);
   });
 
   it("first-category soft-skip + second-category genuine error → result.skipped + markFailed both carry the partial soft-skip", async () => {
