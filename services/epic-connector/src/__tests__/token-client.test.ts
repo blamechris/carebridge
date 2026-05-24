@@ -188,6 +188,13 @@ describe("EpicTokenClient (#389)", () => {
     // Set up a pending fetch that we will invalidate before resolving.
     // After invalidate(), the next call should kick off its own fetch
     // rather than reusing the dropped in-flight promise.
+    //
+    // CRITICAL ordering (#1143): we resolve the SECOND fetch FIRST and
+    // the FIRST (invalidated) fetch LAST. This is the real-world race —
+    // the dropped promise often settles after the retry has already
+    // populated the cache with a fresh token. Without a generation
+    // guard, the late-resolving first fetch overwrites the fresh cache
+    // with stale data and the next caller reads a stale token.
     let resolveFirst: (response: Response) => void;
     let resolveSecond: (response: Response) => void;
     const firstPending = new Promise<Response>((resolve) => {
@@ -210,14 +217,68 @@ describe("EpicTokenClient (#389)", () => {
     // start a brand-new fetch.
     const secondCall = client.getAccessToken();
 
-    resolveFirst!(tokenResponse({ access_token: "first-token" }));
+    // Resolve the SECOND (retry) fetch first — it populates the cache
+    // with the fresh token.
     resolveSecond!(tokenResponse({ access_token: "second-token" }));
-
-    const [first, second] = await Promise.all([firstCall, secondCall]);
+    await secondCall;
+    // NOW resolve the FIRST (invalidated, stale) fetch. It must NOT
+    // overwrite the cache.
+    resolveFirst!(tokenResponse({ access_token: "first-token" }));
+    const first = await firstCall;
+    const second = await secondCall;
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(first).toBe("first-token");
     expect(second).toBe("second-token");
+
+    // The race-critical assertion: after both promises settle, a
+    // subsequent caller must see the FRESH (second) token from cache,
+    // not the stale (first) one that resolved last.
+    const subsequent = await client.getAccessToken();
+    expect(subsequent).toBe("second-token");
+    // No additional fetch — third call served from cache.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not overwrite cache when an invalidated fetch resolves after a fresh fetch (#1143)", async () => {
+    // Race sequence:
+    //   1. Call A starts -> in-flight P1
+    //   2. (Server 401 elsewhere) -> tokens.invalidate() drops P1 + cache
+    //   3. Retry: Call B starts -> in-flight P2 -> P2 resolves fresh
+    //   4. P1 finally resolves with STALE token
+    //   5. Next caller must read the FRESH token, not the stale one.
+    let resolveFirst: (response: Response) => void;
+    let resolveSecond: (response: Response) => void;
+    const firstPending = new Promise<Response>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const secondPending = new Promise<Response>((resolve) => {
+      resolveSecond = resolve;
+    });
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => firstPending)
+      .mockImplementationOnce(() => secondPending);
+    const client = new EpicTokenClient(makeConfig(privatePem), fetchMock);
+
+    const firstCall = client.getAccessToken();
+    client.invalidate();
+    const secondCall = client.getAccessToken();
+
+    // Fresh retry resolves first and populates the cache.
+    resolveSecond!(tokenResponse({ access_token: "fresh-token" }));
+    expect(await secondCall).toBe("fresh-token");
+
+    // Now the stale, invalidated fetch finally settles. It MUST NOT
+    // write back to this.cached — that would be a stale overwrite.
+    resolveFirst!(tokenResponse({ access_token: "stale-token" }));
+    await firstCall;
+
+    // The fresh token from the retry remains cached.
+    const nextToken = await client.getAccessToken();
+    expect(nextToken).toBe("fresh-token");
+    // Still only 2 underlying fetches.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("clears the in-flight promise when the token request fails (#1089)", async () => {
