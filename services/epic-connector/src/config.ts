@@ -23,12 +23,51 @@
  *                               registered JWKS has more than one entry.
  */
 import { readFileSync } from "node:fs";
+import { createPrivateKey } from "node:crypto";
 import { z } from "zod";
 
 const SANDBOX_TOKEN_URL =
   "https://fhir.epic.com/interconnect-fhir-oauth/oauth2/token";
 const SANDBOX_FHIR_BASE_URL =
   "https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4/";
+
+/**
+ * Fully parse + validate the private key PEM at config load (#1089).
+ *
+ * Previously this checked only for the presence of PEM-header
+ * substrings, which let non-RSA PKCS#8 keys and passphrase-encrypted
+ * PEMs through to surface as confusing signing errors at the first
+ * token request. We now feed the PEM to `crypto.createPrivateKey` and
+ * assert the resulting KeyObject is RSA so we fail loudly at boot.
+ *
+ * The function throws a plain `Error` with a clear, no-PHI message so
+ * the Zod `refine` wrapper around it can pass the message straight
+ * through to the operator.
+ */
+function assertRsaPrivateKey(pem: string): void {
+  // Encrypted PKCS#8 PEMs are wrapped in `-----BEGIN ENCRYPTED PRIVATE
+  // KEY-----`. Detect this header upfront so we can surface a clear,
+  // stable message — OpenSSL's parse-failure text for missing
+  // passphrases varies by Node/OpenSSL version (e.g. "bad decrypt",
+  // "interrupted or cancelled") and isn't safe to match on.
+  if (/-----BEGIN ENCRYPTED PRIVATE KEY-----/.test(pem)) {
+    throw new Error(
+      "private key must NOT be encrypted (passphrase-protected PEM is not supported; provide a decrypted RSA key)",
+    );
+  }
+  let key;
+  try {
+    key = createPrivateKey({ key: pem, format: "pem" });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`private key is not a valid PEM: ${message}`);
+  }
+  if (key.asymmetricKeyType !== "rsa") {
+    throw new Error(
+      `private key must be RSA (got ${key.asymmetricKeyType ?? "unknown"}); Epic SMART Backend Services requires RS384`,
+    );
+  }
+}
 
 const configSchema = z.object({
   clientId: z.string().min(1, "EPIC_CLIENT_ID is required"),
@@ -37,12 +76,16 @@ const configSchema = z.object({
   privateKeyPem: z
     .string()
     .min(1)
-    .refine(
-      (pem) =>
-        pem.includes("BEGIN RSA PRIVATE KEY") ||
-        pem.includes("BEGIN PRIVATE KEY"),
-      "private key must be a PEM-encoded RSA key",
-    ),
+    .superRefine((pem, ctx) => {
+      try {
+        assertRsaPrivateKey(pem);
+      } catch (err) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }),
   jwtKid: z.string().min(1, "EPIC_JWT_KID is required"),
 });
 

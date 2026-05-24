@@ -129,6 +129,69 @@ describe("loadEpicConfig (#389)", () => {
         EPIC_PRIVATE_KEY_PATH: bogus,
         EPIC_JWT_KID: "kid-001",
       }),
-    ).toThrow(/private key must be a PEM/);
+    ).toThrow(/private key/i);
+  });
+
+  it("accepts a valid RSA PKCS#8 private key (#1089)", () => {
+    // beforeEach already produces an RSA PKCS#8 PEM and writes it to
+    // pemPath. This case re-asserts the happy path via the new
+    // crypto.createPrivateKey validation path.
+    const cfg = loadEpicConfig({
+      EPIC_CLIENT_ID: "abc-123",
+      EPIC_PRIVATE_KEY_PATH: pemPath,
+      EPIC_JWT_KID: "kid-001",
+    });
+    expect(cfg.privateKeyPem).toBe(privatePem);
+  });
+
+  it("accepts a valid RSA PKCS#1 private key (#1089)", () => {
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const pkcs1Pem = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
+    const pkcs1Path = join(tmpDir, "epic-pkcs1.pem");
+    writeFileSync(pkcs1Path, pkcs1Pem, "utf8");
+
+    const cfg = loadEpicConfig({
+      EPIC_CLIENT_ID: "abc-123",
+      EPIC_PRIVATE_KEY_PATH: pkcs1Path,
+      EPIC_JWT_KID: "kid-001",
+    });
+    expect(cfg.privateKeyPem).toBe(pkcs1Pem);
+  });
+
+  it("rejects a non-RSA (EC) private key with a clear message (#1089)", () => {
+    const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const ecPem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+    const ecPath = join(tmpDir, "epic-ec.pem");
+    writeFileSync(ecPath, ecPem, "utf8");
+
+    expect(() =>
+      loadEpicConfig({
+        EPIC_CLIENT_ID: "abc-123",
+        EPIC_PRIVATE_KEY_PATH: ecPath,
+        EPIC_JWT_KID: "kid-001",
+      }),
+    ).toThrow(/must be RSA/i);
+  });
+
+  it("rejects an encrypted PEM (passphrase-protected) with a clear message (#1089)", () => {
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const encPem = privateKey
+      .export({
+        type: "pkcs8",
+        format: "pem",
+        cipher: "aes-256-cbc",
+        passphrase: "x",
+      })
+      .toString();
+    const encPath = join(tmpDir, "epic-encrypted.pem");
+    writeFileSync(encPath, encPem, "utf8");
+
+    expect(() =>
+      loadEpicConfig({
+        EPIC_CLIENT_ID: "abc-123",
+        EPIC_PRIVATE_KEY_PATH: encPath,
+        EPIC_JWT_KID: "kid-001",
+      }),
+    ).toThrow(/encrypted|passphrase/i);
   });
 });
