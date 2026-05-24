@@ -172,6 +172,61 @@ describe("toDoseQuantity — UCUM-lhc validator integration (#978)", () => {
   });
 });
 
+describe("toDoseQuantity — prototype-pollution defence (#1138 Copilot review)", () => {
+  // `medications.dose_unit` is free-text clinician input flowing through
+  // tRPC → BullMQ → fhir-gateway. The alias table is a Record<string,string>
+  // backed by `Object.create(null)`, but defence-in-depth `typeof === "string"`
+  // guards in the lookup sites ensure that even if the table is ever
+  // refactored back to a plain object, prototype-chain lookups on inputs
+  // like `__proto__` / `constructor` cannot leak non-string `code` values
+  // into the emitted FHIR Quantity. The validator itself may still accept
+  // the literal string as a UCUM annotation, but the FHIR shape contract
+  // (`code` is a string when present) must hold.
+  it("never emits a non-string `code` for `__proto__` input", () => {
+    const q = toDoseQuantity(1, "__proto__");
+    if (q.code !== undefined) {
+      expect(typeof q.code).toBe("string");
+    }
+  });
+
+  it("never emits a non-string `code` for `constructor` input", () => {
+    const q = toDoseQuantity(1, "constructor");
+    if (q.code !== undefined) {
+      expect(typeof q.code).toBe("string");
+    }
+  });
+
+  it("never emits a non-string `code` for Object.prototype method names", () => {
+    for (const name of [
+      "hasOwnProperty",
+      "isPrototypeOf",
+      "propertyIsEnumerable",
+      "toLocaleString",
+      "valueOf",
+      "toString",
+    ]) {
+      const q = toDoseQuantity(1, name);
+      if (q.code !== undefined) {
+        expect(typeof q.code).toBe("string");
+      }
+    }
+  });
+
+  it("does not crash isUcumAllowed on prototype-key inputs", () => {
+    for (const name of [
+      "__proto__",
+      "constructor",
+      "hasOwnProperty",
+      "toString",
+    ]) {
+      // Just assert it returns a boolean without throwing — the predicate's
+      // semantic answer is incidental, what matters is no prototype-object
+      // leak through the alias-lookup branch.
+      expect(typeof isUcumAllowed(name)).toBe("boolean");
+    }
+  });
+});
+
 describe("isUcumAllowed", () => {
   it("accepts the common mass / volume / time codes", () => {
     for (const u of ["mg", "g", "mL", "L", "ug", "kg"]) {

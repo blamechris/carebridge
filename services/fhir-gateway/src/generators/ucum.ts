@@ -72,49 +72,59 @@ const UCUM_SYSTEM = "http://unitsofmeasure.org";
  *  - `MG` is megaGauss in strict UCUM; in clinical context it always
  *    means milligrams, so we coerce.
  */
-const NON_UCUM_TO_UCUM_CODE: Record<string, string> = {
-  // Tablet / dose-form annotations
-  tablet: "{tbl}",
-  tablets: "{tbl}",
-  tab: "{tbl}",
-  tabs: "{tbl}",
-  capsule: "{cap}",
-  capsules: "{cap}",
-  cap: "{cap}",
-  caps: "{cap}",
-  puff: "{puff}",
-  puffs: "{puff}",
-  drop: "{drop}",
-  drops: "{drop}",
-  spray: "{spray}",
-  sprays: "{spray}",
-  patch: "{patch}",
-  patches: "{patch}",
-  // International-unit forms — clinicians type IU/Unit/units; UCUM is [iU]
-  iu: "[iU]",
-  "international units": "[iU]",
-  unit: "[iU]",
-  units: "[iU]",
-  u: "[iU]",
-  // Clinical "mcg" → canonical UCUM "ug" (microgram)
-  mcg: "ug",
-  "mcg/h": "ug/h",
-  "mcg/kg": "ug/kg",
-  "mcg/min": "ug/min",
-  // Case-canonicalisation: lowercase forms → case-sensitive UCUM canonical
-  ml: "mL",
-  l: "L",
-  dl: "dL",
-  ul: "uL",
-  "mmol/l": "mmol/L",
-  "mg/dl": "mg/dL",
-  "ng/ml": "ng/mL",
-  "pg/ml": "pg/mL",
-  "g/dl": "g/dL",
-  "mg/ml": "mg/mL",
-  // 'MG' (megaGauss in strict UCUM) → milligrams in clinical context
-  mg: "mg",
-};
+// Use `Object.assign(Object.create(null), …)` so the lookup table has no
+// prototype chain. `medications.dose_unit` is free-text from clinician
+// input — a plain-object lookup with bracket access would resolve keys
+// like `__proto__` / `constructor` via `Object.prototype`, returning the
+// prototype object / Object constructor function and emitting them as
+// the FHIR `code` field. A null-prototype object eliminates that class
+// of bug entirely; lookups for non-own keys return `undefined`.
+const NON_UCUM_TO_UCUM_CODE: Record<string, string> = Object.assign(
+  Object.create(null) as Record<string, string>,
+  {
+    // Tablet / dose-form annotations
+    tablet: "{tbl}",
+    tablets: "{tbl}",
+    tab: "{tbl}",
+    tabs: "{tbl}",
+    capsule: "{cap}",
+    capsules: "{cap}",
+    cap: "{cap}",
+    caps: "{cap}",
+    puff: "{puff}",
+    puffs: "{puff}",
+    drop: "{drop}",
+    drops: "{drop}",
+    spray: "{spray}",
+    sprays: "{spray}",
+    patch: "{patch}",
+    patches: "{patch}",
+    // International-unit forms — clinicians type IU/Unit/units; UCUM is [iU]
+    iu: "[iU]",
+    "international units": "[iU]",
+    unit: "[iU]",
+    units: "[iU]",
+    u: "[iU]",
+    // Clinical "mcg" → canonical UCUM "ug" (microgram)
+    mcg: "ug",
+    "mcg/h": "ug/h",
+    "mcg/kg": "ug/kg",
+    "mcg/min": "ug/min",
+    // Case-canonicalisation: lowercase forms → case-sensitive UCUM canonical
+    ml: "mL",
+    l: "L",
+    dl: "dL",
+    ul: "uL",
+    "mmol/l": "mmol/L",
+    "mg/dl": "mg/dL",
+    "ng/ml": "ng/mL",
+    "pg/ml": "pg/mL",
+    "g/dl": "g/dL",
+    "mg/ml": "mg/mL",
+    // 'MG' (megaGauss in strict UCUM) → milligrams in clinical context
+    mg: "mg",
+  },
+);
 
 /**
  * Lazy-loaded singleton UcumLhcUtils. The constructor populates a ~500KB
@@ -130,6 +140,22 @@ function getUtils(): UcumLhcUtilsLike {
 }
 
 /**
+ * Per-process memo of validator results keyed by raw input. A bulk FHIR
+ * export over a patient's medication history sees the same handful of
+ * unit strings (`mg`, `mg/kg`, `mL`, …) repeated across many resources;
+ * caching the validator's verdict avoids re-parsing each call against
+ * the ~3.5k-entry unit table. Stores both hits (canonical code) and
+ * misses (`null`) so invalid inputs are also short-circuited on retry.
+ *
+ * Bounded to a reasonable size to defend against memory growth from a
+ * pathological caller pumping unique unit strings; UCUM-valid forms in
+ * clinical use number in the low hundreds, so a 1024-entry ceiling is
+ * comfortably above the working set.
+ */
+const VALIDATOR_CACHE_MAX = 1024;
+const validatorCache: Map<string, string | null> = new Map();
+
+/**
  * Run the validator without leaking its stderr-noisy "blank spaces are
  * not allowed" / "please specify a unit" error paths. Returns the
  * canonical UCUM code on success, null otherwise.
@@ -139,15 +165,26 @@ function validateViaLhc(input: string): string | null {
   if (input.length === 0 || /\s/.test(input)) {
     return null;
   }
-  try {
-    const result = getUtils().validateUnitString(input, false);
-    if (result.status === "valid" && typeof result.ucumCode === "string") {
-      return result.ucumCode;
-    }
-    return null;
-  } catch {
-    return null;
+  const cached = validatorCache.get(input);
+  if (cached !== undefined || validatorCache.has(input)) {
+    return cached ?? null;
   }
+  let result: string | null;
+  try {
+    const r = getUtils().validateUnitString(input, false);
+    result =
+      r.status === "valid" && typeof r.ucumCode === "string" ? r.ucumCode : null;
+  } catch {
+    result = null;
+  }
+  // Evict the oldest entry on overflow — Map iteration is insertion-ordered,
+  // so the first key returned by `keys()` is the longest-resident entry.
+  if (validatorCache.size >= VALIDATOR_CACHE_MAX) {
+    const oldest = validatorCache.keys().next().value;
+    if (oldest !== undefined) validatorCache.delete(oldest);
+  }
+  validatorCache.set(input, result);
+  return result;
 }
 
 export interface DoseQuantity {
@@ -175,9 +212,12 @@ export function toDoseQuantity(value: number, unit: string): DoseQuantity {
   const lower = trimmed.toLowerCase();
 
   // 1. Alias table first. Catches `mcg`, `IU`, `tablet`, `MG`, and the
-  //    lowercase volume forms (`ml` → `mL`).
+  //    lowercase volume forms (`ml` → `mL`). The table is null-prototype,
+  //    so bracket access cannot resolve inherited keys like `__proto__`;
+  //    the `typeof === "string"` guard is belt-and-suspenders for any
+  //    future refactor that swaps the table back to a plain object.
   const aliased = NON_UCUM_TO_UCUM_CODE[lower];
-  if (aliased !== undefined) {
+  if (typeof aliased === "string") {
     return {
       value,
       unit,
@@ -219,8 +259,10 @@ export function isUcumAllowed(unit: string): boolean {
 
   // Alias-table hit, but only if the mapped target is a real UCUM code
   // (not a curly-brace annotation that the validator would also accept).
+  // `typeof === "string"` defends against the prototype-pollution class
+  // of bug — see the matching comment in `toDoseQuantity`.
   const aliased = NON_UCUM_TO_UCUM_CODE[lower];
-  if (aliased !== undefined) {
+  if (typeof aliased === "string") {
     if (aliased.startsWith("{")) return false;
     return validateViaLhc(aliased) !== null;
   }
