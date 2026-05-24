@@ -230,7 +230,9 @@ describe("toFhirPractitioner (#388)", () => {
 
   describe("US Core Practitioner conformance (#947)", () => {
     // Fake but plausible identifiers — never use a real provider's NPI.
-    const FAKE_NPI = "1234567890";
+    // 1234567893 is the standard textbook NPI Luhn example; verified
+    // valid by the CMS check-digit algorithm (#1150).
+    const FAKE_NPI = "1234567893";
     const FAKE_NUCC = "207RC0000X"; // Cardiologist, Clinical Cardiac Electrophysiology
 
     it("with NPI + NUCC + specialty emits meta.profile = us-core-practitioner", () => {

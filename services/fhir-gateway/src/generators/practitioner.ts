@@ -17,6 +17,7 @@ import type {
   PractitionerQualification,
 } from "../types/fhir-r4.js";
 import { CAREBRIDGE_IDENTIFIER_BASE } from "./identifiers.js";
+import { isValidNpi, isValidNuccCode } from "./practitioner-validation.js";
 import { US_CORE_PRACTITIONER } from "./us-core-profiles.js";
 
 /**
@@ -216,16 +217,30 @@ function buildPractitionerName(user: UserRow): HumanName {
 }
 
 export function toFhirPractitioner(user: UserRow): FhirPractitioner {
+  // Shape-validate the optional clinician identifier columns before any
+  // FHIR emission decision (#1150). The DB CHECK constraints in
+  // `0053_npi_nucc_check.sql` already enforce the regex shape, but the
+  // NPI Luhn check-digit cannot be expressed in plain SQL, so the
+  // app-layer remains the authoritative gate. An invalid value still
+  // sits in the column (it shouldn't, post-0053, but historic rows or
+  // any future shape-bypass would land here); we degrade gracefully
+  // rather than emitting a malformed identifier.
+  const npiIsValid = user.npi !== null && isValidNpi(user.npi);
+  const nuccIsValid = user.nucc_code !== null && isValidNuccCode(user.nucc_code);
+
   // US Core Practitioner identifier slice (#947): when the user row
-  // carries an NPI we emit it first with the registered `us-npi`
-  // system so the primary identifier satisfies the profile. The
-  // existing internal `/user-id` identifier stays as a secondary entry
-  // so local lookups (audit join, internal references) keep working.
+  // carries a SHAPE-VALID NPI we emit it first with the registered
+  // `us-npi` system so the primary identifier satisfies the profile.
+  // The existing internal `/user-id` identifier stays as a secondary
+  // entry so local lookups (audit join, internal references) keep
+  // working. A column value that fails shape validation is silently
+  // dropped from `identifier[]` — see #1150 for the rationale (false
+  // conformance > omitted conformance).
   const identifier: Identifier[] = [];
-  if (user.npi) {
+  if (npiIsValid) {
     identifier.push({
       system: US_NPI_IDENTIFIER_SYSTEM,
-      value: user.npi,
+      value: user.npi!,
     });
   }
   identifier.push({
@@ -233,22 +248,23 @@ export function toFhirPractitioner(user: UserRow): FhirPractitioner {
     value: user.id,
   });
 
-  // Qualification / specialty. If the row has a NUCC taxonomy code we
-  // attach a `coding` alongside the free-text specialty so consumers
-  // can map specialties without parsing English. Without a NUCC code
-  // we keep the legacy text-only shape — emitting an unverified code
-  // is worse for interop than emitting none.
+  // Qualification / specialty. If the row has a SHAPE-VALID NUCC
+  // taxonomy code we attach a `coding` alongside the free-text
+  // specialty so consumers can map specialties without parsing English.
+  // Without a valid NUCC code we keep the legacy text-only shape —
+  // emitting an unverified code is worse for interop than emitting
+  // none.
   let qualification: PractitionerQualification[] | undefined;
-  if (user.specialty || user.nucc_code) {
+  if (user.specialty || nuccIsValid) {
     const code: PractitionerQualification["code"] = {};
     if (user.specialty) {
       code.text = user.specialty;
     }
-    if (user.nucc_code) {
+    if (nuccIsValid) {
       code.coding = [
         {
           system: NUCC_TAXONOMY_SYSTEM,
-          code: user.nucc_code,
+          code: user.nucc_code!,
         },
       ];
     }
@@ -262,19 +278,19 @@ export function toFhirPractitioner(user: UserRow): FhirPractitioner {
     name: [buildPractitionerName(user)],
   };
 
-  // US Core Practitioner conformance gate (#947).
+  // US Core Practitioner conformance gate (#947, tightened by #1150).
   //
   // The profile requires at least one identifier with a registered
   // system AND SHOULD carry a NUCC qualification coding. We declare
-  // `meta.profile` only when both signals are present on the row —
-  // emitting it without them would be a false conformance claim that
-  // downstream validators would flag.
+  // `meta.profile` only when BOTH signals are present AND shape-valid
+  // on the row — emitting it without valid values would be a false
+  // conformance claim that downstream validators would flag.
   //
-  // Rows with neither signal continue to emit the pre-#947 shape: no
-  // meta.profile, internal-namespace identifier, text-only
-  // qualification. That keeps existing consumers and the
+  // Rows with missing OR malformed signals continue to emit the
+  // pre-#947 shape: no meta.profile, internal-namespace identifier,
+  // text-only qualification. That keeps existing consumers and the
   // unbackfilled-row case backward compatible.
-  if (user.npi && user.nucc_code) {
+  if (npiIsValid && nuccIsValid) {
     resource.meta = {
       profile: [US_CORE_PRACTITIONER],
     };
