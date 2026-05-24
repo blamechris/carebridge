@@ -25,6 +25,9 @@ import {
   US_CORE_RESPIRATORY_RATE,
   US_CORE_BODY_TEMPERATURE,
   US_CORE_BODY_WEIGHT,
+  US_CORE_BODY_HEIGHT,
+  US_CORE_BMI,
+  US_CORE_HEAD_CIRCUMFERENCE,
   US_CORE_VITAL_SUB_PROFILES,
 } from "../generators/us-core-profiles.js";
 import type { Vital, VitalType } from "@carebridge/shared-types";
@@ -87,6 +90,24 @@ describe("US Core vital-signs sub-profiles (#1145)", () => {
         value_primary: 75,
         unit: "kg",
       },
+      {
+        type: "body_height",
+        subProfile: US_CORE_BODY_HEIGHT,
+        value_primary: 175,
+        unit: "cm",
+      },
+      {
+        type: "bmi",
+        subProfile: US_CORE_BMI,
+        value_primary: 24.5,
+        unit: "kg/m2",
+      },
+      {
+        type: "head_circumference",
+        subProfile: US_CORE_HEAD_CIRCUMFERENCE,
+        value_primary: 35,
+        unit: "cm",
+      },
     ];
 
     for (const c of cases) {
@@ -126,11 +147,11 @@ describe("US Core vital-signs sub-profiles (#1145)", () => {
       // future / unrecognised values, but the generator must still be
       // defensive at runtime so an unexpected payload from a legacy import
       // or upstream system does not crash the exporter.
-      const unknown = "head_circumference" as unknown as VitalType;
+      const unknown = "waist_circumference" as unknown as VitalType;
       const o = toFhirVitalObservation(
         makeVital({
           type: unknown,
-          value_primary: 35,
+          value_primary: 80,
           unit: "cm",
         }),
         "p1",
@@ -153,6 +174,11 @@ describe("US Core vital-signs sub-profiles (#1145)", () => {
         US_CORE_BODY_TEMPERATURE,
       );
       expect(US_CORE_VITAL_SUB_PROFILES.weight).toBe(US_CORE_BODY_WEIGHT);
+      expect(US_CORE_VITAL_SUB_PROFILES.body_height).toBe(US_CORE_BODY_HEIGHT);
+      expect(US_CORE_VITAL_SUB_PROFILES.bmi).toBe(US_CORE_BMI);
+      expect(US_CORE_VITAL_SUB_PROFILES.head_circumference).toBe(
+        US_CORE_HEAD_CIRCUMFERENCE,
+      );
     });
 
     it("all sub-profile URLs share the US Core StructureDefinition base", () => {
@@ -164,6 +190,9 @@ describe("US Core vital-signs sub-profiles (#1145)", () => {
         US_CORE_RESPIRATORY_RATE,
         US_CORE_BODY_TEMPERATURE,
         US_CORE_BODY_WEIGHT,
+        US_CORE_BODY_HEIGHT,
+        US_CORE_BMI,
+        US_CORE_HEAD_CIRCUMFERENCE,
       ]) {
         expect(url.startsWith(base)).toBe(true);
       }
@@ -187,6 +216,15 @@ describe("US Core vital-signs sub-profiles (#1145)", () => {
       );
       expect(US_CORE_BODY_WEIGHT).toBe(
         "http://hl7.org/fhir/us/core/StructureDefinition/us-core-body-weight",
+      );
+      expect(US_CORE_BODY_HEIGHT).toBe(
+        "http://hl7.org/fhir/us/core/StructureDefinition/us-core-body-height",
+      );
+      expect(US_CORE_BMI).toBe(
+        "http://hl7.org/fhir/us/core/StructureDefinition/us-core-bmi",
+      );
+      expect(US_CORE_HEAD_CIRCUMFERENCE).toBe(
+        "http://hl7.org/fhir/us/core/StructureDefinition/us-core-head-circumference",
       );
     });
   });
