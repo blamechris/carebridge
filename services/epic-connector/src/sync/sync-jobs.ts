@@ -367,7 +367,7 @@ function isUnauthorizedSubResourceError(err: unknown): boolean {
  * because 59108 indicates a code bug that we WANT to surface as a
  * loud failure rather than rescue with a fragile heuristic.
  */
-function isMissingRequiredElementError(err: unknown): boolean {
+export function isMissingRequiredElementError(err: unknown): boolean {
   return (
     err instanceof EpicFhirError &&
     err.hasIssueCode(EPIC_ERROR_CODES.MISSING_REQUIRED_ELEMENT)
@@ -380,7 +380,7 @@ function isMissingRequiredElementError(err: unknown): boolean {
  * generic "A required element is missing" into actionable feedback
  * ("Required element missing: MedicationRequest.intent").
  */
-function describeMissingElement(err: unknown): string {
+export function describeMissingElement(err: unknown): string {
   if (!(err instanceof EpicFhirError) || !err.operationOutcome) {
     return "missing element (no diagnostics)";
   }
