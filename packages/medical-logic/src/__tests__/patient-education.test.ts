@@ -28,6 +28,39 @@ describe("getDiagnosisEducation (#328)", () => {
     expect(getDiagnosisEducation(null, "Mild asthma")?.title).toMatch(/Asthma/);
   });
 
+  it("covers the #948 batch (CAD, stroke, lipids, thyroid, GERD, OA, migraine)", () => {
+    expect(getDiagnosisEducation("I25.10", null)?.title).toMatch(/Coronary Artery/);
+    expect(getDiagnosisEducation("I63.9", null)?.title).toMatch(/Stroke/);
+    expect(getDiagnosisEducation("E78.5", null)?.title).toMatch(/Cholesterol/);
+    expect(getDiagnosisEducation("E03.9", null)?.title).toMatch(/Underactive Thyroid/);
+    expect(getDiagnosisEducation("K21.9", null)?.title).toMatch(/Acid Reflux/);
+    expect(getDiagnosisEducation("M17.11", null)?.title).toMatch(/Knee Osteoarthritis/);
+    expect(getDiagnosisEducation("M19.90", null)?.title).toMatch(/Osteoarthritis/);
+    expect(getDiagnosisEducation("G43.909", null)?.title).toMatch(/Migraine/);
+  });
+
+  it("#948 entries also resolve via description keyword fallback", () => {
+    expect(getDiagnosisEducation(null, "Coronary artery disease")?.title).toMatch(/Coronary Artery/);
+    expect(getDiagnosisEducation(null, "History of ischemic stroke")?.title).toMatch(/Stroke/);
+    expect(getDiagnosisEducation(null, "Mixed hyperlipidemia")?.title).toMatch(/Cholesterol/);
+    expect(getDiagnosisEducation(null, "Hypothyroidism")?.title).toMatch(/Underactive Thyroid/);
+    expect(getDiagnosisEducation(null, "GERD")?.title).toMatch(/Acid Reflux/);
+    expect(getDiagnosisEducation(null, "Knee osteoarthritis")?.title).toMatch(/Knee Osteoarthritis/);
+    expect(getDiagnosisEducation(null, "Osteoarthritis of the hand")?.title).toMatch(/Osteoarthritis/);
+    expect(getDiagnosisEducation(null, "Chronic migraine")?.title).toMatch(/Migraine/);
+  });
+
+  it("does not mis-route non-ischemic stroke or non-GERD reflux to the #948 cards", () => {
+    // `heat stroke` (T67.0) and `sun stroke` are environmental heat illness, not ischemic stroke.
+    // The I63 keyword fallback must not catch them via a bare `\bstroke\b`.
+    expect(getDiagnosisEducation(null, "Heat stroke")).toBeNull();
+    expect(getDiagnosisEducation(null, "Sun stroke")).toBeNull();
+    // `vesicoureteral reflux` (N13.7) and `laryngopharyngeal reflux` (R49.x / J38.x) are not GERD.
+    // The K21 keyword fallback must not catch them via a bare `\breflux\b`.
+    expect(getDiagnosisEducation(null, "Vesicoureteral reflux")).toBeNull();
+    expect(getDiagnosisEducation(null, "Laryngopharyngeal reflux")).toBeNull();
+  });
+
   it("returns null for diagnoses we don't have content for", () => {
     expect(getDiagnosisEducation("Z99.0", "Some niche status")).toBeNull();
     expect(getDiagnosisEducation(null, "morgellons")).toBeNull();
@@ -97,7 +130,24 @@ describe("content invariants (#328)", () => {
   });
 
   it("covers the most common adult chronic conditions", () => {
-    for (const prefix of ["E11", "I10", "I48", "I50", "J45", "J44", "N18", "F32"]) {
+    for (const prefix of [
+      "E03",
+      "E11",
+      "E78",
+      "F32",
+      "G43",
+      "I10",
+      "I25",
+      "I48",
+      "I50",
+      "I63",
+      "J44",
+      "J45",
+      "K21",
+      "M17",
+      "M19",
+      "N18",
+    ]) {
       expect(DIAGNOSIS_EDUCATION_TABLE[prefix]).toBeDefined();
     }
   });
