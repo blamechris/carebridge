@@ -272,11 +272,20 @@ async function syncResourceType(
       skipped: result.skipped.map(({ filter, reason }) => ({ filter, reason })),
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const baseMessage = err instanceof Error ? err.message : String(err);
+    // #1124: when Epic returns the structured "required element missing"
+    // code (59108), prefix the persisted error with the missing-element
+    // diagnostic so the failed row in epic_sync_state names the field
+    // (not just a generic 400 message). Helps the operator/dev fix the
+    // upstream request-shape bug without spelunking through job logs.
+    const message = isMissingRequiredElementError(err)
+      ? `Epic required element missing: ${describeMissingElement(err)} — ${baseMessage}`
+      : baseMessage;
     log.error("Epic sync — resource-type failure", {
       patientId: args.patientId,
       resourceType: args.resourceType,
       error: message,
+      missingRequiredElement: isMissingRequiredElementError(err),
     });
     await markFailed({
       patientId: args.patientId,
@@ -343,6 +352,39 @@ function isUnauthorizedSubResourceError(err: unknown): boolean {
     return true;
   }
   return false;
+}
+
+/**
+ * Detect Epic's "A required element is missing" 400 (#1124). Distinct
+ * from the unauthorized-sub-resource code in policy: 59022 → soft-skip
+ * (registered app lacks scope), 59108 → SURFACE (request shape is
+ * wrong, almost always a code bug).
+ *
+ * The discrimination is structural — pure FHIR-spec match on the
+ * coding — and only fires on a structurally trusted OperationOutcome
+ * (see `tryParseOperationOutcome` for the gate). No substring fallback
+ * because 59108 indicates a code bug that we WANT to surface as a
+ * loud failure rather than rescue with a fragile heuristic.
+ */
+function isMissingRequiredElementError(err: unknown): boolean {
+  return (
+    err instanceof EpicFhirError &&
+    err.hasIssueCode(EPIC_ERROR_CODES.MISSING_REQUIRED_ELEMENT)
+  );
+}
+
+/**
+ * Extract the missing-element diagnostic from an Epic 59108
+ * OperationOutcome so the error message names the field — turns a
+ * generic "A required element is missing" into actionable feedback
+ * ("Required element missing: MedicationRequest.intent").
+ */
+function describeMissingElement(err: unknown): string {
+  if (!(err instanceof EpicFhirError) || !err.operationOutcome) {
+    return "missing element (no diagnostics)";
+  }
+  const issue = err.operationOutcome.issue?.[0];
+  return issue?.diagnostics ?? issue?.details?.text ?? "missing element (no diagnostics)";
 }
 
 /**

@@ -1027,6 +1027,56 @@ describe("Epic sync-jobs (#391)", () => {
   // mutates the result's skipped array as it goes, so partial collection
   // survives the throw and is persisted alongside the failure status.
 
+  it("MISSING_REQUIRED_ELEMENT (59108) surfaces with the diagnostic in markFailed's errorMessage (#1124)", async () => {
+    // Simulates Epic responding with a structured 400-with-OO carrying
+    // the 59108 code and an Epic diagnostic naming the missing field.
+    // syncResourceType should NOT swallow this (it's a code bug, not a
+    // scope issue) and the persisted error message should name the
+    // missing element so an operator can fix the request shape upstream.
+    const client = {
+      readPatient: vi.fn(),
+      searchAll: vi.fn().mockImplementation(() =>
+        (async function* () {
+          throw new EpicFhirError(
+            "Epic FHIR request returned 400 Bad Request — A required element is missing.",
+            400,
+            "Bad Request",
+            "{...}",
+            {
+              resourceType: "OperationOutcome",
+              issue: [
+                {
+                  severity: "fatal",
+                  code: "required",
+                  diagnostics: "MedicationRequest.intent",
+                  details: {
+                    text: "A required element is missing.",
+                    coding: [{ system: "epic", code: "59108" }],
+                  },
+                },
+              ],
+            } satisfies OperationOutcome,
+          );
+        })(),
+      ),
+    } as unknown as Parameters<typeof runFullSync>[1]["client"];
+
+    await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "Condition",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    expect(markFailed).toHaveBeenCalledOnce();
+    const args = markFailed.mock.calls[0]![0] as { errorMessage: string };
+    expect(args.errorMessage).toMatch(/Epic required element missing/);
+    expect(args.errorMessage).toMatch(/MedicationRequest\.intent/);
+  });
+
   it("first-category soft-skip + second-category genuine error → result.skipped + markFailed both carry the partial soft-skip", async () => {
     const client = {
       readPatient: vi.fn(),

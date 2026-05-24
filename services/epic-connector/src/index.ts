@@ -97,6 +97,7 @@ export {
 } from "./sync/sync-state-repo.js";
 export {
   loadFanoutConfig,
+  parseFanoutConfig,
   getFanoutConfig,
   getObservationCategories,
   getMedicationRequestStatus,
@@ -105,6 +106,8 @@ export {
   VALID_OBSERVATION_CATEGORIES,
   VALID_MEDICATION_REQUEST_STATUSES,
   type FanoutConfig,
+  type FanoutConfigWarning,
+  type ParsedFanoutConfig,
 } from "./sync/fanout-config.js";
 export {
   persistPatient,
@@ -121,8 +124,11 @@ export {
   enqueueFullSync,
   enqueueIncrementalSync,
   enqueueSingleResourceSync,
+  summarise,
+  SUMMARISE_SKIPPED_DETAIL_CAP,
   EPIC_SYNC_QUEUE_NAME,
   type EpicSyncJobData,
+  type SyncSummary,
 } from "./workers/sync-worker.js";
 export { epicSyncRouter, type EpicSyncRouter } from "./router.js";
 export {

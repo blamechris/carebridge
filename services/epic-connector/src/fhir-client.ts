@@ -52,12 +52,21 @@ const log = createLogger("epic-fhir-client");
  * from a fronting proxy). NOT the full payload — callers needing the
  * complete body must re-fetch.
  */
+/**
+ * Maximum bytes captured in `EpicFhirError.body` / surfaced from
+ * `safeReadBody` / serialised by `operationOutcomeError` (#1126).
+ * Keeps log lines + error dialogs bounded while preserving enough
+ * context to identify the failure. The full payload is in worker
+ * logs / DLQ for forensics.
+ */
+const MAX_BODY_SNIPPET_BYTES = 500;
+
 export class EpicFhirError extends Error {
   constructor(
     message: string,
     public readonly status: number,
     public readonly statusText: string,
-    /** Truncated body snippet (≤500 chars). Do NOT assume full payload. */
+    /** Truncated body snippet (≤MAX_BODY_SNIPPET_BYTES chars). Do NOT assume full payload. */
     public readonly body: string,
     public readonly operationOutcome?: OperationOutcome,
   ) {
@@ -509,7 +518,7 @@ function joinUrl(base: string, path: string): string {
 async function safeReadBody(response: Response): Promise<string> {
   try {
     const text = await response.text();
-    return text.slice(0, 500);
+    return text.slice(0, MAX_BODY_SNIPPET_BYTES);
   } catch {
     return "";
   }
@@ -545,7 +554,7 @@ function operationOutcomeError(
     message,
     status,
     statusText,
-    JSON.stringify(outcome).slice(0, 500),
+    JSON.stringify(outcome).slice(0, MAX_BODY_SNIPPET_BYTES),
     outcome,
   );
 }

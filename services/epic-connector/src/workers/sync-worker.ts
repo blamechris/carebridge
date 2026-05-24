@@ -201,7 +201,13 @@ export function startEpicSyncWorker(): Worker<EpicSyncJobData> | null {
   return worker;
 }
 
-interface SyncSummary {
+/**
+ * Public shape of the BullMQ job-result payload. Re-exported from the
+ * package root so dashboards / admin tooling can type
+ * `job.returnvalue` against this directly instead of redefining the
+ * shape (which drifts when fields are added — #1128).
+ */
+export interface SyncSummary {
   imported: number;
   updated: number;
   conflicts: number;
@@ -219,8 +225,14 @@ interface SyncSummary {
  * set is already persisted to `epic_sync_state.skipped_sub_resources`
  * via markOk/markFailed — operators have a recovery path via the DB
  * for the long tail. The cap protects the Redis-persisted BullMQ
- * job result payload from bloating as fan-out widens (e.g., the
- * future multi-status MedicationRequest fan-out under #1114).
+ * job result payload from bloating as fan-out widens.
+ *
+ * Re-evaluate once #1114 (multi-status MedicationRequest fan-out)
+ * lands (#1129): today's typical fan-out produces ≤5 skipped entries,
+ * leaving 10× headroom. Post-#1114 the typical case could reach 20-30
+ * and a single auth-scope flap could fill the cap — at that point
+ * consider raising or making env-configurable via
+ * `EPIC_SUMMARISE_SKIPPED_DETAIL_CAP`.
  */
 export const SUMMARISE_SKIPPED_DETAIL_CAP = 50;
 
@@ -235,7 +247,17 @@ export const SUMMARISE_SKIPPED_DETAIL_CAP = 50;
  * via `skippedDetailTruncated` so dashboards can render "+N more".
  *
  * Single-pass implementation (#1121) — avoids the O(N²) spread-in-reduce
- * pattern. Not measurable today with N ≤ 5 but matters as fan-out grows.
+ * pattern. Past the cap the inner loop is skipped (#1127) so very
+ * large skipped arrays don't pay per-item iteration cost.
+ *
+ * **Iteration-order stability** (#1129): the cap keeps the FIRST N
+ * entries by iteration order, not a random sample. Order is the
+ * caller's `results: SyncResult[]` order — typically the
+ * `SUPPORTED_RESOURCE_TYPES` order set by `runFullSync` /
+ * `runIncrementalSync`. Truncated payloads are reproducible across
+ * re-runs of the same sync; consumers depending on truncation
+ * stability should not silently reorder fan-out without bumping a
+ * versioned field on the result.
  *
  * Exported for unit testing — the worker callbacks invoke it directly.
  */

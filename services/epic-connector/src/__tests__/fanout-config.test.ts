@@ -25,6 +25,7 @@ vi.mock("@carebridge/logger", () => ({
 
 const {
   loadFanoutConfig,
+  parseFanoutConfig,
   getFanoutConfig,
   resetFanoutConfigCacheForTests,
   getObservationCategories,
@@ -245,6 +246,58 @@ describe("loadFanoutConfig — MedicationRequest status (#1098, #1110, #1111)", 
   it("does NOT warn when env is unset", () => {
     loadFanoutConfig({});
     expect(warnSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("parseFanoutConfig — pure-eval mode (#1116)", () => {
+  it("returns the same config as loadFanoutConfig for any given env", () => {
+    const env = {
+      EPIC_OBSERVATION_CATEGORIES: "vital-signs,laboratory,exam",
+      EPIC_MEDICATION_REQUEST_STATUS: "completed",
+    };
+    const loaded = loadFanoutConfig(env);
+    const { config } = parseFanoutConfig(env);
+    expect(config).toEqual(loaded);
+  });
+
+  it("does NOT emit any warnings via the module logger — admin/diagnostics tooling can preview an env safely", () => {
+    parseFanoutConfig({
+      EPIC_OBSERVATION_CATEGORIES: "foo,bar",
+      EPIC_MEDICATION_REQUEST_STATUS: "in-progress",
+    });
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns warnings as a structured array so admin tooling can render them without scraping log output", () => {
+    const { warnings } = parseFanoutConfig({
+      EPIC_OBSERVATION_CATEGORIES: "vital-signs,foo",
+      EPIC_MEDICATION_REQUEST_STATUS: "in-progress",
+    });
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]!.msg).toMatch(/unknown FHIR observation-category/);
+    expect(warnings[0]!.meta).toMatchObject({
+      invalidCodes: ["foo"],
+      kept: ["vital-signs"],
+    });
+    expect(warnings[1]!.msg).toMatch(/not a known FHIR medication-request-status/);
+    expect(warnings[1]!.meta).toMatchObject({
+      raw: "in-progress",
+      fallback: "active",
+    });
+  });
+
+  it("returns an empty warnings array when env is unset (no operator intent to override)", () => {
+    const { warnings } = parseFanoutConfig({});
+    expect(warnings).toEqual([]);
+  });
+
+  it("loadFanoutConfig is a thin wrapper — it forwards parseFanoutConfig's warnings to the logger", () => {
+    loadFanoutConfig({
+      EPIC_OBSERVATION_CATEGORIES: "foo,bar",
+    });
+    expect(warnSpy).toHaveBeenCalledOnce();
+    const [msg] = warnSpy.mock.calls[0]!;
+    expect(msg).toMatch(/EPIC_OBSERVATION_CATEGORIES/);
   });
 });
 
