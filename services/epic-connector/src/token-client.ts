@@ -73,6 +73,16 @@ export class EpicTokenClient {
    * retry path takes over for subsequent callers.
    */
   private inFlight: Promise<TokenResponse> | null = null;
+  /**
+   * Monotonic generation counter (#1143). Incremented every time
+   * {@link invalidate} is called so any fetch already running when
+   * invalidate() fired can tell that its result is stale and must NOT
+   * overwrite the cache (which a successful retry may have already
+   * populated with a fresh token). Each fetch captures the generation
+   * it was started under and only writes back to `cached` / `inFlight`
+   * if that generation is still current.
+   */
+  private generation = 0;
 
   constructor(
     private readonly config: EpicConfig,
@@ -106,17 +116,24 @@ export class EpicTokenClient {
     }
 
     const issuedAtMs = this.nowMs();
-    this.inFlight = this.fetchToken(scopes, issuedAtMs);
+    // Capture the generation BEFORE kicking off the fetch (#1143). If
+    // invalidate() fires while we're awaiting, `this.generation` will
+    // have advanced; fetchToken() checks that and refuses to write
+    // back stale results to either the cache or the in-flight slot.
+    const myGen = this.generation;
+    const pending = this.fetchToken(scopes, issuedAtMs, myGen);
+    this.inFlight = pending;
     try {
-      const parsed = await this.inFlight;
+      const parsed = await pending;
       return parsed.access_token;
     } finally {
-      // Always clear the in-flight slot — whether the fetch resolved or
-      // rejected — so the next caller observes a clean state. On
-      // failure the cache is untouched (no `this.cached` write) and the
-      // next call will issue its own retry; on success the cache has
-      // been populated and the next call is served from it.
-      this.inFlight = null;
+      // Only clear the in-flight slot if it's still ours. If
+      // invalidate() ran while we were awaiting, the slot has already
+      // been cleared (or a newer fetch from the same generation has
+      // populated it) and we must not stomp on the newer state.
+      if (this.generation === myGen && this.inFlight === pending) {
+        this.inFlight = null;
+      }
     }
   }
 
@@ -128,6 +145,7 @@ export class EpicTokenClient {
   private async fetchToken(
     scopes: string[],
     issuedAtMs: number,
+    startedAtGen: number,
   ): Promise<TokenResponse> {
     const assertion = buildClientAssertion({
       clientId: this.config.clientId,
@@ -175,10 +193,17 @@ export class EpicTokenClient {
     }
 
     const parsed = (await response.json()) as TokenResponse;
-    this.cached = {
-      response: parsed,
-      expiresAtMs: issuedAtMs + parsed.expires_in * 1000,
-    };
+    // Only write back to the cache if our generation is still current
+    // (#1143). If invalidate() fired while we were awaiting fetch /
+    // response.json(), our result is stale — a subsequent retry may
+    // already have populated `cached` with a fresh token and we must
+    // not stomp on it.
+    if (this.generation === startedAtGen) {
+      this.cached = {
+        response: parsed,
+        expiresAtMs: issuedAtMs + parsed.expires_in * 1000,
+      };
+    }
     return parsed;
   }
 
@@ -193,6 +218,12 @@ export class EpicTokenClient {
   invalidate(): void {
     this.cached = null;
     this.inFlight = null;
+    // Bump the generation so any fetch that is already in flight when
+    // invalidate() fires will see `this.generation !== startedAtGen`
+    // when it tries to write its result back. That prevents the dropped
+    // promise from overwriting a fresh token that a subsequent retry
+    // may have already cached (#1143).
+    this.generation += 1;
   }
 }
 
