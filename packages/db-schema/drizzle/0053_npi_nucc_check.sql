@@ -28,10 +28,18 @@
 -- NUCC code (the same NULL-tolerant contract documented on the
 -- columns in #947).
 
+-- Idempotency: drop any prior version of these constraints first so the
+-- migration is safe to re-apply in dev/test environments where the
+-- schema may already have them (e.g. squashed DB, manual apply, branch
+-- swap during local work). Pattern mirrored from 0026 and 0038.
+ALTER TABLE users
+  DROP CONSTRAINT IF EXISTS users_npi_shape_chk;
 ALTER TABLE users
   ADD CONSTRAINT users_npi_shape_chk
   CHECK (npi IS NULL OR npi ~ '^[0-9]{10}$');
 
+ALTER TABLE users
+  DROP CONSTRAINT IF EXISTS users_nucc_code_shape_chk;
 ALTER TABLE users
   ADD CONSTRAINT users_nucc_code_shape_chk
   CHECK (nucc_code IS NULL OR nucc_code ~ '^[A-Z0-9]{5}0000[A-Z]$');

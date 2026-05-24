@@ -79,8 +79,16 @@ describe("isValidNuccCode (#1150 — NUCC taxonomy shape)", () => {
     expect(isValidNuccCode("208000000X")).toBe(true);
   });
 
-  it("accepts lowercase-cased input (case-insensitive)", () => {
-    expect(isValidNuccCode("207rc0000x")).toBe(true);
+  it("rejects lowercase input (canonical NUCC is uppercase, DB CHECK is case-sensitive)", () => {
+    // Downstream FHIR validators (Inferno, Touchstone, HAPI) compare
+    // exact case against the registered NUCC code system. The DB CHECK
+    // constraint also enforces uppercase via `~ '^[A-Z0-9]{5}0000[A-Z]$'`.
+    // Accepting lowercase here would create an app/DB asymmetry and
+    // risk a false `meta.profile = us-core-practitioner` claim if a
+    // lowercase value ever reached the generator.
+    expect(isValidNuccCode("207rc0000x")).toBe(false);
+    expect(isValidNuccCode("207RC0000x")).toBe(false); // mixed case
+    expect(isValidNuccCode("207rC0000X")).toBe(false); // mixed case
   });
 
   it("rejects a code that is too short", () => {

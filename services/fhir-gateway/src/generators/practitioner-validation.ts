@@ -49,10 +49,15 @@ const NPI_SHAPE = /^[0-9]{10}$/;
  * locally; we validate shape only and let the operator-driven backfill
  * own correctness of the mapping.
  *
- * Case-insensitive; canonical codes from NUCC are uppercase. The DB
- * CHECK constraint mirrors this shape (anchored, A-Z + digits only).
+ * Case-sensitive: canonical NUCC codes are uppercase, and downstream
+ * validators (Inferno / Touchstone / HAPI) compare exact case against
+ * the registered code system. Accepting lowercase here would let a
+ * malformed value pass the app gate, then be emitted lowercase to the
+ * Practitioner resource — a false `meta.profile` claim. The DB CHECK
+ * constraint in `0053_npi_nucc_check.sql` mirrors this by using the
+ * case-sensitive `~` POSIX operator with `[A-Z0-9]` / `[A-Z]`.
  */
-const NUCC_SHAPE = /^[A-Z0-9]{5}0000[A-Z]$/i;
+const NUCC_SHAPE = /^[A-Z0-9]{5}0000[A-Z]$/;
 
 /**
  * True when `npi` is exactly 10 digits AND passes the CMS NPI
