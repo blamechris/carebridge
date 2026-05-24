@@ -488,4 +488,66 @@ describe("EpicTokenClient (#389)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(recovered).toBe("after-retry");
   });
+
+  it("emits a debug log when a stale-generation fetch is dropped (#1161)", async () => {
+    // After #1143 introduced the generation guard, a stale fetch that
+    // resolves AFTER invalidate() silently refuses to write back to the
+    // cache. Operators need observability into how often that happens —
+    // during a 401-driven invalidate storm the silent skip looked like a
+    // black hole. Assert that the skip path emits a structured debug log
+    // carrying both the captured and current generation counters so the
+    // churn is visible in log aggregators.
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    let resolveFirst: (response: Response) => void;
+    let resolveSecond: (response: Response) => void;
+    const firstPending = new Promise<Response>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const secondPending = new Promise<Response>((resolve) => {
+      resolveSecond = resolve;
+    });
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => firstPending)
+      .mockImplementationOnce(() => secondPending);
+    const client = new EpicTokenClient(makeConfig(privatePem), fetchMock);
+
+    // P1 in-flight -> invalidate() bumps generation -> P2 in-flight ->
+    // resolve P2 first (fresh) then P1 last (stale, must be dropped +
+    // logged).
+    const firstCall = client.getAccessToken();
+    client.invalidate();
+    const secondCall = client.getAccessToken();
+
+    resolveSecond!(tokenResponse({ access_token: "fresh-token" }));
+    await secondCall;
+    resolveFirst!(tokenResponse({ access_token: "stale-token" }));
+    await firstCall;
+
+    // Find the debug log emitted from the stale-skip branch. Other debug
+    // lines may exist in the future — filter by the expected msg.
+    const debugEntries = logSpy.mock.calls
+      .map((call) => {
+        try {
+          return JSON.parse(call[0] as string) as Record<string, unknown>;
+        } catch {
+          return undefined;
+        }
+      })
+      .filter(
+        (entry): entry is Record<string, unknown> =>
+          !!entry &&
+          entry.level === "debug" &&
+          typeof entry.msg === "string" &&
+          (entry.msg as string).includes("stale"),
+      );
+
+    expect(debugEntries.length).toBeGreaterThanOrEqual(1);
+    const entry = debugEntries[0]!;
+    expect(entry.startedAtGen).toBe(0);
+    expect(entry.currentGen).toBe(1);
+
+    logSpy.mockRestore();
+  });
 });
