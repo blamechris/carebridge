@@ -153,6 +153,54 @@ indistinguishable from one added the plain way.
   the `VALIDATE` migration as a follow-up issue at the time you
   merge the `NOT VALID` one.
 
+### FK-specific note: reduced lock level
+
+`ADD CONSTRAINT ... FOREIGN KEY` is the one exception to the
+`ACCESS EXCLUSIVE` rule. Per the
+[Postgres 16 ALTER TABLE docs](https://www.postgresql.org/docs/16/sql-altertable.html):
+
+> Although most forms of ADD _table_constraint_ require an ACCESS
+> EXCLUSIVE lock, ADD FOREIGN KEY requires only a SHARE ROW EXCLUSIVE
+> lock. Note that ADD FOREIGN KEY also acquires a SHARE ROW EXCLUSIVE
+> lock on the referenced table, in addition to the lock on the table
+> on which the constraint is declared.
+
+In practice this means (per the PG 16 [lock conflict
+matrix](https://www.postgresql.org/docs/16/explicit-locking.html),
+Table 13.2):
+
+- `ALTER TABLE child ADD CONSTRAINT ... FOREIGN KEY (parent_id) REFERENCES parent (id) NOT VALID`
+  takes `SHARE ROW EXCLUSIVE` on both the child and the referenced
+  parent. `SHARE ROW EXCLUSIVE` conflicts with `ROW EXCLUSIVE`,
+  `SHARE UPDATE EXCLUSIVE`, `SHARE`, `SHARE ROW EXCLUSIVE`,
+  `EXCLUSIVE`, and `ACCESS EXCLUSIVE`. In production terms: plain
+  `SELECT` (`ACCESS SHARE`) and `SELECT FOR UPDATE/SHARE`
+  (`ROW SHARE`) continue, but plain `INSERT`/`UPDATE`/`DELETE`
+  (which take `ROW EXCLUSIVE`) are blocked on both tables for the
+  duration of the catalog write. That window is normally
+  milliseconds because `NOT VALID` skips the row scan; the win
+  versus CHECK is that reads keep flowing and the writer pause is
+  near-instant instead of "however long the full-table scan takes".
+- Practical risk: the `SHARE ROW EXCLUSIVE` on the **referenced
+  parent** matters more than the lock on the child. Adding an FK to
+  a small child table can still briefly pause writes on a
+  high-traffic parent (e.g. `users`, `patients`). Plan the add for
+  a low-write window on the parent, not just on the child.
+- The two-step rollout is still required when the column is
+  populated: add `NOT VALID`, backfill any orphan rows that don't
+  resolve to a parent, then `VALIDATE CONSTRAINT`. `VALIDATE` takes
+  `SHARE UPDATE EXCLUSIVE` on the child plus `ROW SHARE` on the
+  referenced parent, so it does not block reads or row-level
+  writes.
+- New INSERTs and UPDATEs are FK-checked from the moment the
+  `NOT VALID` constraint lands — only pre-existing rows are
+  unvalidated.
+
+No worked example yet because the repo has no FK-on-populated-column
+migration to point at. The pattern is documented here so the next
+person reaching for it knows the lock floor is lower than the CHECK
+case above.
+
 ### NOT NULL on a populated column
 
 Plain `ALTER TABLE ... ALTER COLUMN x SET NOT NULL` is the same trap
