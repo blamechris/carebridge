@@ -164,4 +164,31 @@ describe("content invariants (#328)", () => {
       expect(MEDICATION_EDUCATION_TABLE[drug]).toBeDefined();
     }
   });
+
+  // Issue #950 — every diagnosis card carries 1-2 curated MedlinePlus /
+  // CDC / AHA / 988 links so a patient can read more from a source the
+  // care team trusts. The cap is 2 to keep the card scannable.
+  it("every diagnosis entry has 1-2 curated https links (#950)", () => {
+    for (const [key, c] of Object.entries(DIAGNOSIS_EDUCATION_TABLE)) {
+      expect(c.links, `diagnosis ${key} missing links`).toBeDefined();
+      expect(c.links!.length, `diagnosis ${key} link count`).toBeGreaterThanOrEqual(1);
+      expect(c.links!.length, `diagnosis ${key} link count`).toBeLessThanOrEqual(2);
+      for (const link of c.links!) {
+        expect(link.label, `diagnosis ${key} link label`).toMatch(/\S/);
+        expect(link.url, `diagnosis ${key} link url`).toMatch(/^https:\/\//);
+      }
+    }
+  });
+
+  it("diagnosis links point at authoritative health domains (#950)", () => {
+    // Whitelist of domains we curate from: NIH/NLM (MedlinePlus), CDC,
+    // AHA, NIMH/SAMHSA 988, and stroke.org (AHA-affiliated). Anything
+    // else should not slip into the table without a code-review beat.
+    const AUTHORITATIVE = /^https:\/\/(www\.)?(medlineplus\.gov|cdc\.gov|heart\.org|988lifeline\.org|stroke\.org|nimh\.nih\.gov)\//;
+    for (const [key, c] of Object.entries(DIAGNOSIS_EDUCATION_TABLE)) {
+      for (const link of c.links ?? []) {
+        expect(link.url, `diagnosis ${key} link "${link.url}"`).toMatch(AUTHORITATIVE);
+      }
+    }
+  });
 });

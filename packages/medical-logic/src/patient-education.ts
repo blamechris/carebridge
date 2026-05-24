@@ -68,6 +68,10 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
       "New numbness, tingling, or sores on your feet that won't heal.",
       "Blurred vision, chest pain, or trouble breathing — call 911.",
     ],
+    links: [
+      { label: "MedlinePlus: Type 2 Diabetes", url: "https://medlineplus.gov/diabetestype2.html" },
+      { label: "CDC: Type 2 Diabetes", url: "https://www.cdc.gov/diabetes/basics/type2.html" },
+    ],
   },
   E10: {
     title: "Type 1 Diabetes",
@@ -83,6 +87,10 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
       "Blood sugar above 250 mg/dL with ketones, nausea, or vomiting — call your care team the same day.",
       "Low blood sugar episodes you can't explain or that happen repeatedly.",
       "Confusion, trouble staying awake, or seizures — call 911.",
+    ],
+    links: [
+      { label: "MedlinePlus: Type 1 Diabetes", url: "https://medlineplus.gov/diabetestype1.html" },
+      { label: "CDC: Type 1 Diabetes", url: "https://www.cdc.gov/diabetes/basics/type1.html" },
     ],
   },
 
@@ -101,6 +109,10 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
       "Yellow skin or eyes, or severe belly pain.",
       "Side effects that make you want to stop the pill — there are usually other choices.",
     ],
+    links: [
+      { label: "MedlinePlus: Cholesterol", url: "https://medlineplus.gov/cholesterol.html" },
+      { label: "AHA: Cholesterol", url: "https://www.heart.org/en/health-topics/cholesterol" },
+    ],
   },
   E03: {
     title: "Underactive Thyroid (Hypothyroidism)",
@@ -116,6 +128,9 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
       "Chest pain, fast or pounding heartbeat, or shaky hands — your dose may be too high.",
       "New or worse tiredness, weight gain, or feeling cold all the time — your dose may be too low.",
       "Trouble swallowing the pill or any new neck swelling.",
+    ],
+    links: [
+      { label: "MedlinePlus: Hypothyroidism", url: "https://medlineplus.gov/hypothyroidism.html" },
     ],
   },
 
@@ -135,6 +150,10 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
       "Sudden shortness of breath, cold sweats, or pain in the jaw, arm, or back — call 911.",
       "Chest pain that comes with less effort than usual, or that wakes you up.",
     ],
+    links: [
+      { label: "MedlinePlus: Coronary Artery Disease", url: "https://medlineplus.gov/coronaryarterydisease.html" },
+      { label: "AHA: What Is Coronary Artery Disease", url: "https://www.heart.org/en/health-topics/consumer-healthcare/what-is-cardiovascular-disease/coronary-artery-disease" },
+    ],
   },
   I63: {
     title: "Stroke (Ischemic, Past)",
@@ -151,6 +170,10 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
       "Sudden bad headache, confusion, or trouble walking — call 911.",
       "New numbness or weakness on one side of the body, even if it goes away.",
     ],
+    links: [
+      { label: "MedlinePlus: Ischemic Stroke", url: "https://medlineplus.gov/ischemicstroke.html" },
+      { label: "American Stroke Association", url: "https://www.stroke.org/" },
+    ],
   },
   I10: {
     title: "High Blood Pressure (Hypertension)",
@@ -165,6 +188,10 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
     when_to_contact_provider: [
       "Blood pressure above 180/120 on two readings 5 minutes apart — call your care team now.",
       "Chest pain, severe headache, trouble seeing, or trouble speaking — call 911.",
+    ],
+    links: [
+      { label: "MedlinePlus: High Blood Pressure", url: "https://medlineplus.gov/highbloodpressure.html" },
+      { label: "CDC: High Blood Pressure", url: "https://www.cdc.gov/bloodpressure/index.htm" },
     ],
   },
   I48: {
@@ -181,6 +208,10 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
       "Bleeding that won't stop, blood in stool or urine, or severe bruising.",
       "Fainting, chest pain, or heartbeat over 130 at rest.",
     ],
+    links: [
+      { label: "MedlinePlus: Atrial Fibrillation", url: "https://medlineplus.gov/atrialfibrillation.html" },
+      { label: "AHA: Atrial Fibrillation", url: "https://www.heart.org/en/health-topics/atrial-fibrillation" },
+    ],
   },
   I50: {
     title: "Heart Failure",
@@ -196,6 +227,10 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
       "Weight gain of 2+ lbs overnight or 5+ lbs in a week — call your care team.",
       "New shortness of breath lying flat, or needing extra pillows to sleep.",
       "Swelling in both legs that is new or worse than usual.",
+    ],
+    links: [
+      { label: "MedlinePlus: Heart Failure", url: "https://medlineplus.gov/heartfailure.html" },
+      { label: "AHA: Heart Failure", url: "https://www.heart.org/en/health-topics/heart-failure" },
     ],
   },
 
@@ -214,6 +249,9 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
       "Swelling, pain, or red streaks in a leg (could be a new clot).",
       "Nose or gum bleeding that doesn't stop, or blood in urine or stool.",
     ],
+    links: [
+      { label: "MedlinePlus: Pulmonary Embolism", url: "https://medlineplus.gov/pulmonaryembolism.html" },
+    ],
   },
   I80: {
     title: "Blood Clot in a Vein (DVT)",
@@ -228,6 +266,9 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
       "Sudden trouble breathing or chest pain — call 911.",
       "New leg swelling, warmth, or red streaks above the clot.",
       "Bruising or bleeding you can't easily stop.",
+    ],
+    links: [
+      { label: "MedlinePlus: Deep Vein Thrombosis", url: "https://medlineplus.gov/deepveinthrombosis.html" },
     ],
   },
 
@@ -246,6 +287,10 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
       "Rescue inhaler not helping, or using it more than 2 times a week outside exercise.",
       "Lips or fingertips turning blue, trouble speaking a full sentence — call 911.",
     ],
+    links: [
+      { label: "MedlinePlus: Asthma", url: "https://medlineplus.gov/asthma.html" },
+      { label: "CDC: Asthma", url: "https://www.cdc.gov/asthma/default.htm" },
+    ],
   },
   J44: {
     title: "COPD (Chronic Obstructive Pulmonary Disease)",
@@ -261,6 +306,10 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
       "More shortness of breath than usual, or new green / yellow mucus.",
       "Fever above 101°F or confusion — call your care team the same day.",
       "Severe trouble breathing, lips turning blue — call 911.",
+    ],
+    links: [
+      { label: "MedlinePlus: COPD", url: "https://medlineplus.gov/copd.html" },
+      { label: "CDC: COPD", url: "https://www.cdc.gov/copd/index.html" },
     ],
   },
 
@@ -278,6 +327,10 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
       "Thoughts of hurting yourself or others — call 988 (Suicide & Crisis Lifeline) or 911.",
       "New or worsening anxiety, sleep trouble, or side effects.",
     ],
+    links: [
+      { label: "MedlinePlus: Depression", url: "https://medlineplus.gov/depression.html" },
+      { label: "988 Suicide & Crisis Lifeline", url: "https://988lifeline.org/" },
+    ],
   },
   F41: {
     title: "Anxiety",
@@ -291,6 +344,10 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
     when_to_contact_provider: [
       "Panic attacks that interrupt your day or sleep for over a week.",
       "Thoughts of harming yourself — call 988 or 911.",
+    ],
+    links: [
+      { label: "MedlinePlus: Anxiety", url: "https://medlineplus.gov/anxiety.html" },
+      { label: "988 Suicide & Crisis Lifeline", url: "https://988lifeline.org/" },
     ],
   },
 
@@ -310,6 +367,10 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
       "Less urine than usual, or urine that is pink or red.",
       "Confusion, nausea, or extreme tiredness — call the same day.",
     ],
+    links: [
+      { label: "MedlinePlus: Chronic Kidney Disease", url: "https://medlineplus.gov/chronickidneydisease.html" },
+      { label: "CDC: Chronic Kidney Disease", url: "https://www.cdc.gov/kidney-disease/" },
+    ],
   },
 
   // Gastrointestinal
@@ -327,6 +388,9 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
       "Trouble or pain when swallowing food, or food that gets stuck.",
       "Vomiting blood, or stool that is black or bright red — call 911 or go to the ER.",
       "Weight loss you did not plan, or reflux that does not improve in 2 weeks of treatment.",
+    ],
+    links: [
+      { label: "MedlinePlus: GERD", url: "https://medlineplus.gov/gerd.html" },
     ],
   },
 
@@ -346,6 +410,9 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
       "Sudden severe pain after a fall or twist, or you cannot put weight on the leg.",
       "Pain that wakes you at night or keeps getting worse despite home care.",
     ],
+    links: [
+      { label: "MedlinePlus: Osteoarthritis", url: "https://medlineplus.gov/osteoarthritis.html" },
+    ],
   },
   M19: {
     title: "Osteoarthritis (Other Joints)",
@@ -361,6 +428,9 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
       "A joint that is red, hot, very swollen, or comes with a fever — could be an infection, call now.",
       "Sudden severe pain after a fall or twist, or you cannot use the joint.",
       "Pain that wakes you at night or keeps getting worse despite home care.",
+    ],
+    links: [
+      { label: "MedlinePlus: Osteoarthritis", url: "https://medlineplus.gov/osteoarthritis.html" },
     ],
   },
 
@@ -380,6 +450,9 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
       "New weakness, numbness, trouble speaking, or vision loss — call 911.",
       "Fever and a stiff neck with the headache, or a headache after a head injury.",
       "Headaches that are getting worse or happening more often than before.",
+    ],
+    links: [
+      { label: "MedlinePlus: Migraine", url: "https://medlineplus.gov/migraine.html" },
     ],
   },
 };
