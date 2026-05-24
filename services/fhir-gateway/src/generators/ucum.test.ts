@@ -100,6 +100,133 @@ describe("toDoseQuantity — UCUM validity (#946)", () => {
   });
 });
 
+describe("toDoseQuantity — UCUM-lhc validator integration (#978)", () => {
+  // The pre-#978 hand-curated allowlist gated out valid UCUM expressions
+  // that aren't on the dosing short-list. After integrating @lhncbc/ucum-lhc
+  // (NIH/NLM reference implementation), the validator accepts any
+  // syntactically valid UCUM expression while we keep the alias table for
+  // legacy curly-brace forms (`{tbl}`, `{puff}`, etc.) and `mcg → ug`.
+
+  it("accepts exotic-but-valid UCUM exponent forms (10*6/uL)", () => {
+    // Cell-count units in haematology labs are commonly written as
+    // 10*6/uL (10^6 cells per microlitre). Pre-#978 the hand-curated
+    // allowlist rejected this; the lhc validator should accept it.
+    const q = toDoseQuantity(4.5, "10*6/uL");
+    expect(q.system).toBe("http://unitsofmeasure.org");
+    expect(q.code).toBe("10*6/uL");
+    expect(q.unit).toBe("10*6/uL");
+  });
+
+  it("accepts product/exponent compound UCUM (mg.kg-1.d-1)", () => {
+    // Pharmacokinetics commonly uses dot-product / negative-exponent
+    // notation rather than the slash form (mg/kg/d).
+    const q = toDoseQuantity(2, "mg.kg-1.d-1");
+    expect(q.system).toBe("http://unitsofmeasure.org");
+    expect(q.code).toBe("mg.kg-1.d-1");
+  });
+
+  it("accepts arbitrary-unit per-volume forms ([iU]/mL, U/L)", () => {
+    expect(toDoseQuantity(40, "[iU]/mL").code).toBe("[iU]/mL");
+    expect(toDoseQuantity(25, "U/L").code).toBe("U/L");
+  });
+
+  it("accepts other valid UCUM expressions that were absent from the hand-curated allowlist", () => {
+    // None of these were in the original UCUM_ALLOWLIST but all are
+    // syntactically valid UCUM; the lhc validator should let them through.
+    expect(toDoseQuantity(60, "mL/min").code).toBe("mL/min");
+    expect(toDoseQuantity(5, "ug/min").code).toBe("ug/min");
+    expect(toDoseQuantity(1, "mol/L").code).toBe("mol/L");
+    // Proper UCUM blood-pressure form is mm[Hg] (the bracketed Hg atom).
+    expect(toDoseQuantity(15, "mm[Hg]").code).toBe("mm[Hg]");
+  });
+
+  it("preserves canonical alias mapping for legacy 'mcg' compounds the validator rejects", () => {
+    // 'mcg' itself is not strict UCUM. The validator returns invalid;
+    // we keep the NON_UCUM_TO_UCUM_CODE table mapping it to canonical 'ug'.
+    expect(toDoseQuantity(500, "mcg").code).toBe("ug");
+    expect(toDoseQuantity(5, "mcg/h").code).toBe("ug/h");
+    expect(toDoseQuantity(2, "mcg/kg").code).toBe("ug/kg");
+  });
+
+  it("canonicalises case-variant inputs to UCUM-canonical form", () => {
+    // 'mcg/H' (uppercase H) is not in the static alias table but the
+    // lowercased lookup hits 'mcg/h' → 'ug/h'. Verifies case-insensitive
+    // alias lookup uniformly produces canonical UCUM.
+    expect(toDoseQuantity(5, "MCG/H").code).toBe("ug/h");
+    expect(toDoseQuantity(5, "Mcg/h").code).toBe("ug/h");
+  });
+
+  it("falls back to text-only Quantity for anything the validator and alias table both reject", () => {
+    // 'scoop' is neither a UCUM expression nor an alias.
+    const q = toDoseQuantity(1, "scoop");
+    expect(q.system).toBeUndefined();
+    expect(q.code).toBeUndefined();
+    expect(q.unit).toBe("scoop");
+  });
+
+  it("rejects empty / whitespace-only inputs as text-only (defensive guard)", () => {
+    // The lhc validator throws/errors on empty input; ensure we handle
+    // it gracefully without leaking stderr noise from validateUnitString.
+    expect(toDoseQuantity(1, "").code).toBeUndefined();
+    expect(toDoseQuantity(1, "   ").code).toBeUndefined();
+  });
+});
+
+describe("toDoseQuantity — prototype-pollution defence (#1138 Copilot review)", () => {
+  // `medications.dose_unit` is free-text clinician input flowing through
+  // tRPC → BullMQ → fhir-gateway. The alias table is a Record<string,string>
+  // backed by `Object.create(null)`, but defence-in-depth `typeof === "string"`
+  // guards in the lookup sites ensure that even if the table is ever
+  // refactored back to a plain object, prototype-chain lookups on inputs
+  // like `__proto__` / `constructor` cannot leak non-string `code` values
+  // into the emitted FHIR Quantity. The validator itself may still accept
+  // the literal string as a UCUM annotation, but the FHIR shape contract
+  // (`code` is a string when present) must hold.
+  it("never emits a non-string `code` for `__proto__` input", () => {
+    const q = toDoseQuantity(1, "__proto__");
+    if (q.code !== undefined) {
+      expect(typeof q.code).toBe("string");
+    }
+  });
+
+  it("never emits a non-string `code` for `constructor` input", () => {
+    const q = toDoseQuantity(1, "constructor");
+    if (q.code !== undefined) {
+      expect(typeof q.code).toBe("string");
+    }
+  });
+
+  it("never emits a non-string `code` for Object.prototype method names", () => {
+    for (const name of [
+      "hasOwnProperty",
+      "isPrototypeOf",
+      "propertyIsEnumerable",
+      "toLocaleString",
+      "valueOf",
+      "toString",
+    ]) {
+      const q = toDoseQuantity(1, name);
+      if (q.code !== undefined) {
+        expect(typeof q.code).toBe("string");
+      }
+    }
+  });
+
+  it("does not crash isUcumAllowed on prototype-key inputs", () => {
+    for (const name of [
+      "__proto__",
+      "constructor",
+      "hasOwnProperty",
+      "toString",
+    ]) {
+      // Just assert it returns a boolean without throwing — the predicate's
+      // semantic answer is incidental, what matters is no prototype-object
+      // leak through the alias-lookup branch.
+      expect(typeof isUcumAllowed(name)).toBe("boolean");
+    }
+  });
+});
+
 describe("isUcumAllowed", () => {
   it("accepts the common mass / volume / time codes", () => {
     for (const u of ["mg", "g", "mL", "L", "ug", "kg"]) {
