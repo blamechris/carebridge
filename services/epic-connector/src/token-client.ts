@@ -108,15 +108,19 @@ export class EpicTokenClient {
   ) {}
 
   /**
-   * Normalize a scope set to a stable cache key. Sorting before join
-   * means callers passing the same scopes in different orders share a
-   * single cache + in-flight slot (#1144). Empty arrays produce an
-   * empty string, which is a valid Map key distinct from any non-empty
-   * scope set — matching pre-existing behaviour that passes the empty
-   * string through as the `scope` form field.
+   * Normalize a scope set to a stable cache key. Dedupe-then-sort
+   * before join means callers passing the same scopes in different
+   * orders OR with accidental duplicates share a single cache +
+   * in-flight slot (#1144, #1164). Without the Set, ["a", "a"] would
+   * hash to "a a" and miss the cache slot occupied by ["a"] -> "a",
+   * causing a needless double fetch + double cache for two semantically
+   * identical scope requests. Empty arrays produce an empty string,
+   * which is a valid Map key distinct from any non-empty scope set —
+   * matching pre-existing behaviour that passes the empty string
+   * through as the `scope` form field.
    */
   private normalizeScopes(scopes: readonly string[]): string {
-    return [...scopes].sort().join(" ");
+    return [...new Set(scopes)].sort().join(" ");
   }
 
   /**
