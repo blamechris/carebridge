@@ -278,14 +278,15 @@ async function syncResourceType(
     // diagnostic so the failed row in epic_sync_state names the field
     // (not just a generic 400 message). Helps the operator/dev fix the
     // upstream request-shape bug without spelunking through job logs.
-    const message = isMissingRequiredElementError(err)
+    const missingRequiredElement = isMissingRequiredElementError(err);
+    const message = missingRequiredElement
       ? `Epic required element missing: ${describeMissingElement(err)} — ${baseMessage}`
       : baseMessage;
     log.error("Epic sync — resource-type failure", {
       patientId: args.patientId,
       resourceType: args.resourceType,
       error: message,
-      missingRequiredElement: isMissingRequiredElementError(err),
+      missingRequiredElement,
     });
     await markFailed({
       patientId: args.patientId,

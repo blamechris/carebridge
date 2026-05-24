@@ -53,20 +53,26 @@ const log = createLogger("epic-fhir-client");
  * complete body must re-fetch.
  */
 /**
- * Maximum bytes captured in `EpicFhirError.body` / surfaced from
- * `safeReadBody` / serialised by `operationOutcomeError` (#1126).
- * Keeps log lines + error dialogs bounded while preserving enough
- * context to identify the failure. The full payload is in worker
- * logs / DLQ for forensics.
+ * Maximum characters (UTF-16 code units, per JS `String.slice`)
+ * captured in `EpicFhirError.body` / surfaced from `safeReadBody` /
+ * serialised by `operationOutcomeError` (#1126, #1131). Keeps log
+ * lines and error dialogs bounded while preserving enough context
+ * to identify the failure. The full payload is in worker logs / DLQ
+ * for forensics.
+ *
+ * Character-based (not byte-based) so multi-byte UTF-8 payloads land
+ * with predictable string length; if Postgres' UTF-8 byte budget for
+ * `last_error_message` is ever the binding constraint, swap to a
+ * `TextEncoder`-backed byte cap and rename.
  */
-const MAX_BODY_SNIPPET_BYTES = 500;
+const MAX_BODY_SNIPPET_CHARS = 500;
 
 export class EpicFhirError extends Error {
   constructor(
     message: string,
     public readonly status: number,
     public readonly statusText: string,
-    /** Truncated body snippet (≤MAX_BODY_SNIPPET_BYTES chars). Do NOT assume full payload. */
+    /** Truncated body snippet (≤MAX_BODY_SNIPPET_CHARS UTF-16 code units). Do NOT assume full payload. */
     public readonly body: string,
     public readonly operationOutcome?: OperationOutcome,
   ) {
@@ -518,7 +524,7 @@ function joinUrl(base: string, path: string): string {
 async function safeReadBody(response: Response): Promise<string> {
   try {
     const text = await response.text();
-    return text.slice(0, MAX_BODY_SNIPPET_BYTES);
+    return text.slice(0, MAX_BODY_SNIPPET_CHARS);
   } catch {
     return "";
   }
@@ -554,7 +560,7 @@ function operationOutcomeError(
     message,
     status,
     statusText,
-    JSON.stringify(outcome).slice(0, MAX_BODY_SNIPPET_BYTES),
+    JSON.stringify(outcome).slice(0, MAX_BODY_SNIPPET_CHARS),
     outcome,
   );
 }
