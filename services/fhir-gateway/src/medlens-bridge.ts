@@ -24,6 +24,9 @@ const VITAL_TYPES: readonly VitalType[] = [
   "respiratory_rate",
   "pain_level",
   "blood_glucose",
+  "body_height",
+  "bmi",
+  "head_circumference",
 ] as const;
 
 function isVitalType(t: string): t is VitalType {

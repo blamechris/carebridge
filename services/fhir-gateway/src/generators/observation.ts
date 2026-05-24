@@ -101,6 +101,19 @@ const VITAL_UNIT_TO_UCUM: Record<string, string> = {
   // Glucose / concentration
   "mg/dl": "mg/dL",
   "mmol/l": "mmol/L",
+  // Length — body_height, head_circumference (#1165)
+  "cm": "cm",
+  "centimeter": "cm",
+  "centimeters": "cm",
+  "centimetre": "cm",
+  "centimetres": "cm",
+  "m": "m",
+  "in": "[in_i]",
+  "inch": "[in_i]",
+  "inches": "[in_i]",
+  // BMI (#1165) — UCUM kg/m2
+  "kg/m2": "kg/m2",
+  "kg/m²": "kg/m2",
 };
 
 function vitalUnitToUcum(unit: string | null | undefined): string | undefined {
@@ -117,6 +130,11 @@ const VITAL_DISPLAY: Record<VitalType, string> = {
   respiratory_rate: "Respiratory rate",
   pain_level: "Pain severity rating",
   blood_glucose: "Glucose [Mass/volume] in Blood",
+  // US Core 5+ child-profile display strings (#1165). Mirror the LOINC
+  // term names for 8302-2, 39156-5, and 9843-4 respectively.
+  body_height: "Body height",
+  bmi: "Body mass index (BMI) [Ratio]",
+  head_circumference: "Head Occipital-frontal circumference",
 };
 
 // ─── Helpers ────────────────────────────────────────────────────

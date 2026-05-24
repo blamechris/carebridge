@@ -96,7 +96,10 @@ export type VitalType =
   | "weight"
   | "respiratory_rate"
   | "pain_level"
-  | "blood_glucose";
+  | "blood_glucose"
+  | "body_height"
+  | "bmi"
+  | "head_circumference";
 
 export const VITAL_UNITS: Record<VitalType, string> = {
   blood_pressure: "mmHg",
@@ -107,6 +110,15 @@ export const VITAL_UNITS: Record<VitalType, string> = {
   respiratory_rate: "breaths/min",
   pain_level: "/10",
   blood_glucose: "mg/dL",
+  // SI canonical units. US Core 5+ vital-sign profiles for these three
+  // metrics align with UCUM cm / kg/m2, and pediatric growth charts
+  // (which depend on head_circumference + body_height) are universally
+  // metric — keeping the canonical unit metric avoids a conversion step
+  // on the AI-oversight side. Conversion to imperial happens at the
+  // presentation layer where needed.
+  body_height: "cm",
+  bmi: "kg/m2",
+  head_circumference: "cm",
 };
 
 /** LOINC codes for standard vital sign types (FHIR R4 Observation.code) */
@@ -119,6 +131,13 @@ export const VITAL_LOINC_CODES: Record<VitalType, string | null> = {
   respiratory_rate: "9279-1",
   pain_level: "72514-3",
   blood_glucose: "2339-0",
+  // US Core 5+ vital-sign child profiles fix these LOINC codes (#1165).
+  // head_circumference uses 9843-4 (Head Occipital-frontal circumference,
+  // no specified method) per us-core-head-circumference — NOT 8287-5,
+  // which is the tape-measure-specific variant.
+  body_height: "8302-2",
+  bmi: "39156-5",
+  head_circumference: "9843-4",
 };
 
 export interface Vital extends BaseRecord {
