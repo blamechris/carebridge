@@ -86,7 +86,72 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
     ],
   },
 
+  E78: {
+    title: "High Cholesterol (Hyperlipidemia)",
+    summary:
+      "High cholesterol means too much fat in the blood. It usually has no symptoms, but over years it builds plaque in blood vessels and raises the risk of heart attack and stroke. Diet, movement, and a statin (for many people) bring it down.",
+    self_care: [
+      "Take your statin every day if your care team prescribed one — most people take it at night.",
+      "Eat more vegetables, beans, fish, nuts, and whole grains; cut back on red meat and fried food.",
+      "Move your body for 30 minutes most days.",
+      "Get follow-up cholesterol labs at the times your care team asks.",
+    ],
+    when_to_contact_provider: [
+      "New muscle pain, weakness, or dark urine on a statin — call your care team, do not stop on your own.",
+      "Yellow skin or eyes, or severe belly pain.",
+      "Side effects that make you want to stop the pill — there are usually other choices.",
+    ],
+  },
+  E03: {
+    title: "Underactive Thyroid (Hypothyroidism)",
+    summary:
+      "An underactive thyroid means the gland in your neck is not making enough hormone. Common signs are tiredness, weight gain, cold hands, dry skin, and slow thinking. A daily pill replaces the missing hormone and most people feel back to normal.",
+    self_care: [
+      "Take levothyroxine on an empty stomach with water, first thing in the morning.",
+      "Wait 30 to 60 minutes before coffee, food, or other pills.",
+      "Keep calcium, iron, and antacids at least 4 hours apart from the dose.",
+      "Get a TSH lab check at the times your care team asks — dose changes are common at first.",
+    ],
+    when_to_contact_provider: [
+      "Chest pain, fast or pounding heartbeat, or shaky hands — your dose may be too high.",
+      "New or worse tiredness, weight gain, or feeling cold all the time — your dose may be too low.",
+      "Trouble swallowing the pill or any new neck swelling.",
+    ],
+  },
+
   // Cardiovascular
+  I25: {
+    title: "Coronary Artery Disease (CAD)",
+    summary:
+      "Coronary artery disease means the blood vessels that feed your heart have narrowed from plaque buildup. This can lead to chest pain on effort or a heart attack. Daily habits, medicine, and (for some) cardiac rehab keep the heart well supplied.",
+    self_care: [
+      "Take your heart medicines every day — statins, aspirin, and blood-pressure pills if prescribed.",
+      "Aim for 30 minutes of walking or other movement most days; ask about cardiac rehab.",
+      "Eat more plants and fish; cut back on red meat, butter, and fried food.",
+      "Carry your nitroglycerin if your care team gave you a bottle, and know how to use it.",
+    ],
+    when_to_contact_provider: [
+      "Chest pain, pressure, or tightness at rest, or that lasts more than a few minutes — call 911.",
+      "Sudden shortness of breath, cold sweats, or pain in the jaw, arm, or back — call 911.",
+      "Chest pain that comes with less effort than usual, or that wakes you up.",
+    ],
+  },
+  I63: {
+    title: "Stroke (Ischemic, Past)",
+    summary:
+      "An ischemic stroke happens when a clot blocks blood flow to part of the brain. After one stroke, the goal is to keep another from happening — that means taking your medicines and treating blood pressure, cholesterol, and other risk factors.",
+    self_care: [
+      "Take your aspirin, clopidogrel, or blood thinner every day, just as prescribed.",
+      "Keep blood pressure and cholesterol at the goals your care team set.",
+      "Go to the therapy visits your team sets up — for movement, speech, or daily tasks.",
+      "Quit smoking and limit alcohol — both raise stroke risk.",
+    ],
+    when_to_contact_provider: [
+      "BE-FAST: Balance loss, Eye changes, Face drooping, Arm weakness, Speech trouble — Time to call 911 right away.",
+      "Sudden bad headache, confusion, or trouble walking — call 911.",
+      "New numbness or weakness on one side of the body, even if it goes away.",
+    ],
+  },
   I10: {
     title: "High Blood Pressure (Hypertension)",
     summary:
@@ -244,6 +309,77 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
       "Swelling in legs, face, or hands that is new or worsening.",
       "Less urine than usual, or urine that is pink or red.",
       "Confusion, nausea, or extreme tiredness — call the same day.",
+    ],
+  },
+
+  // Gastrointestinal
+  K21: {
+    title: "Acid Reflux (GERD)",
+    summary:
+      "GERD is heartburn that keeps coming back. Stomach acid washes up into the food pipe and burns the lining. Most people feel better with small habit changes and an acid-blocker pill for a few weeks.",
+    self_care: [
+      "Avoid foods that bring on your symptoms — common ones are coffee, chocolate, mint, alcohol, tomato, and spicy or fried meals.",
+      "Eat smaller meals and stop eating 3 hours before bed.",
+      "Raise the head of your bed 6 inches, or use a wedge pillow.",
+      "If you take a PPI like omeprazole, take it 30 to 60 minutes before the first meal of the day.",
+    ],
+    when_to_contact_provider: [
+      "Trouble or pain when swallowing food, or food that gets stuck.",
+      "Vomiting blood, or stool that is black or bright red — call 911 or go to the ER.",
+      "Weight loss you did not plan, or reflux that does not improve in 2 weeks of treatment.",
+    ],
+  },
+
+  // Musculoskeletal
+  M17: {
+    title: "Knee Osteoarthritis",
+    summary:
+      "Osteoarthritis of the knee is wear-and-tear in the joint that brings pain and stiffness. It tends to be worse after rest and a little better with gentle movement. Weight, exercise, and simple pain relief can keep the knee working well for years.",
+    self_care: [
+      "Move the joint every day — walking, biking, or pool exercise keeps it limber.",
+      "Lose a few pounds if you can; each pound off the knee is 4 pounds less load.",
+      "Use ice after activity and heat before activity for stiffness.",
+      "Try acetaminophen or a short course of an NSAID (like ibuprofen) if your care team says it is safe for you.",
+    ],
+    when_to_contact_provider: [
+      "Knee that is red, hot, very swollen, or comes with a fever — could be an infection, call now.",
+      "Sudden severe pain after a fall or twist, or you cannot put weight on the leg.",
+      "Pain that wakes you at night or keeps getting worse despite home care.",
+    ],
+  },
+  M19: {
+    title: "Osteoarthritis (Other Joints)",
+    summary:
+      "Osteoarthritis is wear-and-tear in a joint that brings pain and stiffness — common in hips, hands, and the spine. It tends to be worse after rest and a little better with gentle movement. The goal is to keep the joint working with weight care, exercise, and pain relief.",
+    self_care: [
+      "Move the joint every day — short walks, stretching, and pool exercise help a lot.",
+      "Build strength in nearby muscles; physical therapy is worth asking about.",
+      "Use ice after activity and heat before activity for stiffness.",
+      "Try acetaminophen or a short course of an NSAID (like ibuprofen) if your care team says it is safe for you.",
+    ],
+    when_to_contact_provider: [
+      "A joint that is red, hot, very swollen, or comes with a fever — could be an infection, call now.",
+      "Sudden severe pain after a fall or twist, or you cannot use the joint.",
+      "Pain that wakes you at night or keeps getting worse despite home care.",
+    ],
+  },
+
+  // Neurologic
+  G43: {
+    title: "Migraine",
+    summary:
+      "A migraine is a strong headache, often on one side, that can come with nausea, light or sound sensitivity, or vision changes. Most people have triggers like missed meals, poor sleep, or stress. Care has two parts: a rescue plan for an attack and a daily plan if attacks are frequent.",
+    self_care: [
+      "Keep a simple log of attacks, foods, sleep, and stress to spot your triggers.",
+      "Keep meals, water, and sleep on a steady schedule.",
+      "Take your rescue medicine at the first sign of a migraine — sooner works better than later.",
+      "Take any daily preventive medicine every day, even on good days.",
+    ],
+    when_to_contact_provider: [
+      "A sudden severe headache that peaks in seconds — call 911 (thunderclap).",
+      "New weakness, numbness, trouble speaking, or vision loss — call 911.",
+      "Fever and a stiff neck with the headache, or a headache after a head injury.",
+      "Headaches that are getting worse or happening more often than before.",
     ],
   },
 };
@@ -424,6 +560,10 @@ export function getDiagnosisEducation(
     // pulmonary-embolism card. Word boundaries keep false positives rare.
     if (/diabetes.*type\s*1|type\s*1\s*diabetes|\bdm\s*type\s*1\b/.test(lower)) return DIAGNOSIS_CONTENT.E10!;
     if (/\bdiabetes\b|\bdm\b|\btype\s*2\b|\bt2dm\b/.test(lower)) return DIAGNOSIS_CONTENT.E11!;
+    if (/\bhyperlipidemia\b|\bdyslipidemia\b|\bhigh cholesterol\b/.test(lower)) return DIAGNOSIS_CONTENT.E78!;
+    if (/\bhypothyroidism\b|\bunderactive thyroid\b/.test(lower)) return DIAGNOSIS_CONTENT.E03!;
+    if (/\bcoronary artery disease\b|\bcad\b|\bischemic heart\b/.test(lower)) return DIAGNOSIS_CONTENT.I25!;
+    if (/\bischemic stroke\b|\bcva\b/.test(lower)) return DIAGNOSIS_CONTENT.I63!;
     if (/\bhypertension\b|\bhigh blood pressure\b|\bhtn\b/.test(lower)) return DIAGNOSIS_CONTENT.I10!;
     if (/\batrial fibrillation\b|\bafib\b|\ba.?fib\b/.test(lower)) return DIAGNOSIS_CONTENT.I48!;
     if (/\bheart failure\b|\bchf\b/.test(lower)) return DIAGNOSIS_CONTENT.I50!;
@@ -431,6 +571,10 @@ export function getDiagnosisEducation(
     if (/\bdeep vein thrombosis\b|\bdvt\b/.test(lower)) return DIAGNOSIS_CONTENT.I80!;
     if (/\basthma\b/.test(lower)) return DIAGNOSIS_CONTENT.J45!;
     if (/\bcopd\b|\bchronic obstructive\b/.test(lower)) return DIAGNOSIS_CONTENT.J44!;
+    if (/\bgerd\b|\bgastro.?esophageal\b|\bacid reflux\b/.test(lower)) return DIAGNOSIS_CONTENT.K21!;
+    if (/\bknee osteoarthritis\b|\bknee oa\b/.test(lower)) return DIAGNOSIS_CONTENT.M17!;
+    if (/\bosteoarthritis\b/.test(lower)) return DIAGNOSIS_CONTENT.M19!;
+    if (/\bmigraine\b/.test(lower)) return DIAGNOSIS_CONTENT.G43!;
     if (/\bdepression\b|\bmajor depressive\b/.test(lower)) return DIAGNOSIS_CONTENT.F32!;
     if (/\banxiety\b/.test(lower)) return DIAGNOSIS_CONTENT.F41!;
     if (/\bchronic kidney\b|\bckd\b/.test(lower)) return DIAGNOSIS_CONTENT.N18!;
