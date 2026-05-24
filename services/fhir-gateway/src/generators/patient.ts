@@ -1,5 +1,6 @@
 import type { FhirPatient } from "../types/index.js";
 import { CAREBRIDGE_IDENTIFIER_BASE } from "./identifiers.js";
+import { US_CORE_PATIENT } from "./us-core-profiles.js";
 
 /** Shape of a row from the `patients` table after decryption. */
 interface PatientRow {
@@ -49,9 +50,7 @@ export function toFhirPatient(patient: PatientRow): FhirPatient {
     resourceType: "Patient",
     id: patient.id,
     meta: {
-      profile: [
-        "http://hl7.org/fhir/us/core/StructureDefinition/us-core-patient",
-      ],
+      profile: [US_CORE_PATIENT],
     },
     identifier: patient.mrn
       ? [

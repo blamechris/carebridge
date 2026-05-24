@@ -19,6 +19,7 @@ import type {
   DosageInstruction,
 } from "../types/fhir-r4.js";
 import { toDoseQuantity } from "./ucum.js";
+import { US_CORE_MEDICATION_REQUEST } from "./us-core-profiles.js";
 
 type Medication = typeof medications.$inferSelect;
 
@@ -96,6 +97,9 @@ export function toFhirMedicationRequest(
   const resource: FhirMedicationRequest = {
     resourceType: "MedicationRequest",
     id: medication.id,
+    meta: {
+      profile: [US_CORE_MEDICATION_REQUEST],
+    },
     status: mapRequestStatus(medication.status),
     // CareBridge-internal medications are prescription orders; there's no
     // plan-vs-order distinction in the current data model, so we emit

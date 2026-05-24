@@ -7,7 +7,8 @@
  */
 
 import type { allergies } from "@carebridge/db-schema";
-import type { Coding } from "../types/fhir-r4.js";
+import type { Coding, Meta } from "../types/fhir-r4.js";
+import { US_CORE_ALLERGY_INTOLERANCE } from "./us-core-profiles.js";
 
 type Allergy = typeof allergies.$inferSelect;
 
@@ -31,6 +32,7 @@ type FhirAllergyCategory = "food" | "medication" | "environment" | "biologic";
 interface FhirAllergyIntolerance {
   resourceType: "AllergyIntolerance";
   id: string;
+  meta?: Meta;
   clinicalStatus: {
     coding: FhirCoding[];
   };
@@ -262,6 +264,9 @@ export function toFhirAllergyIntolerance(
   const resource: FhirAllergyIntolerance = {
     resourceType: "AllergyIntolerance",
     id: allergy.id,
+    meta: {
+      profile: [US_CORE_ALLERGY_INTOLERANCE],
+    },
     clinicalStatus: {
       coding: [
         {

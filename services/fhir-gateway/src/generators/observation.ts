@@ -6,7 +6,12 @@ import type {
   Quantity,
   Reference,
   ObservationComponent,
+  Meta,
 } from "../types/fhir-r4.js";
+import {
+  US_CORE_VITAL_SIGNS,
+  US_CORE_LABORATORY_RESULT,
+} from "./us-core-profiles.js";
 
 const UNIT_TO_UCUM: Record<string, string> = {
   "K/uL": "10*3/uL",
@@ -44,6 +49,7 @@ interface ObservationReferenceRange {
 export interface FhirObservation {
   resourceType: "Observation";
   id?: string;
+  meta?: Meta;
   status: "final" | "preliminary" | "registered" | "amended";
   category?: CodeableConcept[];
   code: CodeableConcept;
@@ -198,6 +204,9 @@ export function toFhirVitalObservation(
   const observation: FhirObservation = {
     resourceType: "Observation",
     id: vital.id,
+    meta: {
+      profile: [US_CORE_VITAL_SIGNS],
+    },
     status: "final",
     category: [vitalSignsCategory()],
     code: {
@@ -244,6 +253,9 @@ export function toFhirLabObservation(
   const observation: FhirObservation = {
     resourceType: "Observation",
     id: labResult.id,
+    meta: {
+      profile: [US_CORE_LABORATORY_RESULT],
+    },
     status: "final",
     category: [laboratoryCategory()],
     code: {
