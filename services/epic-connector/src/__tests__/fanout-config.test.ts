@@ -7,6 +7,9 @@
  * Defaults match CareBridge's MVP scope; env overrides let an operator
  * widen/narrow the set without code changes.
  */
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // Capture log.warn calls before fanout-config imports/creates its
@@ -405,5 +408,88 @@ describe("getFanoutConfig caching (#1112)", () => {
     expect(() => {
       (cfg.medicationRequestStatuses as string[]).push("stopped");
     }).toThrow(TypeError);
+  });
+});
+
+describe("FanoutConfig.medicationRequestStatus — deprecated singular field (#1147)", () => {
+  // PR #1140 removed the singular `medicationRequestStatus` field from
+  // the `FanoutConfig` interface in favour of the plural array. The
+  // interface is re-exported from the package root, so any external
+  // consumer reading `cfg.medicationRequestStatus` would break at
+  // compile time. #1147 restores it as a deprecated alias for
+  // `medicationRequestStatuses[0]`.
+
+  it("loadFanoutConfig exposes the singular field equal to medicationRequestStatuses[0] (default)", () => {
+    const cfg = loadFanoutConfig({});
+    expect(cfg.medicationRequestStatus).toBe(cfg.medicationRequestStatuses[0]);
+    expect(cfg.medicationRequestStatus).toBe(DEFAULT_MEDICATION_REQUEST_STATUS);
+  });
+
+  it("singular field reflects the first element of a multi-status env override", () => {
+    const cfg = loadFanoutConfig({
+      EPIC_MEDICATION_REQUEST_STATUS: "draft,active",
+    });
+    expect(cfg.medicationRequestStatuses).toEqual(["draft", "active"]);
+    expect(cfg.medicationRequestStatus).toBe("draft");
+  });
+
+  it("singular field reflects a single-value env override", () => {
+    const cfg = loadFanoutConfig({
+      EPIC_MEDICATION_REQUEST_STATUS: "completed",
+    });
+    expect(cfg.medicationRequestStatus).toBe("completed");
+    expect(cfg.medicationRequestStatus).toBe(cfg.medicationRequestStatuses[0]);
+  });
+
+  it("singular field falls back to DEFAULT_MEDICATION_REQUEST_STATUS when env is empty/invalid", () => {
+    // Empty/all-invalid env triggers the fall-back path which seeds the
+    // array with the default, so the singular alias should reflect that
+    // default rather than being undefined.
+    const cfgEmpty = loadFanoutConfig({ EPIC_MEDICATION_REQUEST_STATUS: "" });
+    expect(cfgEmpty.medicationRequestStatus).toBe(
+      DEFAULT_MEDICATION_REQUEST_STATUS,
+    );
+    warnSpy.mockClear();
+    const cfgInvalid = loadFanoutConfig({
+      EPIC_MEDICATION_REQUEST_STATUS: "foo,bar",
+    });
+    expect(cfgInvalid.medicationRequestStatus).toBe(
+      DEFAULT_MEDICATION_REQUEST_STATUS,
+    );
+  });
+
+  it("parseFanoutConfig exposes the singular field on the returned config", () => {
+    const { config } = parseFanoutConfig({
+      EPIC_MEDICATION_REQUEST_STATUS: "on-hold,active",
+    });
+    expect(config.medicationRequestStatus).toBe("on-hold");
+    expect(config.medicationRequestStatus).toBe(config.medicationRequestStatuses[0]);
+  });
+
+  it("getFanoutConfig (cached) exposes the singular field equal to the plural first element", () => {
+    const cfg = getFanoutConfig();
+    expect(cfg.medicationRequestStatus).toBe(cfg.medicationRequestStatuses[0]);
+  });
+
+  it("source declares @deprecated JSDoc on the singular field so consumers see the upgrade hint", () => {
+    // Read the source file so we can assert the interface field carries
+    // a @deprecated tag — back-compat shims that ship without a
+    // deprecation marker tend to become permanent.
+    const here = dirname(fileURLToPath(import.meta.url));
+    const sourcePath = resolve(here, "..", "sync", "fanout-config.ts");
+    const src = readFileSync(sourcePath, "utf8");
+    // Find the FanoutConfig interface body.
+    const ifaceMatch = src.match(
+      /export interface FanoutConfig \{([\s\S]*?)\n\}/,
+    );
+    expect(ifaceMatch, "FanoutConfig interface not found").not.toBeNull();
+    const body = ifaceMatch![1]!;
+    // The singular field must be declared inside the interface body.
+    expect(body).toMatch(/medicationRequestStatus\s*:/);
+    // And it must carry a @deprecated tag in a JSDoc immediately above
+    // its declaration.
+    expect(body).toMatch(
+      /@deprecated[\s\S]*?medicationRequestStatus\s*:\s*string/,
+    );
   });
 });
