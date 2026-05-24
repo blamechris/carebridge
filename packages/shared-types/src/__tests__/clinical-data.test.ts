@@ -88,6 +88,8 @@ describe("createVitalSchema", () => {
     const types = [
       "blood_pressure", "heart_rate", "o2_sat", "temperature",
       "weight", "respiratory_rate", "pain_level", "blood_glucose",
+      // US Core 5+ child-profile types (#1165)
+      "body_height", "bmi", "head_circumference",
     ];
     for (const type of types) {
       const result = vitalTypeSchema.safeParse(type);

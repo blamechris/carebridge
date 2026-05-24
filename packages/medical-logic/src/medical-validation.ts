@@ -42,6 +42,18 @@ export const VITAL_DANGER_ZONES: Record<VitalType, VitalRange> = {
   respiratory_rate: { min: 4, max: 60, criticalLow: 8, criticalHigh: 30 },
   pain_level: { min: 0, max: 10 },
   blood_glucose: { min: 10, max: 800, criticalLow: 54, criticalHigh: 350, warningLow: 70, warningHigh: 250 },
+  // US Core 5+ vital types (#1165). Bounds are plausibility checks only —
+  // no critical/warning thresholds because a single anthropometric
+  // measurement isn't a critical-value signal on its own. The min/max
+  // exist to reject sensor / unit-conversion noise.
+  // body_height: 20 cm (extreme preemie at ~22 wks ≈ 28 cm; pad down)
+  //              to 280 cm (tallest documented human, Robert Wadlow, 272 cm).
+  body_height: { min: 20, max: 280 },
+  // bmi: 5 kg/m² (extreme cachexia) to 150 kg/m² (super-morbid obesity).
+  bmi: { min: 5, max: 150 },
+  // head_circumference: 20 cm (extreme microcephaly preemie) to 80 cm
+  //                     (extreme macrocephaly; covers hydrocephalus).
+  head_circumference: { min: 20, max: 80 },
 };
 
 // ─── Age-Stratified Vital Ranges (Pediatric) ───────────────────

@@ -73,6 +73,9 @@ export const US_CORE_PULSE_OXIMETRY = `${BASE}/us-core-pulse-oximetry`;
 export const US_CORE_RESPIRATORY_RATE = `${BASE}/us-core-respiratory-rate`;
 export const US_CORE_BODY_TEMPERATURE = `${BASE}/us-core-body-temperature`;
 export const US_CORE_BODY_WEIGHT = `${BASE}/us-core-body-weight`;
+export const US_CORE_BODY_HEIGHT = `${BASE}/us-core-body-height`;
+export const US_CORE_BMI = `${BASE}/us-core-bmi`;
+export const US_CORE_HEAD_CIRCUMFERENCE = `${BASE}/us-core-head-circumference`;
 
 /**
  * Lookup from local `VitalType` to its US Core child profile URL.
@@ -81,10 +84,6 @@ export const US_CORE_BODY_WEIGHT = `${BASE}/us-core-body-weight`;
  * exist in the schema but have NO matching US Core child profile (e.g.
  * `pain_level`, `blood_glucose`) are intentionally absent — the generator
  * falls back to the umbrella alone for those.
- *
- * Body-height, BMI, and head-circumference profiles exist in US Core but
- * are not in the local `VitalType` enum yet, so they're not listed here.
- * Add them once the corresponding schema values land.
  */
 export const US_CORE_VITAL_SUB_PROFILES: Partial<Record<VitalType, string>> = {
   blood_pressure: US_CORE_BLOOD_PRESSURE,
@@ -93,6 +92,9 @@ export const US_CORE_VITAL_SUB_PROFILES: Partial<Record<VitalType, string>> = {
   respiratory_rate: US_CORE_RESPIRATORY_RATE,
   temperature: US_CORE_BODY_TEMPERATURE,
   weight: US_CORE_BODY_WEIGHT,
+  body_height: US_CORE_BODY_HEIGHT,
+  bmi: US_CORE_BMI,
+  head_circumference: US_CORE_HEAD_CIRCUMFERENCE,
 };
 
 /** US Core Laboratory Result Observation profile URL. */

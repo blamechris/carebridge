@@ -52,6 +52,8 @@ describe("vitalTypeSchema", () => {
     const validTypes = [
       "blood_pressure", "heart_rate", "o2_sat", "temperature",
       "weight", "respiratory_rate", "pain_level", "blood_glucose",
+      // US Core 5+ child-profile types (#1165)
+      "body_height", "bmi", "head_circumference",
     ];
     for (const type of validTypes) {
       expect(vitalTypeSchema.safeParse(type).success).toBe(true);

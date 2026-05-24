@@ -12,6 +12,11 @@ export const icd10CodeSchema = z
 export const vitalTypeSchema = z.enum([
   "blood_pressure", "heart_rate", "o2_sat", "temperature",
   "weight", "respiratory_rate", "pain_level", "blood_glucose",
+  // US Core 5+ child-profile types (#1165) — body_height, BMI, and
+  // head_circumference complete the umbrella+child slicing introduced
+  // in #1160. Keep this enum in lock-step with the `VitalType` union
+  // in clinical-data.ts.
+  "body_height", "bmi", "head_circumference",
 ]);
 
 export const createVitalSchema = z.object({
