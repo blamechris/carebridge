@@ -244,6 +244,19 @@ export class EpicTokenClient {
         response: parsed,
         expiresAtMs: issuedAtMs + parsed.expires_in * 1000,
       });
+    } else {
+      // The generation advanced while we were awaiting the network /
+      // JSON parse — invalidate() (typically a 401-driven retry path)
+      // fired mid-fetch and our result is stale (#1143). Skipping the
+      // cache write is correct, but the skip was previously silent;
+      // under 401 churn that hid useful signal from operators. Emit a
+      // structured debug line carrying both the captured and current
+      // generation so log aggregators can surface the rate of dropped
+      // stale writes during invalidate storms (#1161).
+      log.debug("Dropping stale Epic token cache write after invalidate", {
+        startedAtGen,
+        currentGen: this.generation,
+      });
     }
     return parsed;
   }
