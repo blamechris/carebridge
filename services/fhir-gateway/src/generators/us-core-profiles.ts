@@ -9,8 +9,9 @@
  * Resource-level notes:
  *  - Patient, Condition, AllergyIntolerance, Encounter, Procedure,
  *    MedicationRequest each have a single canonical US Core profile.
- *  - Observation depends on category — vitals declare `us-core-vital-signs`,
- *    lab results declare `us-core-laboratory-result-observation`.
+ *  - Observation depends on category — vitals declare `us-core-vital-signs`
+ *    PLUS the matching child profile per `vital.type` (#1145), lab results
+ *    declare `us-core-laboratory-result-observation`.
  *  - MedicationStatement was deprecated in US Core 5+ and has no current
  *    US Core profile; that generator intentionally does not populate
  *    meta.profile.
@@ -21,6 +22,8 @@
  *
  * Reference: https://hl7.org/fhir/us/core/
  */
+
+import type { VitalType } from "@carebridge/shared-types";
 
 const BASE = "http://hl7.org/fhir/us/core/StructureDefinition";
 
@@ -52,8 +55,45 @@ export const US_CORE_ENCOUNTER = `${BASE}/us-core-encounter`;
 /** US Core Procedure profile URL. */
 export const US_CORE_PROCEDURE = `${BASE}/us-core-procedure`;
 
-/** US Core Vital Signs Observation profile URL. */
+/** US Core Vital Signs Observation profile URL (umbrella). */
 export const US_CORE_VITAL_SIGNS = `${BASE}/us-core-vital-signs`;
+
+/**
+ * US Core 5.x+ vital-sign child profiles (#1145).
+ *
+ * The umbrella `us-core-vital-signs` profile is sliced into vital-type-
+ * specific child profiles. A fully conformant exporter declares BOTH the
+ * umbrella AND the matching child profile on `Observation.meta.profile`.
+ * The umbrella stays for slicer-driven validators; the child profile lets
+ * downstream consumers branch on vital type without coding lookups.
+ */
+export const US_CORE_BLOOD_PRESSURE = `${BASE}/us-core-blood-pressure`;
+export const US_CORE_HEART_RATE = `${BASE}/us-core-heart-rate`;
+export const US_CORE_PULSE_OXIMETRY = `${BASE}/us-core-pulse-oximetry`;
+export const US_CORE_RESPIRATORY_RATE = `${BASE}/us-core-respiratory-rate`;
+export const US_CORE_BODY_TEMPERATURE = `${BASE}/us-core-body-temperature`;
+export const US_CORE_BODY_WEIGHT = `${BASE}/us-core-body-weight`;
+
+/**
+ * Lookup from local `VitalType` to its US Core child profile URL.
+ *
+ * Only the vital types we actually persist are mapped. Vital types that
+ * exist in the schema but have NO matching US Core child profile (e.g.
+ * `pain_level`, `blood_glucose`) are intentionally absent — the generator
+ * falls back to the umbrella alone for those.
+ *
+ * Body-height, BMI, and head-circumference profiles exist in US Core but
+ * are not in the local `VitalType` enum yet, so they're not listed here.
+ * Add them once the corresponding schema values land.
+ */
+export const US_CORE_VITAL_SUB_PROFILES: Partial<Record<VitalType, string>> = {
+  blood_pressure: US_CORE_BLOOD_PRESSURE,
+  heart_rate: US_CORE_HEART_RATE,
+  o2_sat: US_CORE_PULSE_OXIMETRY,
+  respiratory_rate: US_CORE_RESPIRATORY_RATE,
+  temperature: US_CORE_BODY_TEMPERATURE,
+  weight: US_CORE_BODY_WEIGHT,
+};
 
 /** US Core Laboratory Result Observation profile URL. */
 export const US_CORE_LABORATORY_RESULT =

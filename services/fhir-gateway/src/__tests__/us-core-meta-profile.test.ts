@@ -227,9 +227,12 @@ describe("US Core meta.profile (#938)", () => {
   });
 
   describe("Observation (vital)", () => {
-    it("emits the US Core Vital Signs profile URL", () => {
+    it("emits the US Core Vital Signs umbrella profile URL", () => {
       const o = toFhirVitalObservation(makeVital(), "p1");
-      expect(o.meta?.profile).toEqual([US_CORE_VITAL_SIGNS]);
+      // makeVital() builds a heart_rate vital, which maps to a sub-profile
+      // (#1145). The umbrella us-core-vital-signs MUST still be present
+      // alongside the heart-rate child profile.
+      expect(o.meta?.profile).toContain(US_CORE_VITAL_SIGNS);
       expect(o.meta?.profile?.[0]).toBe(
         "http://hl7.org/fhir/us/core/StructureDefinition/us-core-vital-signs",
       );

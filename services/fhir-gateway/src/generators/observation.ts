@@ -10,6 +10,7 @@ import type {
 import {
   US_CORE_VITAL_SIGNS,
   US_CORE_LABORATORY_RESULT,
+  US_CORE_VITAL_SUB_PROFILES,
 } from "./us-core-profiles.js";
 
 export type { FhirObservation };
@@ -183,11 +184,21 @@ export function toFhirVitalObservation(
   const vitalType = vital.type as VitalType;
   const loincCode = vital.loinc_code ?? VITAL_LOINC_CODES[vitalType] ?? undefined;
 
+  // US Core 5.x+ slices the umbrella `us-core-vital-signs` profile into per-
+  // vital-type child profiles (#1145). Emit the umbrella for every vital and
+  // additively declare the matching child profile when one is mapped. Vital
+  // types without a US Core child profile (e.g. pain_level, blood_glucose)
+  // or unknown future types fall back to umbrella-only — never throw.
+  const subProfile = US_CORE_VITAL_SUB_PROFILES[vitalType];
+  const profile = subProfile
+    ? [US_CORE_VITAL_SIGNS, subProfile]
+    : [US_CORE_VITAL_SIGNS];
+
   const observation: FhirObservation = {
     resourceType: "Observation",
     id: vital.id,
     meta: {
-      profile: [US_CORE_VITAL_SIGNS],
+      profile,
     },
     status: "final",
     category: [vitalSignsCategory()],
