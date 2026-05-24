@@ -57,6 +57,28 @@ describe("getStalenessThreshold", () => {
     expect(t.overdueMs).toBe(4 * HOUR);
     expect(t.staleMs).toBe(24 * HOUR);
   });
+
+  // Anthropometric vitals (#1176) — measured on a monthly (pediatric
+  // well-child) or annual (adult) cadence, NOT the acute-care 4h/24h
+  // default. Flagging a 5-hour-old body_height as overdue is clinical
+  // noise, mirroring the existing `weight` precedent.
+  it("returns 30d/365d for body_height", () => {
+    const t = getStalenessThreshold("body_height");
+    expect(t.overdueMs).toBe(30 * DAY);
+    expect(t.staleMs).toBe(365 * DAY);
+  });
+
+  it("returns 30d/365d for bmi", () => {
+    const t = getStalenessThreshold("bmi");
+    expect(t.overdueMs).toBe(30 * DAY);
+    expect(t.staleMs).toBe(365 * DAY);
+  });
+
+  it("returns 30d/180d for head_circumference", () => {
+    const t = getStalenessThreshold("head_circumference");
+    expect(t.overdueMs).toBe(30 * DAY);
+    expect(t.staleMs).toBe(6 * 30 * DAY);
+  });
 });
 
 describe("VITAL_STALENESS_THRESHOLDS", () => {

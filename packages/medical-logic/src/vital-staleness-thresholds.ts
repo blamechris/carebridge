@@ -46,6 +46,13 @@ export const VITAL_STALENESS_THRESHOLDS: Partial<
   weight: { overdueMs: 24 * HOUR, staleMs: 7 * DAY },
   o2_sat: { overdueMs: 4 * HOUR, staleMs: 24 * HOUR },
   respiratory_rate: { overdueMs: 4 * HOUR, staleMs: 24 * HOUR },
+  // Anthropometric vitals (#1176). Acute-care 4h/24h is wrong: these
+  // refresh on a monthly (pediatric well-child) or annual (adult)
+  // cadence, mirroring the `weight` precedent above. Without explicit
+  // entries a 5h-old body_height would flag overdue — clinical noise.
+  body_height: { overdueMs: 30 * DAY, staleMs: 365 * DAY },
+  bmi: { overdueMs: 30 * DAY, staleMs: 365 * DAY },
+  head_circumference: { overdueMs: 30 * DAY, staleMs: 6 * 30 * DAY },
 };
 
 /**
