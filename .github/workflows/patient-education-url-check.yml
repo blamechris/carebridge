@@ -1,0 +1,97 @@
+name: Patient Education URL Check
+
+on:
+  schedule:
+    # 09:00 UTC on the 1st of every month.
+    - cron: '0 9 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: patient-education-url-check-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check-urls:
+    name: Check curated education URLs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run URL rot check
+        id: check
+        run: |
+          set +e
+          pnpm --filter @carebridge/medical-logic run check:education-urls \
+            > url-check.log 2>&1
+          status=$?
+          cat url-check.log
+          echo "exit_status=$status" >> "$GITHUB_OUTPUT"
+          # The script already appends to $GITHUB_STEP_SUMMARY itself,
+          # so no extra summary step needed here.
+          exit 0
+
+      - name: Open or update tracking issue on failure
+        if: steps.check.outputs.exit_status != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          title="fhir: patient-education URL rot detected (auto)"
+          body_file=$(mktemp)
+          {
+            echo "Automated URL rot check found one or more curated"
+            echo "patient-education URLs that did not respond with a 2xx."
+            echo ""
+            echo "Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo ""
+            echo '```'
+            cat url-check.log
+            echo '```'
+          } > "$body_file"
+
+          # Make sure the url-rot label exists (no-op if already there).
+          # `from-review` is created by other workflows already.
+          gh label create url-rot \
+            --color "B60205" \
+            --description "Detected URL rot in curated content" \
+            2>/dev/null || true
+
+          # Idempotency: if an open issue with the canonical title prefix
+          # already exists, comment on it instead of opening a duplicate.
+          existing=$(gh issue list \
+            --state open \
+            --search "in:title \"fhir: patient-education URL rot detected\"" \
+            --json number,title \
+            --jq '.[] | select(.title | startswith("fhir: patient-education URL rot detected")) | .number' \
+            | head -n1)
+
+          if [ -n "$existing" ]; then
+            echo "Updating existing issue #$existing"
+            gh issue comment "$existing" --body-file "$body_file"
+          else
+            echo "Creating new tracking issue"
+            gh issue create \
+              --title "$title" \
+              --label "url-rot,from-review" \
+              --body-file "$body_file"
+          fi
+
+      - name: Fail job if URL check failed
+        if: steps.check.outputs.exit_status != '0'
+        run: exit 1
