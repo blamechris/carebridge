@@ -77,6 +77,8 @@ export {
   runFullSync,
   runIncrementalSync,
   runSingleResourceSync,
+  isMissingRequiredElementError,
+  describeMissingElement,
   SUPPORTED_RESOURCE_TYPES,
   type SyncResourceType,
   type SyncResult,

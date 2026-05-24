@@ -1137,16 +1137,15 @@ describe("Epic sync-jobs (#391)", () => {
     expect(markOk).not.toHaveBeenCalled();
   });
 
-  // #1099 acceptance #4: documented placeholder for multi-status fan-out
+  // #1099 acceptance #4: documented placeholder for multi-status fan-out.
+  // Tracked separately as #1114 (multi-status fan-out implementation) and
+  // #1097 (related sync_result signalling). The body uses expect.fail so
+  // accidentally un-skipping surfaces the tracking ID rather than a bare
+  // boolean (#1105).
   it.skip(
     "MedicationRequest fan-out supports multi-status override (active + on-hold + completed) — future",
     async () => {
-      // When the worker dispatch grows a `medication_request_statuses?:
-      // string[]` override, this test should drive the fan-out across
-      // each status as a separate searchAll call. Today the default is
-      // hardcoded to "active" and there's no per-job override channel
-      // — see issue #1097 for the related sync_result signalling work.
-      expect(false).toBe(true);
+      expect.fail("not yet implemented — tracked as #1114");
     },
   );
 });
