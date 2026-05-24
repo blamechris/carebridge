@@ -79,6 +79,7 @@ export {
   runSingleResourceSync,
   isMissingRequiredElementError,
   describeMissingElement,
+  sanitizeMissingElementForPersistence,
   SUPPORTED_RESOURCE_TYPES,
   type SyncResourceType,
   type SyncResult,

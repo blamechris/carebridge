@@ -1088,6 +1088,100 @@ describe("Epic sync-jobs (#391)", () => {
     expect(args.errorMessage).toMatch(/MedicationRequest\.intent/);
   });
 
+  it("MISSING_REQUIRED_ELEMENT (59108) with non-path diagnostic → markFailed sees the fallback placeholder, NOT the raw diagnostic (#1132)", async () => {
+    // Defense-in-depth: Epic's 59108 sub-code is documented to carry a
+    // FHIR element path ("Resource.element"), but `last_error_message`
+    // is surfaced via clinician-portal tRPC — so if a future Epic
+    // schema drift ever puts free-form text in `diagnostics` (potentially
+    // PHI-adjacent or just operator-confusing), the sanitization gate
+    // must drop it and substitute a non-revealing placeholder. The
+    // FULL diagnostic still goes to `log.error` for dev debugging —
+    // verified by the "diagnostic" payload field on the log call.
+    const rawDiagnostic =
+      "Some free-form NOT-a-path text that should never reach clinicians";
+    const client = {
+      readPatient: vi.fn(),
+      searchAll: vi.fn().mockImplementation(() =>
+        (async function* () {
+          throw new EpicFhirError(
+            "Epic FHIR request returned 400 Bad Request — A required element is missing.",
+            400,
+            "Bad Request",
+            "{...}",
+            {
+              resourceType: "OperationOutcome",
+              issue: [
+                {
+                  severity: "fatal",
+                  code: "required",
+                  diagnostics: rawDiagnostic,
+                  details: {
+                    text: "A required element is missing.",
+                    coding: [{ system: "epic", code: "59108" }],
+                  },
+                },
+              ],
+            } satisfies OperationOutcome,
+          );
+        })(),
+      ),
+    } as unknown as Parameters<typeof runFullSync>[1]["client"];
+
+    await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "Condition",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    expect(markFailed).toHaveBeenCalledOnce();
+    const args = markFailed.mock.calls[0]![0] as { errorMessage: string };
+    // Persisted message uses the fallback — raw free-form text never
+    // reaches `last_error_message`.
+    expect(args.errorMessage).toMatch(/Epic required element missing/);
+    expect(args.errorMessage).toMatch(/missing element \(see logs\)/);
+    expect(args.errorMessage).not.toContain(rawDiagnostic);
+  });
+
+  it("sanitizeMissingElementForPersistence: allow-list passes FHIR element paths, rejects everything else (#1132)", async () => {
+    const { sanitizeMissingElementForPersistence } = await import(
+      "../sync/sync-jobs.js"
+    );
+    // FHIR element paths pass through unchanged.
+    expect(sanitizeMissingElementForPersistence("MedicationRequest.intent")).toBe(
+      "MedicationRequest.intent",
+    );
+    expect(sanitizeMissingElementForPersistence("Observation.code")).toBe(
+      "Observation.code",
+    );
+    expect(
+      sanitizeMissingElementForPersistence("MedicationRequest.dosageInstruction.text"),
+    ).toBe("MedicationRequest.dosageInstruction.text");
+
+    // Anything else falls back to the non-revealing placeholder.
+    const fallback = "missing element (see logs)";
+    expect(sanitizeMissingElementForPersistence("Some free-form text")).toBe(
+      fallback,
+    );
+    expect(sanitizeMissingElementForPersistence("lowercase.element")).toBe(
+      fallback,
+    );
+    expect(sanitizeMissingElementForPersistence("Resource")).toBe(fallback);
+    expect(sanitizeMissingElementForPersistence("")).toBe(fallback);
+    expect(sanitizeMissingElementForPersistence("Resource.Element")).toBe(
+      fallback,
+    );
+    // Whitespace, newlines, PHI-adjacent content — all rejected.
+    expect(
+      sanitizeMissingElementForPersistence(
+        "patient John Doe MRN 12345 missing field",
+      ),
+    ).toBe(fallback);
+  });
+
   it("first-category soft-skip + second-category genuine error → result.skipped + markFailed both carry the partial soft-skip", async () => {
     const client = {
       readPatient: vi.fn(),
