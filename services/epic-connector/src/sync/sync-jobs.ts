@@ -51,7 +51,7 @@ import {
 } from "./sync-state-repo.js";
 import {
   getObservationCategories,
-  getMedicationRequestStatus,
+  getMedicationRequestStatuses,
 } from "./fanout-config.js";
 import { EPIC_ERROR_CODES } from "../epic-error-codes.js";
 import type { FhirResource } from "../fhir-types.js";
@@ -321,7 +321,11 @@ async function syncResourceType(
  *
  * The default set + status are overridable per deployment via env
  * (#1098) — see {@link getObservationCategories} and
- * {@link getMedicationRequestStatus}.
+ * {@link getMedicationRequestStatuses}.
+ *
+ * MedicationRequest also fans out per `status` (#1114) — same shape
+ * as the Observation path. Default is a single-element `["active"]`
+ * so the pre-#1114 behavior is preserved when env is unset.
  */
 
 /**
@@ -496,21 +500,37 @@ async function fetchResources(
   }
 
   // MedicationRequest: Epic requires `status` for unfiltered patient
-  // queries. Some app registrations (Order Template Medication only,
-  // for example) won't accept any `?patient=X` query — fail soft so
-  // the rest of the sync still runs.
+  // queries. Default fan-out is a single-element `["active"]`; a
+  // med-rec tenant can opt into multi-status (e.g. `active,on-hold,
+  // completed`) via EPIC_MEDICATION_REQUEST_STATUS (#1114).
+  //
+  // Per-status soft-skip mirrors the Observation per-category path —
+  // some app registrations (Order Template Medication only, for
+  // example) carry the scope for some statuses but not others, so a
+  // sibling-rejection on one status MUST NOT abort the others. Dedup
+  // by resource.id covers the rare overlap where Epic returns the
+  // same MedicationRequest under multiple statuses.
   if (args.resourceType === "MedicationRequest") {
-    const params = { ...baseParams, status: getMedicationRequestStatus() };
-    const outcome = await collectSearchOrSkipUnauthorized(
-      client,
-      args.resourceType,
-      params,
-    );
-    if (outcome.kind === "skipped") {
-      skippedOut.push(outcome.entry);
-      return [];
+    const seen = new Set<string>();
+    const out: FhirResource[] = [];
+    for (const status of getMedicationRequestStatuses()) {
+      const params = { ...baseParams, status };
+      const outcome = await collectSearchOrSkipUnauthorized(
+        client,
+        args.resourceType,
+        params,
+      );
+      if (outcome.kind === "skipped") {
+        skippedOut.push(outcome.entry);
+        continue;
+      }
+      for (const r of outcome.resources) {
+        if (r.id && seen.has(r.id)) continue;
+        if (r.id) seen.add(r.id);
+        out.push(r);
+      }
     }
-    return outcome.resources;
+    return out;
   }
 
   const resources: FhirResource[] = [];

@@ -1,5 +1,5 @@
 /**
- * Epic sync fan-out configuration (#1098, #1110, #1111, #1112, #1113).
+ * Epic sync fan-out configuration (#1098, #1110, #1111, #1112, #1113, #1114).
  *
  * Epic enforces per-resource-type search-parameter restrictions, so the
  * sync worker fans out across a small set of values for the resource
@@ -8,7 +8,8 @@
  *   - `Observation` — one search per `category` (Epic refuses an
  *     un-categorised search). Defaults: `vital-signs`, `laboratory`.
  *   - `MedicationRequest` — Epic refuses an un-`status`-scoped search.
- *     Defaults: `active`.
+ *     Defaults: `active`. Multi-status fan-out (#1114) lets a med-rec
+ *     tenant pull e.g. `active,on-hold,completed` in one sync.
  *
  * The MVP defaults match what the persistence layer can actually
  * import (vitals + lab_results, active meds) and what the AI oversight
@@ -25,11 +26,13 @@
  *     keeping the worker available rather than blocking boot on a
  *     typo. If the entire override is empty or all-invalid, the
  *     defaults are used and a log.warn is emitted once.
- *   EPIC_MEDICATION_REQUEST_STATUS    — Single FHIR MedicationRequest
- *     status code. Unknown values fall back to the default with a
- *     log.warn. Multi-status fan-out implementation is tracked under
- *     #1114; the related `it.skip` test-placeholder cleanup is
- *     tracked under #1105.
+ *   EPIC_MEDICATION_REQUEST_STATUS    — Comma-separated FHIR
+ *     MedicationRequest status codes (e.g. `active,on-hold,completed`).
+ *     A single value (e.g. `active`) is still accepted — that's the
+ *     pre-#1114 shape and downstream tenants keep working without an
+ *     env change. Same trim / dedup / unknown-drop semantics as
+ *     `EPIC_OBSERVATION_CATEGORIES`. The `it.skip` placeholder from
+ *     #1100 (tracked under #1105) is now a real test.
  *
  * Caching: `loadFanoutConfig` runs once on first access, then the
  * resolved config is reused for the lifetime of the process — env
@@ -78,11 +81,21 @@ export const DEFAULT_OBSERVATION_CATEGORIES: readonly string[] = [
   "laboratory",
 ];
 
-export const DEFAULT_MEDICATION_REQUEST_STATUS = "active";
+export const DEFAULT_MEDICATION_REQUEST_STATUSES: readonly string[] = [
+  "active",
+];
+
+/**
+ * Back-compat alias for the singular constant exported pre-#1114.
+ * Equal to `DEFAULT_MEDICATION_REQUEST_STATUSES[0]`. New code should
+ * use the plural constant.
+ */
+export const DEFAULT_MEDICATION_REQUEST_STATUS: string =
+  DEFAULT_MEDICATION_REQUEST_STATUSES[0]!;
 
 export interface FanoutConfig {
   readonly observationCategories: readonly string[];
-  readonly medicationRequestStatus: string;
+  readonly medicationRequestStatuses: readonly string[];
 }
 
 interface ParseResult<T> {
@@ -140,31 +153,75 @@ function parseObservationCategories(raw: string | undefined): ParseResult<string
   return { value: valid };
 }
 
-function parseMedicationRequestStatus(raw: string | undefined): ParseResult<string> {
-  if (raw === undefined) return { value: DEFAULT_MEDICATION_REQUEST_STATUS };
+/**
+ * Parse + validate `EPIC_MEDICATION_REQUEST_STATUS` (#1114).
+ *
+ * Pre-#1114 this was a single-value env. The shape upgrade is fully
+ * back-compat: a singleton like `EPIC_MEDICATION_REQUEST_STATUS=active`
+ * still resolves to `["active"]`. Multi-value like
+ * `EPIC_MEDICATION_REQUEST_STATUS=active,on-hold,completed` produces the
+ * comma-split list. Trim, dedup, and unknown-code-drop semantics match
+ * `parseObservationCategories` so a med-rec tenant gets the same UX as
+ * the Observation fan-out (#1109).
+ */
+function parseMedicationRequestStatuses(
+  raw: string | undefined,
+): ParseResult<string[]> {
+  if (raw === undefined) {
+    return { value: [...DEFAULT_MEDICATION_REQUEST_STATUSES] };
+  }
 
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) {
+  const parts = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+
+  const seen = new Set<string>();
+  const valid: string[] = [];
+  const invalid: string[] = [];
+  for (const p of parts) {
+    if (seen.has(p)) continue;
+    seen.add(p);
+    if (VALID_MEDICATION_REQUEST_STATUSES.has(p)) valid.push(p);
+    else invalid.push(p);
+  }
+
+  if (valid.length === 0) {
+    // All-empty (`""`, `,,,`, `"   "`) or all-invalid → fall back.
+    // Silently disabling MedicationRequest sync is worse than refusing
+    // the misconfig; emit a warning so the operator sees their override
+    // didn't take effect. The "not a known FHIR medication-request-status"
+    // phrasing is shared with the partial-invalid path so callers can
+    // grep one regex for the misconfig-class warning regardless of
+    // whether they typoed one entry or all of them.
     return {
-      value: DEFAULT_MEDICATION_REQUEST_STATUS,
+      value: [...DEFAULT_MEDICATION_REQUEST_STATUSES],
       warning: {
-        msg: "EPIC_MEDICATION_REQUEST_STATUS set but parsed empty, using default",
-        meta: { raw, fallback: DEFAULT_MEDICATION_REQUEST_STATUS },
+        msg:
+          parts.length === 0
+            ? "EPIC_MEDICATION_REQUEST_STATUS set but parsed empty, using default"
+            : "EPIC_MEDICATION_REQUEST_STATUS contains values that are not a known FHIR medication-request-status code, using default",
+        meta: {
+          raw,
+          invalidCodes: invalid,
+          fallback: [...DEFAULT_MEDICATION_REQUEST_STATUSES],
+        },
       },
     };
   }
 
-  if (!VALID_MEDICATION_REQUEST_STATUSES.has(trimmed)) {
+  if (invalid.length > 0) {
+    // Partial misconfig — keep the valid ones, warn about the typos.
     return {
-      value: DEFAULT_MEDICATION_REQUEST_STATUS,
+      value: valid,
       warning: {
-        msg: "EPIC_MEDICATION_REQUEST_STATUS is not a known FHIR medication-request-status code, using default",
-        meta: { raw: trimmed, fallback: DEFAULT_MEDICATION_REQUEST_STATUS },
+        msg: "EPIC_MEDICATION_REQUEST_STATUS contains unknown FHIR medication-request-status codes, dropping",
+        meta: { raw, invalidCodes: invalid, kept: valid },
       },
     };
   }
 
-  return { value: trimmed };
+  return { value: valid };
 }
 
 /** One structured warning emitted while parsing a fan-out env (#1116). */
@@ -194,14 +251,16 @@ export function parseFanoutConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): ParsedFanoutConfig {
   const cats = parseObservationCategories(env.EPIC_OBSERVATION_CATEGORIES);
-  const status = parseMedicationRequestStatus(env.EPIC_MEDICATION_REQUEST_STATUS);
+  const statuses = parseMedicationRequestStatuses(
+    env.EPIC_MEDICATION_REQUEST_STATUS,
+  );
   const warnings: FanoutConfigWarning[] = [];
   if (cats.warning) warnings.push(cats.warning);
-  if (status.warning) warnings.push(status.warning);
+  if (statuses.warning) warnings.push(statuses.warning);
   return {
     config: {
       observationCategories: cats.value,
-      medicationRequestStatus: status.value,
+      medicationRequestStatuses: statuses.value,
     },
     warnings,
   };
@@ -226,7 +285,7 @@ let cached: FanoutConfig | null = null;
 /**
  * Returns the resolved fan-out config, loading + caching on first
  * access. Subsequent calls in the same process reuse the cached
- * value. The returned object and its array are frozen so a consumer
+ * value. The returned object and its arrays are frozen so a consumer
  * doing `getFanoutConfig().observationCategories.push(...)` can't
  * silently mutate the process-wide config and bypass validation.
  */
@@ -235,7 +294,9 @@ export function getFanoutConfig(): FanoutConfig {
     const fresh = loadFanoutConfig();
     cached = Object.freeze({
       observationCategories: Object.freeze([...fresh.observationCategories]),
-      medicationRequestStatus: fresh.medicationRequestStatus,
+      medicationRequestStatuses: Object.freeze([
+        ...fresh.medicationRequestStatuses,
+      ]),
     });
   }
   return cached;
@@ -253,6 +314,20 @@ export function getObservationCategories(): readonly string[] {
   return getFanoutConfig().observationCategories;
 }
 
+/**
+ * Plural getter — returns every status the sync worker should fan out
+ * over for `MedicationRequest`. Default: `["active"]` (#1114).
+ */
+export function getMedicationRequestStatuses(): readonly string[] {
+  return getFanoutConfig().medicationRequestStatuses;
+}
+
+/**
+ * Singular getter — back-compat alias for the pre-#1114 API. Returns
+ * the first element of {@link getMedicationRequestStatuses}. Retained
+ * so downstream consumers that imported the singular name keep
+ * compiling; new code should call the plural helper.
+ */
 export function getMedicationRequestStatus(): string {
-  return getFanoutConfig().medicationRequestStatus;
+  return getMedicationRequestStatuses()[0]!;
 }

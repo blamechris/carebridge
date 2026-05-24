@@ -48,6 +48,9 @@ const {
   runSingleResourceSync,
   SUPPORTED_RESOURCE_TYPES,
 } = await import("../sync/sync-jobs.js");
+const { resetFanoutConfigCacheForTests } = await import(
+  "../sync/fanout-config.js"
+);
 
 const PATIENT_ID = "11111111-1111-1111-1111-111111111111";
 const EPIC_PATIENT_FHIR_ID = "epic-patient-1";
@@ -74,6 +77,14 @@ describe("Epic sync-jobs (#391)", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // The fan-out config is cached on first access. Tests that override
+    // EPIC_OBSERVATION_CATEGORIES / EPIC_MEDICATION_REQUEST_STATUS via
+    // process.env must reset the cache so the override is honored;
+    // resetting unconditionally keeps test ordering independent of
+    // whichever test ran first.
+    resetFanoutConfigCacheForTests();
+    delete process.env.EPIC_OBSERVATION_CATEGORIES;
+    delete process.env.EPIC_MEDICATION_REQUEST_STATUS;
     emit = vi.fn().mockResolvedValue(undefined);
   });
 
@@ -1137,15 +1148,214 @@ describe("Epic sync-jobs (#391)", () => {
     expect(markOk).not.toHaveBeenCalled();
   });
 
-  // #1099 acceptance #4: documented placeholder for multi-status fan-out.
-  // Tracked separately as #1114 (multi-status fan-out implementation) and
-  // #1097 (related sync_result signalling). The body uses expect.fail so
-  // accidentally un-skipping surfaces the tracking ID rather than a bare
-  // boolean (#1105).
-  it.skip(
-    "MedicationRequest fan-out supports multi-status override (active + on-hold + completed) — future",
-    async () => {
-      expect.fail("not yet implemented — tracked as #1114");
-    },
-  );
+  // ── #1114: multi-status MedicationRequest fan-out ───────────────
+  // Mirrors the Observation category fan-out — one Epic search per
+  // status, dedup by resource.id, soft-skip per status on
+  // unauthorized scope. Default (env unset) remains a single
+  // status=active query — back-compat guaranteed by the singular
+  // EPIC_MEDICATION_REQUEST_STATUS env continuing to work.
+
+  it("MedicationRequest fetch fans out across multi-status env override (active + on-hold + completed)", async () => {
+    process.env.EPIC_MEDICATION_REQUEST_STATUS = "active,on-hold,completed";
+    resetFanoutConfigCacheForTests();
+
+    const client = {
+      readPatient: vi.fn(),
+      searchAll: vi
+        .fn()
+        .mockImplementation((_rt: string, params: Record<string, string>) => {
+          // One unique med per status so we can verify each status was
+          // queried independently and all results are persisted.
+          return (async function* () {
+            yield {
+              resourceType: "MedicationRequest",
+              id: `med-${params.status}`,
+            };
+          })();
+        }),
+    } as unknown as Parameters<typeof runFullSync>[1]["client"];
+
+    persistMedicationRequest.mockResolvedValue({
+      internalId: "med-internal",
+      kind: "medication",
+      inserted: true,
+    });
+
+    const result = await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "MedicationRequest",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    const medCalls = (
+      client.searchAll as ReturnType<typeof vi.fn>
+    ).mock.calls.filter((c) => c[0] === "MedicationRequest");
+    expect(medCalls).toHaveLength(3);
+    const statuses = medCalls.map((c) => c[1].status).sort();
+    expect(statuses).toEqual(["active", "completed", "on-hold"]);
+    // Every status call must still carry `patient` so Epic scopes results.
+    for (const call of medCalls) {
+      expect(call[1].patient).toBe(EPIC_PATIENT_FHIR_ID);
+    }
+    expect(result.imported).toBe(3);
+    expect(result.errors).toHaveLength(0);
+    expect(result.skipped).toEqual([]);
+  });
+
+  it("MedicationRequest fetch dedups resources that appear in multiple status fan-out responses", async () => {
+    // Defensive guard against Epic returning the same MedicationRequest
+    // under multiple statuses (shouldn't happen for status-disjoint
+    // sets, but a tenant overriding to overlapping/legacy statuses
+    // shouldn't double-import).
+    process.env.EPIC_MEDICATION_REQUEST_STATUS = "active,on-hold";
+    resetFanoutConfigCacheForTests();
+
+    const sharedMed = {
+      resourceType: "MedicationRequest",
+      id: "med-shared",
+    };
+    const client = {
+      readPatient: vi.fn(),
+      searchAll: vi.fn().mockImplementation(() =>
+        (async function* () {
+          yield sharedMed;
+        })(),
+      ),
+    } as unknown as Parameters<typeof runFullSync>[1]["client"];
+
+    persistMedicationRequest.mockResolvedValue({
+      internalId: "med-internal",
+      kind: "medication",
+      inserted: true,
+    });
+
+    const result = await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "MedicationRequest",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    // searchAll fires twice (fan-out), persistMedicationRequest fires
+    // once because the duplicate is dropped before persistence.
+    expect(client.searchAll).toHaveBeenCalledTimes(2);
+    expect(persistMedicationRequest).toHaveBeenCalledTimes(1);
+    expect(result.imported).toBe(1);
+  });
+
+  it("MedicationRequest fan-out soft-skips per-status on unauthorized scope while other statuses succeed", async () => {
+    // Acceptance criterion #1114: one status soft-skipped, others
+    // succeed — matches the per-category Observation behavior.
+    process.env.EPIC_MEDICATION_REQUEST_STATUS = "active,on-hold,completed";
+    resetFanoutConfigCacheForTests();
+
+    const client = {
+      readPatient: vi.fn(),
+      searchAll: vi
+        .fn()
+        .mockImplementation((_rt: string, params: Record<string, string>) => {
+          if (params.status === "on-hold") {
+            return (async function* () {
+              throw new Error(
+                "Epic FHIR request returned 400 Bad Request — Combination of parameters is not valid for any authorized sub-resource. No search was performed.",
+              );
+            })();
+          }
+          return (async function* () {
+            yield {
+              resourceType: "MedicationRequest",
+              id: `med-${params.status}`,
+            };
+          })();
+        }),
+    } as unknown as Parameters<typeof runFullSync>[1]["client"];
+
+    persistMedicationRequest.mockResolvedValue({
+      internalId: "med-internal",
+      kind: "medication",
+      inserted: true,
+    });
+
+    const result = await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "MedicationRequest",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    // 3 fan-out calls; 2 succeeded, 1 soft-skipped, 0 errors.
+    expect(client.searchAll).toHaveBeenCalledTimes(3);
+    expect(persistMedicationRequest).toHaveBeenCalledTimes(2);
+    expect(result.imported).toBe(2);
+    expect(result.errors).toHaveLength(0);
+
+    // Soft-skip surfaces in result.skipped[] with the offending status
+    // and NO `patient` leak — same shape as the Observation path.
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0]).toMatchObject({
+      resource_type: "MedicationRequest",
+      reason: "unauthorized",
+      filter: { status: "on-hold" },
+    });
+    expect(result.skipped[0]!.filter).not.toHaveProperty("patient");
+
+    // markOk receives the soft-skip so it lands on epic_sync_state.
+    expect(markOk).toHaveBeenCalledOnce();
+    const markOkArgs = markOk.mock.calls[0]![0] as {
+      skipped?: Array<{ filter: Record<string, string>; reason: string }>;
+    };
+    expect(markOkArgs.skipped).toEqual([
+      { filter: { status: "on-hold" }, reason: "unauthorized" },
+    ]);
+  });
+
+  it("MedicationRequest fan-out preserves the incremental watermark on every status call", async () => {
+    process.env.EPIC_MEDICATION_REQUEST_STATUS = "active,on-hold";
+    resetFanoutConfigCacheForTests();
+
+    getSyncState.mockImplementation(async (_p, rt) =>
+      rt === "MedicationRequest"
+        ? {
+            patient_id: PATIENT_ID,
+            resource_type: "MedicationRequest",
+            last_fhir_lastupdated: "2026-04-01T00:00:00Z",
+            last_synced_at: "2026-04-01T00:00:00Z",
+            status: "ok",
+            resources_synced_count: 0,
+            error_count: 0,
+            last_error_message: null,
+            last_error_at: null,
+          }
+        : null,
+    );
+    persistPatient.mockResolvedValue({
+      internalId: PATIENT_ID,
+      kind: "patient",
+      inserted: false,
+    });
+    const client = makeFakeClient({});
+
+    await runIncrementalSync(
+      { patientId: PATIENT_ID, epicPatientFhirId: EPIC_PATIENT_FHIR_ID },
+      { client, emit },
+    );
+
+    const medCalls = (
+      client.searchAll as ReturnType<typeof vi.fn>
+    ).mock.calls.filter((c) => c[0] === "MedicationRequest");
+    expect(medCalls).toHaveLength(2);
+    for (const call of medCalls) {
+      expect(call[1]._lastUpdated).toBe("gt2026-04-01T00:00:00Z");
+    }
+  });
 });
