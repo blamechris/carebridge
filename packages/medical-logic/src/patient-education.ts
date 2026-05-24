@@ -563,7 +563,7 @@ export function getDiagnosisEducation(
     if (/\bhyperlipidemia\b|\bdyslipidemia\b|\bhigh cholesterol\b/.test(lower)) return DIAGNOSIS_CONTENT.E78!;
     if (/\bhypothyroidism\b|\bunderactive thyroid\b/.test(lower)) return DIAGNOSIS_CONTENT.E03!;
     if (/\bcoronary artery disease\b|\bcad\b|\bischemic heart\b/.test(lower)) return DIAGNOSIS_CONTENT.I25!;
-    if (/\bischemic stroke\b|\bstroke\b|\bcva\b/.test(lower)) return DIAGNOSIS_CONTENT.I63!;
+    if (/\bischemic stroke\b|\bcva\b/.test(lower)) return DIAGNOSIS_CONTENT.I63!;
     if (/\bhypertension\b|\bhigh blood pressure\b|\bhtn\b/.test(lower)) return DIAGNOSIS_CONTENT.I10!;
     if (/\batrial fibrillation\b|\bafib\b|\ba.?fib\b/.test(lower)) return DIAGNOSIS_CONTENT.I48!;
     if (/\bheart failure\b|\bchf\b/.test(lower)) return DIAGNOSIS_CONTENT.I50!;
@@ -571,7 +571,7 @@ export function getDiagnosisEducation(
     if (/\bdeep vein thrombosis\b|\bdvt\b/.test(lower)) return DIAGNOSIS_CONTENT.I80!;
     if (/\basthma\b/.test(lower)) return DIAGNOSIS_CONTENT.J45!;
     if (/\bcopd\b|\bchronic obstructive\b/.test(lower)) return DIAGNOSIS_CONTENT.J44!;
-    if (/\bgerd\b|\bgastro.?esophageal\b|\bacid reflux\b|\breflux\b/.test(lower)) return DIAGNOSIS_CONTENT.K21!;
+    if (/\bgerd\b|\bgastro.?esophageal\b|\bacid reflux\b/.test(lower)) return DIAGNOSIS_CONTENT.K21!;
     if (/\bknee osteoarthritis\b|\bknee oa\b/.test(lower)) return DIAGNOSIS_CONTENT.M17!;
     if (/\bosteoarthritis\b/.test(lower)) return DIAGNOSIS_CONTENT.M19!;
     if (/\bmigraine\b/.test(lower)) return DIAGNOSIS_CONTENT.G43!;

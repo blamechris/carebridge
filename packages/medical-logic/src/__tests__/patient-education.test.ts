@@ -50,6 +50,17 @@ describe("getDiagnosisEducation (#328)", () => {
     expect(getDiagnosisEducation(null, "Chronic migraine")?.title).toMatch(/Migraine/);
   });
 
+  it("does not mis-route non-ischemic stroke or non-GERD reflux to the #948 cards", () => {
+    // `heat stroke` (T67.0) and `sun stroke` are environmental heat illness, not ischemic stroke.
+    // The I63 keyword fallback must not catch them via a bare `\bstroke\b`.
+    expect(getDiagnosisEducation(null, "Heat stroke")).toBeNull();
+    expect(getDiagnosisEducation(null, "Sun stroke")).toBeNull();
+    // `vesicoureteral reflux` (N13.7) and `laryngopharyngeal reflux` (R49.x / J38.x) are not GERD.
+    // The K21 keyword fallback must not catch them via a bare `\breflux\b`.
+    expect(getDiagnosisEducation(null, "Vesicoureteral reflux")).toBeNull();
+    expect(getDiagnosisEducation(null, "Laryngopharyngeal reflux")).toBeNull();
+  });
+
   it("returns null for diagnoses we don't have content for", () => {
     expect(getDiagnosisEducation("Z99.0", "Some niche status")).toBeNull();
     expect(getDiagnosisEducation(null, "morgellons")).toBeNull();
