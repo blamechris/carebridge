@@ -10,6 +10,7 @@
 
 import type { encounters } from "@carebridge/db-schema";
 import type { FhirEncounter } from "../types/fhir-r4.js";
+import { US_CORE_ENCOUNTER } from "./us-core-profiles.js";
 
 type EncounterRow = typeof encounters.$inferSelect;
 
@@ -78,6 +79,9 @@ export function toFhirEncounter(
   const resource: FhirEncounter = {
     resourceType: "Encounter",
     id: encounter.id,
+    meta: {
+      profile: [US_CORE_ENCOUNTER],
+    },
     status: mapEncounterStatus(encounter.status),
     class: {
       system: ACT_CODE_SYSTEM,
