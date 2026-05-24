@@ -45,6 +45,18 @@ export interface EducationContent {
 // ── Diagnosis content, keyed by ICD-10 prefix ───────────────────
 
 /**
+ * URL maintenance (issue #1151):
+ *   Curated `links[*].url` values below are HEAD-checked monthly by
+ *   `.github/workflows/patient-education-url-check.yml`. The job opens
+ *   (or comments on) an issue titled "fhir: patient-education URL rot
+ *   detected (auto)" whenever a curated URL returns a non-2xx.
+ *
+ *   When updating or adding links, stick to authoritative health domains
+ *   — MedlinePlus (medlineplus.gov), CDC (cdc.gov), American Heart
+ *   Association (heart.org), National Stroke Association (stroke.org),
+ *   988 Lifeline (988lifeline.org), NIMH (nimh.nih.gov). The invariant
+ *   test in `patient-education.test.ts` enforces this allowlist.
+ *
  * ICD-10 prefixes are matched in descending length order so a more
  * specific code wins over a broader family. For example, `I25.10`
  * (CAD without angina) matches the `I25` entry; `I63` would match a

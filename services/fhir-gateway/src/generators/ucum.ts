@@ -1,5 +1,5 @@
 /**
- * UCUM validity helpers for FHIR Quantity emission (#946, #978).
+ * UCUM validity helpers for FHIR Quantity emission (#946, #978, #1148).
  *
  * Our internal `medications.dose_unit` is free-text. FHIR's Quantity shape
  * reserves `system: "http://unitsofmeasure.org"` for UCUM-coded units —
@@ -127,6 +127,48 @@ const NON_UCUM_TO_UCUM_CODE: Record<string, string> = Object.assign(
 );
 
 /**
+ * Clinical case-variant aliases (#1148).
+ *
+ * UCUM is strictly case-sensitive, but several case-variants the pre-#1138
+ * hand-curated allowlist accepted are now rejected by the strict validator,
+ * losing their `system + code` and falling back to text-only Quantity.
+ * The lower-cased lookup table above is also too aggressive to catch
+ * inputs like `mg/Kg` (the slash form prevents a single lowercase rewrite),
+ * and crucially the bare token `G` IS a valid UCUM atom — it means gauss
+ * (magnetic flux density). Without an explicit alias, `toDoseQuantity(1, "G")`
+ * silently re-codes "1 gram" as "1 gauss" in the FHIR export.
+ *
+ * Consulted BEFORE the strict validator so the clinical interpretation
+ * always wins. Keys preserve their original casing; values are canonical
+ * UCUM codes (case-sensitive). Conservative — only entries where the
+ * case-variant is unambiguously clinical: clinicians never mean magnetic
+ * flux density (gauss / kilo-gauss) when typing "G" or "KG" in a
+ * dose_unit field.
+ *
+ * Null-prototype object (same `Object.create(null)` pattern as the main
+ * alias table) to keep `medications.dose_unit` free-text input from
+ * resolving prototype keys like `__proto__` / `constructor`.
+ */
+const CLINICAL_CASE_ALIASES: Record<string, string> = Object.assign(
+  Object.create(null) as Record<string, string>,
+  {
+    // Mass — clinical "G" / "KG" never means gauss / kilo-gauss
+    G: "g",
+    KG: "kg",
+    // Milliequivalent — common mixed-case clinician form
+    mEq: "meq",
+    "mEq/L": "meq/L",
+    "mEq/l": "meq/L",
+    // mg/kg compounds — slash form blocks a single lowercase coercion
+    "mg/Kg": "mg/kg",
+    "Mg/Kg": "mg/kg",
+    "Mg/kg": "mg/kg",
+    "MG/KG": "mg/kg",
+    "MG/kg": "mg/kg",
+  },
+);
+
+/**
  * Lazy-loaded singleton UcumLhcUtils. The constructor populates a ~500KB
  * unit-definitions table; we memoise so repeated `toDoseQuantity` calls
  * pay the cost only once per process.
@@ -211,11 +253,27 @@ export function toDoseQuantity(value: number, unit: string): DoseQuantity {
   const trimmed = unit.trim();
   const lower = trimmed.toLowerCase();
 
-  // 1. Alias table first. Catches `mcg`, `IU`, `tablet`, `MG`, and the
-  //    lowercase volume forms (`ml` → `mL`). The table is null-prototype,
-  //    so bracket access cannot resolve inherited keys like `__proto__`;
-  //    the `typeof === "string"` guard is belt-and-suspenders for any
-  //    future refactor that swaps the table back to a plain object.
+  // 1. Clinical case-variant alias table (#1148). Consulted BEFORE the
+  //    strict validator so a clinician's `G` always means gram (not the
+  //    UCUM `G` atom, which is gauss / magnetic flux density), `KG` means
+  //    kilogram, `mEq` means milliequivalent, etc. Keyed by ORIGINAL
+  //    casing — the slash form (`mg/Kg`) blocks a lowercase coercion in
+  //    the main table.
+  const clinicalAliased = CLINICAL_CASE_ALIASES[trimmed];
+  if (typeof clinicalAliased === "string") {
+    return {
+      value,
+      unit,
+      system: UCUM_SYSTEM,
+      code: clinicalAliased,
+    };
+  }
+
+  // 2. Lower-cased alias table. Catches `mcg`, `IU`, `tablet`, `MG`, and
+  //    the lowercase volume forms (`ml` → `mL`). The table is null-
+  //    prototype, so bracket access cannot resolve inherited keys like
+  //    `__proto__`; the `typeof === "string"` guard is belt-and-suspenders
+  //    for any future refactor that swaps the table back to a plain object.
   const aliased = NON_UCUM_TO_UCUM_CODE[lower];
   if (typeof aliased === "string") {
     return {
@@ -226,7 +284,7 @@ export function toDoseQuantity(value: number, unit: string): DoseQuantity {
     };
   }
 
-  // 2. Validate the raw input via UCUM-lhc. Accepts the full UCUM grammar
+  // 3. Validate the raw input via UCUM-lhc. Accepts the full UCUM grammar
   //    (e.g. `10*6/uL`, `mg.kg-1.d-1`, `[iU]/mL`).
   const ucumCode = validateViaLhc(trimmed);
   if (ucumCode !== null) {
@@ -238,7 +296,7 @@ export function toDoseQuantity(value: number, unit: string): DoseQuantity {
     };
   }
 
-  // 3. Unknown. Emit value + human-readable unit only — valid FHIR Quantity.
+  // 4. Unknown. Emit value + human-readable unit only — valid FHIR Quantity.
   return { value, unit };
 }
 
@@ -256,6 +314,13 @@ export function isUcumAllowed(unit: string): boolean {
   const trimmed = unit.trim();
   if (trimmed.length === 0) return false;
   const lower = trimmed.toLowerCase();
+
+  // Clinical case-variant aliases (#1148). Mirror `toDoseQuantity` so the
+  // predicate stays consistent with what we actually emit.
+  const clinicalAliased = CLINICAL_CASE_ALIASES[trimmed];
+  if (typeof clinicalAliased === "string") {
+    return validateViaLhc(clinicalAliased) !== null;
+  }
 
   // Alias-table hit, but only if the mapped target is a real UCUM code
   // (not a curly-brace annotation that the validator would also accept).

@@ -172,6 +172,85 @@ describe("toDoseQuantity — UCUM-lhc validator integration (#978)", () => {
   });
 });
 
+describe("toDoseQuantity — clinical case-variant aliases (#1148)", () => {
+  // PR #1138 replaced the hand-curated allowlist with the @lhncbc/ucum-lhc
+  // validator, which is strictly case-sensitive. Several case-variant inputs
+  // the pre-#1138 allowlist accepted now lose their system+code:
+  //  - mEq → text-only (was: meq)
+  //  - KG → text-only (was: kg)
+  //  - mg/Kg, Mg/Kg → text-only (was: mg/kg)
+  //  - G → 'G' (gauss, magnetic flux density!) instead of 'g' (gram)
+  //
+  // The clinical-context fix is a small alias table consulted BEFORE the
+  // strict validator: case-variants that are unambiguously clinical
+  // (clinicians never mean magnetic flux when typing "G" in a dose_unit)
+  // are normalised to their canonical UCUM atom.
+  it("maps 'mEq' to UCUM 'meq' (milliequivalent)", () => {
+    const q = toDoseQuantity(10, "mEq");
+    expect(q.system).toBe("http://unitsofmeasure.org");
+    expect(q.code).toBe("meq");
+    expect(q.unit).toBe("mEq"); // original casing preserved
+  });
+
+  it("maps 'mEq/L' to UCUM 'meq/L'", () => {
+    const q = toDoseQuantity(140, "mEq/L");
+    expect(q.system).toBe("http://unitsofmeasure.org");
+    expect(q.code).toBe("meq/L");
+    expect(q.unit).toBe("mEq/L");
+  });
+
+  it("maps 'KG' to UCUM 'kg' (kilogram)", () => {
+    const q = toDoseQuantity(70, "KG");
+    expect(q.system).toBe("http://unitsofmeasure.org");
+    expect(q.code).toBe("kg");
+    expect(q.unit).toBe("KG");
+  });
+
+  it("maps 'mg/Kg' to UCUM 'mg/kg'", () => {
+    const q = toDoseQuantity(2.5, "mg/Kg");
+    expect(q.system).toBe("http://unitsofmeasure.org");
+    expect(q.code).toBe("mg/kg");
+    expect(q.unit).toBe("mg/Kg");
+  });
+
+  it("maps 'Mg/Kg' to UCUM 'mg/kg'", () => {
+    const q = toDoseQuantity(2.5, "Mg/Kg");
+    expect(q.system).toBe("http://unitsofmeasure.org");
+    expect(q.code).toBe("mg/kg");
+    expect(q.unit).toBe("Mg/Kg");
+  });
+
+  it("maps bare 'G' to UCUM 'g' (gram, NOT gauss)", () => {
+    // CRITICAL semantic-regression guard. The strict UCUM atom 'G' is
+    // gauss (magnetic flux density). In any clinical dose_unit context,
+    // a clinician typing 'G' means grams. Without the case-alias map,
+    // toDoseQuantity(1, "G") would emit code: "G" (gauss) — silently
+    // re-interpreting "1 gram" as "1 gauss" in the FHIR export.
+    const q = toDoseQuantity(1, "G");
+    expect(q.system).toBe("http://unitsofmeasure.org");
+    expect(q.code).toBe("g"); // gram, NOT gauss ("G")
+    expect(q.unit).toBe("G"); // original input preserved
+  });
+
+  it("does not pollute the alias map via prototype keys", () => {
+    // Defence-in-depth: a null-prototype alias map should never return
+    // anything for __proto__ / constructor, so even an alias-table-only
+    // path cannot leak a non-string code.
+    const q = toDoseQuantity(1, "__proto__");
+    if (q.code !== undefined) {
+      expect(typeof q.code).toBe("string");
+    }
+  });
+
+  it("leaves unknown case variants to the strict validator", () => {
+    // 'scoop' is not in any alias table; the validator rejects it; result
+    // must remain text-only Quantity (no system, no code).
+    const q = toDoseQuantity(1, "scoop");
+    expect(q.system).toBeUndefined();
+    expect(q.code).toBeUndefined();
+  });
+});
+
 describe("toDoseQuantity — prototype-pollution defence (#1138 Copilot review)", () => {
   // `medications.dose_unit` is free-text clinician input flowing through
   // tRPC → BullMQ → fhir-gateway. The alias table is a Record<string,string>
@@ -253,5 +332,19 @@ describe("isUcumAllowed", () => {
   it("rejects truly invalid strings", () => {
     expect(isUcumAllowed("scoop")).toBe(false);
     expect(isUcumAllowed("")).toBe(false);
+  });
+
+  it("accepts clinical case-variants restored by #1148 (mirror of toDoseQuantity)", () => {
+    // Predicate must stay aligned with toDoseQuantity — anything the
+    // emitter encodes as system+code MUST be reported allowed here, or
+    // callers gating on `isUcumAllowed` get a different verdict than
+    // what shows up in the emitted FHIR Quantity. Covers the new
+    // CLINICAL_CASE_ALIASES branch in isUcumAllowed.
+    expect(isUcumAllowed("G")).toBe(true); // gram, not gauss
+    expect(isUcumAllowed("KG")).toBe(true);
+    expect(isUcumAllowed("mEq")).toBe(true);
+    expect(isUcumAllowed("mEq/L")).toBe(true);
+    expect(isUcumAllowed("mg/Kg")).toBe(true);
+    expect(isUcumAllowed("Mg/Kg")).toBe(true);
   });
 });
