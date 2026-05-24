@@ -60,18 +60,22 @@ The `@lhncbc/ucum-lhc` package bundles `data/ucumDefs.min.json`, which is
 derived from the UCUM table; consequently this notice applies to the
 fhir-gateway distribution.
 
-### Sub-license: LOINC content (conditional)
+### Sub-license: LOINC content
 
-If LOINC ® content is included, that content is copyright © 1995–2016
-Regenstrief Institute, Inc. and the LOINC Committee, and is distributed
-under the LOINC terms of use:
+The bundled `data/ucumDefs.min.json` in `@lhncbc/ucum-lhc` v7.1.6
+declares (in its own `license` field) that the data was generated
+from "the UCUM data and selected LOINC combinations of UCUM units".
+The LOINC sub-license therefore applies to this fhir-gateway
+distribution.
+
+LOINC content is copyright © 1995–2016 Regenstrief Institute, Inc.
+and the Logical Observation Identifiers Names and Codes (LOINC)
+Committee, and is distributed under the LOINC terms of use:
 
 - LOINC terms: <https://loinc.org/terms-of-use>
 
-LOINC ® is a registered United States trademark of Regenstrief Institute,
-Inc. As of `@lhncbc/ucum-lhc` v7.1.6, the runtime files shipped to the
-fhir-gateway are UCUM-only; the LOINC condition is reproduced here for
-completeness because the upstream license enumerates it.
+LOINC ® is a registered United States trademark of Regenstrief
+Institute, Inc.
 
 ### Citation request
 
@@ -83,5 +87,8 @@ completeness because the upstream license enumerates it.
 A previous internal discussion (issue #978, closed by PR #1138) referred
 to `@lhncbc/ucum-lhc` as "MIT-licensed". That characterisation was
 incorrect. The package is distributed under the BSD-derived LHNCBC/NLM
-license reproduced above, with the UCUM and LOINC sub-licenses noted. This
-file supersedes any prior claim in PRs, issue comments, or commit messages.
+license summarised above, with the UCUM and LOINC sub-licenses noted.
+For the full authoritative text (including the warranty disclaimer),
+refer to the upstream `LICENSE.md` shipped inside the package. This
+file supersedes any prior claim in PRs, issue comments, or commit
+messages.

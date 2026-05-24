@@ -25,6 +25,6 @@ In particular, [`@lhncbc/ucum-lhc`](https://github.com/lhncbc/ucum-lhc)
 is distributed under a BSD-derived license from the U.S. National Library
 of Medicine's Lister Hill National Center for Biomedical Communications
 (LHNCBC), with sub-licenses for UCUM table content (Regenstrief Institute
-+ UCUM Organization) and, where applicable, LOINC content. Any
-redistribution of CareBridge that includes this service must reproduce
-the notices in `NOTICES.md`.
++ UCUM Organization) and LOINC content (the bundled `ucumDefs.min.json`
+includes LOINC-derived combinations). Any redistribution of CareBridge
+that includes this service must reproduce the notices in `NOTICES.md`.
