@@ -7,7 +7,8 @@
  */
 
 import type { diagnoses } from "@carebridge/db-schema";
-import type { Coding } from "../types/fhir-r4.js";
+import type { Coding, Meta } from "../types/fhir-r4.js";
+import { US_CORE_CONDITION } from "./us-core-profiles.js";
 
 type Diagnosis = typeof diagnoses.$inferSelect;
 
@@ -17,6 +18,7 @@ type FhirCoding = Required<Pick<Coding, "system" | "code">> & Pick<Coding, "disp
 interface FhirCondition {
   resourceType: "Condition";
   id: string;
+  meta?: Meta;
   clinicalStatus: {
     coding: FhirCoding[];
   };
@@ -95,6 +97,9 @@ export function toFhirCondition(
   const condition: FhirCondition = {
     resourceType: "Condition",
     id: diagnosis.id,
+    meta: {
+      profile: [US_CORE_CONDITION],
+    },
     clinicalStatus: {
       coding: [
         {

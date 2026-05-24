@@ -151,4 +151,91 @@ describe("EpicTokenClient (#389)", () => {
     );
     expect(body.get("scope")).toBe("system/Patient.read");
   });
+
+  it("coalesces concurrent callers into a single in-flight fetch (#1089)", async () => {
+    // Hold the fetch response until we explicitly resolve it, so all
+    // callers race for the same in-flight promise before any of them
+    // see a cached value.
+    let resolveFetch: (response: Response) => void;
+    const pendingResponse = new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    });
+    const fetchMock = vi.fn().mockImplementation(() => pendingResponse);
+    const client = new EpicTokenClient(makeConfig(privatePem), fetchMock);
+
+    // Fire 5 concurrent getAccessToken() calls before the first fetch
+    // resolves.
+    const callers = Array.from({ length: 5 }, () => client.getAccessToken());
+
+    // Now release the underlying token fetch.
+    resolveFetch!(tokenResponse({ access_token: "coalesced-token" }));
+
+    const tokens = await Promise.all(callers);
+
+    // Every caller should receive the same token, and only ONE fetch
+    // should have hit the network.
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(tokens).toEqual([
+      "coalesced-token",
+      "coalesced-token",
+      "coalesced-token",
+      "coalesced-token",
+      "coalesced-token",
+    ]);
+  });
+
+  it("invalidate() clears the in-flight promise so the next call fetches afresh (#1089)", async () => {
+    // Set up a pending fetch that we will invalidate before resolving.
+    // After invalidate(), the next call should kick off its own fetch
+    // rather than reusing the dropped in-flight promise.
+    let resolveFirst: (response: Response) => void;
+    let resolveSecond: (response: Response) => void;
+    const firstPending = new Promise<Response>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const secondPending = new Promise<Response>((resolve) => {
+      resolveSecond = resolve;
+    });
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => firstPending)
+      .mockImplementationOnce(() => secondPending);
+    const client = new EpicTokenClient(makeConfig(privatePem), fetchMock);
+
+    // Kick off the first call but do not await it — it is in-flight.
+    const firstCall = client.getAccessToken();
+    // While in-flight, invalidate clears the in-flight reference.
+    client.invalidate();
+    // The next call should NOT reuse the dropped promise; it should
+    // start a brand-new fetch.
+    const secondCall = client.getAccessToken();
+
+    resolveFirst!(tokenResponse({ access_token: "first-token" }));
+    resolveSecond!(tokenResponse({ access_token: "second-token" }));
+
+    const [first, second] = await Promise.all([firstCall, secondCall]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(first).toBe("first-token");
+    expect(second).toBe("second-token");
+  });
+
+  it("clears the in-flight promise when the token request fails (#1089)", async () => {
+    // After a fetch failure, the in-flight promise must be cleared so a
+    // retry can issue a fresh request — otherwise every subsequent
+    // caller would await (and reject from) the same poisoned promise.
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response("invalid_client_assertion_or_signature", { status: 400 }),
+      )
+      .mockResolvedValueOnce(tokenResponse({ access_token: "after-retry" }));
+    const client = new EpicTokenClient(makeConfig(privatePem), fetchMock);
+
+    await expect(client.getAccessToken()).rejects.toThrow(/400/);
+    const recovered = await client.getAccessToken();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(recovered).toBe("after-retry");
+  });
 });

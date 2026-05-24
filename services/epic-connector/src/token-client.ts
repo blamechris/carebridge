@@ -65,6 +65,14 @@ interface CachedToken {
  */
 export class EpicTokenClient {
   private cached: CachedToken | null = null;
+  /**
+   * In-flight token request. Concurrent {@link getAccessToken} callers
+   * that arrive while a fetch is outstanding await the same promise
+   * instead of each kicking off their own request (#1089). Cleared as
+   * soon as the request settles (success or failure) so the cache /
+   * retry path takes over for subsequent callers.
+   */
+  private inFlight: Promise<TokenResponse> | null = null;
 
   constructor(
     private readonly config: EpicConfig,
@@ -77,9 +85,9 @@ export class EpicTokenClient {
   /**
    * Return a usable access token. Uses the cached value when it has
    * more than REFRESH_BUFFER_SEC of lifetime left; otherwise requests
-   * a fresh one. Thread-safe in Node's single-threaded event loop —
-   * concurrent callers within a tick share the same in-flight request
-   * via the cache being populated on resolution.
+   * a fresh one. Concurrent callers that arrive while a fetch is
+   * outstanding coalesce on a shared in-flight promise (#1089) so a
+   * burst of N callers issues a single network round-trip.
    */
   async getAccessToken(scopes: string[] = DEFAULT_SYSTEM_SCOPES): Promise<string> {
     if (this.cached) {
@@ -89,7 +97,38 @@ export class EpicTokenClient {
       }
     }
 
+    // If a refresh is already in flight, every concurrent caller awaits
+    // the same promise. The first caller to enter this branch sets
+    // `inFlight`; later callers in the same tick observe it and join.
+    if (this.inFlight) {
+      const parsed = await this.inFlight;
+      return parsed.access_token;
+    }
+
     const issuedAtMs = this.nowMs();
+    this.inFlight = this.fetchToken(scopes, issuedAtMs);
+    try {
+      const parsed = await this.inFlight;
+      return parsed.access_token;
+    } finally {
+      // Always clear the in-flight slot — whether the fetch resolved or
+      // rejected — so the next caller observes a clean state. On
+      // failure the cache is untouched (no `this.cached` write) and the
+      // next call will issue its own retry; on success the cache has
+      // been populated and the next call is served from it.
+      this.inFlight = null;
+    }
+  }
+
+  /**
+   * Internal fetch helper. Extracted so the in-flight slot can be
+   * tracked as a single `Promise<TokenResponse>` regardless of the
+   * scope override or issued-at timestamp.
+   */
+  private async fetchToken(
+    scopes: string[],
+    issuedAtMs: number,
+  ): Promise<TokenResponse> {
     const assertion = buildClientAssertion({
       clientId: this.config.clientId,
       tokenUrl: this.config.tokenUrl,
@@ -140,18 +179,20 @@ export class EpicTokenClient {
       response: parsed,
       expiresAtMs: issuedAtMs + parsed.expires_in * 1000,
     };
-
-    return parsed.access_token;
+    return parsed;
   }
 
   /**
-   * Drop the cached token. Forces the next {@link getAccessToken} call
-   * to request a fresh one. Useful when the FHIR client receives a 401
-   * (token revoked / org rotated keys) and wants to retry once with a
-   * fresh assertion before failing.
+   * Drop the cached token AND any in-flight refresh promise. Forces
+   * the next {@link getAccessToken} call to request a fresh one.
+   * Useful when the FHIR client receives a 401 (token revoked / org
+   * rotated keys) and wants to retry once with a fresh assertion
+   * before failing. Clearing the in-flight reference too (#1089)
+   * prevents a stale-credential refresh from satisfying the retry.
    */
   invalidate(): void {
     this.cached = null;
+    this.inFlight = null;
   }
 }
 
