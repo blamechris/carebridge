@@ -4,14 +4,15 @@ import type {
   Coding,
   CodeableConcept,
   Quantity,
-  Reference,
-  ObservationComponent,
-  Meta,
+  FhirObservation,
+  ObservationReferenceRange,
 } from "../types/fhir-r4.js";
 import {
   US_CORE_VITAL_SIGNS,
   US_CORE_LABORATORY_RESULT,
 } from "./us-core-profiles.js";
+
+export type { FhirObservation };
 
 const UNIT_TO_UCUM: Record<string, string> = {
   "K/uL": "10*3/uL",
@@ -39,25 +40,6 @@ const UNIT_TO_UCUM: Record<string, string> = {
 function toUcumCode(unit: string | null): string {
   if (!unit) return "{unknown}";
   return UNIT_TO_UCUM[unit] ?? unit;
-}
-
-interface ObservationReferenceRange {
-  low?: Quantity;
-  high?: Quantity;
-}
-
-export interface FhirObservation {
-  resourceType: "Observation";
-  id?: string;
-  meta?: Meta;
-  status: "final" | "preliminary" | "registered" | "amended";
-  category?: CodeableConcept[];
-  code: CodeableConcept;
-  subject?: Reference;
-  effectiveDateTime?: string;
-  valueQuantity?: Quantity;
-  component?: ObservationComponent[];
-  referenceRange?: ObservationReferenceRange[];
 }
 
 // ─── UCUM unit mapping ──────────────────────────────────────────
