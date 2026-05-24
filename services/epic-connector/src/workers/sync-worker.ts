@@ -254,12 +254,21 @@ export function summarise(results: SyncResult[]): SyncSummary {
     conflicts += r.conflicts;
     errors += r.errors.length;
     skipped += r.skipped.length;
-    for (const s of r.skipped) {
-      if (skippedDetail.length < SUMMARISE_SKIPPED_DETAIL_CAP) {
-        skippedDetail.push(s);
-      } else {
-        skippedDetailTruncated++;
-      }
+
+    // Once the cap is hit, just bump the truncated counter by the
+    // remaining length instead of iterating each entry to do the same
+    // increment. Matters for the future multi-status fan-out (#1114)
+    // where a single SyncResult could carry hundreds of skipped entries.
+    const headroom = SUMMARISE_SKIPPED_DETAIL_CAP - skippedDetail.length;
+    if (headroom <= 0) {
+      skippedDetailTruncated += r.skipped.length;
+      continue;
+    }
+    if (r.skipped.length <= headroom) {
+      for (const s of r.skipped) skippedDetail.push(s);
+    } else {
+      for (let i = 0; i < headroom; i++) skippedDetail.push(r.skipped[i]!);
+      skippedDetailTruncated += r.skipped.length - headroom;
     }
   }
 
