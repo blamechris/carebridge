@@ -167,21 +167,58 @@ function parseMedicationRequestStatus(raw: string | undefined): ParseResult<stri
   return { value: trimmed };
 }
 
+/** One structured warning emitted while parsing a fan-out env (#1116). */
+export interface FanoutConfigWarning {
+  msg: string;
+  meta: Record<string, unknown>;
+}
+
+/** Result of `parseFanoutConfig` — config + warnings, no side effects (#1116). */
+export interface ParsedFanoutConfig {
+  config: FanoutConfig;
+  warnings: FanoutConfigWarning[];
+}
+
 /**
- * Parse + validate fan-out env. Pure with respect to the supplied env
- * map (no caching). Logs warnings as a side-effect for misconfigs.
+ * Pure parse + validate (#1116) — no logger side effects. Useful for
+ * admin / diagnostics tooling that wants to PREVIEW what a candidate
+ * env override would produce (e.g. CLI `dry-run this
+ * EPIC_OBSERVATION_CATEGORIES value`) without emitting the warnings
+ * into the worker's real log.
+ *
+ * The boot path (`loadFanoutConfig`) is a thin wrapper that calls
+ * this and forwards warnings to the module logger, so the production
+ * behaviour is unchanged.
+ */
+export function parseFanoutConfig(
+  env: NodeJS.ProcessEnv = process.env,
+): ParsedFanoutConfig {
+  const cats = parseObservationCategories(env.EPIC_OBSERVATION_CATEGORIES);
+  const status = parseMedicationRequestStatus(env.EPIC_MEDICATION_REQUEST_STATUS);
+  const warnings: FanoutConfigWarning[] = [];
+  if (cats.warning) warnings.push(cats.warning);
+  if (status.warning) warnings.push(status.warning);
+  return {
+    config: {
+      observationCategories: cats.value,
+      medicationRequestStatus: status.value,
+    },
+    warnings,
+  };
+}
+
+/**
+ * Parse + validate fan-out env AND emit warnings to the module logger.
+ * Thin wrapper around `parseFanoutConfig` (#1116) — production boot
+ * path. Admin tooling that wants pure-eval semantics should call
+ * `parseFanoutConfig` directly.
  */
 export function loadFanoutConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): FanoutConfig {
-  const cats = parseObservationCategories(env.EPIC_OBSERVATION_CATEGORIES);
-  const status = parseMedicationRequestStatus(env.EPIC_MEDICATION_REQUEST_STATUS);
-  if (cats.warning) log.warn(cats.warning.msg, cats.warning.meta);
-  if (status.warning) log.warn(status.warning.msg, status.warning.meta);
-  return {
-    observationCategories: cats.value,
-    medicationRequestStatus: status.value,
-  };
+  const { config, warnings } = parseFanoutConfig(env);
+  for (const w of warnings) log.warn(w.msg, w.meta);
+  return config;
 }
 
 let cached: FanoutConfig | null = null;
