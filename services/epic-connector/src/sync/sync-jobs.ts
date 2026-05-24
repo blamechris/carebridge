@@ -278,15 +278,35 @@ async function syncResourceType(
     // diagnostic so the failed row in epic_sync_state names the field
     // (not just a generic 400 message). Helps the operator/dev fix the
     // upstream request-shape bug without spelunking through job logs.
-    const missingRequiredElement = isMissingRequiredElementError(err);
-    const message = missingRequiredElement
-      ? `Epic required element missing: ${describeMissingElement(err)} — ${baseMessage}`
+    //
+    // #1132: lift the predicate to a single local + sanitize the
+    // diagnostic before persistence. Epic's 59108 diagnostics are
+    // documented to be FHIR element paths ("MedicationRequest.intent"),
+    // but the persisted `last_error_message` is surfaced via
+    // clinician-portal tRPC — so we gate via an allow-list pattern
+    // before forwarding, and fall back to "missing element (see logs)"
+    // if a future Epic schema drift ever puts free-form content in
+    // that field. The FULL diagnostic still goes to `log.error` below
+    // for operator/dev debugging; the gate ONLY affects what lands in
+    // `markFailed.errorMessage`.
+    const isMissingReq = isMissingRequiredElementError(err);
+    const rawDiagnostic = isMissingReq ? describeMissingElement(err) : null;
+    const safeDiagnostic =
+      rawDiagnostic !== null
+        ? sanitizeMissingElementForPersistence(rawDiagnostic)
+        : null;
+    const message = isMissingReq
+      ? `Epic required element missing: ${safeDiagnostic} — ${baseMessage}`
       : baseMessage;
     log.error("Epic sync — resource-type failure", {
       patientId: args.patientId,
       resourceType: args.resourceType,
       error: message,
-      missingRequiredElement,
+      missingRequiredElement: isMissingReq,
+      // Keep the FULL (unsanitized) diagnostic in the log payload for
+      // dev/operator debugging — the sanitization gate above ONLY
+      // narrows what gets persisted to clinician-visible state.
+      diagnostic: rawDiagnostic,
     });
     await markFailed({
       patientId: args.patientId,
@@ -390,6 +410,52 @@ export function describeMissingElement(err: unknown): string {
   }
   const issue = err.operationOutcome.issue?.[0];
   return issue?.diagnostics ?? issue?.details?.text ?? "missing element (no diagnostics)";
+}
+
+/**
+ * FHIR element path: `Resource.element` or `Resource.element.subElement`,
+ * resource name is upper-camelcase, elements are lower-camelcase. Epic's
+ * 59108 diagnostics are documented to follow this shape (and only this
+ * shape) — see {@link sanitizeMissingElementForPersistence}.
+ */
+const FHIR_ELEMENT_PATH = /^[A-Z][A-Za-z]+(\.[a-z][A-Za-z]+)+$/;
+
+/**
+ * Max allowed length for a path-shaped diagnostic to forward into
+ * persisted clinician-visible state. Real FHIR element paths are short
+ * (`MedicationRequest.dosageInstruction.doseAndRate.doseQuantity.value`
+ * is ~64 chars); 80 is generous headroom without being a meaningful
+ * exfil channel. Layered on top of the 1KiB row-level cap in
+ * {@link markFailed} per Copilot review on PR #1142.
+ */
+const FHIR_ELEMENT_PATH_MAX_LEN = 80;
+
+/**
+ * Defense-in-depth sanitizer for the missing-element diagnostic before
+ * it lands in clinician-visible persisted state (#1132).
+ *
+ * Epic's 59108 ("A required element is missing") sub-code is documented
+ * to carry a FHIR element path as its diagnostic — e.g.
+ * `"MedicationRequest.intent"` or `"Observation.code"`. The 1KiB cap in
+ * {@link markFailed} is a backstop, but the persisted `last_error_message`
+ * is surfaced to clinicians via the portal — so we layer a stricter
+ * structural gate on top: if the diagnostic doesn't match the
+ * `Resource.element[.subElement]` shape (or is longer than
+ * {@link FHIR_ELEMENT_PATH_MAX_LEN}), treat it as untrusted free-form
+ * content and fall back to a non-revealing placeholder. Callers must
+ * route the FULL diagnostic to logs (where it's bounded by audit-log
+ * retention) so dev/operator debugging is unaffected.
+ *
+ * Picked Option A (allow-list pattern) over Option B (length cap)
+ * because Epic's 59108 sub-code structurally promises a path — the
+ * allow-list is the narrower, more defensive assertion of that promise.
+ * The 80-char inner cap is a belt-and-suspenders addition on top of the
+ * regex (Copilot review on PR #1142): regex-matching but unexpectedly
+ * long inputs are also dropped.
+ */
+export function sanitizeMissingElementForPersistence(raw: string): string {
+  if (raw.length > FHIR_ELEMENT_PATH_MAX_LEN) return "missing element (see logs)";
+  return FHIR_ELEMENT_PATH.test(raw) ? raw : "missing element (see logs)";
 }
 
 /**

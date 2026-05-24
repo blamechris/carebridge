@@ -11,6 +11,7 @@ import { describe, it, expect } from "vitest";
 import {
   isMissingRequiredElementError,
   describeMissingElement,
+  sanitizeMissingElementForPersistence,
   EpicFhirError,
   EPIC_ERROR_CODES,
 } from "../index.js";
@@ -77,6 +78,16 @@ describe("epic-connector index surface (#1133)", () => {
   it("describeMissingElement returns a fallback for errors without an OperationOutcome", () => {
     expect(describeMissingElement(new Error("boom"))).toBe(
       "missing element (no diagnostics)",
+    );
+  });
+
+  it("re-exports sanitizeMissingElementForPersistence (#1132)", () => {
+    expect(typeof sanitizeMissingElementForPersistence).toBe("function");
+    expect(sanitizeMissingElementForPersistence("MedicationRequest.intent")).toBe(
+      "MedicationRequest.intent",
+    );
+    expect(sanitizeMissingElementForPersistence("free form text")).toBe(
+      "missing element (see logs)",
     );
   });
 });
