@@ -281,6 +281,195 @@ describe("EpicTokenClient (#389)", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("does not coalesce concurrent callers requesting different scope sets (#1144)", async () => {
+    // Two concurrent callers with different scope sets must each receive
+    // a token fetched with their own scopes — not be served whichever
+    // narrow-scope token happened to be in flight first. Otherwise a
+    // caller that requested ["system/Patient.read", "system/Observation.read"]
+    // could receive a token issued only for ["system/Patient.read"] and
+    // then fail mid-call when it tried to read Observation resources.
+    let resolveNarrow: (response: Response) => void;
+    let resolveWide: (response: Response) => void;
+    const narrowPending = new Promise<Response>((resolve) => {
+      resolveNarrow = resolve;
+    });
+    const widePending = new Promise<Response>((resolve) => {
+      resolveWide = resolve;
+    });
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => narrowPending)
+      .mockImplementationOnce(() => widePending);
+    const client = new EpicTokenClient(makeConfig(privatePem), fetchMock);
+
+    const narrowCall = client.getAccessToken(["system/Patient.read"]);
+    const wideCall = client.getAccessToken([
+      "system/Patient.read",
+      "system/Observation.read",
+    ]);
+
+    // Each scope set must drive its OWN fetch — coalescing would
+    // collapse these to one.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    resolveNarrow!(tokenResponse({ access_token: "narrow-token" }));
+    resolveWide!(tokenResponse({ access_token: "wide-token" }));
+
+    expect(await narrowCall).toBe("narrow-token");
+    expect(await wideCall).toBe("wide-token");
+
+    // Verify each fetch carried the correct scope string.
+    const narrowBody = new URLSearchParams(
+      fetchMock.mock.calls[0]![1].body as string,
+    );
+    const wideBody = new URLSearchParams(
+      fetchMock.mock.calls[1]![1].body as string,
+    );
+    expect(narrowBody.get("scope")).toBe("system/Patient.read");
+    expect(wideBody.get("scope")?.split(" ").sort()).toEqual(
+      ["system/Observation.read", "system/Patient.read"],
+    );
+  });
+
+  it("coalesces concurrent callers with the same scopes regardless of order (#1144)", async () => {
+    // ["a", "b"] and ["b", "a"] are semantically identical scope sets —
+    // both must hash to the same key and share the in-flight fetch.
+    let resolveFetch: (response: Response) => void;
+    const pendingResponse = new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    });
+    const fetchMock = vi.fn().mockImplementation(() => pendingResponse);
+    const client = new EpicTokenClient(makeConfig(privatePem), fetchMock);
+
+    const callA = client.getAccessToken([
+      "system/Patient.read",
+      "system/Observation.read",
+    ]);
+    const callB = client.getAccessToken([
+      "system/Observation.read",
+      "system/Patient.read",
+    ]);
+
+    resolveFetch!(tokenResponse({ access_token: "shared-token" }));
+
+    expect(await callA).toBe("shared-token");
+    expect(await callB).toBe("shared-token");
+    // Only ONE network round-trip despite two callers.
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("caches per scope key — different scope sets don't reuse each other's cache (#1144)", async () => {
+    // Sequential calls (not concurrent) with different scope sets must
+    // each issue their own fetch, because the cached token for one scope
+    // set may not satisfy a different scope set.
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(tokenResponse({ access_token: "narrow-token" }))
+      .mockResolvedValueOnce(tokenResponse({ access_token: "wide-token" }));
+    const client = new EpicTokenClient(makeConfig(privatePem), fetchMock);
+
+    const narrow = await client.getAccessToken(["system/Patient.read"]);
+    const wide = await client.getAccessToken([
+      "system/Patient.read",
+      "system/Observation.read",
+    ]);
+
+    expect(narrow).toBe("narrow-token");
+    expect(wide).toBe("wide-token");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    // Repeating the narrow request should hit the per-scope cache, not
+    // refetch and not be served the wide token.
+    const narrowAgain = await client.getAccessToken(["system/Patient.read"]);
+    expect(narrowAgain).toBe("narrow-token");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("invalidate() clears all per-scope cache entries (#1144)", async () => {
+    // After invalidate() drops the per-scope cache, the next call for
+    // ANY scope set must refetch — no scope key should survive.
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(tokenResponse({ access_token: "narrow-1" }))
+      .mockResolvedValueOnce(tokenResponse({ access_token: "wide-1" }))
+      .mockResolvedValueOnce(tokenResponse({ access_token: "narrow-2" }))
+      .mockResolvedValueOnce(tokenResponse({ access_token: "wide-2" }));
+    const client = new EpicTokenClient(makeConfig(privatePem), fetchMock);
+
+    await client.getAccessToken(["system/Patient.read"]);
+    await client.getAccessToken([
+      "system/Patient.read",
+      "system/Observation.read",
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    client.invalidate();
+
+    const narrow = await client.getAccessToken(["system/Patient.read"]);
+    const wide = await client.getAccessToken([
+      "system/Patient.read",
+      "system/Observation.read",
+    ]);
+    expect(narrow).toBe("narrow-2");
+    expect(wide).toBe("wide-2");
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("generation guard works per scope key — stale write to one key doesn't pollute another (#1144)", async () => {
+    // Race sequence:
+    //   1. Caller A starts -> in-flight P_narrow for narrow scopes
+    //   2. Caller B starts -> in-flight P_wide for wide scopes
+    //   3. invalidate() drops both in-flight slots + cache, bumps generation
+    //   4. Retry for narrow scopes resolves first -> fresh narrow token cached
+    //   5. STALE P_wide finally resolves -> must NOT write to the wide
+    //      cache entry (its generation no longer matches), and must NOT
+    //      pollute the unrelated narrow entry either.
+    let resolveNarrow1: (response: Response) => void;
+    let resolveWide1: (response: Response) => void;
+    let resolveNarrow2: (response: Response) => void;
+    const narrow1Pending = new Promise<Response>((resolve) => {
+      resolveNarrow1 = resolve;
+    });
+    const wide1Pending = new Promise<Response>((resolve) => {
+      resolveWide1 = resolve;
+    });
+    const narrow2Pending = new Promise<Response>((resolve) => {
+      resolveNarrow2 = resolve;
+    });
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => narrow1Pending)
+      .mockImplementationOnce(() => wide1Pending)
+      .mockImplementationOnce(() => narrow2Pending);
+    const client = new EpicTokenClient(makeConfig(privatePem), fetchMock);
+
+    const narrowCall1 = client.getAccessToken(["system/Patient.read"]);
+    const wideCall1 = client.getAccessToken([
+      "system/Patient.read",
+      "system/Observation.read",
+    ]);
+
+    // Drop both in-flight requests; bumps generation.
+    client.invalidate();
+
+    // Retry just the narrow scope.
+    const narrowCall2 = client.getAccessToken(["system/Patient.read"]);
+    resolveNarrow2!(tokenResponse({ access_token: "narrow-fresh" }));
+    expect(await narrowCall2).toBe("narrow-fresh");
+
+    // Late-arriving STALE responses from the invalidated fetches.
+    resolveNarrow1!(tokenResponse({ access_token: "narrow-stale" }));
+    resolveWide1!(tokenResponse({ access_token: "wide-stale" }));
+    await narrowCall1;
+    await wideCall1;
+
+    // Cached narrow token must remain the fresh one.
+    const narrowAgain = await client.getAccessToken(["system/Patient.read"]);
+    expect(narrowAgain).toBe("narrow-fresh");
+    // No extra fetches — served from cache.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it("clears the in-flight promise when the token request fails (#1089)", async () => {
     // After a fetch failure, the in-flight promise must be cleared so a
     // retry can issue a fresh request — otherwise every subsequent
