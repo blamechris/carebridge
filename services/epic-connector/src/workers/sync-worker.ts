@@ -208,9 +208,21 @@ interface SyncSummary {
   errors: number;
   /** Count of soft-skipped sub-resource fetches across all resource types (#1107). */
   skipped: number;
-  /** Per-skip detail for ops dashboards that want structured drill-down (#1107). */
+  /** Per-skip detail for ops dashboards that want structured drill-down (#1107). Capped at SUMMARISE_SKIPPED_DETAIL_CAP (#1120). */
   skippedDetail: SkippedSubResource[];
+  /** How many skipped entries were dropped from skippedDetail due to the cap (#1120). 0 when nothing was truncated. */
+  skippedDetailTruncated: number;
 }
+
+/**
+ * Maximum entries in `summarise().skippedDetail` (#1120). The full
+ * set is already persisted to `epic_sync_state.skipped_sub_resources`
+ * via markOk/markFailed — operators have a recovery path via the DB
+ * for the long tail. The cap protects the Redis-persisted BullMQ
+ * job result payload from bloating as fan-out widens (e.g., the
+ * future multi-status MedicationRequest fan-out under #1114).
+ */
+export const SUMMARISE_SKIPPED_DETAIL_CAP = 50;
 
 /**
  * Rolls up a per-resource-type `SyncResult[]` into the single object
@@ -218,27 +230,55 @@ interface SyncSummary {
  *
  * `skipped` + `skippedDetail` (#1107) make sub-resource auth-scope
  * issues visible from the BullMQ dashboard without cross-referencing
- * the `epic_sync_state` Postgres column.
+ * the `epic_sync_state` Postgres column. `skippedDetail` is capped at
+ * SUMMARISE_SKIPPED_DETAIL_CAP entries (#1120); overflow is reported
+ * via `skippedDetailTruncated` so dashboards can render "+N more".
+ *
+ * Single-pass implementation (#1121) — avoids the O(N²) spread-in-reduce
+ * pattern. Not measurable today with N ≤ 5 but matters as fan-out grows.
  *
  * Exported for unit testing — the worker callbacks invoke it directly.
  */
 export function summarise(results: SyncResult[]): SyncSummary {
-  return results.reduce<SyncSummary>(
-    (acc, r) => ({
-      imported: acc.imported + r.imported,
-      updated: acc.updated + r.updated,
-      conflicts: acc.conflicts + r.conflicts,
-      errors: acc.errors + r.errors.length,
-      skipped: acc.skipped + r.skipped.length,
-      skippedDetail: [...acc.skippedDetail, ...r.skipped],
-    }),
-    {
-      imported: 0,
-      updated: 0,
-      conflicts: 0,
-      errors: 0,
-      skipped: 0,
-      skippedDetail: [],
-    },
-  );
+  let imported = 0;
+  let updated = 0;
+  let conflicts = 0;
+  let errors = 0;
+  let skipped = 0;
+  const skippedDetail: SkippedSubResource[] = [];
+  let skippedDetailTruncated = 0;
+
+  for (const r of results) {
+    imported += r.imported;
+    updated += r.updated;
+    conflicts += r.conflicts;
+    errors += r.errors.length;
+    skipped += r.skipped.length;
+
+    // Once the cap is hit, just bump the truncated counter by the
+    // remaining length instead of iterating each entry to do the same
+    // increment. Matters for the future multi-status fan-out (#1114)
+    // where a single SyncResult could carry hundreds of skipped entries.
+    const headroom = SUMMARISE_SKIPPED_DETAIL_CAP - skippedDetail.length;
+    if (headroom <= 0) {
+      skippedDetailTruncated += r.skipped.length;
+      continue;
+    }
+    if (r.skipped.length <= headroom) {
+      for (const s of r.skipped) skippedDetail.push(s);
+    } else {
+      for (let i = 0; i < headroom; i++) skippedDetail.push(r.skipped[i]!);
+      skippedDetailTruncated += r.skipped.length - headroom;
+    }
+  }
+
+  return {
+    imported,
+    updated,
+    conflicts,
+    errors,
+    skipped,
+    skippedDetail,
+    skippedDetailTruncated,
+  };
 }
