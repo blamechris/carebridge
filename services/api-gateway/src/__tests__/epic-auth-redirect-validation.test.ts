@@ -244,4 +244,33 @@ describe("GET /auth/epic/authorize — redirect validation (#1185)", () => {
     expect(beginLaunchMock).toHaveBeenCalledTimes(1);
     expect(capturedBeginLaunchArgs[0]?.postLaunchRedirect).toBe("/");
   });
+
+  // Exercises the explicit `/\` prefix guard. Some URL parsers normalise
+  // `/\foo` into the same-origin path `/\foo`, others promote the
+  // backslash to a path separator. We reject up-front so neither shape
+  // can slip through if the parser ever changes behaviour.
+  it("rejects mixed-slash ?redirect=/\\attacker.example with 400", async () => {
+    const response = await server.inject({
+      method: "GET",
+      url: `/auth/epic/authorize?iss=${encodeURIComponent(ISS)}&redirect=${encodeURIComponent("/\\attacker.example")}`,
+      headers: { "x-test-auth": "1" },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(beginLaunchMock).not.toHaveBeenCalled();
+  });
+
+  // Whitespace-prefixed candidate — fails the `startsWith("/")` guard.
+  // Important because raw spaces survive `decodeURIComponent` and could
+  // hide downstream parser quirks if we accepted them.
+  it("rejects whitespace-prefixed ?redirect=%20/legit with 400", async () => {
+    const response = await server.inject({
+      method: "GET",
+      url: `/auth/epic/authorize?iss=${encodeURIComponent(ISS)}&redirect=${encodeURIComponent(" /legit")}`,
+      headers: { "x-test-auth": "1" },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(beginLaunchMock).not.toHaveBeenCalled();
+  });
 });
