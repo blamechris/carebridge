@@ -1,17 +1,33 @@
 /**
- * Persistence layer for Epic-synced FHIR resources (#391).
+ * Persistence layer for Epic-synced FHIR resources (#391, #1191).
  *
  * Each persistResource* function:
  *  1. Looks up the existing CareBridge row for the (Epic resource_type, resource_id)
  *     tuple via the `fhir_resources` mapping table.
- *  2. UPSERTs the target row (insert when no mapping exists; update when
- *     it does).
- *  3. UPSERTs the `fhir_resources` mapping row so the next sync pull can
+ *  2. If the mapping miss, does a *clinical fingerprint* fallback lookup
+ *     (#1191) — patient_id + a small handful of stable plaintext columns
+ *     per resource type (MRN, start_time + encounter_type, ICD-10 +
+ *     onset_date, RxNorm + started_at, LOINC + recorded_at, etc.). When
+ *     a fingerprint hit is found on a CareBridge-originated row, the Epic
+ *     sync updates that row in place AND creates a `fhir_resources` row
+ *     so future Epic re-syncs land on the same record. The match is
+ *     logged to audit_log (action="epic_sync_dedup_match") for HIPAA
+ *     traceability — clinicians need to see when a manually-entered row
+ *     was reconciled with an Epic record.
+ *  3. UPSERTs the target row (insert when no mapping or fingerprint
+ *     exists; update when one does).
+ *  4. UPSERTs the `fhir_resources` mapping row so the next sync pull can
  *     find the same internal row.
- *  4. Records a conflict to `audit_log` if the existing target row has
- *     `source_system != "epic"` — Epic does not get to overwrite
- *     CareBridge-originated data; we keep CareBridge's row and log the
- *     attempted overwrite for manual review.
+ *  5. Records a source-system conflict to `audit_log` if the existing
+ *     target row has `source_system != "epic"` — Epic does not get to
+ *     overwrite CareBridge-originated data through the Epic-id path; we
+ *     keep CareBridge's row and log the attempted overwrite for manual
+ *     review.
+ *
+ * Independent of #1190 (which adds explicit `source_system` columns to
+ * encounters/diagnoses/allergies). Fingerprint matching reads only
+ * plaintext clinical fields that exist on main today, and the writer
+ * remains correct with or without #1190.
  *
  * Idempotent by design: re-running the same FHIR resource is a no-op
  * after the first call other than refreshing `updated_at`. This lets
@@ -31,6 +47,7 @@ import {
   encounters,
   fhirResources,
   auditLog,
+  hmacForIndex,
 } from "@carebridge/db-schema";
 import {
   epicPatientToRow,
@@ -45,6 +62,7 @@ import {
 import type { FhirResource } from "../fhir-types.js";
 
 const EPIC_SYNC_AUDIT_USER = "system:epic-sync";
+const DEDUP_MATCH_ACTION = "epic_sync_dedup_match";
 
 export interface PersistResult {
   /** Internal CareBridge row id, or null when the resource was unmappable. */
@@ -157,6 +175,219 @@ async function logSourceConflict(args: {
 }
 
 /**
+ * Log a cross-source dedup hit (#1191). Distinct from source-system
+ * conflicts: a fingerprint match means the Epic resource is the same
+ * logical entity as an existing CareBridge row, and we merged into it.
+ * Recorded as success=true so the HIPAA audit trail shows the
+ * reconciliation explicitly rather than as a failure.
+ */
+async function logDedupMatch(args: {
+  resourceType: string;
+  fhirId: string;
+  internalId: string;
+  patientId: string | null;
+  fingerprint: Record<string, unknown>;
+}): Promise<void> {
+  const db = getDb();
+  await db.insert(auditLog).values({
+    id: crypto.randomUUID(),
+    user_id: EPIC_SYNC_AUDIT_USER,
+    action: DEDUP_MATCH_ACTION,
+    resource_type: args.resourceType,
+    resource_id: args.internalId,
+    patient_id: args.patientId,
+    success: true,
+    details: JSON.stringify({
+      reason: "fingerprint_match",
+      attempted_source: EPIC_SOURCE_SYSTEM_TAG,
+      epic_fhir_id: args.fhirId,
+      fingerprint: args.fingerprint,
+      resolution: "merge_into_existing_internal_row",
+    }),
+    timestamp: new Date().toISOString(),
+  });
+}
+
+/**
+ * Look up an existing CareBridge row by clinical fingerprint. Returns
+ * the matching row's `id` and (when the column exists on the table) its
+ * `source_system` for downstream policy decisions.
+ *
+ * All fingerprint queries operate on plaintext-indexed columns only —
+ * encrypted columns (allergen name, medication free-text name, lab
+ * test_name) can't be equality-compared without HMAC sidebands that
+ * don't exist on most tables today. When code values (RxNorm, LOINC,
+ * ICD-10, SNOMED) are absent on the inbound Epic resource the lookup
+ * returns null and the caller falls through to insert — better to
+ * tolerate the occasional duplicate than to risk false-merges on a
+ * dimensionally-weak fingerprint.
+ */
+interface FingerprintHit {
+  internalId: string;
+  sourceSystem: string | null;
+}
+
+async function findEncounterByFingerprint(args: {
+  patientId: string;
+  startTime: string;
+  encounterType: string;
+}): Promise<FingerprintHit | null> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(encounters)
+    .where(
+      and(
+        eq(encounters.patient_id, args.patientId),
+        eq(encounters.start_time, args.startTime),
+        eq(encounters.encounter_type, args.encounterType),
+      ),
+    )
+    .limit(1);
+  const hit = rows[0];
+  if (!hit) return null;
+  // encounters has no source_system column today (#1190 may add one);
+  // treat absence as "internal" — anything not tagged epic-via-mapping
+  // is CareBridge-originated by definition.
+  return {
+    internalId: hit.id,
+    sourceSystem:
+      (hit as { source_system?: string | null }).source_system ?? null,
+  };
+}
+
+async function findDiagnosisByFingerprint(args: {
+  patientId: string;
+  icd10Code: string | null;
+  snomedCode: string | null;
+  onsetDate: string | null;
+}): Promise<FingerprintHit | null> {
+  // Need at least one code dimension to fingerprint safely.
+  if (!args.icd10Code && !args.snomedCode) return null;
+  const db = getDb();
+  const codePredicate = args.icd10Code
+    ? eq(diagnoses.icd10_code, args.icd10Code)
+    : eq(diagnoses.snomed_code, args.snomedCode!);
+  // onset_date is nullable on the table; only join it when both sides
+  // carry a value, otherwise widen the fingerprint to patient+code so a
+  // CareBridge row without an onset date can still be matched.
+  const predicate = args.onsetDate
+    ? and(
+        eq(diagnoses.patient_id, args.patientId),
+        codePredicate,
+        eq(diagnoses.onset_date, args.onsetDate),
+      )
+    : and(eq(diagnoses.patient_id, args.patientId), codePredicate);
+  const rows = await db.select().from(diagnoses).where(predicate).limit(1);
+  const hit = rows[0];
+  if (!hit) return null;
+  return {
+    internalId: hit.id,
+    sourceSystem:
+      (hit as { source_system?: string | null }).source_system ?? null,
+  };
+}
+
+async function findAllergyByFingerprint(args: {
+  patientId: string;
+  rxnormCode: string | null;
+  snomedCode: string | null;
+}): Promise<FingerprintHit | null> {
+  if (!args.rxnormCode && !args.snomedCode) return null;
+  const db = getDb();
+  const codePredicate = args.rxnormCode
+    ? eq(allergies.rxnorm_code, args.rxnormCode)
+    : eq(allergies.snomed_code, args.snomedCode!);
+  const rows = await db
+    .select()
+    .from(allergies)
+    .where(and(eq(allergies.patient_id, args.patientId), codePredicate))
+    .limit(1);
+  const hit = rows[0];
+  if (!hit) return null;
+  return {
+    internalId: hit.id,
+    sourceSystem:
+      (hit as { source_system?: string | null }).source_system ?? null,
+  };
+}
+
+async function findMedicationByFingerprint(args: {
+  patientId: string;
+  rxnormCode: string | null;
+  startedAt: string | null;
+}): Promise<FingerprintHit | null> {
+  if (!args.rxnormCode) return null;
+  const db = getDb();
+  const predicate = args.startedAt
+    ? and(
+        eq(medications.patient_id, args.patientId),
+        eq(medications.rxnorm_code, args.rxnormCode),
+        eq(medications.started_at, args.startedAt),
+      )
+    : and(
+        eq(medications.patient_id, args.patientId),
+        eq(medications.rxnorm_code, args.rxnormCode),
+      );
+  const rows = await db
+    .select()
+    .from(medications)
+    .where(predicate)
+    .limit(1);
+  const hit = rows[0];
+  if (!hit) return null;
+  return {
+    internalId: hit.id,
+    sourceSystem: hit.source_system ?? null,
+  };
+}
+
+async function findVitalByFingerprint(args: {
+  patientId: string;
+  loincCode: string | null;
+  recordedAt: string;
+}): Promise<FingerprintHit | null> {
+  if (!args.loincCode) return null;
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(vitals)
+    .where(
+      and(
+        eq(vitals.patient_id, args.patientId),
+        eq(vitals.loinc_code, args.loincCode),
+        eq(vitals.recorded_at, args.recordedAt),
+      ),
+    )
+    .limit(1);
+  const hit = rows[0];
+  if (!hit) return null;
+  return {
+    internalId: hit.id,
+    sourceSystem: hit.source_system ?? null,
+  };
+}
+
+async function findPatientByFingerprint(args: {
+  mrnHmac: string | null;
+}): Promise<FingerprintHit | null> {
+  if (!args.mrnHmac) return null;
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(patients)
+    .where(eq(patients.mrn_hmac, args.mrnHmac))
+    .limit(1);
+  const hit = rows[0];
+  if (!hit) return null;
+  // patients has no source_system column — treat as internal.
+  return {
+    internalId: hit.id,
+    sourceSystem: null,
+  };
+}
+
+/**
  * Per-row write helpers: each calls findMapping → INSERT or UPDATE on
  * the target table → upsertMapping. The conflict check (source_system
  * != "epic") refuses to overwrite CareBridge-originated rows.
@@ -217,6 +448,49 @@ export async function persistPatient(
     return { internalId: mapping.internalId, kind: "patient", inserted: false };
   }
 
+  // #1191 fingerprint fallback. The patients table already has a
+  // unique constraint on mrn_hmac, so this lookup is also the safety
+  // net for the unique-violation that would otherwise come up at INSERT
+  // time. Reading mrn_hmac directly from the converter row would be
+  // cleaner, but the existing MappedPatientRow shape stores the
+  // plaintext MRN; we recompute the HMAC on the fly via a deterministic
+  // helper at write time (hmacForIndex is invoked inside the encrypted
+  // column adapter, so we surface the lookup via a select on the
+  // hmac column populated by a prior write — see migration 0023).
+  const mrnHmac = computeMrnHmacIfPresent(row.mrn ?? null);
+  const fingerprintHit = await findPatientByFingerprint({ mrnHmac });
+  if (fingerprintHit) {
+    await db
+      .update(patients)
+      .set({
+        name: row.name,
+        date_of_birth: row.date_of_birth,
+        biological_sex: row.biological_sex,
+        mrn: row.mrn ?? undefined,
+        updated_at: now,
+      })
+      .where(eq(patients.id, fingerprintHit.internalId));
+    await upsertMapping({
+      resourceType: "Patient",
+      fhirId,
+      internalId: fingerprintHit.internalId,
+      patientId: fingerprintHit.internalId,
+      resource,
+    });
+    await logDedupMatch({
+      resourceType: "Patient",
+      fhirId,
+      internalId: fingerprintHit.internalId,
+      patientId: fingerprintHit.internalId,
+      fingerprint: { mrn_hmac: mrnHmac },
+    });
+    return {
+      internalId: fingerprintHit.internalId,
+      kind: "patient",
+      inserted: false,
+    };
+  }
+
   const id = crypto.randomUUID();
   await db.insert(patients).values({
     id,
@@ -235,6 +509,21 @@ export async function persistPatient(
     resource,
   });
   return { internalId: id, kind: "patient", inserted: true };
+}
+
+/**
+ * Compute the deterministic MRN HMAC used by the `mrn_hmac` column.
+ * When the HMAC helper is unavailable (test mocks, missing PHI_HMAC_KEY
+ * in dev), returns null and the fingerprint lookup short-circuits,
+ * leaving the mapping-only path intact.
+ */
+function computeMrnHmacIfPresent(mrn: string | null): string | null {
+  if (!mrn || mrn.trim() === "") return null;
+  try {
+    return hmacForIndex(mrn);
+  } catch {
+    return null;
+  }
 }
 
 export async function persistMedicationRequest(
@@ -310,6 +599,52 @@ async function persistMedicationRow(
     });
     return {
       internalId: mapping.internalId,
+      kind: "medication",
+      inserted: false,
+    };
+  }
+
+  // #1191 fingerprint fallback — patient_id + rxnorm_code + started_at.
+  const fingerprintHit = await findMedicationByFingerprint({
+    patientId,
+    rxnormCode: row.rxnorm_code ?? null,
+    startedAt: row.started_at ?? null,
+  });
+  if (fingerprintHit) {
+    await db
+      .update(medications)
+      .set({
+        name: row.name,
+        dose_amount: row.dose_amount,
+        dose_unit: row.dose_unit,
+        route: row.route,
+        frequency: row.frequency,
+        status: row.status,
+        rxnorm_code: row.rxnorm_code,
+        max_doses_per_day: row.max_doses_per_day,
+        updated_at: now,
+      })
+      .where(eq(medications.id, fingerprintHit.internalId));
+    await upsertMapping({
+      resourceType,
+      fhirId,
+      internalId: fingerprintHit.internalId,
+      patientId,
+      resource,
+    });
+    await logDedupMatch({
+      resourceType,
+      fhirId,
+      internalId: fingerprintHit.internalId,
+      patientId,
+      fingerprint: {
+        patient_id: patientId,
+        rxnorm_code: row.rxnorm_code,
+        started_at: row.started_at,
+      },
+    });
+    return {
+      internalId: fingerprintHit.internalId,
       kind: "medication",
       inserted: false,
     };
@@ -401,6 +736,50 @@ export async function persistObservation(
         inserted: false,
       };
     }
+
+    // #1191 fingerprint fallback — patient_id + loinc_code + recorded_at.
+    const fingerprintHit = await findVitalByFingerprint({
+      patientId,
+      loincCode: conversion.row.loinc_code ?? null,
+      recordedAt: conversion.row.recorded_at,
+    });
+    if (fingerprintHit) {
+      await db
+        .update(vitals)
+        .set({
+          type: conversion.row.type,
+          loinc_code: conversion.row.loinc_code,
+          value_primary: conversion.row.value_primary,
+          value_secondary: conversion.row.value_secondary,
+          unit: conversion.row.unit,
+          recorded_at: conversion.row.recorded_at,
+        })
+        .where(eq(vitals.id, fingerprintHit.internalId));
+      await upsertMapping({
+        resourceType: "Observation",
+        fhirId,
+        internalId: fingerprintHit.internalId,
+        patientId,
+        resource,
+      });
+      await logDedupMatch({
+        resourceType: "Observation",
+        fhirId,
+        internalId: fingerprintHit.internalId,
+        patientId,
+        fingerprint: {
+          patient_id: patientId,
+          loinc_code: conversion.row.loinc_code,
+          recorded_at: conversion.row.recorded_at,
+        },
+      });
+      return {
+        internalId: fingerprintHit.internalId,
+        kind: "vital",
+        inserted: false,
+      };
+    }
+
     const id = crypto.randomUUID();
     await db.insert(vitals).values({
       id,
@@ -427,7 +806,12 @@ export async function persistObservation(
   // Lab result — single-result panel synthesised for the Epic
   // resource. Multi-test panels arriving from Epic come in as a
   // DiagnosticReport (deferred to #391-followup) and are not handled
-  // here yet.
+  // here yet. Lab fingerprint dedup is also deferred — the leaf
+  // (lab_results) doesn't carry patient_id directly; matching would
+  // require a JOIN against the synthesised lab_panels row whose
+  // collected_at is itself derived from recorded_at, so the dimensional
+  // weight of the fingerprint is identical to the panel lookup. Tracked
+  // as a #1191 follow-up.
   if (mapping.internalId) {
     // Existing lab_results rows are leaves — conflict logic on the panel
     // level is out of scope for the first cut. Refresh the value in place.
@@ -544,6 +928,51 @@ export async function persistCondition(
     };
   }
 
+  // #1191 fingerprint fallback — patient_id + (icd10_code | snomed_code) + onset_date.
+  const fingerprintHit = await findDiagnosisByFingerprint({
+    patientId,
+    icd10Code: row.icd10_code ?? null,
+    snomedCode: row.snomed_code ?? null,
+    onsetDate: row.onset_date ?? null,
+  });
+  if (fingerprintHit) {
+    await db
+      .update(diagnoses)
+      .set({
+        description: row.description,
+        icd10_code: row.icd10_code,
+        snomed_code: row.snomed_code,
+        status: row.status,
+        onset_date: row.onset_date,
+        resolved_date: row.resolved_date,
+      })
+      .where(eq(diagnoses.id, fingerprintHit.internalId));
+    await upsertMapping({
+      resourceType: "Condition",
+      fhirId,
+      internalId: fingerprintHit.internalId,
+      patientId,
+      resource,
+    });
+    await logDedupMatch({
+      resourceType: "Condition",
+      fhirId,
+      internalId: fingerprintHit.internalId,
+      patientId,
+      fingerprint: {
+        patient_id: patientId,
+        icd10_code: row.icd10_code,
+        snomed_code: row.snomed_code,
+        onset_date: row.onset_date,
+      },
+    });
+    return {
+      internalId: fingerprintHit.internalId,
+      kind: "diagnosis",
+      inserted: false,
+    };
+  }
+
   const id = crypto.randomUUID();
   await db.insert(diagnoses).values({
     id,
@@ -622,6 +1051,49 @@ export async function persistAllergy(
     };
   }
 
+  // #1191 fingerprint fallback — patient_id + (rxnorm | snomed) code.
+  // No timestamp dimension on allergies (allergens are typically
+  // open-ended), and the free-text allergen column is encrypted, so we
+  // rely on the coded substance for a safe match.
+  const fingerprintHit = await findAllergyByFingerprint({
+    patientId,
+    rxnormCode: row.rxnorm_code ?? null,
+    snomedCode: row.snomed_code ?? null,
+  });
+  if (fingerprintHit) {
+    await db
+      .update(allergies)
+      .set({
+        allergen: row.allergen,
+        severity: row.severity,
+        reaction: row.reaction,
+      })
+      .where(eq(allergies.id, fingerprintHit.internalId));
+    await upsertMapping({
+      resourceType: "AllergyIntolerance",
+      fhirId,
+      internalId: fingerprintHit.internalId,
+      patientId,
+      resource,
+    });
+    await logDedupMatch({
+      resourceType: "AllergyIntolerance",
+      fhirId,
+      internalId: fingerprintHit.internalId,
+      patientId,
+      fingerprint: {
+        patient_id: patientId,
+        rxnorm_code: row.rxnorm_code,
+        snomed_code: row.snomed_code,
+      },
+    });
+    return {
+      internalId: fingerprintHit.internalId,
+      kind: "allergy",
+      inserted: false,
+    };
+  }
+
   const id = crypto.randomUUID();
   await db.insert(allergies).values({
     id,
@@ -652,6 +1124,10 @@ export async function persistAllergy(
  * imported rows are distinguishable at the row level without a JOIN to
  * `fhir_resources`. The Epic CSN still round-trips through `fhir_resources`
  * (a dedicated `epic_encounter_id` column is out of scope here).
+ *
+ * #1191 adds a fingerprint fallback so a CareBridge-originated encounter
+ * (created manually before Epic sync was wired) doesn't get duplicated
+ * when Epic later syncs the same visit.
  */
 export async function persistEncounter(
   resource: FhirResource,
@@ -706,6 +1182,49 @@ export async function persistEncounter(
     });
     return {
       internalId: mapping.internalId,
+      kind: "encounter",
+      inserted: false,
+    };
+  }
+
+  // #1191 fingerprint fallback — patient_id + start_time + encounter_type.
+  const fingerprintHit = await findEncounterByFingerprint({
+    patientId,
+    startTime: row.start_time,
+    encounterType: row.encounter_type,
+  });
+  if (fingerprintHit) {
+    await db
+      .update(encounters)
+      .set({
+        encounter_type: row.encounter_type,
+        status: row.status,
+        start_time: row.start_time,
+        end_time: row.end_time,
+        location: row.location,
+        reason: row.reason,
+      })
+      .where(eq(encounters.id, fingerprintHit.internalId));
+    await upsertMapping({
+      resourceType: "Encounter",
+      fhirId,
+      internalId: fingerprintHit.internalId,
+      patientId,
+      resource,
+    });
+    await logDedupMatch({
+      resourceType: "Encounter",
+      fhirId,
+      internalId: fingerprintHit.internalId,
+      patientId,
+      fingerprint: {
+        patient_id: patientId,
+        start_time: row.start_time,
+        encounter_type: row.encounter_type,
+      },
+    });
+    return {
+      internalId: fingerprintHit.internalId,
       kind: "encounter",
       inserted: false,
     };
