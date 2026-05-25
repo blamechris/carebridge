@@ -85,7 +85,12 @@ afterEach(() => {
 });
 
 describe("EpicLaunchBanner", () => {
-  it("returns null when no epic_patient param is on the URL", () => {
+  it("returns null when no URL params AND server has no launch context", () => {
+    getLaunchContextQuery.mockReturnValueOnce({
+      data: null,
+      isLoading: false,
+      isError: false,
+    });
     const { storage } = makeStorage();
     render(<EpicLaunchBanner storage={storage} />);
     expect(screen.queryByTestId("epic-launch-banner")).toBeNull();
@@ -95,6 +100,17 @@ describe("EpicLaunchBanner", () => {
     searchParamsMock = new URLSearchParams({
       epic_patient: "eP123",
       epic_encounter: "eE456",
+    });
+    getLaunchContextQuery.mockReturnValueOnce({
+      data: {
+        epic_org_iss: "https://fhir.epic.example/api/FHIR/R4",
+        epic_practitioner_fhir_id: "prac-1",
+        epic_patient_fhir_id: "eP123",
+        launch_encounter_fhir_id: "eE456",
+        expires_at: "2099-01-01T00:00:00Z",
+      },
+      isLoading: false,
+      isError: false,
     });
     const { storage } = makeStorage();
     render(<EpicLaunchBanner storage={storage} />);
@@ -142,5 +158,91 @@ describe("EpicLaunchBanner", () => {
 
     render(<EpicLaunchBanner storage={storage} />);
     expect(screen.queryByTestId("epic-launch-banner")).toBeNull();
+  });
+
+  // Issue #1186 — banner must NOT trust URL params alone. The server-confirmed
+  // launch context (epicAuth.getLaunchContext) is the source of truth; URL
+  // params are only used as a hint to enable the query.
+
+  it("renders null when server returns null but URL has epic_patient (anti-spoof)", () => {
+    searchParamsMock = new URLSearchParams({
+      epic_patient: "spoofed-fhir-id",
+    });
+    getLaunchContextQuery.mockReturnValueOnce({
+      data: null,
+      isLoading: false,
+      isError: false,
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { storage } = makeStorage();
+    render(<EpicLaunchBanner storage={storage} />);
+    expect(screen.queryByTestId("epic-launch-banner")).toBeNull();
+    warnSpy.mockRestore();
+  });
+
+  it("renders banner from server values when URL params absent (post-callback genuine launch)", () => {
+    // No URL params at all — but server has a valid launch context.
+    searchParamsMock = new URLSearchParams();
+    getLaunchContextQuery.mockReturnValueOnce({
+      data: {
+        epic_org_iss: "https://fhir.epic.example/api/FHIR/R4",
+        epic_practitioner_fhir_id: "prac-1",
+        epic_patient_fhir_id: "abc",
+        launch_encounter_fhir_id: null,
+        expires_at: "2099-01-01T00:00:00Z",
+      },
+      isLoading: false,
+      isError: false,
+    });
+    const { storage } = makeStorage();
+    render(<EpicLaunchBanner storage={storage} />);
+    const banner = screen.getByTestId("epic-launch-banner");
+    expect(banner).toBeInTheDocument();
+    expect(banner.textContent).toMatch(/abc/);
+  });
+
+  it("renders null + warns when URL epic_patient mismatches server epic_patient_fhir_id", () => {
+    searchParamsMock = new URLSearchParams({
+      epic_patient: "spoof",
+    });
+    getLaunchContextQuery.mockReturnValueOnce({
+      data: {
+        epic_org_iss: "https://fhir.epic.example/api/FHIR/R4",
+        epic_practitioner_fhir_id: "prac-1",
+        epic_patient_fhir_id: "abc",
+        launch_encounter_fhir_id: null,
+        expires_at: "2099-01-01T00:00:00Z",
+      },
+      isLoading: false,
+      isError: false,
+    });
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { storage } = makeStorage();
+    render(<EpicLaunchBanner storage={storage} />);
+    expect(screen.queryByTestId("epic-launch-banner")).toBeNull();
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it("renders banner from server values when URL epic_patient matches server (uses server values)", () => {
+    searchParamsMock = new URLSearchParams({
+      epic_patient: "abc",
+    });
+    getLaunchContextQuery.mockReturnValueOnce({
+      data: {
+        epic_org_iss: "https://fhir.epic.example/api/FHIR/R4",
+        epic_practitioner_fhir_id: "prac-1",
+        epic_patient_fhir_id: "abc",
+        launch_encounter_fhir_id: null,
+        expires_at: "2099-01-01T00:00:00Z",
+      },
+      isLoading: false,
+      isError: false,
+    });
+    const { storage } = makeStorage();
+    render(<EpicLaunchBanner storage={storage} />);
+    const banner = screen.getByTestId("epic-launch-banner");
+    expect(banner).toBeInTheDocument();
+    expect(banner.textContent).toMatch(/abc/);
   });
 });
