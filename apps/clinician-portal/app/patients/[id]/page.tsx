@@ -32,6 +32,7 @@ import {
 } from "@/lib/lab-display";
 import { PrescriptionForm } from "./PrescriptionForm";
 import { EpicSyncCard } from "@/components/epic-sync-card";
+import { parseEpicPatientParam } from "@/lib/epic-launch";
 import type { Medication } from "@carebridge/shared-types";
 
 const tabs = [
@@ -85,7 +86,13 @@ function stalenessStyles(tier: StalenessTier): {
   }
 }
 
-function OverviewTab({ patientId }: { patientId: string }) {
+function OverviewTab({
+  patientId,
+  epicPatientFhirId,
+}: {
+  patientId: string;
+  epicPatientFhirId?: string;
+}) {
   const patientQuery = trpc.patients.getById.useQuery({ id: patientId });
   const diagnosesQuery = trpc.patients.diagnoses.getByPatient.useQuery({ patientId });
   const allergiesQuery = trpc.patients.allergies.getByPatient.useQuery({ patientId });
@@ -249,8 +256,14 @@ function OverviewTab({ patientId }: { patientId: string }) {
         )}
       </div>
 
-      {/* Epic sync status + admin-only Sync Now action (#1182). */}
-      <EpicSyncCard patientId={patientId} />
+      {/* Epic sync status + admin-only Sync Now action (#1182).
+          When the user arrived via the Epic SMART launch flow the URL
+          carries `?epic_patient=<fhir-id>` (#1188) — forward it so the
+          backend can skip the stored-mapping lookup. */}
+      <EpicSyncCard
+        patientId={patientId}
+        epicPatientFhirId={epicPatientFhirId}
+      />
     </div>
   );
 }
@@ -952,6 +965,12 @@ function PatientChartContent() {
 
   const patientId = params.id as string;
   const activeTab = searchParams.get("tab") || "overview";
+  // Epic SMART-launch flow surfaces the patient FHIR id on the URL
+  // (#1188). Validate before forwarding so a hostile / typo'd value
+  // never reaches the triggerSync payload.
+  const epicPatientFhirId = parseEpicPatientParam(
+    searchParams.get("epic_patient"),
+  );
 
   const patientQuery = trpc.patients.getById.useQuery({ id: patientId });
   const patient = patientQuery.data;
@@ -1011,7 +1030,12 @@ function PatientChartContent() {
             ))}
           </div>
 
-          {activeTab === "overview" && <OverviewTab patientId={patientId} />}
+          {activeTab === "overview" && (
+            <OverviewTab
+              patientId={patientId}
+              epicPatientFhirId={epicPatientFhirId}
+            />
+          )}
           {activeTab === "vitals" && <VitalsTab patientId={patientId} />}
           {activeTab === "labs" && <LabsTab patientId={patientId} />}
           {activeTab === "medications" && (
