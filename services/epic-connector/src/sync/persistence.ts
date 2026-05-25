@@ -554,6 +554,7 @@ export async function persistCondition(
     status: row.status,
     onset_date: row.onset_date,
     resolved_date: row.resolved_date,
+    source_system: EPIC_SOURCE_SYSTEM_TAG,
     created_at: now,
   });
   await upsertMapping({
@@ -628,6 +629,7 @@ export async function persistAllergy(
     allergen: row.allergen,
     severity: row.severity,
     reaction: row.reaction,
+    source_system: EPIC_SOURCE_SYSTEM_TAG,
     created_at: now,
   });
   await upsertMapping({
@@ -645,11 +647,11 @@ export async function persistAllergy(
  *
  * Closes the last gap of #390 — the FHIR client has searchEncounters and
  * #1181 adds the converter + this writer + sync-worker fan-out. The
- * `encounters` table doesn't carry a dedicated `epic_encounter_id` or
- * `source_system` column today; the FHIR resource.id round-trips through
- * the `fhir_resources` mapping row, and source provenance is recoverable
- * via the same mapping table. A future migration can lift those fields
- * onto the table without changing this writer.
+ * `encounters` table now carries a `source_system` column (#1190) which
+ * this writer stamps with EPIC_SOURCE_SYSTEM_TAG on insert so Epic-
+ * imported rows are distinguishable at the row level without a JOIN to
+ * `fhir_resources`. The Epic CSN still round-trips through `fhir_resources`
+ * (a dedicated `epic_encounter_id` column is out of scope here).
  */
 export async function persistEncounter(
   resource: FhirResource,
@@ -719,6 +721,7 @@ export async function persistEncounter(
     end_time: row.end_time,
     location: row.location,
     reason: row.reason,
+    source_system: EPIC_SOURCE_SYSTEM_TAG,
     created_at: now,
   });
   await upsertMapping({

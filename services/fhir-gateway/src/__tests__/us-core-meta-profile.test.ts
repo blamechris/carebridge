@@ -66,6 +66,7 @@ function makeDiagnosis(): Diagnosis {
     resolved_date: null,
     diagnosed_by: null,
     notes: null,
+    source_system: "internal",
     created_at: "2024-01-01T00:00:00.000Z",
     updated_at: "2024-01-01T00:00:00.000Z",
   } as Diagnosis;
@@ -105,6 +106,7 @@ function makeAllergy(): Allergy {
     rxnorm_code: null,
     reaction: null,
     severity: null,
+    source_system: "internal",
     created_at: "2026-01-01T00:00:00.000Z",
   } as Allergy;
 }
@@ -148,6 +150,7 @@ function makeEncounter(): EncounterRow {
     location: null,
     reason: null,
     notes: null,
+    source_system: "internal",
     created_at: "2026-04-10T10:00:00.000Z",
   } as EncounterRow;
 }
