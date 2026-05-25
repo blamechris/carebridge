@@ -61,13 +61,33 @@ export function EpicLaunchBanner({ storage }: EpicLaunchBannerProps = {}) {
     staleTime: 60_000,
   });
 
-  // Sessionstorage suppression — only access on the client after mount.
-  // Keyed on the server-confirmed patient id so spoofed URLs can't
-  // pre-suppress a future genuine launch.
+  // Sessionstorage suppression — keyed on the server-confirmed patient id
+  // so spoofed URLs can't pre-suppress a future genuine launch.
   const ctx = contextQuery.data ?? null;
   const serverPatient = ctx?.epic_patient_fhir_id ?? null;
 
-  const [suppressed, setSuppressed] = useState(false);
+  // Issue #1187: Read the suppression flag SYNCHRONOUSLY during the first
+  // render via a useState lazy initializer. If we read it inside useEffect
+  // instead, the banner paints once on first render (with suppressed=false),
+  // then re-renders to null after the effect — producing a visible flash on
+  // deep-link re-visits where the launch params are still in the URL.
+  //
+  // The follow-up useEffect below still runs to catch the rare cross-tab
+  // edge case: user lands without the flag, then another tab sets it
+  // (storage events would be needed for true cross-tab sync, but at minimum
+  // the effect handles the case where serverPatient resolves after first
+  // render, e.g. cold tRPC query mount).
+  const [suppressed, setSuppressed] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false; // SSR-safe
+    if (!serverPatient) return false;
+    try {
+      const ss = storage ?? globalThis.sessionStorage;
+      return ss?.getItem(SUPPRESS_KEY) === serverPatient;
+    } catch {
+      // sessionStorage unavailable (Safari private mode, sandboxed iframe).
+      return false;
+    }
+  });
   useEffect(() => {
     if (!serverPatient) return;
     try {

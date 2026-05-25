@@ -245,4 +245,64 @@ describe("EpicLaunchBanner", () => {
     expect(banner).toBeInTheDocument();
     expect(banner.textContent).toMatch(/abc/);
   });
+
+  // Issue #1187 — suppression flag must be read synchronously during render
+  // (lazy useState initializer), not in a post-mount useEffect. Reading it
+  // post-mount causes the banner to paint once before the effect hides it,
+  // producing a visible flash on deep-link re-visits with launch params still
+  // present in the URL.
+
+  it("reads sessionStorage suppress flag during initial render (lazy init, not via effect)", () => {
+    // Contract: with the lazy useState initializer, getItem must be called
+    // as part of the synchronous render path. Without the fix, getItem is
+    // only called inside useEffect — which fires AFTER the first paint.
+    //
+    // The probe below renders AFTER the banner in tree order. React calls
+    // function components top-down during render, so by the time Probe's
+    // render function executes, the banner's render function has already
+    // run to completion (including any lazy useState initializer). If
+    // getItem was called by then, the lazy-init path was exercised; if not,
+    // the read is deferred to an effect and the banner has already painted.
+    searchParamsMock = new URLSearchParams({
+      epic_patient: "eP123",
+    });
+    getLaunchContextQuery.mockReturnValueOnce({
+      data: {
+        epic_org_iss: "https://fhir.epic.example/api/FHIR/R4",
+        epic_practitioner_fhir_id: "prac-1",
+        epic_patient_fhir_id: "eP123",
+        launch_encounter_fhir_id: null,
+        expires_at: "2099-01-01T00:00:00Z",
+      },
+      isLoading: false,
+      isError: false,
+    });
+
+    const { store, storage } = makeStorage();
+    store.set("carebridge_epic_launch_suppressed", "eP123");
+
+    const getItemSpy = vi.fn((k: string) => storage.getItem(k));
+    const spyStorage: Pick<Storage, "getItem" | "setItem" | "removeItem"> = {
+      getItem: getItemSpy,
+      setItem: (k, v) => storage.setItem(k, v),
+      removeItem: (k) => storage.removeItem(k),
+    };
+
+    let getItemCallsSeenByProbe = 0;
+    function Probe() {
+      getItemCallsSeenByProbe = getItemSpy.mock.calls.length;
+      return null;
+    }
+
+    render(
+      <div>
+        <EpicLaunchBanner storage={spyStorage} />
+        <Probe />
+      </div>,
+    );
+
+    expect(getItemCallsSeenByProbe).toBeGreaterThan(0);
+    // And the steady-state DOM has no banner either.
+    expect(screen.queryByTestId("epic-launch-banner")).toBeNull();
+  });
 });
