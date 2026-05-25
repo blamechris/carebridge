@@ -2,12 +2,16 @@
  * @vitest-environment jsdom
  *
  * Issue #1182 — per-patient Epic sync card.
+ * Issue #1189 — inactive-state row when the user has no Epic connection
+ *   and there are no historical sync rows for the patient.
  *
  * Covers:
  *   - Admin sees the "Sync from Epic now" button; non-admin does not.
  *   - Clicking the button calls epicSync.triggerSync with incremental
  *     mode and the patient id, then invalidates getSyncStatus.
  *   - Status widget renders last-synced + error totals from the query.
+ *   - Four-quadrant gating on (connections × sync-rows): only the
+ *     (0 connections, 0 rows) cell collapses to the inactive-state hint.
  */
 import React from "react";
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
@@ -28,7 +32,32 @@ vi.mock("@/lib/auth", () => ({
   useAuth: () => ({ user: mockedUser }),
 }));
 
-const statusRows = [
+interface SyncRow {
+  patient_id: string;
+  resource_type: string;
+  last_synced_at: string | null;
+  last_fhir_lastupdated: string | null;
+  status: string;
+  resources_synced_count: number;
+  error_count: number;
+  last_error_message: string | null;
+  last_error_at: string | null;
+  skipped_sub_resources: string[];
+}
+
+interface ConnectionRow {
+  id: string;
+  epic_org_iss: string;
+  scopes: string;
+  expires_at: string;
+  epic_practitioner_fhir_id: string | null;
+  epic_patient_fhir_id: string | null;
+  launch_encounter_fhir_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+const populatedStatusRows: SyncRow[] = [
   {
     patient_id: "p-1",
     resource_type: "Observation",
@@ -54,6 +83,23 @@ const statusRows = [
     skipped_sub_resources: [],
   },
 ];
+
+const populatedConnectionRows: ConnectionRow[] = [
+  {
+    id: "conn-1",
+    epic_org_iss: "https://fhir.epic.example/api/FHIR/R4",
+    scopes: "openid fhirUser patient/*.read",
+    expires_at: "2099-01-01T00:00:00.000Z",
+    epic_practitioner_fhir_id: "prac-1",
+    epic_patient_fhir_id: "pat-1",
+    launch_encounter_fhir_id: null,
+    created_at: "2026-04-01T00:00:00.000Z",
+    updated_at: "2026-04-01T00:00:00.000Z",
+  },
+];
+
+let statusRows: SyncRow[] = populatedStatusRows;
+let connectionRows: ConnectionRow[] = populatedConnectionRows;
 
 vi.mock("@/lib/trpc", () => ({
   trpc: {
@@ -84,6 +130,15 @@ vi.mock("@/lib/trpc", () => ({
         }),
       },
     },
+    epicAuth: {
+      getMyConnections: {
+        useQuery: () => ({
+          data: connectionRows,
+          isLoading: false,
+          isError: false,
+        }),
+      },
+    },
   },
 }));
 
@@ -93,6 +148,8 @@ beforeEach(() => {
   triggerMutate.mockClear();
   invalidate.mockClear();
   mockedUser = { role: "admin" };
+  statusRows = populatedStatusRows;
+  connectionRows = populatedConnectionRows;
 });
 
 afterEach(() => {
@@ -153,5 +210,68 @@ describe("EpicSyncCard (non-admin)", () => {
     expect(
       screen.queryByRole("button", { name: /Sync from Epic now/i }),
     ).toBeNull();
+  });
+});
+
+/**
+ * Issue #1189 — four-quadrant inactive-state gating.
+ *
+ * Only the (0 connections × 0 sync-rows) cell should collapse to the
+ * minimal "Sync inactive" hint. The other three cells preserve the
+ * full card so users with either historical sync data OR an active
+ * Epic connection retain visibility into sync state.
+ */
+describe("EpicSyncCard (inactive-state — issue #1189)", () => {
+  it("renders the inactive-state hint when there are no connections and no sync rows", () => {
+    connectionRows = [];
+    statusRows = [];
+    render(<EpicSyncCard patientId={PATIENT_ID} />);
+
+    expect(screen.getByText(/Sync inactive/i)).toBeInTheDocument();
+    const settingsLink = screen.getByRole("link", {
+      name: /connect to Epic in Settings/i,
+    });
+    expect(settingsLink).toBeInTheDocument();
+    expect(settingsLink.getAttribute("href")).toBe("/settings/integrations");
+
+    // None of the full-card chrome should render.
+    expect(screen.queryByText(/Last synced/i)).toBeNull();
+    expect(screen.queryByText(/^Errors$/)).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /Sync from Epic now/i }),
+    ).toBeNull();
+  });
+
+  it("renders the full card when there are no connections but historical sync rows exist", () => {
+    connectionRows = [];
+    statusRows = populatedStatusRows;
+    render(<EpicSyncCard patientId={PATIENT_ID} />);
+
+    expect(screen.queryByText(/Sync inactive/i)).toBeNull();
+    expect(screen.getByText(/Last synced/i)).toBeInTheDocument();
+    expect(screen.getByText(/^Errors$/)).toBeInTheDocument();
+  });
+
+  it("renders the full card when the user has an Epic connection but no sync rows yet", () => {
+    connectionRows = populatedConnectionRows;
+    statusRows = [];
+    render(<EpicSyncCard patientId={PATIENT_ID} />);
+
+    expect(screen.queryByText(/Sync inactive/i)).toBeNull();
+    expect(screen.getByText(/Last synced/i)).toBeInTheDocument();
+    // Empty-but-connected state: no sync timestamp yet, zero errors.
+    const lastSyncedRow = screen.getByText(/Last synced/i).parentElement;
+    expect(lastSyncedRow?.textContent).toMatch(/never/i);
+    expect(screen.getByText(/^Errors$/)).toBeInTheDocument();
+  });
+
+  it("renders the full card when the user has both connections and sync rows", () => {
+    connectionRows = populatedConnectionRows;
+    statusRows = populatedStatusRows;
+    render(<EpicSyncCard patientId={PATIENT_ID} />);
+
+    expect(screen.queryByText(/Sync inactive/i)).toBeNull();
+    expect(screen.getByText(/Last synced/i)).toBeInTheDocument();
+    expect(screen.getByText(/^Errors$/)).toBeInTheDocument();
   });
 });
