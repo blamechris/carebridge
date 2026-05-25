@@ -39,6 +39,10 @@ export const diagnoses = pgTable("diagnoses", {
   onset_date: text("onset_date"),
   resolved_date: text("resolved_date"),
   diagnosed_by: text("diagnosed_by"),
+  // Provenance tag — distinguishes Epic-imported diagnoses from
+  // CareBridge-originated ones without joining through fhir_resources
+  // (#1190). Mirrors medications/vitals/lab_panels/procedures convention.
+  source_system: text("source_system").notNull().default("internal"),
   created_at: text("created_at").notNull(),
 }, (table) => [
   index("idx_diagnoses_patient").on(table.patient_id, table.status),
@@ -55,6 +59,10 @@ export const allergies = pgTable("allergies", {
   // Tracks clinical verification of this allergy record: confirmed (verified reaction),
   // unconfirmed (reported but not verified), entered_in_error, or refuted (tested negative).
   verification_status: text("verification_status").notNull().default("unconfirmed"), // confirmed, unconfirmed, entered_in_error, refuted
+  // Provenance tag — distinguishes Epic-imported allergies from
+  // CareBridge-originated ones without joining through fhir_resources
+  // (#1190). Mirrors medications/vitals/lab_panels/procedures convention.
+  source_system: text("source_system").notNull().default("internal"),
   created_at: text("created_at").notNull(),
 }, (table) => [
   index("idx_allergies_patient").on(table.patient_id),
