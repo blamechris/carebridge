@@ -13,9 +13,19 @@
  * Admin gate matches the backend RBAC: only `user.role === "admin"` can
  * trigger sync. Non-admins still see the status widget but the button is
  * hidden.
+ *
+ * Issue #1189 — inactive-state row. When the user has zero Epic
+ * connections (`epicAuth.getMyConnections`) AND zero sync rows for this
+ * patient, the card collapses to a single low-emphasis line:
+ *   "Sync inactive — connect to Epic in Settings"
+ * This keeps Epic discoverable for unconnected orgs without dominating
+ * the Overview tab with a "Last synced: never" row that adds no
+ * information. Once either side becomes non-empty (a connection is
+ * linked OR a sync has ever run) the full card renders again.
  */
 
 import { useState } from "react";
+import Link from "next/link";
 import { trpc } from "@/lib/trpc";
 import { useAuth } from "@/lib/auth";
 
@@ -43,6 +53,7 @@ export function EpicSyncCard({ patientId, epicPatientFhirId }: EpicSyncCardProps
   const statusQuery = trpc.epicSync.getSyncStatus.useQuery({
     patient_id: patientId,
   });
+  const connectionsQuery = trpc.epicAuth.getMyConnections.useQuery();
   const utils = trpc.useUtils();
   const [mutateError, setMutateError] = useState<string | null>(null);
   const [mutateSuccess, setMutateSuccess] = useState<string | null>(null);
@@ -70,12 +81,41 @@ export function EpicSyncCard({ patientId, epicPatientFhirId }: EpicSyncCardProps
   }
 
   const rows = statusQuery.data ?? [];
+  const connections = connectionsQuery.data ?? [];
   const totalErrors = rows.reduce((sum, r) => sum + (r.error_count ?? 0), 0);
   const mostRecentSync = rows
     .map((r) => r.last_synced_at)
     .filter((t): t is string => Boolean(t))
     .sort()
     .pop();
+
+  // Issue #1189 — when there's nothing to show *and* no Epic linkage,
+  // surface a one-line discoverability hint instead of the full card.
+  // We only collapse once both queries have resolved so the card doesn't
+  // briefly flash the hint while data is still loading.
+  const isInactive =
+    !statusQuery.isLoading &&
+    !connectionsQuery.isLoading &&
+    !statusQuery.isError &&
+    !connectionsQuery.isError &&
+    connections.length === 0 &&
+    rows.length === 0;
+
+  if (isInactive) {
+    return (
+      <div
+        className="text-xs text-muted-foreground"
+        style={{
+          marginBottom: 20,
+          fontSize: 12,
+          color: "var(--text-muted)",
+        }}
+      >
+        Sync inactive —{" "}
+        <Link href="/settings/integrations">connect to Epic in Settings</Link>
+      </div>
+    );
+  }
 
   return (
     <div className="detail-card" style={{ marginBottom: 20 }}>
