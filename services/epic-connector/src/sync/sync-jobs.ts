@@ -38,6 +38,7 @@ import { EPIC_SOURCE_SYSTEM_TAG } from "../converters.js";
 import {
   persistAllergy,
   persistCondition,
+  persistEncounter,
   persistMedicationRequest,
   persistObservation,
   persistPatient,
@@ -58,20 +59,23 @@ import type { FhirResource } from "../fhir-types.js";
 
 const log = createLogger("epic-sync-jobs");
 
-export type SyncResourceType = Exclude<EpicResourceType, "Encounter">;
-
 /**
- * Resource types this PR ships sync support for. Encounter persistence
- * is deferred to a follow-up — there's no inbound encounter mapper in
- * fhir-gateway yet, and the `encounters` table writes need their own
- * idempotency story (Epic CSN ↔ internal id).
+ * Resource types this worker syncs end-to-end.
+ *
+ * Encounter was excluded in the initial #391 cut (the converter +
+ * persistence wiring landed later in #1181 — the last gap of #390).
+ * It's now wired through the same fetch / persist / event-emit /
+ * sync-state path as everything else.
  */
+export type SyncResourceType = EpicResourceType;
+
 export const SUPPORTED_RESOURCE_TYPES: SyncResourceType[] = [
   "Patient",
   "Observation",
   "Condition",
   "MedicationRequest",
   "AllergyIntolerance",
+  "Encounter",
 ];
 
 export type EmitFn = (event: ClinicalEvent) => Promise<void>;
@@ -622,6 +626,8 @@ async function persistOne(
       return persistMedicationRequest(resource, patientId);
     case "AllergyIntolerance":
       return persistAllergy(resource, patientId);
+    case "Encounter":
+      return persistEncounter(resource, patientId);
   }
 }
 
@@ -662,6 +668,8 @@ function eventTypeFor(persisted: PersistResult): ClinicalEventType {
       return persisted.inserted ? "diagnosis.added" : "diagnosis.updated";
     case "allergy":
       return persisted.inserted ? "allergy.added" : "allergy.updated";
+    case "encounter":
+      return persisted.inserted ? "encounter.created" : "encounter.updated";
     case "unmapped":
       // Should never happen — buildClinicalEvent is gated by
       // persisted.kind !== "unmapped" at the callsite. Fall through to

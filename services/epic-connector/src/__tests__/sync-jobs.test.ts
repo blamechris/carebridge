@@ -16,6 +16,7 @@ const persistObservation = vi.fn();
 const persistCondition = vi.fn();
 const persistMedicationRequest = vi.fn();
 const persistAllergy = vi.fn();
+const persistEncounter = vi.fn();
 
 vi.mock("../sync/persistence.js", () => ({
   persistPatient,
@@ -23,6 +24,7 @@ vi.mock("../sync/persistence.js", () => ({
   persistCondition,
   persistMedicationRequest,
   persistAllergy,
+  persistEncounter,
   persistMedicationStatement: vi.fn(),
 }));
 
@@ -1468,5 +1470,125 @@ describe("Epic sync-jobs (#391)", () => {
     for (const call of medCalls) {
       expect(call[1]._lastUpdated).toBe("gt2026-04-01T00:00:00Z");
     }
+  });
+
+  // ── #1181: Encounter fan-out closes the last gap of #390 ─────────
+  // searchEncounters existed on the FHIR client since #390 but the
+  // sync worker never wired it in. #1181 ships the converter +
+  // per-resource persistence + clinical-event emission so encounters
+  // sync alongside everything else.
+
+  it("Encounter is included in SUPPORTED_RESOURCE_TYPES so full-sync iterates it", () => {
+    expect(SUPPORTED_RESOURCE_TYPES).toContain("Encounter");
+  });
+
+  it("runSingleResourceSync('Encounter') fetches, persists, and emits encounter.created", async () => {
+    persistEncounter.mockResolvedValueOnce({
+      internalId: "internal-encounter-1",
+      kind: "encounter",
+      inserted: true,
+    });
+    const client = makeFakeClient({
+      Encounter: [
+        {
+          resourceType: "Encounter",
+          id: "enc-1",
+          meta: { lastUpdated: "2026-05-20T10:00:00Z" },
+        },
+      ],
+    });
+
+    const result = await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "Encounter",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    expect(markRunning).toHaveBeenCalledWith(PATIENT_ID, "Encounter");
+    expect(persistEncounter).toHaveBeenCalledOnce();
+    // Emit fires exactly once with the encounter.created event shape:
+    // source_system=epic, epic_resource_type=Encounter, operation=created.
+    expect(emit).toHaveBeenCalledOnce();
+    const event = emit.mock.calls[0]![0] as ClinicalEvent;
+    expect(event.type).toBe("encounter.created");
+    expect(event.patient_id).toBe(PATIENT_ID);
+    expect(event.data.source_system).toBe("epic");
+    expect(event.data.epic_fhir_id).toBe("enc-1");
+    expect(event.data.epic_resource_type).toBe("Encounter");
+    expect(event.data.operation).toBe("created");
+
+    // epic_sync_state row updated for the Encounter resource type with
+    // the watermark from meta.lastUpdated.
+    expect(markOk).toHaveBeenCalledOnce();
+    expect(markOk.mock.calls[0]![0]).toMatchObject({
+      patientId: PATIENT_ID,
+      resourceType: "Encounter",
+      highWatermark: "2026-05-20T10:00:00Z",
+      importedCount: 1,
+    });
+
+    expect(result).toMatchObject({
+      patient_id: PATIENT_ID,
+      resource_type: "Encounter",
+      imported: 1,
+      updated: 0,
+      conflicts: 0,
+      errors: [],
+    });
+  });
+
+  it("emits encounter.updated (not encounter.created) when persist reports inserted=false", async () => {
+    persistEncounter.mockResolvedValueOnce({
+      internalId: "internal-encounter-1",
+      kind: "encounter",
+      inserted: false,
+    });
+    const client = makeFakeClient({
+      Encounter: [{ resourceType: "Encounter", id: "enc-1" }],
+    });
+
+    await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "Encounter",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    const event = emit.mock.calls[0]![0] as ClinicalEvent;
+    expect(event.type).toBe("encounter.updated");
+    expect(event.data.operation).toBe("updated");
+  });
+
+  it("runFullSync iterates Encounter alongside the other resource types", async () => {
+    persistPatient.mockResolvedValue({
+      internalId: PATIENT_ID,
+      kind: "patient",
+      inserted: false,
+    });
+    persistEncounter.mockResolvedValue({
+      internalId: "internal-encounter-1",
+      kind: "encounter",
+      inserted: true,
+    });
+    const client = makeFakeClient({
+      Encounter: [{ resourceType: "Encounter", id: "enc-fullsync" }],
+    });
+
+    await runFullSync(
+      { patientId: PATIENT_ID, epicPatientFhirId: EPIC_PATIENT_FHIR_ID },
+      { client, emit },
+    );
+
+    const searchedTypes = (
+      client.searchAll as ReturnType<typeof vi.fn>
+    ).mock.calls.map((c) => c[0]);
+    expect(searchedTypes).toContain("Encounter");
   });
 });

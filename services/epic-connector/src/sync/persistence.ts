@@ -28,6 +28,7 @@ import {
   labResults,
   diagnoses,
   allergies,
+  encounters,
   fhirResources,
   auditLog,
 } from "@carebridge/db-schema";
@@ -38,6 +39,7 @@ import {
   epicObservationToRow,
   epicConditionToRow,
   epicAllergyToRow,
+  epicEncounterToRow,
   EPIC_SOURCE_SYSTEM_TAG,
 } from "../converters.js";
 import type { FhirResource } from "../fhir-types.js";
@@ -55,6 +57,7 @@ export interface PersistResult {
     | "lab"
     | "diagnosis"
     | "allergy"
+    | "encounter"
     | "unmapped";
   /** True when the call inserted a new row; false when it updated. */
   inserted: boolean;
@@ -635,4 +638,95 @@ export async function persistAllergy(
     resource,
   });
   return { internalId: id, kind: "allergy", inserted: true };
+}
+
+/**
+ * Persist an Epic FHIR Encounter to the `encounters` table (#1181).
+ *
+ * Closes the last gap of #390 — the FHIR client has searchEncounters and
+ * #1181 adds the converter + this writer + sync-worker fan-out. The
+ * `encounters` table doesn't carry a dedicated `epic_encounter_id` or
+ * `source_system` column today; the FHIR resource.id round-trips through
+ * the `fhir_resources` mapping row, and source provenance is recoverable
+ * via the same mapping table. A future migration can lift those fields
+ * onto the table without changing this writer.
+ */
+export async function persistEncounter(
+  resource: FhirResource,
+  patientId: string,
+): Promise<PersistResult> {
+  const fhirId = resource.id;
+  if (!fhirId) return { internalId: null, kind: "unmapped", inserted: false };
+
+  const row = epicEncounterToRow(resource, patientId);
+  if (!row) return { internalId: null, kind: "unmapped", inserted: false };
+
+  const db = getDb();
+  const now = new Date().toISOString();
+  const mapping = await findMapping("Encounter", fhirId);
+
+  if (mapping.internalId) {
+    if (
+      mapping.existingSourceSystem &&
+      mapping.existingSourceSystem !== EPIC_SOURCE_SYSTEM_TAG
+    ) {
+      await logSourceConflict({
+        resourceType: "Encounter",
+        fhirId,
+        internalId: mapping.internalId,
+        patientId,
+        existingSourceSystem: mapping.existingSourceSystem,
+      });
+      return {
+        internalId: mapping.internalId,
+        kind: "encounter",
+        inserted: false,
+        conflict: "source_system_conflict",
+      };
+    }
+    await db
+      .update(encounters)
+      .set({
+        encounter_type: row.encounter_type,
+        status: row.status,
+        start_time: row.start_time,
+        end_time: row.end_time,
+        location: row.location,
+        reason: row.reason,
+      })
+      .where(eq(encounters.id, mapping.internalId));
+    await upsertMapping({
+      resourceType: "Encounter",
+      fhirId,
+      internalId: mapping.internalId,
+      patientId,
+      resource,
+    });
+    return {
+      internalId: mapping.internalId,
+      kind: "encounter",
+      inserted: false,
+    };
+  }
+
+  const id = crypto.randomUUID();
+  await db.insert(encounters).values({
+    id,
+    patient_id: patientId,
+    encounter_type: row.encounter_type,
+    status: row.status,
+    start_time: row.start_time,
+    end_time: row.end_time,
+    location: row.location,
+    reason: row.reason,
+    created_at: now,
+  });
+  await upsertMapping({
+    resourceType: "Encounter",
+    fhirId,
+    internalId: id,
+    patientId,
+    resource,
+  });
+  return { internalId: id, kind: "encounter", inserted: true };
 }
