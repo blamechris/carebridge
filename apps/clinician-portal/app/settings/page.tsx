@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useAuth } from "@/lib/auth";
 import { trpcVanilla } from "@/lib/trpc";
 import { AuthGuard } from "@/lib/auth-guard";
@@ -459,6 +460,25 @@ function SettingsContent() {
 
         {/* MFA enrollment */}
         <MFASection />
+
+        {/* Integrations entry point — full management page lives at
+            /settings/integrations (see #1182). */}
+        <div className="detail-card" style={{ marginBottom: 20 }}>
+          <div className="detail-card-title">Integrations</div>
+          <p
+            style={{
+              fontSize: 13,
+              color: "var(--text-secondary)",
+              marginBottom: 16,
+              lineHeight: 1.5,
+            }}
+          >
+            Connect external clinical systems (Epic, …) to CareBridge.
+          </p>
+          <Link href="/settings/integrations" className="btn btn-ghost btn-sm">
+            Manage integrations
+          </Link>
+        </div>
       </div>
     </>
   );

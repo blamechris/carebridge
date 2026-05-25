@@ -31,6 +31,7 @@ import {
   deriveInferredFlag,
 } from "@/lib/lab-display";
 import { PrescriptionForm } from "./PrescriptionForm";
+import { EpicSyncCard } from "@/components/epic-sync-card";
 import type { Medication } from "@carebridge/shared-types";
 
 const tabs = [
@@ -247,6 +248,9 @@ function OverviewTab({ patientId }: { patientId: string }) {
           </div>
         )}
       </div>
+
+      {/* Epic sync status + admin-only Sync Now action (#1182). */}
+      <EpicSyncCard patientId={patientId} />
     </div>
   );
 }

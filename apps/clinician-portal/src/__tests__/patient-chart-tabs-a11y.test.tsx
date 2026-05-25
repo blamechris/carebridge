@@ -22,6 +22,13 @@ vi.mock("@/lib/auth-guard", () => ({
   AuthGuard: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
+// EpicSyncCard reads useAuth() to gate its admin-only "Sync Now" button.
+// This a11y test only cares about the tab strip, so stub the hook with a
+// minimal non-admin user.
+vi.mock("@/lib/auth", () => ({
+  useAuth: () => ({ user: { id: "u-1", role: "physician", name: "T" } }),
+}));
+
 // Mutable holder so individual tests can set the active tab.
 let currentTab: string | null = null;
 
