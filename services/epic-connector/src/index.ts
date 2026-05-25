@@ -69,9 +69,11 @@ export {
   epicObservationToRow,
   epicConditionToRow,
   epicAllergyToRow,
+  epicEncounterToRow,
   type EpicDiagnosisRow,
   type EpicLabResultRow,
   type EpicObservationConversion,
+  type EpicEncounterRow,
 } from "./converters.js";
 export {
   runFullSync,
@@ -121,6 +123,7 @@ export {
   persistObservation,
   persistCondition,
   persistAllergy,
+  persistEncounter,
   type PersistResult,
 } from "./sync/persistence.js";
 export {
