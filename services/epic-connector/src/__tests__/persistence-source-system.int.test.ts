@@ -29,6 +29,16 @@ if (TEST_URL) {
   process.env.DATABASE_URL = TEST_URL;
 }
 
+// `patients.name` is an encryptedText column, so seedPatient() needs a
+// PHI_ENCRYPTION_KEY to write any row. CI's test job (.github/workflows/ci.yml)
+// doesn't set one — and we don't want it to, because that's a real production
+// secret. Generate a per-process throwaway key here so the test is self-
+// contained. Must be set BEFORE the dynamic import of @carebridge/db-schema
+// below: getKey() memoises the parsed key on first read.
+if (TEST_URL && !process.env.PHI_ENCRYPTION_KEY) {
+  process.env.PHI_ENCRYPTION_KEY = crypto.randomBytes(32).toString("hex");
+}
+
 const {
   getDb,
   patients,
