@@ -49,6 +49,18 @@ export default defineConfig({
         __dirname,
         "../../services/ai-oversight/src/index.ts",
       ),
+      // Aliased so the route module can import the package in tests
+      // without the dist build. Every test that uses the gateway's epic
+      // routes mocks `@carebridge/epic-connector` directly, so the alias
+      // only needs to resolve to *something* in the module graph.
+      "@carebridge/epic-connector": path.resolve(
+        __dirname,
+        "../../services/epic-connector/src/index.ts",
+      ),
+      "@carebridge/logger": path.resolve(
+        __dirname,
+        "../../packages/logger/src/index.ts",
+      ),
     },
   },
 });
