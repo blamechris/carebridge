@@ -450,13 +450,9 @@ async function findEncounterByFingerprint(args: {
     .limit(1);
   const hit = rows[0];
   if (!hit) return null;
-  // encounters has no source_system column today (#1190 may add one);
-  // treat absence as "internal" — anything not tagged epic-via-mapping
-  // is CareBridge-originated by definition.
   return {
     internalId: hit.id,
-    sourceSystem:
-      (hit as { source_system?: string | null }).source_system ?? null,
+    sourceSystem: hit.source_system ?? null,
   };
 }
 
@@ -487,8 +483,7 @@ async function findDiagnosisByFingerprint(args: {
   if (!hit) return null;
   return {
     internalId: hit.id,
-    sourceSystem:
-      (hit as { source_system?: string | null }).source_system ?? null,
+    sourceSystem: hit.source_system ?? null,
   };
 }
 
@@ -509,21 +504,14 @@ async function findAllergyByFingerprint(args: {
     .limit(1);
   const hit = rows[0];
   if (!hit) return null;
-  const raw = hit as {
-    id: string;
-    source_system?: string | null;
-    allergen?: string | null;
-    severity?: string | null;
-    reaction?: string | null;
-  };
   return {
-    internalId: raw.id,
-    sourceSystem: raw.source_system ?? null,
+    internalId: hit.id,
+    sourceSystem: hit.source_system ?? null,
     // #1203: snapshot the columns persistAllergy's UPDATE will rewrite.
     priorAllergyRow: {
-      allergen: raw.allergen ?? null,
-      severity: raw.severity ?? null,
-      reaction: raw.reaction ?? null,
+      allergen: hit.allergen ?? null,
+      severity: hit.severity ?? null,
+      reaction: hit.reaction ?? null,
     },
   };
 }
