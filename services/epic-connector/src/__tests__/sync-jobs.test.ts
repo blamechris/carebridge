@@ -194,6 +194,41 @@ describe("Epic sync-jobs (#391)", () => {
     expect(result.imported).toBe(0);
   });
 
+  // #1217 — epic_id_conflict is the fingerprint-collision-on-different-
+  // Epic-id forked-insert path. Persistence inserts a NEW internal row
+  // (so `inserted: true`) but the operator still needs the conflict
+  // signal: a row pair needs manual reconciliation. Treated identically
+  // to source_system_conflict by the orchestrator — counted as a
+  // conflict (NOT imported), event emit suppressed.
+  it("counts epic_id_conflict as a conflict and suppresses the clinical event", async () => {
+    persistMedicationRequest.mockResolvedValueOnce({
+      internalId: "internal-med-forked",
+      kind: "medication",
+      inserted: true,
+      conflict: "epic_id_conflict",
+    });
+    const client = makeFakeClient({
+      MedicationRequest: [
+        { resourceType: "MedicationRequest", id: "med-B" },
+      ],
+    });
+
+    const result = await runSingleResourceSync(
+      {
+        patientId: PATIENT_ID,
+        epicPatientFhirId: EPIC_PATIENT_FHIR_ID,
+        resourceType: "MedicationRequest",
+        watermark: null,
+      },
+      { client, emit },
+    );
+
+    expect(emit).not.toHaveBeenCalled();
+    expect(result.conflicts).toBe(1);
+    expect(result.imported).toBe(0);
+    expect(result.updated).toBe(0);
+  });
+
   it("skips unmapped resources without crashing the loop", async () => {
     persistObservation
       .mockResolvedValueOnce({

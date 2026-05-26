@@ -13,12 +13,18 @@
  *  4. UPSERTs the `fhir_resources` mapping row so the next sync pull can
  *     find the same internal row.
  *  5. Refuses to overwrite CareBridge-originated data on BOTH the
- *     Epic-id path (step 1) AND the fingerprint path (step 2). When the
- *     existing target row has `source_system != "epic"` (or null on a
- *     table that has the column — defensively treated as non-epic), the
- *     writer skips the UPDATE, still writes the `fhir_resources`
- *     mapping (so Epic and CareBridge IDs round-trip to the same row),
- *     and logs the attempt to `audit_log`:
+ *     Epic-id path (step 1) AND the fingerprint path (step 2) for the
+ *     five resource tables that carry `source_system` (encounters,
+ *     diagnoses, allergies, medications, vitals/observations). Patient
+ *     identity is treated as Epic-owned at first import — the `patients`
+ *     table has no `source_system` column and the fingerprint hit in
+ *     `persistPatient` merges unconditionally; see
+ *     `findPatientByFingerprint` for the rationale. When the existing
+ *     target row has `source_system != "epic"` (or null on a table that
+ *     has the column — defensively treated as non-epic), the writer
+ *     skips the UPDATE, still writes the `fhir_resources` mapping (so
+ *     Epic and CareBridge IDs round-trip to the same row), and logs
+ *     the attempt to `audit_log`:
  *       • Epic-id path     → action="update", success=false,
  *                            reason="source_system_conflict" (#1183)
  *       • Fingerprint path → action="epic_sync_source_conflict" (#1200)
@@ -121,8 +127,27 @@ export interface PersistResult {
     | "unmapped";
   /** True when the call inserted a new row; false when it updated. */
   inserted: boolean;
-  /** Set when the call rejected an Epic update due to source_system mismatch. */
-  conflict?: string;
+  /**
+   * Caller-visible conflict discriminator (#1200, #1217). Distinguishes
+   * the two skip / fork paths that otherwise look identical from a
+   * `{ inserted, internalId }` reading:
+   *
+   *   - `source_system_conflict` (#1200) — the matched row is
+   *     CareBridge-originated. The writer skipped the UPDATE, wrote the
+   *     fhir_resources mapping anyway so future re-syncs round-trip to
+   *     the same row, and logged `epic_sync_source_conflict`. Combined
+   *     with `inserted: false`.
+   *
+   *   - `epic_id_conflict` (#1201, surfaced #1217) — the fingerprint hit
+   *     landed on an internal row that already has a different Epic FHIR
+   *     id mapped to it. The writer fell through to a plain INSERT (a
+   *     new internal row + a new mapping) rather than silently double-
+   *     map two Epic ids to one row, and logged `epic_sync_dedup_conflict`.
+   *     Combined with `inserted: true` and a fresh `internalId`.
+   *
+   * Absent on clean inserts and clean dedup-merges.
+   */
+  conflict?: "source_system_conflict" | "epic_id_conflict";
 }
 
 interface MappingLookup {
@@ -447,6 +472,7 @@ interface PriorAllergyRow {
   allergen: string | null;
   severity: string | null;
   reaction: string | null;
+  verification_status: string | null;
 }
 
 async function findEncounterByFingerprint(args: {
@@ -468,13 +494,9 @@ async function findEncounterByFingerprint(args: {
     .limit(1);
   const hit = rows[0];
   if (!hit) return null;
-  // encounters has no source_system column today (#1190 may add one);
-  // treat absence as "internal" — anything not tagged epic-via-mapping
-  // is CareBridge-originated by definition.
   return {
     internalId: hit.id,
-    sourceSystem:
-      (hit as { source_system?: string | null }).source_system ?? null,
+    sourceSystem: hit.source_system ?? null,
   };
 }
 
@@ -505,8 +527,7 @@ async function findDiagnosisByFingerprint(args: {
   if (!hit) return null;
   return {
     internalId: hit.id,
-    sourceSystem:
-      (hit as { source_system?: string | null }).source_system ?? null,
+    sourceSystem: hit.source_system ?? null,
   };
 }
 
@@ -533,15 +554,19 @@ async function findAllergyByFingerprint(args: {
     allergen?: string | null;
     severity?: string | null;
     reaction?: string | null;
+    verification_status?: string | null;
   };
   return {
-    internalId: raw.id,
-    sourceSystem: raw.source_system ?? null,
+    internalId: hit.id,
+    sourceSystem: hit.source_system ?? null,
     // #1203: snapshot the columns persistAllergy's UPDATE will rewrite.
+    // #1220 widens the snapshot + UPDATE to include verification_status
+    // so an unconfirmed → confirmed flip is captured in the audit row.
     priorAllergyRow: {
       allergen: raw.allergen ?? null,
       severity: raw.severity ?? null,
       reaction: raw.reaction ?? null,
+      verification_status: raw.verification_status ?? null,
     },
   };
 }
@@ -560,12 +585,20 @@ async function findAllergyByFingerprint(args: {
  */
 function computeAllergyOverwrittenFields(
   prior: PriorAllergyRow,
-  incoming: { allergen: string; severity: string | null; reaction: string | null },
+  incoming: {
+    allergen: string;
+    severity: string | null;
+    reaction: string | null;
+    verification_status: string | null;
+  },
 ): Record<string, unknown> {
   const overwritten: Record<string, unknown> = {};
   if (prior.allergen !== incoming.allergen) overwritten.allergen = prior.allergen;
   if (prior.severity !== incoming.severity) overwritten.severity = prior.severity;
   if (prior.reaction !== incoming.reaction) overwritten.reaction = prior.reaction;
+  if (prior.verification_status !== incoming.verification_status) {
+    overwritten.verification_status = prior.verification_status;
+  }
   return overwritten;
 }
 
@@ -627,23 +660,27 @@ async function findVitalByFingerprint(args: {
 
 // #1202 — panel_name uses test_name for single-result Observations,
 // so two distinct panels labelled differently for the same test collide.
+// `collectedAt` is required: the (patient_id, panel_name) pair alone is
+// dimensionally weak (a stale Hemoglobin from years ago could absorb a
+// fresh one), and the only caller upstream-guarantees a non-null
+// recorded_at via mapFhirObservationToLabResultRow (#1212).
 async function findLabPanelByFingerprint(args: {
   patientId: string;
   panelName: string;
-  collectedAt: string | null;
+  collectedAt: string;
 }): Promise<FingerprintHit | null> {
   const db = getDb();
-  const predicate = args.collectedAt
-    ? and(
+  const rows = await db
+    .select()
+    .from(labPanels)
+    .where(
+      and(
         eq(labPanels.patient_id, args.patientId),
         eq(labPanels.panel_name, args.panelName),
         eq(labPanels.collected_at, args.collectedAt),
-      )
-    : and(
-        eq(labPanels.patient_id, args.patientId),
-        eq(labPanels.panel_name, args.panelName),
-      );
-  const rows = await db.select().from(labPanels).where(predicate).limit(1);
+      ),
+    )
+    .limit(1);
   const hit = rows[0];
   if (!hit) return null;
   return {
@@ -815,6 +852,12 @@ export async function persistPatient(
       patientId: id,
       fingerprint,
     });
+    return {
+      internalId: id,
+      kind: "patient",
+      inserted: true,
+      conflict: "epic_id_conflict",
+    };
   }
   return { internalId: id, kind: "patient", inserted: true };
 }
@@ -1025,6 +1068,12 @@ async function persistMedicationRow(
       patientId,
       fingerprint,
     });
+    return {
+      internalId: id,
+      kind: "medication",
+      inserted: true,
+      conflict: "epic_id_conflict",
+    };
   }
   return { internalId: id, kind: "medication", inserted: true };
 }
@@ -1197,6 +1246,12 @@ export async function persistObservation(
         patientId,
         fingerprint,
       });
+      return {
+        internalId: id,
+        kind: "vital",
+        inserted: true,
+        conflict: "epic_id_conflict",
+      };
     }
     return { internalId: id, kind: "vital", inserted: true };
   }
@@ -1241,6 +1296,10 @@ export async function persistObservation(
     collectedAt: conversion.row.recorded_at,
   });
   if (panelFingerprintHit) {
+    // #1213 — intentionally NO update to lab_panels.source_system or
+    // reported_at on reuse: a CareBridge-originated panel keeps its
+    // provenance, and the Epic-side merge fact is captured in the
+    // logDedupMatch audit row below.
     // #1207 — store the newly-inserted lab_results.id (the leaf the
     // Epic Observation id round-trips to) in the fhir_resources
     // mapping, NOT the reused lab_panels.id. The round-2 update path
@@ -1485,6 +1544,12 @@ export async function persistCondition(
       patientId,
       fingerprint,
     });
+    return {
+      internalId: id,
+      kind: "diagnosis",
+      inserted: true,
+      conflict: "epic_id_conflict",
+    };
   }
   return { internalId: id, kind: "diagnosis", inserted: true };
 }
@@ -1528,6 +1593,7 @@ export async function persistAllergy(
         allergen: row.allergen,
         severity: row.severity,
         reaction: row.reaction,
+        verification_status: row.verification_status,
       })
       .where(eq(allergies.id, mapping.internalId));
     await upsertMapping({
@@ -1601,6 +1667,7 @@ export async function persistAllergy(
           allergen: row.allergen,
           severity: row.severity,
           reaction: row.reaction,
+          verification_status: row.verification_status,
         })
       : {};
     await db
@@ -1609,6 +1676,7 @@ export async function persistAllergy(
         allergen: row.allergen,
         severity: row.severity,
         reaction: row.reaction,
+        verification_status: row.verification_status,
       })
       .where(eq(allergies.id, fingerprintHit.internalId));
     await upsertMapping({
@@ -1660,6 +1728,12 @@ export async function persistAllergy(
       patientId,
       fingerprint,
     });
+    return {
+      internalId: id,
+      kind: "allergy",
+      inserted: true,
+      conflict: "epic_id_conflict",
+    };
   }
   return { internalId: id, kind: "allergy", inserted: true };
 }
@@ -1851,6 +1925,12 @@ export async function persistEncounter(
       patientId,
       fingerprint,
     });
+    return {
+      internalId: id,
+      kind: "encounter",
+      inserted: true,
+      conflict: "epic_id_conflict",
+    };
   }
   return { internalId: id, kind: "encounter", inserted: true };
 }
