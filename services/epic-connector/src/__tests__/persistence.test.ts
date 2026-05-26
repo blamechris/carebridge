@@ -38,8 +38,16 @@ vi.mock("@carebridge/db-schema", () => ({
     loinc_code: "loinc_code",
     recorded_at: "recorded_at",
   },
-  labPanels: {},
-  labResults: {},
+  labPanels: {
+    id: "id",
+    patient_id: "patient_id",
+    panel_name: "panel_name",
+    collected_at: "collected_at",
+  },
+  labResults: {
+    id: "id",
+    panel_id: "panel_id",
+  },
   diagnoses: {
     id: "id",
     patient_id: "patient_id",
@@ -454,6 +462,137 @@ describe("persistObservation (vital) — cross-source dedup (#1191)", () => {
 
     const result = await persistObservation(RESOURCE, PATIENT_ID);
     expect(result.inserted).toBe(true);
+  });
+});
+
+// ── Observation / Lab Panel ────────────────────────────────────
+
+describe("persistObservation (lab) — panel-level dedup (#1202)", () => {
+  const RESOURCE = {
+    resourceType: "Observation",
+    id: "epic-lab-1",
+    status: "final",
+    category: [
+      {
+        coding: [
+          {
+            system:
+              "http://terminology.hl7.org/CodeSystem/observation-category",
+            code: "laboratory",
+          },
+        ],
+      },
+    ],
+    code: {
+      text: "Hemoglobin",
+      coding: [
+        {
+          system: "http://loinc.org",
+          code: "718-7",
+          display: "Hemoglobin",
+        },
+      ],
+    },
+    subject: { reference: "Patient/p-1" },
+    effectiveDateTime: "2026-05-20T07:30:00Z",
+    valueQuantity: { value: 13.2, unit: "g/dL" },
+  };
+
+  it("dedups against existing CareBridge lab_panels row by patient_id+panel_name+collected_at and attaches the result to it", async () => {
+    const existingPanelId = "internal-panel-1";
+    db.willSelect([]); // findMapping miss
+    db.willSelect([
+      {
+        id: existingPanelId,
+        patient_id: PATIENT_ID,
+        panel_name: "Hemoglobin",
+        collected_at: "2026-05-20T07:30:00Z",
+      },
+    ]);
+    db.willInsert(); // lab_results row attached to existing panel
+    db.willInsert(); // fhir_resources mapping row
+    db.willInsert(); // audit_log epic_sync_dedup_match
+
+    const result = await persistObservation(RESOURCE, PATIENT_ID);
+
+    expect(result.kind).toBe("lab");
+    expect(result.inserted).toBe(false);
+    expect(result.internalId).toBe(existingPanelId);
+
+    // Total of 3 inserts — lab_results, mapping, audit. No new lab_panels row.
+    expect(db.insert).toHaveBeenCalledTimes(3);
+
+    // There should be a lab_results insert pointing at the existing panel id.
+    const labResultInsert = db.insert.calls.find((c) => {
+      const v = c.chainArgs[0]?.[0] as Record<string, unknown> | undefined;
+      return v?.panel_id === existingPanelId;
+    });
+    expect(labResultInsert).toBeDefined();
+
+    // audit_log epic_sync_dedup_match for the panel.
+    const auditInsert = db.insert.calls.find((c) => {
+      const v = c.chainArgs[0]?.[0] as Record<string, unknown> | undefined;
+      return v?.action === "epic_sync_dedup_match";
+    });
+    expect(auditInsert).toBeDefined();
+    const auditValues = auditInsert!.chainArgs[0]![0] as Record<
+      string,
+      unknown
+    >;
+    expect(auditValues.resource_type).toBe("Observation");
+    expect(auditValues.resource_id).toBe(existingPanelId);
+
+    // fhir_resources mapping points at the existing panel id (so the
+    // next Epic re-sync of the same Observation finds the same panel).
+    const fhirInsert = db.insert.calls.find((c) => {
+      const v = c.chainArgs[0]?.[0] as Record<string, unknown> | undefined;
+      return v?.resource_type === "Observation";
+    });
+    expect(fhirInsert).toBeDefined();
+  });
+
+  it("inserts a new lab_panels + lab_results row when no fingerprint match exists", async () => {
+    db.willSelect([]); // findMapping miss
+    db.willSelect([]); // findLabPanelByFingerprint miss
+    db.willInsert(); // new lab_panels row
+    db.willInsert(); // new lab_results row
+    db.willInsert(); // fhir_resources mapping row
+
+    const result = await persistObservation(RESOURCE, PATIENT_ID);
+
+    expect(result.inserted).toBe(true);
+    expect(result.kind).toBe("lab");
+
+    // No audit_log dedup-match row when there's no fingerprint hit.
+    const dedup = db.insert.calls.find((c) => {
+      const v = c.chainArgs[0]?.[0] as Record<string, unknown> | undefined;
+      return v?.action === "epic_sync_dedup_match";
+    });
+    expect(dedup).toBeUndefined();
+  });
+
+  it("dedups single-result Observations using test_name as panel_name", async () => {
+    // Two single-test Epic Observations for the same patient at the same
+    // collected_at + test_name should resolve to the same lab_panels row.
+    const existingPanelId = "internal-panel-cbc-1";
+    db.willSelect([]); // mapping miss
+    db.willSelect([
+      {
+        id: existingPanelId,
+        patient_id: PATIENT_ID,
+        panel_name: "Hemoglobin",
+        collected_at: "2026-05-20T07:30:00Z",
+      },
+    ]);
+    db.willInsert(); // lab_results row attached
+    db.willInsert(); // mapping
+    db.willInsert(); // audit
+
+    const result = await persistObservation(RESOURCE, PATIENT_ID);
+
+    expect(result.internalId).toBe(existingPanelId);
+    expect(result.kind).toBe("lab");
+    expect(result.inserted).toBe(false);
   });
 });
 
