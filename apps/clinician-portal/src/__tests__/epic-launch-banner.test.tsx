@@ -305,4 +305,102 @@ describe("EpicLaunchBanner", () => {
     // And the steady-state DOM has no banner either.
     expect(screen.queryByTestId("epic-launch-banner")).toBeNull();
   });
+
+  // Issue #1199 — the mismatch console.warn runs inline in render, so React
+  // strict-mode double-renders and parent re-renders fired the same tamper
+  // warning repeatedly in dev. Dedup by tracking the last warned
+  // (urlEpicPatient, serverPatient) pair in a useRef and only re-warning
+  // when the pair changes.
+
+  it("warns only once when re-rendered repeatedly with the same patient mismatch", () => {
+    searchParamsMock = new URLSearchParams({ epic_patient: "spoof" });
+    getLaunchContextQuery.mockReturnValue({
+      data: {
+        epic_org_iss: "https://fhir.epic.example/api/FHIR/R4",
+        epic_practitioner_fhir_id: "prac-1",
+        epic_patient_fhir_id: "abc",
+        launch_encounter_fhir_id: null,
+        expires_at: "2099-01-01T00:00:00Z",
+      },
+      isLoading: false,
+      isError: false,
+    });
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { storage } = makeStorage();
+    const { rerender } = render(<EpicLaunchBanner storage={storage} />);
+    for (let i = 0; i < 10; i++) {
+      rerender(<EpicLaunchBanner storage={storage} />);
+    }
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
+  });
+
+  it("emits a fresh warn when the mismatch pair changes between renders", () => {
+    searchParamsMock = new URLSearchParams({ epic_patient: "spoof-1" });
+    getLaunchContextQuery.mockReturnValue({
+      data: {
+        epic_org_iss: "https://fhir.epic.example/api/FHIR/R4",
+        epic_practitioner_fhir_id: "prac-1",
+        epic_patient_fhir_id: "abc",
+        launch_encounter_fhir_id: null,
+        expires_at: "2099-01-01T00:00:00Z",
+      },
+      isLoading: false,
+      isError: false,
+    });
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { storage } = makeStorage();
+    const { rerender } = render(<EpicLaunchBanner storage={storage} />);
+    rerender(<EpicLaunchBanner storage={storage} />);
+    // Same pair so far: only one warn.
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+
+    // Switch the URL to a different spoofed value: pair changes, warn again.
+    searchParamsMock = new URLSearchParams({ epic_patient: "spoof-2" });
+    rerender(<EpicLaunchBanner storage={storage} />);
+    rerender(<EpicLaunchBanner storage={storage} />);
+
+    expect(warnSpy).toHaveBeenCalledTimes(2);
+    warnSpy.mockRestore();
+  });
+
+  it("warns only once on repeat encounter-mismatch re-renders, fires again on new pair", () => {
+    searchParamsMock = new URLSearchParams({
+      epic_patient: "abc",
+      epic_encounter: "spoof-enc-1",
+    });
+    getLaunchContextQuery.mockReturnValue({
+      data: {
+        epic_org_iss: "https://fhir.epic.example/api/FHIR/R4",
+        epic_practitioner_fhir_id: "prac-1",
+        epic_patient_fhir_id: "abc",
+        // Cast through unknown because the vi.fn's inferred return type
+        // pins this property to `null` from the module-level default;
+        // tests need a concrete encounter id to exercise the mismatch path.
+        launch_encounter_fhir_id: "real-enc" as unknown as null,
+        expires_at: "2099-01-01T00:00:00Z",
+      },
+      isLoading: false,
+      isError: false,
+    });
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { storage } = makeStorage();
+    const { rerender } = render(<EpicLaunchBanner storage={storage} />);
+    for (let i = 0; i < 10; i++) {
+      rerender(<EpicLaunchBanner storage={storage} />);
+    }
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+
+    searchParamsMock = new URLSearchParams({
+      epic_patient: "abc",
+      epic_encounter: "spoof-enc-2",
+    });
+    rerender(<EpicLaunchBanner storage={storage} />);
+    expect(warnSpy).toHaveBeenCalledTimes(2);
+    warnSpy.mockRestore();
+  });
 });

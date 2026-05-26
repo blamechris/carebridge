@@ -426,6 +426,34 @@ async function findVitalByFingerprint(args: {
   };
 }
 
+// #1202 — panel_name uses test_name for single-result Observations,
+// so two distinct panels labelled differently for the same test collide.
+async function findLabPanelByFingerprint(args: {
+  patientId: string;
+  panelName: string;
+  collectedAt: string | null;
+}): Promise<FingerprintHit | null> {
+  const db = getDb();
+  const predicate = args.collectedAt
+    ? and(
+        eq(labPanels.patient_id, args.patientId),
+        eq(labPanels.panel_name, args.panelName),
+        eq(labPanels.collected_at, args.collectedAt),
+      )
+    : and(
+        eq(labPanels.patient_id, args.patientId),
+        eq(labPanels.panel_name, args.panelName),
+      );
+  const rows = await db.select().from(labPanels).where(predicate).limit(1);
+  const hit = rows[0];
+  if (!hit) return null;
+  return {
+    internalId: hit.id,
+    sourceSystem:
+      (hit as { source_system?: string | null }).source_system ?? null,
+  };
+}
+
 async function findPatientByFingerprint(args: {
   mrnHmac: string | null;
 }): Promise<FingerprintHit | null> {
@@ -914,12 +942,8 @@ export async function persistObservation(
   // Lab result — single-result panel synthesised for the Epic
   // resource. Multi-test panels arriving from Epic come in as a
   // DiagnosticReport (deferred to #391-followup) and are not handled
-  // here yet. Lab fingerprint dedup is also deferred — the leaf
-  // (lab_results) doesn't carry patient_id directly; matching would
-  // require a JOIN against the synthesised lab_panels row whose
-  // collected_at is itself derived from recorded_at, so the dimensional
-  // weight of the fingerprint is identical to the panel lookup. Tracked
-  // as a #1191 follow-up.
+  // here yet. Panel-level fingerprint dedup (#1202) reuses an existing
+  // lab_panels row when patient_id + panel_name + collected_at matches.
   if (mapping.internalId) {
     // Existing lab_results rows are leaves — conflict logic on the panel
     // level is out of scope for the first cut. Refresh the value in place.
@@ -943,6 +967,60 @@ export async function persistObservation(
       resource,
     });
     return { internalId: mapping.internalId, kind: "lab", inserted: false };
+  }
+
+  // #1202 panel-level fingerprint fallback — patient_id + panel_name +
+  // collected_at. Single-test Epic Observations synthesise a one-row
+  // panel keyed by test_name, so repeated syncs of the same test reuse
+  // the panel and attach the new result row to it.
+  const panelFingerprintHit = await findLabPanelByFingerprint({
+    patientId,
+    panelName: conversion.row.test_name,
+    collectedAt: conversion.row.recorded_at,
+  });
+  if (panelFingerprintHit) {
+    // #1207 — store the newly-inserted lab_results.id (the leaf the
+    // Epic Observation id round-trips to) in the fhir_resources
+    // mapping, NOT the reused lab_panels.id. The round-2 update path
+    // (see the `mapping.internalId` branch above) looks the mapping's
+    // internalId up in labResults.id; pointing at a panel id would
+    // silently match zero rows and drop Epic-side result changes.
+    const resultId = crypto.randomUUID();
+    await db.insert(labResults).values({
+      id: resultId,
+      panel_id: panelFingerprintHit.internalId,
+      test_name: conversion.row.test_name,
+      test_code: conversion.row.test_code,
+      value: conversion.row.value,
+      unit: conversion.row.unit,
+      reference_low: conversion.row.reference_low,
+      reference_high: conversion.row.reference_high,
+      flag: conversion.row.flag,
+      created_at: now,
+    });
+    await upsertMapping({
+      resourceType: "Observation",
+      fhirId,
+      internalId: resultId,
+      patientId,
+      resource,
+    });
+    await logDedupMatch({
+      resourceType: "Observation",
+      fhirId,
+      internalId: resultId,
+      patientId,
+      fingerprint: {
+        patient_id: patientId,
+        panel_name: conversion.row.test_name,
+        collected_at: conversion.row.recorded_at,
+      },
+    });
+    return {
+      internalId: resultId,
+      kind: "lab",
+      inserted: false,
+    };
   }
 
   const panelId = crypto.randomUUID();
