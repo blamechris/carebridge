@@ -292,28 +292,38 @@ async function logDedupMatch(args: {
 }
 
 /**
- * Look up a pre-existing Epic-id mapping that already points at the
+ * Look up pre-existing Epic-id mappings that already point at the
  * given internal record id but with a DIFFERENT resource_id than the
- * inbound FHIR id (#1201). When this returns a row, the caller must
- * NOT merge into the fingerprint-matched internal row — two distinct
- * Epic ids would otherwise both round-trip to the same CareBridge
- * record with no signal to a reviewer. Caller falls through to a
- * plain INSERT and writes an `epic_sync_dedup_conflict` audit row.
+ * inbound FHIR id (#1201, #1219). When this returns a non-empty array,
+ * the caller must NOT merge into the fingerprint-matched internal row
+ * — two distinct Epic ids would otherwise both round-trip to the same
+ * CareBridge record with no signal to a reviewer. Caller falls through
+ * to a plain INSERT and writes an `epic_sync_dedup_conflict` audit row.
  *
- * Returns null when there is no such conflicting mapping. A mapping
- * whose resource_id equals the inbound FHIR id is *not* a conflict —
- * it's the same logical Epic resource re-syncing.
+ * Returns an empty array when there is no such conflicting mapping.
+ * A mapping whose resource_id equals the inbound FHIR id is *not* a
+ * conflict — it's the same logical Epic resource re-syncing.
+ *
+ * #1219: result is capped at {@link CAP_CONFLICTING_MAPPINGS}. Today's
+ * `(resource_type, resource_id)` unique key on `fhir_resources` makes
+ * more than one row impossible, but a manual DB intervention or a
+ * future schema change could relax that. `LIMIT 5` keeps the audit
+ * payload bounded while still surfacing the multi-id case for review.
  */
-interface ConflictingMapping {
-  existingEpicFhirId: string;
-  internalRecordId: string;
-}
+/**
+ * Upper bound on the number of conflicting Epic mappings reported in
+ * the `epic_sync_dedup_conflict` audit row (#1219). Five is a soft
+ * forensic cap: enough to surface a non-trivial multi-mapping bug,
+ * small enough that a malformed `fhir_resources` table can't bloat the
+ * audit payload.
+ */
+const CAP_CONFLICTING_MAPPINGS = 5;
 
-async function findConflictingMapping(args: {
+async function findConflictingMappings(args: {
   resourceType: string;
   matchedInternalId: string;
   inboundFhirId: string;
-}): Promise<ConflictingMapping | null> {
+}): Promise<string[]> {
   const db = getDb();
   const rows = await db
     .select()
@@ -325,28 +335,31 @@ async function findConflictingMapping(args: {
         ne(fhirResources.resource_id, args.inboundFhirId),
       ),
     )
-    .limit(1);
+    .limit(CAP_CONFLICTING_MAPPINGS);
   // Defensive: Drizzle returns [] on no rows, but unit-test mocks that
   // under-queue can return undefined. Treat both as "no conflict".
-  const existing = rows?.[0];
-  if (!existing) return null;
-  return {
-    existingEpicFhirId: existing.resource_id,
-    internalRecordId: existing.internal_record_id ?? args.matchedInternalId,
-  };
+  if (!rows || rows.length === 0) return [];
+  return rows.map((row) => row.resource_id);
 }
 
 /**
- * Log an Epic-id conflict on the fingerprint path (#1201). The matched
- * internal row already has a different Epic FHIR id mapped to it; the
- * caller has already fallen through to INSERT a fresh internal row and
- * its own mapping. This audit row preserves both Epic ids and the
+ * Log an Epic-id conflict on the fingerprint path (#1201, #1219). The
+ * matched internal row already has one or more different Epic FHIR ids
+ * mapped to it; the caller has already fallen through to INSERT a fresh
+ * internal row and its own mapping. This audit row preserves every
+ * conflicting Epic id (up to {@link CAP_CONFLICTING_MAPPINGS}) and the
  * fingerprint for manual reconciliation.
+ *
+ * #1219: details carry `existing_epic_fhir_ids: string[]` (the full
+ * array) AND `existing_epic_fhir_id: string` (the first entry) for
+ * back-compat with consumers wired against the original scalar field.
+ * The caller must pass a non-empty array; the function's contract is
+ * that `existing_epic_fhir_id` always reflects `existing_epic_fhir_ids[0]`.
  */
 async function logDedupConflict(args: {
   resourceType: string;
   newEpicFhirId: string;
-  existingEpicFhirId: string;
+  existingEpicFhirIds: string[];
   matchedInternalId: string;
   newInternalId: string;
   patientId: string | null;
@@ -368,7 +381,12 @@ async function logDedupConflict(args: {
       reason: "epic_id_conflict_on_fingerprint_match",
       attempted_source: EPIC_SOURCE_SYSTEM_TAG,
       new_epic_fhir_id: args.newEpicFhirId,
-      existing_epic_fhir_id: args.existingEpicFhirId,
+      // #1219: surface the full set of conflicting Epic ids so a
+      // reviewer can see when more than one mapping survived a manual
+      // intervention. First entry is duplicated into the scalar field
+      // below for back-compat with consumers wired against #1201.
+      existing_epic_fhir_ids: args.existingEpicFhirIds,
+      existing_epic_fhir_id: args.existingEpicFhirIds[0],
       matched_internal_id: args.matchedInternalId,
       fingerprint: args.fingerprint,
       resolution: "insert_new_internal_row",
@@ -767,15 +785,15 @@ export async function persistPatient(
   // #1201: identity-ambiguity check. Patient identity is a high-stakes
   // case — two Epic patient FHIR ids resolving to the same MRN HMAC
   // usually means an Epic-side merge / unmerge cycle. Treat as conflict.
-  let conflictMapping: ConflictingMapping | null = null;
+  let conflictingEpicIds: string[] = [];
   if (fingerprintHit) {
-    conflictMapping = await findConflictingMapping({
+    conflictingEpicIds = await findConflictingMappings({
       resourceType: "Patient",
       matchedInternalId: fingerprintHit.internalId,
       inboundFhirId: fhirId,
     });
   }
-  if (fingerprintHit && !conflictMapping) {
+  if (fingerprintHit && conflictingEpicIds.length === 0) {
     await db
       .update(patients)
       .set({
@@ -824,11 +842,11 @@ export async function persistPatient(
     patientId: id,
     resource,
   });
-  if (conflictMapping && fingerprintHit) {
+  if (conflictingEpicIds.length > 0 && fingerprintHit) {
     await logDedupConflict({
       resourceType: "Patient",
       newEpicFhirId: fhirId,
-      existingEpicFhirId: conflictMapping.existingEpicFhirId,
+      existingEpicFhirIds: conflictingEpicIds,
       matchedInternalId: fingerprintHit.internalId,
       newInternalId: id,
       patientId: id,
@@ -949,15 +967,15 @@ async function persistMedicationRow(
     started_at: row.started_at,
   };
   // #1201: identity-ambiguity check (see persistEncounter for rationale).
-  let conflictMapping: ConflictingMapping | null = null;
+  let conflictingEpicIds: string[] = [];
   if (fingerprintHit) {
-    conflictMapping = await findConflictingMapping({
+    conflictingEpicIds = await findConflictingMappings({
       resourceType,
       matchedInternalId: fingerprintHit.internalId,
       inboundFhirId: fhirId,
     });
   }
-  if (fingerprintHit && !conflictMapping) {
+  if (fingerprintHit && conflictingEpicIds.length === 0) {
     // #1200: source_system guard — see persistEncounter for rationale.
     if (!isEpicOwned(fingerprintHit.sourceSystem)) {
       await upsertMapping({
@@ -1040,11 +1058,11 @@ async function persistMedicationRow(
     patientId,
     resource,
   });
-  if (conflictMapping && fingerprintHit) {
+  if (conflictingEpicIds.length > 0 && fingerprintHit) {
     await logDedupConflict({
       resourceType,
       newEpicFhirId: fhirId,
-      existingEpicFhirId: conflictMapping.existingEpicFhirId,
+      existingEpicFhirIds: conflictingEpicIds,
       matchedInternalId: fingerprintHit.internalId,
       newInternalId: id,
       patientId,
@@ -1133,15 +1151,15 @@ export async function persistObservation(
       recorded_at: conversion.row.recorded_at,
     };
     // #1201: identity-ambiguity check (see persistEncounter).
-    let conflictMapping: ConflictingMapping | null = null;
+    let conflictingEpicIds: string[] = [];
     if (fingerprintHit) {
-      conflictMapping = await findConflictingMapping({
+      conflictingEpicIds = await findConflictingMappings({
         resourceType: "Observation",
         matchedInternalId: fingerprintHit.internalId,
         inboundFhirId: fhirId,
       });
     }
-    if (fingerprintHit && !conflictMapping) {
+    if (fingerprintHit && conflictingEpicIds.length === 0) {
       // #1200: source_system guard — see persistEncounter for rationale.
       if (!isEpicOwned(fingerprintHit.sourceSystem)) {
         await upsertMapping({
@@ -1218,11 +1236,11 @@ export async function persistObservation(
       patientId,
       resource,
     });
-    if (conflictMapping && fingerprintHit) {
+    if (conflictingEpicIds.length > 0 && fingerprintHit) {
       await logDedupConflict({
         resourceType: "Observation",
         newEpicFhirId: fhirId,
-        existingEpicFhirId: conflictMapping.existingEpicFhirId,
+        existingEpicFhirIds: conflictingEpicIds,
         matchedInternalId: fingerprintHit.internalId,
         newInternalId: id,
         patientId,
@@ -1431,15 +1449,15 @@ export async function persistCondition(
     onset_date: row.onset_date,
   };
   // #1201: identity-ambiguity check (see persistEncounter).
-  let conflictMapping: ConflictingMapping | null = null;
+  let conflictingEpicIds: string[] = [];
   if (fingerprintHit) {
-    conflictMapping = await findConflictingMapping({
+    conflictingEpicIds = await findConflictingMappings({
       resourceType: "Condition",
       matchedInternalId: fingerprintHit.internalId,
       inboundFhirId: fhirId,
     });
   }
-  if (fingerprintHit && !conflictMapping) {
+  if (fingerprintHit && conflictingEpicIds.length === 0) {
     // #1200: source_system guard — see persistEncounter for rationale.
     if (!isEpicOwned(fingerprintHit.sourceSystem)) {
       await upsertMapping({
@@ -1516,11 +1534,11 @@ export async function persistCondition(
     patientId,
     resource,
   });
-  if (conflictMapping && fingerprintHit) {
+  if (conflictingEpicIds.length > 0 && fingerprintHit) {
     await logDedupConflict({
       resourceType: "Condition",
       newEpicFhirId: fhirId,
-      existingEpicFhirId: conflictMapping.existingEpicFhirId,
+      existingEpicFhirIds: conflictingEpicIds,
       matchedInternalId: fingerprintHit.internalId,
       newInternalId: id,
       patientId,
@@ -1607,15 +1625,15 @@ export async function persistAllergy(
     snomed_code: row.snomed_code,
   };
   // #1201: identity-ambiguity check (see persistEncounter).
-  let conflictMapping: ConflictingMapping | null = null;
+  let conflictingEpicIds: string[] = [];
   if (fingerprintHit) {
-    conflictMapping = await findConflictingMapping({
+    conflictingEpicIds = await findConflictingMappings({
       resourceType: "AllergyIntolerance",
       matchedInternalId: fingerprintHit.internalId,
       inboundFhirId: fhirId,
     });
   }
-  if (fingerprintHit && !conflictMapping) {
+  if (fingerprintHit && conflictingEpicIds.length === 0) {
     // #1200: source_system guard — see persistEncounter for rationale.
     if (!isEpicOwned(fingerprintHit.sourceSystem)) {
       await upsertMapping({
@@ -1700,11 +1718,11 @@ export async function persistAllergy(
     patientId,
     resource,
   });
-  if (conflictMapping && fingerprintHit) {
+  if (conflictingEpicIds.length > 0 && fingerprintHit) {
     await logDedupConflict({
       resourceType: "AllergyIntolerance",
       newEpicFhirId: fhirId,
-      existingEpicFhirId: conflictMapping.existingEpicFhirId,
+      existingEpicFhirIds: conflictingEpicIds,
       matchedInternalId: fingerprintHit.internalId,
       newInternalId: id,
       patientId,
@@ -1810,15 +1828,15 @@ export async function persistEncounter(
   // runs BEFORE the #1200 source_system guard because once two Epic ids
   // both point at one row we've lost the ability to safely round-trip
   // either, regardless of data ownership.
-  let conflictMapping: ConflictingMapping | null = null;
+  let conflictingEpicIds: string[] = [];
   if (fingerprintHit) {
-    conflictMapping = await findConflictingMapping({
+    conflictingEpicIds = await findConflictingMappings({
       resourceType: "Encounter",
       matchedInternalId: fingerprintHit.internalId,
       inboundFhirId: fhirId,
     });
   }
-  if (fingerprintHit && !conflictMapping) {
+  if (fingerprintHit && conflictingEpicIds.length === 0) {
     // #1200: guard the fingerprint-merge UPDATE on source_system. If the
     // matched row is CareBridge-originated, write the mapping so Epic IDs
     // still round-trip, but DO NOT overwrite the clinician's data.
@@ -1897,11 +1915,11 @@ export async function persistEncounter(
     patientId,
     resource,
   });
-  if (conflictMapping && fingerprintHit) {
+  if (conflictingEpicIds.length > 0 && fingerprintHit) {
     await logDedupConflict({
       resourceType: "Encounter",
       newEpicFhirId: fhirId,
-      existingEpicFhirId: conflictMapping.existingEpicFhirId,
+      existingEpicFhirIds: conflictingEpicIds,
       matchedInternalId: fingerprintHit.internalId,
       newInternalId: id,
       patientId,
