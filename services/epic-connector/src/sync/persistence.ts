@@ -609,23 +609,27 @@ async function findVitalByFingerprint(args: {
 
 // #1202 — panel_name uses test_name for single-result Observations,
 // so two distinct panels labelled differently for the same test collide.
+// `collectedAt` is required: the (patient_id, panel_name) pair alone is
+// dimensionally weak (a stale Hemoglobin from years ago could absorb a
+// fresh one), and the only caller upstream-guarantees a non-null
+// recorded_at via mapFhirObservationToLabResultRow (#1212).
 async function findLabPanelByFingerprint(args: {
   patientId: string;
   panelName: string;
-  collectedAt: string | null;
+  collectedAt: string;
 }): Promise<FingerprintHit | null> {
   const db = getDb();
-  const predicate = args.collectedAt
-    ? and(
+  const rows = await db
+    .select()
+    .from(labPanels)
+    .where(
+      and(
         eq(labPanels.patient_id, args.patientId),
         eq(labPanels.panel_name, args.panelName),
         eq(labPanels.collected_at, args.collectedAt),
-      )
-    : and(
-        eq(labPanels.patient_id, args.patientId),
-        eq(labPanels.panel_name, args.panelName),
-      );
-  const rows = await db.select().from(labPanels).where(predicate).limit(1);
+      ),
+    )
+    .limit(1);
   const hit = rows[0];
   if (!hit) return null;
   return {
