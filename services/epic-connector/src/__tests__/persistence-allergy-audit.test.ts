@@ -103,12 +103,13 @@ function findAuditInsert(
 function buildInboundAllergy(opts: {
   severity?: "mild" | "moderate" | "severe";
   reactionText?: string;
+  verificationStatus?: "unconfirmed" | "confirmed" | "refuted";
 }): FhirResource {
   const reaction: Record<string, unknown> = {};
   if (opts.reactionText) reaction.description = opts.reactionText;
   if (opts.severity) reaction.severity = opts.severity;
   const hasReaction = Object.keys(reaction).length > 0;
-  return {
+  const resource: FhirResource = {
     resourceType: "AllergyIntolerance",
     id: "epic-aller-1",
     patient: { reference: "Patient/p-1" },
@@ -133,6 +134,18 @@ function buildInboundAllergy(opts: {
     },
     ...(hasReaction ? { reaction: [reaction] } : {}),
   };
+  if (opts.verificationStatus) {
+    (resource as Record<string, unknown>).verificationStatus = {
+      coding: [
+        {
+          system:
+            "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+          code: opts.verificationStatus,
+        },
+      ],
+    };
+  }
+  return resource;
 }
 
 describe("persistAllergy — dedup-merge audit snapshots prior values (#1203)", () => {
@@ -147,6 +160,7 @@ describe("persistAllergy — dedup-merge audit snapshots prior values (#1203)", 
         allergen: "Penicillin",
         severity: "severe",
         reaction: "anaphylaxis",
+        verification_status: "unconfirmed",
         source_system: "epic",
       },
     ]);
@@ -185,6 +199,7 @@ describe("persistAllergy — dedup-merge audit snapshots prior values (#1203)", 
         allergen: "Penicillin G",
         severity: "severe",
         reaction: "anaphylaxis",
+        verification_status: "unconfirmed",
         source_system: "epic",
       },
     ]);
@@ -223,6 +238,7 @@ describe("persistAllergy — dedup-merge audit snapshots prior values (#1203)", 
         allergen: "Penicillin",
         severity: "moderate",
         reaction: "rash",
+        verification_status: "unconfirmed",
         source_system: "epic",
       },
     ]);
@@ -255,6 +271,7 @@ describe("persistAllergy — dedup-merge audit snapshots prior values (#1203)", 
         allergen: "Penicillin",
         severity: "severe",
         reaction: "rash",
+        verification_status: "unconfirmed",
         source_system: "epic",
       },
     ]);
@@ -276,13 +293,12 @@ describe("persistAllergy — dedup-merge audit snapshots prior values (#1203)", 
     expect(details.overwritten_fields).toEqual({ severity: "severe" });
   });
 
-  it("acceptance criterion — severe → moderate with verification flip (issue example)", async () => {
+  it("acceptance criterion — severity flip with verification flip both captured (#1220)", async () => {
     // Mirrors the issue body: penicillin in 2020 (severity=moderate,
     // verification_status=unconfirmed) → re-evaluated 2024 (severity=severe,
-    // verification_status=confirmed). The current UPDATE writes allergen,
-    // severity, reaction — verification_status is not yet in the merge
-    // surface, so it isn't captured here. The test pins what IS captured
-    // and documents the boundary.
+    // verification_status=confirmed). Post-#1220 the UPDATE now writes
+    // verification_status alongside allergen/severity/reaction, so the
+    // diff helper captures both flips.
     const existingInternalId = "internal-aller-issue";
     db.willSelect([]);
     db.willSelect([
@@ -291,9 +307,49 @@ describe("persistAllergy — dedup-merge audit snapshots prior values (#1203)", 
         patient_id: PATIENT_ID,
         snomed_code: "373270004",
         allergen: "Penicillin",
-        severity: "severe",
+        severity: "moderate",
         reaction: "anaphylaxis",
-        verification_status: "confirmed",
+        verification_status: "unconfirmed",
+        source_system: "epic",
+      },
+    ]);
+    db.willUpdate();
+    db.willInsert();
+    db.willInsert();
+
+    const resource = buildInboundAllergy({
+      severity: "severe",
+      reactionText: "anaphylaxis",
+      verificationStatus: "confirmed",
+    });
+
+    await persistAllergy(resource, PATIENT_ID);
+    const audit = findAuditInsert("epic_sync_dedup_match");
+    expect(audit).toBeDefined();
+    const details = JSON.parse(audit?.details as string);
+    expect(details.overwritten_fields).toEqual({
+      severity: "moderate",
+      verification_status: "unconfirmed",
+    });
+  });
+
+  it("verification_status flip only (unconfirmed → confirmed) captured in overwritten_fields (#1220)", async () => {
+    // Pure verification_status flip: every other clinically meaningful
+    // column on the merge surface matches the inbound row. The diff
+    // helper still records the verification flip — re-evaluation of an
+    // unconfirmed allergy to confirmed is clinically meaningful even
+    // when allergen/severity/reaction are unchanged.
+    const existingInternalId = "internal-aller-vs1";
+    db.willSelect([]);
+    db.willSelect([
+      {
+        id: existingInternalId,
+        patient_id: PATIENT_ID,
+        snomed_code: "373270004",
+        allergen: "Penicillin",
+        severity: "moderate",
+        reaction: "rash",
+        verification_status: "unconfirmed",
         source_system: "epic",
       },
     ]);
@@ -303,13 +359,16 @@ describe("persistAllergy — dedup-merge audit snapshots prior values (#1203)", 
 
     const resource = buildInboundAllergy({
       severity: "moderate",
-      reactionText: "anaphylaxis",
+      reactionText: "rash",
+      verificationStatus: "confirmed",
     });
 
     await persistAllergy(resource, PATIENT_ID);
     const audit = findAuditInsert("epic_sync_dedup_match");
     expect(audit).toBeDefined();
     const details = JSON.parse(audit?.details as string);
-    expect(details.overwritten_fields).toEqual({ severity: "severe" });
+    expect(details.overwritten_fields).toEqual({
+      verification_status: "unconfirmed",
+    });
   });
 });

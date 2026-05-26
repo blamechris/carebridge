@@ -454,6 +454,7 @@ interface PriorAllergyRow {
   allergen: string | null;
   severity: string | null;
   reaction: string | null;
+  verification_status: string | null;
 }
 
 async function findEncounterByFingerprint(args: {
@@ -529,14 +530,25 @@ async function findAllergyByFingerprint(args: {
     .limit(1);
   const hit = rows[0];
   if (!hit) return null;
+  const raw = hit as {
+    id: string;
+    source_system?: string | null;
+    allergen?: string | null;
+    severity?: string | null;
+    reaction?: string | null;
+    verification_status?: string | null;
+  };
   return {
     internalId: hit.id,
     sourceSystem: hit.source_system ?? null,
     // #1203: snapshot the columns persistAllergy's UPDATE will rewrite.
+    // #1220 widens the snapshot + UPDATE to include verification_status
+    // so an unconfirmed → confirmed flip is captured in the audit row.
     priorAllergyRow: {
-      allergen: hit.allergen ?? null,
-      severity: hit.severity ?? null,
-      reaction: hit.reaction ?? null,
+      allergen: raw.allergen ?? null,
+      severity: raw.severity ?? null,
+      reaction: raw.reaction ?? null,
+      verification_status: raw.verification_status ?? null,
     },
   };
 }
@@ -555,12 +567,20 @@ async function findAllergyByFingerprint(args: {
  */
 function computeAllergyOverwrittenFields(
   prior: PriorAllergyRow,
-  incoming: { allergen: string; severity: string | null; reaction: string | null },
+  incoming: {
+    allergen: string;
+    severity: string | null;
+    reaction: string | null;
+    verification_status: string | null;
+  },
 ): Record<string, unknown> {
   const overwritten: Record<string, unknown> = {};
   if (prior.allergen !== incoming.allergen) overwritten.allergen = prior.allergen;
   if (prior.severity !== incoming.severity) overwritten.severity = prior.severity;
   if (prior.reaction !== incoming.reaction) overwritten.reaction = prior.reaction;
+  if (prior.verification_status !== incoming.verification_status) {
+    overwritten.verification_status = prior.verification_status;
+  }
   return overwritten;
 }
 
@@ -1555,6 +1575,7 @@ export async function persistAllergy(
         allergen: row.allergen,
         severity: row.severity,
         reaction: row.reaction,
+        verification_status: row.verification_status,
       })
       .where(eq(allergies.id, mapping.internalId));
     await upsertMapping({
@@ -1628,6 +1649,7 @@ export async function persistAllergy(
           allergen: row.allergen,
           severity: row.severity,
           reaction: row.reaction,
+          verification_status: row.verification_status,
         })
       : {};
     await db
@@ -1636,6 +1658,7 @@ export async function persistAllergy(
         allergen: row.allergen,
         severity: row.severity,
         reaction: row.reaction,
+        verification_status: row.verification_status,
       })
       .where(eq(allergies.id, fingerprintHit.internalId));
     await upsertMapping({
