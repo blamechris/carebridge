@@ -48,8 +48,16 @@ vi.mock("@carebridge/db-schema", () => ({
     loinc_code: "loinc_code",
     recorded_at: "recorded_at",
   },
-  labPanels: {},
-  labResults: {},
+  labPanels: {
+    id: "id",
+    patient_id: "patient_id",
+    panel_name: "panel_name",
+    collected_at: "collected_at",
+  },
+  labResults: {
+    id: "id",
+    panel_id: "panel_id",
+  },
   diagnoses: {
     id: "id",
     patient_id: "patient_id",
@@ -516,6 +524,161 @@ describe("persistObservation (vital) — source_system guard on fingerprint path
     expect(result.conflict).toBeUndefined();
     expect(db.update).toHaveBeenCalledOnce();
     expect(findAuditInsert("epic_sync_dedup_match")).toBeDefined();
+  });
+});
+
+// ── Labs (Observation, panel-level fingerprint) ───────────────
+
+describe("persistObservation (lab) — source_system guard on panel fingerprint path (#1234)", () => {
+  const RESOURCE = {
+    resourceType: "Observation",
+    id: "epic-lab-1",
+    status: "final",
+    category: [
+      {
+        coding: [
+          {
+            system:
+              "http://terminology.hl7.org/CodeSystem/observation-category",
+            code: "laboratory",
+          },
+        ],
+      },
+    ],
+    code: {
+      text: "Hemoglobin",
+      coding: [
+        {
+          system: "http://loinc.org",
+          code: "718-7",
+          display: "Hemoglobin",
+        },
+      ],
+    },
+    subject: { reference: "Patient/p-1" },
+    effectiveDateTime: "2026-05-20T07:30:00Z",
+    valueQuantity: { value: 13.2, unit: "g/dL" },
+  };
+
+  it("CareBridge-originated lab_panels (source_system='internal') → skip lab_results attach, write mapping, audit epic_sync_source_conflict", async () => {
+    const existingPanelId = "internal-panel-cb-1";
+    db.willSelect([]); // findMapping miss
+    db.willSelect([
+      {
+        id: existingPanelId,
+        patient_id: PATIENT_ID,
+        panel_name: "Hemoglobin",
+        collected_at: "2026-05-20T07:30:00Z",
+        source_system: "internal",
+      },
+    ]);
+    db.willInsert(); // fhir_resources mapping
+    db.willInsert(); // audit_log epic_sync_source_conflict
+
+    const result = await persistObservation(RESOURCE, PATIENT_ID);
+
+    expect(result.internalId).toBe(existingPanelId);
+    expect(result.kind).toBe("lab");
+    expect(result.inserted).toBe(false);
+    expect(result.conflict).toBe("source_system_conflict");
+
+    // No lab_results row attached — Epic must not silently grow a leaf
+    // on a CareBridge-originated panel.
+    const labResultInsert = db.insert.calls.find((c) => {
+      const v = c.chainArgs[0]?.[0] as Record<string, unknown> | undefined;
+      return v?.panel_id !== undefined;
+    });
+    expect(labResultInsert).toBeUndefined();
+
+    // fhir_resources mapping IS written so the Epic FHIR id still
+    // round-trips to the same panel on the next sync (and trips the
+    // same guard).
+    const mapping = findMappingInsert();
+    expect(mapping).toBeDefined();
+    expect(mapping?.resource_type).toBe("Observation");
+    expect(mapping?.resource_id).toBe("epic-lab-1");
+    expect(mapping?.internal_record_id).toBe(existingPanelId);
+
+    // Audit row uses the source-conflict action and carries provenance.
+    const audit = findAuditInsert("epic_sync_source_conflict");
+    expect(audit).toBeDefined();
+    expect(audit?.resource_type).toBe("Observation");
+    expect(audit?.resource_id).toBe(existingPanelId);
+    const details = JSON.parse(audit?.details as string);
+    expect(details.epic_fhir_id).toBe("epic-lab-1");
+    expect(details.existing_source).toBe("internal");
+    expect(details.resolution).toBe("keep_carebridge_value");
+
+    // No dedup-match row — this is a conflict, not a merge.
+    expect(findAuditInsert("epic_sync_dedup_match")).toBeUndefined();
+  });
+
+  it("Epic-originated lab_panels (source_system='epic') → attach lab_result + epic_sync_dedup_match (negative)", async () => {
+    const existingPanelId = "internal-panel-epic-1";
+    db.willSelect([]); // findMapping miss
+    db.willSelect([
+      {
+        id: existingPanelId,
+        patient_id: PATIENT_ID,
+        panel_name: "Hemoglobin",
+        collected_at: "2026-05-20T07:30:00Z",
+        source_system: "epic",
+      },
+    ]);
+    db.willInsert(); // lab_results row attached to existing Epic panel
+    db.willInsert(); // fhir_resources mapping
+    db.willInsert(); // audit_log epic_sync_dedup_match
+
+    const result = await persistObservation(RESOURCE, PATIENT_ID);
+
+    expect(result.kind).toBe("lab");
+    expect(result.inserted).toBe(false);
+    expect(result.conflict).toBeUndefined();
+
+    // A new lab_results leaf WAS attached to the Epic panel — the
+    // existing dedup behaviour stands when both sides are Epic-owned.
+    const labResultInsert = db.insert.calls.find((c) => {
+      const v = c.chainArgs[0]?.[0] as Record<string, unknown> | undefined;
+      return v?.panel_id === existingPanelId;
+    });
+    expect(labResultInsert).toBeDefined();
+    const newResultId = (
+      labResultInsert!.chainArgs[0]![0] as Record<string, unknown>
+    ).id as string;
+    expect(result.internalId).toBe(newResultId);
+
+    // Dedup audit, NOT source-conflict.
+    expect(findAuditInsert("epic_sync_dedup_match")).toBeDefined();
+    expect(findAuditInsert("epic_sync_source_conflict")).toBeUndefined();
+  });
+
+  it("Matched lab_panels with source_system=null → treated as non-epic, skip attach", async () => {
+    const existingPanelId = "internal-panel-null-1";
+    db.willSelect([]); // findMapping miss
+    db.willSelect([
+      {
+        id: existingPanelId,
+        patient_id: PATIENT_ID,
+        panel_name: "Hemoglobin",
+        collected_at: "2026-05-20T07:30:00Z",
+        source_system: null,
+      },
+    ]);
+    db.willInsert(); // mapping
+    db.willInsert(); // audit
+
+    const result = await persistObservation(RESOURCE, PATIENT_ID);
+
+    expect(result.conflict).toBe("source_system_conflict");
+    expect(result.internalId).toBe(existingPanelId);
+
+    const labResultInsert = db.insert.calls.find((c) => {
+      const v = c.chainArgs[0]?.[0] as Record<string, unknown> | undefined;
+      return v?.panel_id !== undefined;
+    });
+    expect(labResultInsert).toBeUndefined();
+
+    expect(findAuditInsert("epic_sync_source_conflict")).toBeDefined();
   });
 });
 

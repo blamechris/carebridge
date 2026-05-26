@@ -518,7 +518,10 @@ describe("persistObservation (lab) — panel-level dedup (#1202)", () => {
     valueQuantity: { value: 13.2, unit: "g/dL" },
   };
 
-  it("dedups against existing CareBridge lab_panels row by patient_id+panel_name+collected_at and attaches the result to it", async () => {
+  it("dedups against an existing Epic-owned lab_panels row by patient_id+panel_name+collected_at and attaches the result to it", async () => {
+    // #1234 — the panel must be source_system='epic' to follow the
+    // attach-leaf branch. CareBridge-originated panels now trip the
+    // source_system guard (covered in persistence-source-guard.test.ts).
     const existingPanelId = "internal-panel-1";
     db.willSelect([]); // findMapping miss
     db.willSelect([
@@ -527,6 +530,7 @@ describe("persistObservation (lab) — panel-level dedup (#1202)", () => {
         patient_id: PATIENT_ID,
         panel_name: "Hemoglobin",
         collected_at: "2026-05-20T07:30:00Z",
+        source_system: "epic",
       },
     ]);
     db.willInsert(); // lab_results row attached to existing panel
@@ -615,6 +619,8 @@ describe("persistObservation (lab) — panel-level dedup (#1202)", () => {
     // test so regressions on either side fail loudly.
 
     // ── Path A: same test_name (Hemoglobin) → fingerprint HIT, reuse panel ──
+    // #1234 — Epic-sourced panel so the attach-leaf branch runs (the
+    // source_system guard is exercised in persistence-source-guard.test.ts).
     const existingPanelId = "internal-panel-hemoglobin-1";
     db.willSelect([]); // mapping miss
     db.willSelect([
@@ -623,6 +629,7 @@ describe("persistObservation (lab) — panel-level dedup (#1202)", () => {
         patient_id: PATIENT_ID,
         panel_name: "Hemoglobin",
         collected_at: "2026-05-20T07:30:00Z",
+        source_system: "epic",
       },
     ]);
     db.willInsert(); // lab_results row attached
@@ -727,6 +734,7 @@ describe("persistObservation (lab) — panel-level dedup (#1202)", () => {
     const existingPanelId = "internal-panel-1207";
 
     // ── Round 1: fingerprint hit on the existing panel ──
+    // #1234 — Epic-sourced panel so the attach-leaf branch runs.
     db.willSelect([]); // findMapping miss
     db.willSelect([
       {
@@ -734,6 +742,7 @@ describe("persistObservation (lab) — panel-level dedup (#1202)", () => {
         patient_id: PATIENT_ID,
         panel_name: "Hemoglobin",
         collected_at: "2026-05-20T07:30:00Z",
+        source_system: "epic",
       },
     ]);
     db.willInsert(); // lab_results insert hanging off existing panel

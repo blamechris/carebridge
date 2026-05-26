@@ -14,9 +14,11 @@
  *     find the same internal row.
  *  5. Refuses to overwrite CareBridge-originated data on BOTH the
  *     Epic-id path (step 1) AND the fingerprint path (step 2) for the
- *     five resource tables that carry `source_system` (encounters,
- *     diagnoses, allergies, medications, vitals/observations). Patient
- *     identity is treated as Epic-owned at first import — the `patients`
+ *     six resource tables that carry `source_system` (encounters,
+ *     diagnoses, allergies, medications, vitals/observations, and
+ *     lab_panels — the lab branch of persistObservation guards the
+ *     panel a new Epic lab_results leaf would attach to per #1234).
+ *     Patient identity is treated as Epic-owned at first import — the `patients`
  *     table has no `source_system` column and the fingerprint hit in
  *     `persistPatient` merges unconditionally; see
  *     `findPatientByFingerprint` for the rationale. When the existing
@@ -1296,6 +1298,50 @@ export async function persistObservation(
     collectedAt: conversion.row.recorded_at,
   });
   if (panelFingerprintHit) {
+    // #1234: source_system guard on the panel fingerprint-hit branch.
+    // When the matched lab_panels row was originally written by
+    // CareBridge (source_system != 'epic', or null which we defensively
+    // treat as non-epic), an Epic Observation MUST NOT silently attach
+    // a new lab_results leaf — that would let an Epic-sourced result
+    // grow underneath a CareBridge-owned panel, defeating the data-
+    // ownership boundary #1200 established for the parent-row writers
+    // (encounters/diagnoses/allergies/medications/vitals). Skip the
+    // leaf attach, still upsert the fhir_resources mapping so the Epic
+    // FHIR id round-trips to the same panel on the next sync (and trips
+    // the same guard), and emit epic_sync_source_conflict carrying the
+    // matched panel id + its existing source_system value. The mapping
+    // intentionally points at the panel id here (not a leaf, because no
+    // leaf was inserted) — round-2 syncs land in the `mapping.internalId`
+    // branch above; that branch looks the id up in lab_results and finds
+    // zero rows, so the UPDATE is a no-op and the guard holds without
+    // further plumbing.
+    if (!isEpicOwned(panelFingerprintHit.sourceSystem)) {
+      await upsertMapping({
+        resourceType: "Observation",
+        fhirId,
+        internalId: panelFingerprintHit.internalId,
+        patientId,
+        resource,
+      });
+      await logFingerprintSourceConflict({
+        resourceType: "Observation",
+        fhirId,
+        internalId: panelFingerprintHit.internalId,
+        patientId,
+        existingSourceSystem: panelFingerprintHit.sourceSystem,
+        fingerprint: {
+          patient_id: patientId,
+          panel_name: conversion.row.test_name,
+          collected_at: conversion.row.recorded_at,
+        },
+      });
+      return {
+        internalId: panelFingerprintHit.internalId,
+        kind: "lab",
+        inserted: false,
+        conflict: "source_system_conflict",
+      };
+    }
     // #1213 — intentionally NO update to lab_panels.source_system or
     // reported_at on reuse: a CareBridge-originated panel keeps its
     // provenance, and the Epic-side merge fact is captured in the
