@@ -186,6 +186,11 @@ describe("persistEncounter — Epic-id conflict on fingerprint match (#1201)", (
     expect(result.kind).toBe("encounter");
     expect(result.inserted).toBe(true);
     expect(result.internalId).not.toBe(existingInternalId);
+    // #1217: caller-visible discriminator mirrors source_system_conflict
+    // so the sync orchestrator can distinguish a forked-insert (fingerprint
+    // collided on a different Epic id) from a clean import without
+    // re-reading the audit_log row.
+    expect(result.conflict).toBe("epic_id_conflict");
 
     // UPDATE must NOT have happened — the existing row is left alone.
     expect(db.update).not.toHaveBeenCalled();
@@ -326,6 +331,8 @@ describe("persistCondition — Epic-id conflict on fingerprint match (#1201)", (
     expect(result.kind).toBe("diagnosis");
     expect(result.inserted).toBe(true);
     expect(result.internalId).not.toBe(existingInternalId);
+    // #1217: discriminator surfaces the forked-insert reason to callers.
+    expect(result.conflict).toBe("epic_id_conflict");
     expect(db.update).not.toHaveBeenCalled();
 
     const audit = findAuditInsert("epic_sync_dedup_conflict");
@@ -391,6 +398,8 @@ describe("persistMedicationRequest — Epic-id conflict on fingerprint match (#1
     expect(result.kind).toBe("medication");
     expect(result.inserted).toBe(true);
     expect(result.internalId).not.toBe(existingInternalId);
+    // #1217: discriminator surfaces the forked-insert reason to callers.
+    expect(result.conflict).toBe("epic_id_conflict");
     expect(db.update).not.toHaveBeenCalled();
 
     const audit = findAuditInsert("epic_sync_dedup_conflict");

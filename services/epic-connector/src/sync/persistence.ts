@@ -121,8 +121,27 @@ export interface PersistResult {
     | "unmapped";
   /** True when the call inserted a new row; false when it updated. */
   inserted: boolean;
-  /** Set when the call rejected an Epic update due to source_system mismatch. */
-  conflict?: string;
+  /**
+   * Caller-visible conflict discriminator (#1200, #1217). Distinguishes
+   * the two skip / fork paths that otherwise look identical from a
+   * `{ inserted, internalId }` reading:
+   *
+   *   - `source_system_conflict` (#1200) — the matched row is
+   *     CareBridge-originated. The writer skipped the UPDATE, wrote the
+   *     fhir_resources mapping anyway so future re-syncs round-trip to
+   *     the same row, and logged `epic_sync_source_conflict`. Combined
+   *     with `inserted: false`.
+   *
+   *   - `epic_id_conflict` (#1201, surfaced #1217) — the fingerprint hit
+   *     landed on an internal row that already has a different Epic FHIR
+   *     id mapped to it. The writer fell through to a plain INSERT (a
+   *     new internal row + a new mapping) rather than silently double-
+   *     map two Epic ids to one row, and logged `epic_sync_dedup_conflict`.
+   *     Combined with `inserted: true` and a fresh `internalId`.
+   *
+   * Absent on clean inserts and clean dedup-merges.
+   */
+  conflict?: "source_system_conflict" | "epic_id_conflict";
 }
 
 interface MappingLookup {
@@ -797,6 +816,12 @@ export async function persistPatient(
       patientId: id,
       fingerprint,
     });
+    return {
+      internalId: id,
+      kind: "patient",
+      inserted: true,
+      conflict: "epic_id_conflict",
+    };
   }
   return { internalId: id, kind: "patient", inserted: true };
 }
@@ -1007,6 +1032,12 @@ async function persistMedicationRow(
       patientId,
       fingerprint,
     });
+    return {
+      internalId: id,
+      kind: "medication",
+      inserted: true,
+      conflict: "epic_id_conflict",
+    };
   }
   return { internalId: id, kind: "medication", inserted: true };
 }
@@ -1179,6 +1210,12 @@ export async function persistObservation(
         patientId,
         fingerprint,
       });
+      return {
+        internalId: id,
+        kind: "vital",
+        inserted: true,
+        conflict: "epic_id_conflict",
+      };
     }
     return { internalId: id, kind: "vital", inserted: true };
   }
@@ -1467,6 +1504,12 @@ export async function persistCondition(
       patientId,
       fingerprint,
     });
+    return {
+      internalId: id,
+      kind: "diagnosis",
+      inserted: true,
+      conflict: "epic_id_conflict",
+    };
   }
   return { internalId: id, kind: "diagnosis", inserted: true };
 }
@@ -1642,6 +1685,12 @@ export async function persistAllergy(
       patientId,
       fingerprint,
     });
+    return {
+      internalId: id,
+      kind: "allergy",
+      inserted: true,
+      conflict: "epic_id_conflict",
+    };
   }
   return { internalId: id, kind: "allergy", inserted: true };
 }
@@ -1833,6 +1882,12 @@ export async function persistEncounter(
       patientId,
       fingerprint,
     });
+    return {
+      internalId: id,
+      kind: "encounter",
+      inserted: true,
+      conflict: "epic_id_conflict",
+    };
   }
   return { internalId: id, kind: "encounter", inserted: true };
 }
