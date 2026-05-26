@@ -1229,6 +1229,10 @@ export async function persistObservation(
     collectedAt: conversion.row.recorded_at,
   });
   if (panelFingerprintHit) {
+    // #1213 — intentionally NO update to lab_panels.source_system or
+    // reported_at on reuse: a CareBridge-originated panel keeps its
+    // provenance, and the Epic-side merge fact is captured in the
+    // logDedupMatch audit row below.
     // #1207 — store the newly-inserted lab_results.id (the leaf the
     // Epic Observation id round-trips to) in the fhir_resources
     // mapping, NOT the reused lab_panels.id. The round-2 update path
