@@ -35,7 +35,7 @@
  * re-show it.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { trpc } from "@/lib/trpc";
 
@@ -100,6 +100,15 @@ export function EpicLaunchBanner({ storage }: EpicLaunchBannerProps = {}) {
     }
   }, [serverPatient, storage]);
 
+  // Issue #1199: the mismatch warns below run inline in the render body,
+  // so React strict-mode double-renders and parent re-renders previously
+  // caused the same tamper warning to spam the dev console. Track the
+  // last warned (urlValue, serverValue) pair in a ref and only warn when
+  // the pair changes. Refs persist across re-renders but reset on remount,
+  // so a fresh launch attempt will still log once.
+  const warnedPatientPairRef = useRef<string | null>(null);
+  const warnedEncounterPairRef = useRef<string | null>(null);
+
   // Hide while loading or on error — better to flash nothing than to
   // flash an unverified URL-derived banner.
   if (contextQuery.isLoading || contextQuery.isError) return null;
@@ -114,10 +123,14 @@ export function EpicLaunchBanner({ storage }: EpicLaunchBannerProps = {}) {
   // don't, someone tampered — hide the banner and log a warning so it
   // surfaces in browser dev tools / error-reporting pipelines.
   if (urlEpicPatient && urlEpicPatient !== ctx.epic_patient_fhir_id) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      "[epic-launch-banner] URL epic_patient does not match server launch context; hiding banner.",
-    );
+    const pairKey = `${urlEpicPatient}|${ctx.epic_patient_fhir_id}`;
+    if (warnedPatientPairRef.current !== pairKey) {
+      warnedPatientPairRef.current = pairKey;
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[epic-launch-banner] URL epic_patient does not match server launch context; hiding banner.",
+      );
+    }
     return null;
   }
   if (
@@ -125,10 +138,14 @@ export function EpicLaunchBanner({ storage }: EpicLaunchBannerProps = {}) {
     ctx.launch_encounter_fhir_id &&
     urlEpicEncounter !== ctx.launch_encounter_fhir_id
   ) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      "[epic-launch-banner] URL epic_encounter does not match server launch context; hiding banner.",
-    );
+    const pairKey = `${urlEpicEncounter}|${ctx.launch_encounter_fhir_id}`;
+    if (warnedEncounterPairRef.current !== pairKey) {
+      warnedEncounterPairRef.current = pairKey;
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[epic-launch-banner] URL epic_encounter does not match server launch context; hiding banner.",
+      );
+    }
     return null;
   }
 
