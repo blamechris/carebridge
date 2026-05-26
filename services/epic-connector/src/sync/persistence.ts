@@ -871,6 +871,12 @@ export async function persistObservation(
     collectedAt: conversion.row.recorded_at,
   });
   if (panelFingerprintHit) {
+    // #1207 — store the newly-inserted lab_results.id (the leaf the
+    // Epic Observation id round-trips to) in the fhir_resources
+    // mapping, NOT the reused lab_panels.id. The round-2 update path
+    // (see the `mapping.internalId` branch above) looks the mapping's
+    // internalId up in labResults.id; pointing at a panel id would
+    // silently match zero rows and drop Epic-side result changes.
     const resultId = crypto.randomUUID();
     await db.insert(labResults).values({
       id: resultId,
@@ -887,14 +893,14 @@ export async function persistObservation(
     await upsertMapping({
       resourceType: "Observation",
       fhirId,
-      internalId: panelFingerprintHit.internalId,
+      internalId: resultId,
       patientId,
       resource,
     });
     await logDedupMatch({
       resourceType: "Observation",
       fhirId,
-      internalId: panelFingerprintHit.internalId,
+      internalId: resultId,
       patientId,
       fingerprint: {
         patient_id: patientId,
@@ -903,7 +909,7 @@ export async function persistObservation(
       },
     });
     return {
-      internalId: panelFingerprintHit.internalId,
+      internalId: resultId,
       kind: "lab",
       inserted: false,
     };
