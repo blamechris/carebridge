@@ -1,5 +1,5 @@
 /**
- * Persistence layer for Epic-synced FHIR resources (#391, #1191).
+ * Persistence layer for Epic-synced FHIR resources (#391, #1191, #1200).
  *
  * Each persistResource* function:
  *  1. Looks up the existing CareBridge row for the (Epic resource_type, resource_id)
@@ -7,22 +7,24 @@
  *  2. If the mapping miss, does a *clinical fingerprint* fallback lookup
  *     (#1191) — patient_id + a small handful of stable plaintext columns
  *     per resource type (MRN, start_time + encounter_type, ICD-10 +
- *     onset_date, RxNorm + started_at, LOINC + recorded_at, etc.). When
- *     a fingerprint hit is found on a CareBridge-originated row, the Epic
- *     sync updates that row in place AND creates a `fhir_resources` row
- *     so future Epic re-syncs land on the same record. The match is
- *     logged to audit_log (action="epic_sync_dedup_match") for HIPAA
- *     traceability — clinicians need to see when a manually-entered row
- *     was reconciled with an Epic record.
+ *     onset_date, RxNorm + started_at, LOINC + recorded_at, etc.).
  *  3. UPSERTs the target row (insert when no mapping or fingerprint
  *     exists; update when one does).
  *  4. UPSERTs the `fhir_resources` mapping row so the next sync pull can
  *     find the same internal row.
- *  5. Records a source-system conflict to `audit_log` if the existing
- *     target row has `source_system != "epic"` — Epic does not get to
- *     overwrite CareBridge-originated data through the Epic-id path; we
- *     keep CareBridge's row and log the attempted overwrite for manual
- *     review.
+ *  5. Refuses to overwrite CareBridge-originated data on BOTH the
+ *     Epic-id path (step 1) AND the fingerprint path (step 2). When the
+ *     existing target row has `source_system != "epic"` (or null on a
+ *     table that has the column — defensively treated as non-epic), the
+ *     writer skips the UPDATE, still writes the `fhir_resources`
+ *     mapping (so Epic and CareBridge IDs round-trip to the same row),
+ *     and logs the attempt to `audit_log`:
+ *       • Epic-id path     → action="update", success=false,
+ *                            reason="source_system_conflict" (#1183)
+ *       • Fingerprint path → action="epic_sync_source_conflict" (#1200)
+ *     When the matched row IS Epic-originated (or pre-#1191 untagged),
+ *     the writer merges normally and logs `epic_sync_dedup_match` so
+ *     the HIPAA trail records the reconciliation explicitly.
  *
  * Independent of #1190 (which adds explicit `source_system` columns to
  * encounters/diagnoses/allergies). Fingerprint matching reads only
@@ -63,6 +65,25 @@ import type { FhirResource } from "../fhir-types.js";
 
 const EPIC_SYNC_AUDIT_USER = "system:epic-sync";
 const DEDUP_MATCH_ACTION = "epic_sync_dedup_match";
+/**
+ * Audit action emitted when the fingerprint-merge path (#1191) hits a
+ * row whose `source_system` is anything other than "epic". Distinct
+ * from `epic_sync_dedup_match` (a successful merge) and from the
+ * Epic-id-path `action="update", success=false` row (a different code
+ * path predating fingerprint dedup). See #1200.
+ */
+const SOURCE_CONFLICT_ACTION = "epic_sync_source_conflict";
+
+/**
+ * Returns true when the fingerprint-matched row was originally written
+ * by Epic and is therefore safe to overwrite with the latest Epic
+ * payload. Null is treated as "not Epic": pre-#1190 rows on tables that
+ * lacked the column default to null at read time, and the safer policy
+ * is to skip the UPDATE and let manual reconciliation decide.
+ */
+function isEpicOwned(sourceSystem: string | null | undefined): boolean {
+  return sourceSystem === EPIC_SOURCE_SYSTEM_TAG;
+}
 
 export interface PersistResult {
   /** Internal CareBridge row id, or null when the resource was unmappable. */
@@ -203,6 +224,43 @@ async function logDedupMatch(args: {
       epic_fhir_id: args.fhirId,
       fingerprint: args.fingerprint,
       resolution: "merge_into_existing_internal_row",
+    }),
+    timestamp: new Date().toISOString(),
+  });
+}
+
+/**
+ * Log a fingerprint-merge attempt that hit a CareBridge-originated row
+ * (#1200). Recorded as success=false to flag the attempted overwrite,
+ * but the `fhir_resources` mapping IS still written by the caller — the
+ * Epic FHIR id and the CareBridge internal id refer to the same logical
+ * entity, so future re-syncs need to land on this row (and trip the
+ * same guard).
+ */
+async function logFingerprintSourceConflict(args: {
+  resourceType: string;
+  fhirId: string;
+  internalId: string;
+  patientId: string | null;
+  existingSourceSystem: string | null | undefined;
+  fingerprint: Record<string, unknown>;
+}): Promise<void> {
+  const db = getDb();
+  await db.insert(auditLog).values({
+    id: crypto.randomUUID(),
+    user_id: EPIC_SYNC_AUDIT_USER,
+    action: SOURCE_CONFLICT_ACTION,
+    resource_type: args.resourceType,
+    resource_id: args.internalId,
+    patient_id: args.patientId,
+    success: false,
+    details: JSON.stringify({
+      reason: "fingerprint_source_system_conflict",
+      attempted_source: EPIC_SOURCE_SYSTEM_TAG,
+      existing_source: args.existingSourceSystem ?? null,
+      epic_fhir_id: args.fhirId,
+      fingerprint: args.fingerprint,
+      resolution: "keep_carebridge_value",
     }),
     timestamp: new Date().toISOString(),
   });
@@ -639,6 +697,35 @@ async function persistMedicationRow(
     startedAt: row.started_at ?? null,
   });
   if (fingerprintHit) {
+    const fingerprint = {
+      patient_id: patientId,
+      rxnorm_code: row.rxnorm_code,
+      started_at: row.started_at,
+    };
+    // #1200: source_system guard — see persistEncounter for rationale.
+    if (!isEpicOwned(fingerprintHit.sourceSystem)) {
+      await upsertMapping({
+        resourceType,
+        fhirId,
+        internalId: fingerprintHit.internalId,
+        patientId,
+        resource,
+      });
+      await logFingerprintSourceConflict({
+        resourceType,
+        fhirId,
+        internalId: fingerprintHit.internalId,
+        patientId,
+        existingSourceSystem: fingerprintHit.sourceSystem,
+        fingerprint,
+      });
+      return {
+        internalId: fingerprintHit.internalId,
+        kind: "medication",
+        inserted: false,
+        conflict: "source_system_conflict",
+      };
+    }
     await db
       .update(medications)
       .set({
@@ -665,11 +752,7 @@ async function persistMedicationRow(
       fhirId,
       internalId: fingerprintHit.internalId,
       patientId,
-      fingerprint: {
-        patient_id: patientId,
-        rxnorm_code: row.rxnorm_code,
-        started_at: row.started_at,
-      },
+      fingerprint,
     });
     return {
       internalId: fingerprintHit.internalId,
@@ -772,6 +855,35 @@ export async function persistObservation(
       recordedAt: conversion.row.recorded_at,
     });
     if (fingerprintHit) {
+      const fingerprint = {
+        patient_id: patientId,
+        loinc_code: conversion.row.loinc_code,
+        recorded_at: conversion.row.recorded_at,
+      };
+      // #1200: source_system guard — see persistEncounter for rationale.
+      if (!isEpicOwned(fingerprintHit.sourceSystem)) {
+        await upsertMapping({
+          resourceType: "Observation",
+          fhirId,
+          internalId: fingerprintHit.internalId,
+          patientId,
+          resource,
+        });
+        await logFingerprintSourceConflict({
+          resourceType: "Observation",
+          fhirId,
+          internalId: fingerprintHit.internalId,
+          patientId,
+          existingSourceSystem: fingerprintHit.sourceSystem,
+          fingerprint,
+        });
+        return {
+          internalId: fingerprintHit.internalId,
+          kind: "vital",
+          inserted: false,
+          conflict: "source_system_conflict",
+        };
+      }
       await db
         .update(vitals)
         .set({
@@ -795,11 +907,7 @@ export async function persistObservation(
         fhirId,
         internalId: fingerprintHit.internalId,
         patientId,
-        fingerprint: {
-          patient_id: patientId,
-          loinc_code: conversion.row.loinc_code,
-          recorded_at: conversion.row.recorded_at,
-        },
+        fingerprint,
       });
       return {
         internalId: fingerprintHit.internalId,
@@ -1014,6 +1122,36 @@ export async function persistCondition(
     onsetDate: row.onset_date ?? null,
   });
   if (fingerprintHit) {
+    const fingerprint = {
+      patient_id: patientId,
+      icd10_code: row.icd10_code,
+      snomed_code: row.snomed_code,
+      onset_date: row.onset_date,
+    };
+    // #1200: source_system guard — see persistEncounter for rationale.
+    if (!isEpicOwned(fingerprintHit.sourceSystem)) {
+      await upsertMapping({
+        resourceType: "Condition",
+        fhirId,
+        internalId: fingerprintHit.internalId,
+        patientId,
+        resource,
+      });
+      await logFingerprintSourceConflict({
+        resourceType: "Condition",
+        fhirId,
+        internalId: fingerprintHit.internalId,
+        patientId,
+        existingSourceSystem: fingerprintHit.sourceSystem,
+        fingerprint,
+      });
+      return {
+        internalId: fingerprintHit.internalId,
+        kind: "diagnosis",
+        inserted: false,
+        conflict: "source_system_conflict",
+      };
+    }
     await db
       .update(diagnoses)
       .set({
@@ -1037,12 +1175,7 @@ export async function persistCondition(
       fhirId,
       internalId: fingerprintHit.internalId,
       patientId,
-      fingerprint: {
-        patient_id: patientId,
-        icd10_code: row.icd10_code,
-        snomed_code: row.snomed_code,
-        onset_date: row.onset_date,
-      },
+      fingerprint,
     });
     return {
       internalId: fingerprintHit.internalId,
@@ -1139,6 +1272,35 @@ export async function persistAllergy(
     snomedCode: row.snomed_code ?? null,
   });
   if (fingerprintHit) {
+    const fingerprint = {
+      patient_id: patientId,
+      rxnorm_code: row.rxnorm_code,
+      snomed_code: row.snomed_code,
+    };
+    // #1200: source_system guard — see persistEncounter for rationale.
+    if (!isEpicOwned(fingerprintHit.sourceSystem)) {
+      await upsertMapping({
+        resourceType: "AllergyIntolerance",
+        fhirId,
+        internalId: fingerprintHit.internalId,
+        patientId,
+        resource,
+      });
+      await logFingerprintSourceConflict({
+        resourceType: "AllergyIntolerance",
+        fhirId,
+        internalId: fingerprintHit.internalId,
+        patientId,
+        existingSourceSystem: fingerprintHit.sourceSystem,
+        fingerprint,
+      });
+      return {
+        internalId: fingerprintHit.internalId,
+        kind: "allergy",
+        inserted: false,
+        conflict: "source_system_conflict",
+      };
+    }
     await db
       .update(allergies)
       .set({
@@ -1159,11 +1321,7 @@ export async function persistAllergy(
       fhirId,
       internalId: fingerprintHit.internalId,
       patientId,
-      fingerprint: {
-        patient_id: patientId,
-        rxnorm_code: row.rxnorm_code,
-        snomed_code: row.snomed_code,
-      },
+      fingerprint,
     });
     return {
       internalId: fingerprintHit.internalId,
@@ -1272,6 +1430,37 @@ export async function persistEncounter(
     encounterType: row.encounter_type,
   });
   if (fingerprintHit) {
+    const fingerprint = {
+      patient_id: patientId,
+      start_time: row.start_time,
+      encounter_type: row.encounter_type,
+    };
+    // #1200: guard the fingerprint-merge UPDATE on source_system. If the
+    // matched row is CareBridge-originated, write the mapping so Epic IDs
+    // still round-trip, but DO NOT overwrite the clinician's data.
+    if (!isEpicOwned(fingerprintHit.sourceSystem)) {
+      await upsertMapping({
+        resourceType: "Encounter",
+        fhirId,
+        internalId: fingerprintHit.internalId,
+        patientId,
+        resource,
+      });
+      await logFingerprintSourceConflict({
+        resourceType: "Encounter",
+        fhirId,
+        internalId: fingerprintHit.internalId,
+        patientId,
+        existingSourceSystem: fingerprintHit.sourceSystem,
+        fingerprint,
+      });
+      return {
+        internalId: fingerprintHit.internalId,
+        kind: "encounter",
+        inserted: false,
+        conflict: "source_system_conflict",
+      };
+    }
     await db
       .update(encounters)
       .set({
@@ -1295,11 +1484,7 @@ export async function persistEncounter(
       fhirId,
       internalId: fingerprintHit.internalId,
       patientId,
-      fingerprint: {
-        patient_id: patientId,
-        start_time: row.start_time,
-        encounter_type: row.encounter_type,
-      },
+      fingerprint,
     });
     return {
       internalId: fingerprintHit.internalId,
