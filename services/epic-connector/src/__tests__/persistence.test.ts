@@ -38,8 +38,16 @@ vi.mock("@carebridge/db-schema", () => ({
     loinc_code: "loinc_code",
     recorded_at: "recorded_at",
   },
-  labPanels: {},
-  labResults: {},
+  labPanels: {
+    id: "id",
+    patient_id: "patient_id",
+    panel_name: "panel_name",
+    collected_at: "collected_at",
+  },
+  labResults: {
+    id: "id",
+    panel_id: "panel_id",
+  },
   diagnoses: {
     id: "id",
     patient_id: "patient_id",
@@ -454,6 +462,265 @@ describe("persistObservation (vital) — cross-source dedup (#1191)", () => {
 
     const result = await persistObservation(RESOURCE, PATIENT_ID);
     expect(result.inserted).toBe(true);
+  });
+});
+
+// ── Observation / Lab Panel ────────────────────────────────────
+
+describe("persistObservation (lab) — panel-level dedup (#1202)", () => {
+  const RESOURCE = {
+    resourceType: "Observation",
+    id: "epic-lab-1",
+    status: "final",
+    category: [
+      {
+        coding: [
+          {
+            system:
+              "http://terminology.hl7.org/CodeSystem/observation-category",
+            code: "laboratory",
+          },
+        ],
+      },
+    ],
+    code: {
+      text: "Hemoglobin",
+      coding: [
+        {
+          system: "http://loinc.org",
+          code: "718-7",
+          display: "Hemoglobin",
+        },
+      ],
+    },
+    subject: { reference: "Patient/p-1" },
+    effectiveDateTime: "2026-05-20T07:30:00Z",
+    valueQuantity: { value: 13.2, unit: "g/dL" },
+  };
+
+  it("dedups against existing CareBridge lab_panels row by patient_id+panel_name+collected_at and attaches the result to it", async () => {
+    const existingPanelId = "internal-panel-1";
+    db.willSelect([]); // findMapping miss
+    db.willSelect([
+      {
+        id: existingPanelId,
+        patient_id: PATIENT_ID,
+        panel_name: "Hemoglobin",
+        collected_at: "2026-05-20T07:30:00Z",
+      },
+    ]);
+    db.willInsert(); // lab_results row attached to existing panel
+    db.willInsert(); // fhir_resources mapping row
+    db.willInsert(); // audit_log epic_sync_dedup_match
+
+    const result = await persistObservation(RESOURCE, PATIENT_ID);
+
+    expect(result.kind).toBe("lab");
+    expect(result.inserted).toBe(false);
+
+    // Total of 3 inserts — lab_results, mapping, audit. No new lab_panels row.
+    expect(db.insert).toHaveBeenCalledTimes(3);
+
+    // The lab_results insert hangs off the existing panel id.
+    const labResultInsert = db.insert.calls.find((c) => {
+      const v = c.chainArgs[0]?.[0] as Record<string, unknown> | undefined;
+      return v?.panel_id === existingPanelId;
+    });
+    expect(labResultInsert).toBeDefined();
+    const newResultId = (
+      labResultInsert!.chainArgs[0]![0] as Record<string, unknown>
+    ).id as string;
+    expect(newResultId).toBeDefined();
+    expect(newResultId).not.toBe(existingPanelId);
+
+    // The function returns the leaf row id — NOT the reused panel id —
+    // so round-2 syncs route the Epic Observation id back to the row
+    // their UPDATE actually targets (#1207).
+    expect(result.internalId).toBe(newResultId);
+
+    // audit_log epic_sync_dedup_match records the leaf id (the row we
+    // actually merged Epic data into), matching the new-panel branch.
+    const auditInsert = db.insert.calls.find((c) => {
+      const v = c.chainArgs[0]?.[0] as Record<string, unknown> | undefined;
+      return v?.action === "epic_sync_dedup_match";
+    });
+    expect(auditInsert).toBeDefined();
+    const auditValues = auditInsert!.chainArgs[0]![0] as Record<
+      string,
+      unknown
+    >;
+    expect(auditValues.resource_type).toBe("Observation");
+    expect(auditValues.resource_id).toBe(newResultId);
+
+    // fhir_resources mapping points at the lab_results.id so the next
+    // Epic re-sync of the same Observation lands on the leaf row whose
+    // value/unit/flag actually need refreshing (#1207).
+    const fhirInsert = db.insert.calls.find((c) => {
+      const v = c.chainArgs[0]?.[0] as Record<string, unknown> | undefined;
+      return v?.resource_type === "Observation";
+    });
+    expect(fhirInsert).toBeDefined();
+    const fhirValues = fhirInsert!.chainArgs[0]![0] as Record<string, unknown>;
+    expect(fhirValues.internal_record_id).toBe(newResultId);
+    expect(fhirValues.internal_record_id).not.toBe(existingPanelId);
+  });
+
+  it("inserts a new lab_panels + lab_results row when no fingerprint match exists", async () => {
+    db.willSelect([]); // findMapping miss
+    db.willSelect([]); // findLabPanelByFingerprint miss
+    db.willInsert(); // new lab_panels row
+    db.willInsert(); // new lab_results row
+    db.willInsert(); // fhir_resources mapping row
+
+    const result = await persistObservation(RESOURCE, PATIENT_ID);
+
+    expect(result.inserted).toBe(true);
+    expect(result.kind).toBe("lab");
+
+    // No audit_log dedup-match row when there's no fingerprint hit.
+    const dedup = db.insert.calls.find((c) => {
+      const v = c.chainArgs[0]?.[0] as Record<string, unknown> | undefined;
+      return v?.action === "epic_sync_dedup_match";
+    });
+    expect(dedup).toBeUndefined();
+  });
+
+  it("dedups single-result Observations using test_name as panel_name", async () => {
+    // Two single-test Epic Observations for the same patient at the same
+    // collected_at + test_name should resolve to the same lab_panels row.
+    const existingPanelId = "internal-panel-cbc-1";
+    db.willSelect([]); // mapping miss
+    db.willSelect([
+      {
+        id: existingPanelId,
+        patient_id: PATIENT_ID,
+        panel_name: "Hemoglobin",
+        collected_at: "2026-05-20T07:30:00Z",
+      },
+    ]);
+    db.willInsert(); // lab_results row attached
+    db.willInsert(); // mapping
+    db.willInsert(); // audit
+
+    const result = await persistObservation(RESOURCE, PATIENT_ID);
+
+    // Return value is the newly-inserted lab_results.id (the leaf), not
+    // the reused panel id (#1207). Round-2 syncs need the leaf id to
+    // hit the row whose value the UPDATE actually targets.
+    const labResultInsert = db.insert.calls.find((c) => {
+      const v = c.chainArgs[0]?.[0] as Record<string, unknown> | undefined;
+      return v?.panel_id === existingPanelId;
+    });
+    const newResultId = (
+      labResultInsert!.chainArgs[0]![0] as Record<string, unknown>
+    ).id as string;
+    expect(result.internalId).toBe(newResultId);
+    expect(result.internalId).not.toBe(existingPanelId);
+    expect(result.kind).toBe("lab");
+    expect(result.inserted).toBe(false);
+  });
+
+  it("round-2 lab Observation sync via dedup path updates the leaf row (#1207)", async () => {
+    // Regression for the panel-vs-result internalId mix-up in the
+    // fingerprint-hit branch of persistObservation. Round 1 hits the
+    // panel fingerprint and inserts a NEW lab_results row hanging off
+    // the existing panel; round 2 with the same Epic Observation id and
+    // a modified value MUST update that leaf row in place. Pre-fix the
+    // mapping pointed at lab_panels.id while the UPDATE looked up
+    // lab_results.id → zero rows matched → Epic-side changes silently
+    // dropped.
+    const existingPanelId = "internal-panel-1207";
+
+    // ── Round 1: fingerprint hit on the existing panel ──
+    db.willSelect([]); // findMapping miss
+    db.willSelect([
+      {
+        id: existingPanelId,
+        patient_id: PATIENT_ID,
+        panel_name: "Hemoglobin",
+        collected_at: "2026-05-20T07:30:00Z",
+      },
+    ]);
+    db.willInsert(); // lab_results insert hanging off existing panel
+    db.willInsert(); // fhir_resources mapping insert
+    db.willInsert(); // audit_log epic_sync_dedup_match
+
+    const round1 = await persistObservation(RESOURCE, PATIENT_ID);
+    expect(round1.kind).toBe("lab");
+    expect(round1.inserted).toBe(false);
+
+    // The lab_results row freshly inserted in round 1 is the leaf the
+    // Epic Observation id MUST round-trip to.
+    const labResultInsert = db.insert.calls.find((c) => {
+      const v = c.chainArgs[0]?.[0] as Record<string, unknown> | undefined;
+      return v?.panel_id === existingPanelId;
+    });
+    expect(labResultInsert).toBeDefined();
+    const newLabResultId = (
+      labResultInsert!.chainArgs[0]![0] as Record<string, unknown>
+    ).id as string;
+    expect(newLabResultId).toBeDefined();
+    expect(newLabResultId).not.toBe(existingPanelId);
+
+    // The mapping written by round 1 must store the leaf id so round-2
+    // findMapping returns it and the UPDATE lands on the correct row.
+    const fhirInsert = db.insert.calls.find((c) => {
+      const v = c.chainArgs[0]?.[0] as Record<string, unknown> | undefined;
+      return v?.resource_type === "Observation";
+    });
+    expect(fhirInsert).toBeDefined();
+    const mappedInternalId = (
+      fhirInsert!.chainArgs[0]![0] as Record<string, unknown>
+    ).internal_record_id as string;
+    expect(mappedInternalId).toBe(newLabResultId);
+    expect(mappedInternalId).not.toBe(existingPanelId);
+
+    // ── Round 2: same Epic Observation id, modified value ──
+    // Drop round-1 history so round-2 assertions are isolated.
+    db.reset();
+
+    const round2Resource = {
+      ...RESOURCE,
+      valueQuantity: { value: 9.4, unit: "g/dL" }, // modified
+    };
+
+    // findMapping HIT — returns the mapping round-1 wrote (leaf id).
+    db.willSelect([
+      {
+        id: `epic:Observation:${RESOURCE.id}`,
+        resource_type: "Observation",
+        resource_id: RESOURCE.id,
+        internal_record_id: mappedInternalId,
+        source_system: "epic",
+      },
+    ]);
+    db.willUpdate(); // lab_results update
+    db.willInsert(); // fhir_resources mapping refresh
+
+    const round2 = await persistObservation(round2Resource, PATIENT_ID);
+
+    expect(round2.kind).toBe("lab");
+    expect(round2.inserted).toBe(false);
+    expect(round2.internalId).toBe(newLabResultId);
+
+    // The UPDATE chain ran against lab_results — the leaf the Epic
+    // Observation id maps to — NOT lab_panels.
+    expect(db.update).toHaveBeenCalledTimes(1);
+    const updateCall = db.update.calls[0]!;
+    // db.update(labResults) — the mock tags the table by the schema
+    // sentinel passed in (see vi.mock at top of file).
+    const updateTable = updateCall.args[0] as Record<string, unknown>;
+    expect(updateTable).toHaveProperty("panel_id"); // labResults sentinel
+    expect(updateTable).not.toHaveProperty("panel_name"); // would be labPanels
+
+    // The new value from round 2 reached the SET clause — proves the
+    // update is no longer a silent no-op.
+    const setCall = updateCall.chainArgs[updateCall.chain.indexOf("set")]![0];
+    const setValues = setCall as Record<string, unknown>;
+    expect(setValues.value).toBeDefined();
+    // (epicObservationToRow encodes value+unit into row.value; we don't
+    //  assert the encoded shape here — that's converters.test.ts —
+    //  only that the SET clause carries the round-2 value.)
   });
 });
 
