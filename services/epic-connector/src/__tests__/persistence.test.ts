@@ -126,7 +126,10 @@ describe("persistEncounter — cross-source dedup (#1191)", () => {
     period: { start: "2026-05-20T09:00:00Z", end: "2026-05-20T09:45:00Z" },
   };
 
-  it("dedups against an existing CareBridge-originated encounter by patient_id+start_time+encounter_type and inserts a mapping row", async () => {
+  it("dedups against an existing Epic-originated encounter by patient_id+start_time+encounter_type and inserts a mapping row", async () => {
+    // NOTE (#1200): existing row is tagged source_system='epic' so this
+    // test exercises the dedup-MERGE path. The protection-of-CareBridge-
+    // data variant lives in persistence-source-guard.test.ts.
     const existingInternalId = "internal-enc-1";
     // findMapping → no Epic mapping yet
     db.willSelect([]);
@@ -137,6 +140,7 @@ describe("persistEncounter — cross-source dedup (#1191)", () => {
         patient_id: PATIENT_ID,
         start_time: "2026-05-20T09:00:00Z",
         encounter_type: "AMB",
+        source_system: "epic",
       },
     ]);
     // UPDATE the matched encounters row
@@ -223,7 +227,10 @@ describe("persistCondition — cross-source dedup (#1191)", () => {
     },
   };
 
-  it("dedups against existing CareBridge diagnosis by patient_id+icd10_code+onset_date", async () => {
+  it("dedups against existing Epic-originated diagnosis by patient_id+icd10_code+onset_date", async () => {
+    // NOTE (#1200): tagged source_system='epic' to exercise the merge
+    // path; CareBridge-protection variant lives in
+    // persistence-source-guard.test.ts.
     const existingInternalId = "internal-diag-1";
     db.willSelect([]); // findMapping miss
     db.willSelect([
@@ -232,6 +239,7 @@ describe("persistCondition — cross-source dedup (#1191)", () => {
         patient_id: PATIENT_ID,
         icd10_code: "I26.99",
         onset_date: "2026-04-15",
+        source_system: "epic",
       },
     ]);
     db.willUpdate();
@@ -290,7 +298,10 @@ describe("persistAllergy — cross-source dedup (#1191)", () => {
     },
   };
 
-  it("dedups against existing CareBridge allergy by patient_id+snomed_code", async () => {
+  it("dedups against existing Epic-originated allergy by patient_id+snomed_code", async () => {
+    // NOTE (#1200): tagged source_system='epic' to exercise the merge
+    // path; CareBridge-protection variant lives in
+    // persistence-source-guard.test.ts.
     const existingInternalId = "internal-aller-1";
     db.willSelect([]); // mapping miss
     db.willSelect([
@@ -298,6 +309,7 @@ describe("persistAllergy — cross-source dedup (#1191)", () => {
         id: existingInternalId,
         patient_id: PATIENT_ID,
         snomed_code: "373270004",
+        source_system: "epic",
       },
     ]);
     db.willUpdate();
@@ -349,7 +361,10 @@ describe("persistMedicationRequest — cross-source dedup (#1191)", () => {
     authoredOn: "2026-05-01T10:00:00Z",
   };
 
-  it("dedups against existing CareBridge medication by patient_id+rxnorm_code+started_at", async () => {
+  it("dedups against existing Epic-originated medication by patient_id+rxnorm_code+started_at", async () => {
+    // NOTE (#1200): tagged source_system='epic' to exercise the merge
+    // path; CareBridge-protection variant lives in
+    // persistence-source-guard.test.ts.
     const existingInternalId = "internal-med-1";
     db.willSelect([]); // mapping miss
     db.willSelect([
@@ -358,6 +373,7 @@ describe("persistMedicationRequest — cross-source dedup (#1191)", () => {
         patient_id: PATIENT_ID,
         rxnorm_code: "314076",
         started_at: "2026-05-01T10:00:00Z",
+        source_system: "epic",
       },
     ]);
     db.willUpdate();
@@ -419,7 +435,10 @@ describe("persistObservation (vital) — cross-source dedup (#1191)", () => {
     valueQuantity: { value: 72, unit: "/min" },
   };
 
-  it("dedups against existing CareBridge vital by patient_id+loinc_code+recorded_at", async () => {
+  it("dedups against existing Epic-originated vital by patient_id+loinc_code+recorded_at", async () => {
+    // NOTE (#1200): tagged source_system='epic' to exercise the merge
+    // path; CareBridge-protection variant lives in
+    // persistence-source-guard.test.ts.
     const existingInternalId = "internal-vital-1";
     db.willSelect([]); // mapping miss
     db.willSelect([
@@ -428,6 +447,7 @@ describe("persistObservation (vital) — cross-source dedup (#1191)", () => {
         patient_id: PATIENT_ID,
         loinc_code: "8867-4",
         recorded_at: "2026-05-20T08:00:00Z",
+        source_system: "epic",
       },
     ]);
     db.willUpdate();
