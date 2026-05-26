@@ -13,12 +13,18 @@
  *  4. UPSERTs the `fhir_resources` mapping row so the next sync pull can
  *     find the same internal row.
  *  5. Refuses to overwrite CareBridge-originated data on BOTH the
- *     Epic-id path (step 1) AND the fingerprint path (step 2). When the
- *     existing target row has `source_system != "epic"` (or null on a
- *     table that has the column — defensively treated as non-epic), the
- *     writer skips the UPDATE, still writes the `fhir_resources`
- *     mapping (so Epic and CareBridge IDs round-trip to the same row),
- *     and logs the attempt to `audit_log`:
+ *     Epic-id path (step 1) AND the fingerprint path (step 2) for the
+ *     five resource tables that carry `source_system` (encounters,
+ *     diagnoses, allergies, medications, vitals/observations). Patient
+ *     identity is treated as Epic-owned at first import — the `patients`
+ *     table has no `source_system` column and the fingerprint hit in
+ *     `persistPatient` merges unconditionally; see
+ *     `findPatientByFingerprint` for the rationale. When the existing
+ *     target row has `source_system != "epic"` (or null on a table that
+ *     has the column — defensively treated as non-epic), the writer
+ *     skips the UPDATE, still writes the `fhir_resources` mapping (so
+ *     Epic and CareBridge IDs round-trip to the same row), and logs
+ *     the attempt to `audit_log`:
  *       • Epic-id path     → action="update", success=false,
  *                            reason="source_system_conflict" (#1183)
  *       • Fingerprint path → action="epic_sync_source_conflict" (#1200)
@@ -469,13 +475,9 @@ async function findEncounterByFingerprint(args: {
     .limit(1);
   const hit = rows[0];
   if (!hit) return null;
-  // encounters has no source_system column today (#1190 may add one);
-  // treat absence as "internal" — anything not tagged epic-via-mapping
-  // is CareBridge-originated by definition.
   return {
     internalId: hit.id,
-    sourceSystem:
-      (hit as { source_system?: string | null }).source_system ?? null,
+    sourceSystem: hit.source_system ?? null,
   };
 }
 
@@ -506,8 +508,7 @@ async function findDiagnosisByFingerprint(args: {
   if (!hit) return null;
   return {
     internalId: hit.id,
-    sourceSystem:
-      (hit as { source_system?: string | null }).source_system ?? null,
+    sourceSystem: hit.source_system ?? null,
   };
 }
 
@@ -528,21 +529,14 @@ async function findAllergyByFingerprint(args: {
     .limit(1);
   const hit = rows[0];
   if (!hit) return null;
-  const raw = hit as {
-    id: string;
-    source_system?: string | null;
-    allergen?: string | null;
-    severity?: string | null;
-    reaction?: string | null;
-  };
   return {
-    internalId: raw.id,
-    sourceSystem: raw.source_system ?? null,
+    internalId: hit.id,
+    sourceSystem: hit.source_system ?? null,
     // #1203: snapshot the columns persistAllergy's UPDATE will rewrite.
     priorAllergyRow: {
-      allergen: raw.allergen ?? null,
-      severity: raw.severity ?? null,
-      reaction: raw.reaction ?? null,
+      allergen: hit.allergen ?? null,
+      severity: hit.severity ?? null,
+      reaction: hit.reaction ?? null,
     },
   };
 }
@@ -628,23 +622,27 @@ async function findVitalByFingerprint(args: {
 
 // #1202 — panel_name uses test_name for single-result Observations,
 // so two distinct panels labelled differently for the same test collide.
+// `collectedAt` is required: the (patient_id, panel_name) pair alone is
+// dimensionally weak (a stale Hemoglobin from years ago could absorb a
+// fresh one), and the only caller upstream-guarantees a non-null
+// recorded_at via mapFhirObservationToLabResultRow (#1212).
 async function findLabPanelByFingerprint(args: {
   patientId: string;
   panelName: string;
-  collectedAt: string | null;
+  collectedAt: string;
 }): Promise<FingerprintHit | null> {
   const db = getDb();
-  const predicate = args.collectedAt
-    ? and(
+  const rows = await db
+    .select()
+    .from(labPanels)
+    .where(
+      and(
         eq(labPanels.patient_id, args.patientId),
         eq(labPanels.panel_name, args.panelName),
         eq(labPanels.collected_at, args.collectedAt),
-      )
-    : and(
-        eq(labPanels.patient_id, args.patientId),
-        eq(labPanels.panel_name, args.panelName),
-      );
-  const rows = await db.select().from(labPanels).where(predicate).limit(1);
+      ),
+    )
+    .limit(1);
   const hit = rows[0];
   if (!hit) return null;
   return {
@@ -1260,6 +1258,10 @@ export async function persistObservation(
     collectedAt: conversion.row.recorded_at,
   });
   if (panelFingerprintHit) {
+    // #1213 — intentionally NO update to lab_panels.source_system or
+    // reported_at on reuse: a CareBridge-originated panel keeps its
+    // provenance, and the Epic-side merge fact is captured in the
+    // logDedupMatch audit row below.
     // #1207 — store the newly-inserted lab_results.id (the leaf the
     // Epic Observation id round-trips to) in the fhir_resources
     // mapping, NOT the reused lab_panels.id. The round-2 update path

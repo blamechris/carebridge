@@ -92,6 +92,8 @@ const {
   persistMedicationRequest,
   persistCondition,
   persistEncounter,
+  persistPatient,
+  persistAllergy,
 } = await import("../sync/persistence.js");
 
 const PATIENT_ID = "11111111-1111-1111-1111-111111111111";
@@ -436,6 +438,267 @@ describe("persistMedicationRequest — Epic-id conflict on fingerprint match (#1
     db.willInsert(); // audit_log dedup_match
 
     const result = await persistMedicationRequest(SAME_RESOURCE, PATIENT_ID);
+
+    expect(result.internalId).toBe(existingInternalId);
+    expect(result.inserted).toBe(false);
+    expect(result.conflict).toBeUndefined();
+    expect(db.update).toHaveBeenCalledOnce();
+    expect(findAuditInsert("epic_sync_dedup_match")).toBeDefined();
+    expect(findAuditInsert("epic_sync_dedup_conflict")).toBeUndefined();
+  });
+});
+
+// ── Patient ────────────────────────────────────────────────────
+//
+// Patient identity is called out in persistPatient as the highest-stakes
+// case for this conflict path: two Epic patient FHIR ids landing on the
+// same MRN-HMAC typically means an Epic-side merge / unmerge cycle, and
+// silently writing a second mapping would conflate two distinct charts.
+
+describe("persistPatient — Epic-id conflict on fingerprint match (#1201)", () => {
+  const RESOURCE = {
+    resourceType: "Patient",
+    id: "epic-pat-B", // inbound Epic id
+    active: true,
+    name: [{ family: "Smith", given: ["Jane"] }],
+    gender: "female",
+    birthDate: "1980-04-12",
+    identifier: [
+      {
+        type: { coding: [{ code: "MR" }] },
+        value: "MRN-12345",
+      },
+    ],
+  };
+
+  it("fingerprint hit on internal row already mapped to a DIFFERENT Epic id → fall through to INSERT + epic_sync_dedup_conflict audit", async () => {
+    const existingInternalId = "internal-pat-X";
+    const existingEpicId = "epic-pat-A";
+
+    // findMapping (Epic-id lookup for epic-pat-B) → miss
+    db.willSelect([]);
+    // MRN-HMAC fingerprint lookup → hits internal-pat-X
+    db.willSelect([
+      {
+        id: existingInternalId,
+        mrn_hmac: "hmac:MRN-12345",
+      },
+    ]);
+    // NEW conflict-mapping lookup → returns a row mapping epic-pat-A
+    // to internal-pat-X (a different Epic id already owns this MRN).
+    db.willSelect([
+      {
+        id: `epic:Patient:${existingEpicId}`,
+        resource_type: "Patient",
+        resource_id: existingEpicId,
+        internal_record_id: existingInternalId,
+      },
+    ]);
+    db.willInsert(); // new patients row (INSERT, not UPDATE)
+    db.willInsert(); // new fhir_resources mapping for epic-pat-B
+    db.willInsert(); // audit_log epic_sync_dedup_conflict
+
+    const result = await persistPatient(RESOURCE);
+
+    // A NEW internal row was inserted — Epic merge/unmerge cycles must
+    // never silently collapse two charts onto one CareBridge row.
+    expect(result.kind).toBe("patient");
+    expect(result.inserted).toBe(true);
+    expect(result.internalId).not.toBe(existingInternalId);
+
+    // UPDATE must NOT have happened — the existing patient row is left alone.
+    expect(db.update).not.toHaveBeenCalled();
+
+    // A new fhir_resources mapping was written pointing at the NEW
+    // internal id (not the existing one). No second mapping silently
+    // points the inbound Epic id at the pre-existing chart.
+    const mappings = findAllMappingInserts();
+    const inboundMapping = mappings.find(
+      (m) => m.resource_id === "epic-pat-B",
+    );
+    expect(inboundMapping).toBeDefined();
+    expect(inboundMapping?.internal_record_id).toBe(result.internalId);
+    expect(inboundMapping?.internal_record_id).not.toBe(existingInternalId);
+
+    expect(
+      mappings.find(
+        (m) =>
+          m.internal_record_id === existingInternalId &&
+          m.resource_id === "epic-pat-B",
+      ),
+    ).toBeUndefined();
+
+    // Audit row carries both Epic ids + the MRN-HMAC fingerprint so a
+    // reviewer can reconcile the merge/unmerge against Epic.
+    const audit = findAuditInsert("epic_sync_dedup_conflict");
+    expect(audit).toBeDefined();
+    expect(audit?.resource_type).toBe("Patient");
+    expect(audit?.success).toBe(false);
+    const details = JSON.parse(audit?.details as string);
+    expect(details.new_epic_fhir_id).toBe("epic-pat-B");
+    expect(details.existing_epic_fhir_id).toBe(existingEpicId);
+    expect(details.matched_internal_id).toBe(existingInternalId);
+    // Fingerprint preserved for forensics — MRN HMAC is the only
+    // dimension on the patient fingerprint.
+    expect(details.fingerprint).toBeDefined();
+    expect(details.fingerprint.mrn_hmac).toBe("hmac:MRN-12345");
+
+    // No dedup-match row — this is a conflict, not a merge.
+    expect(findAuditInsert("epic_sync_dedup_match")).toBeUndefined();
+    // No source-conflict row — this is identity ambiguity, not data ownership.
+    expect(findAuditInsert("epic_sync_source_conflict")).toBeUndefined();
+  });
+
+  it("fingerprint hit + SAME Epic id (mapping already points at the matched row) → existing dedup-match path", async () => {
+    // Negative case: epic-pat-A already maps to internal-pat-same, and
+    // the inbound Epic id is ALSO epic-pat-A (e.g. mapping was lost due
+    // to a partial-failure and Epic is re-syncing). The conflict check
+    // must NOT trip — dedup-merge proceeds.
+    const existingInternalId = "internal-pat-same";
+    const SAME_RESOURCE = { ...RESOURCE, id: "epic-pat-A" };
+
+    db.willSelect([]); // findMapping miss (defensive)
+    db.willSelect([
+      {
+        id: existingInternalId,
+        mrn_hmac: "hmac:MRN-12345",
+      },
+    ]);
+    // conflict-mapping lookup → empty (any mapping for A would be
+    // filtered out by `resource_id != A`).
+    db.willSelect([]);
+    db.willUpdate();
+    db.willInsert(); // mapping upsert
+    db.willInsert(); // audit_log epic_sync_dedup_match
+
+    const result = await persistPatient(SAME_RESOURCE);
+
+    expect(result.internalId).toBe(existingInternalId);
+    expect(result.inserted).toBe(false);
+    expect(result.conflict).toBeUndefined();
+    expect(db.update).toHaveBeenCalledOnce();
+    expect(findAuditInsert("epic_sync_dedup_match")).toBeDefined();
+    expect(findAuditInsert("epic_sync_dedup_conflict")).toBeUndefined();
+  });
+});
+
+// ── AllergyIntolerance ─────────────────────────────────────────
+
+describe("persistAllergy — Epic-id conflict on fingerprint match (#1201)", () => {
+  const RESOURCE = {
+    resourceType: "AllergyIntolerance",
+    id: "epic-aller-B", // inbound Epic id
+    patient: { reference: "Patient/p-1" },
+    code: {
+      text: "Penicillin",
+      coding: [
+        {
+          system: "http://www.nlm.nih.gov/research/umls/rxnorm",
+          code: "7980",
+          display: "Penicillin G",
+        },
+      ],
+    },
+    clinicalStatus: {
+      coding: [
+        {
+          system:
+            "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+          code: "active",
+        },
+      ],
+    },
+  };
+
+  it("fingerprint hit on internal row already mapped to a DIFFERENT Epic id → INSERT + dedup_conflict audit", async () => {
+    const existingInternalId = "internal-aller-X";
+    const existingEpicId = "epic-aller-A";
+
+    db.willSelect([]); // findMapping miss
+    // RxNorm fingerprint lookup → hits internal-aller-X (Epic-owned,
+    // would otherwise merge).
+    db.willSelect([
+      {
+        id: existingInternalId,
+        patient_id: PATIENT_ID,
+        rxnorm_code: "7980",
+        source_system: "epic",
+        allergen: "Penicillin",
+        severity: null,
+        reaction: null,
+      },
+    ]);
+    // NEW conflict-mapping lookup → returns a row mapping epic-aller-A
+    // to internal-aller-X.
+    db.willSelect([
+      {
+        id: `epic:AllergyIntolerance:${existingEpicId}`,
+        resource_type: "AllergyIntolerance",
+        resource_id: existingEpicId,
+        internal_record_id: existingInternalId,
+      },
+    ]);
+    db.willInsert(); // new allergies row
+    db.willInsert(); // new mapping
+    db.willInsert(); // audit_log
+
+    const result = await persistAllergy(RESOURCE, PATIENT_ID);
+
+    expect(result.kind).toBe("allergy");
+    expect(result.inserted).toBe(true);
+    expect(result.internalId).not.toBe(existingInternalId);
+    expect(db.update).not.toHaveBeenCalled();
+
+    const mappings = findAllMappingInserts();
+    const inboundMapping = mappings.find(
+      (m) => m.resource_id === "epic-aller-B",
+    );
+    expect(inboundMapping).toBeDefined();
+    expect(inboundMapping?.internal_record_id).toBe(result.internalId);
+    expect(inboundMapping?.internal_record_id).not.toBe(existingInternalId);
+
+    const audit = findAuditInsert("epic_sync_dedup_conflict");
+    expect(audit).toBeDefined();
+    expect(audit?.resource_type).toBe("AllergyIntolerance");
+    expect(audit?.success).toBe(false);
+    const details = JSON.parse(audit?.details as string);
+    expect(details.new_epic_fhir_id).toBe("epic-aller-B");
+    expect(details.existing_epic_fhir_id).toBe(existingEpicId);
+    expect(details.matched_internal_id).toBe(existingInternalId);
+    // Allergy fingerprint carries patient_id + the coded substance.
+    expect(details.fingerprint).toBeDefined();
+    expect(details.fingerprint.patient_id).toBe(PATIENT_ID);
+    expect(details.fingerprint.rxnorm_code).toBe("7980");
+
+    // Exactly one audit row — we don't double-log conflict + match.
+    expect(findAllAuditInserts("epic_sync_dedup_conflict")).toHaveLength(1);
+    expect(findAuditInsert("epic_sync_dedup_match")).toBeUndefined();
+    expect(findAuditInsert("epic_sync_source_conflict")).toBeUndefined();
+  });
+
+  it("fingerprint hit + SAME Epic id → existing dedup-match path", async () => {
+    const existingInternalId = "internal-aller-same";
+    const SAME_RESOURCE = { ...RESOURCE, id: "epic-aller-A" };
+
+    db.willSelect([]); // findMapping miss
+    db.willSelect([
+      {
+        id: existingInternalId,
+        patient_id: PATIENT_ID,
+        rxnorm_code: "7980",
+        source_system: "epic",
+        allergen: "Penicillin",
+        severity: null,
+        reaction: null,
+      },
+    ]);
+    // conflict-mapping lookup → empty.
+    db.willSelect([]);
+    db.willUpdate();
+    db.willInsert(); // mapping
+    db.willInsert(); // audit_log dedup_match
+
+    const result = await persistAllergy(SAME_RESOURCE, PATIENT_ID);
 
     expect(result.internalId).toBe(existingInternalId);
     expect(result.inserted).toBe(false);
