@@ -414,6 +414,13 @@
       "when": 1747930260000,
       "tag": "0054_source_system_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1747930320000,
+      "tag": "0055_fingerprint_dedup_indexes",
+      "breakpoints": true
     }
   ]
 }
