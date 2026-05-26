@@ -341,7 +341,12 @@ async function findConflictingMappings(args: {
   // Defensive: Drizzle returns [] on no rows, but unit-test mocks that
   // under-queue can return undefined. Treat both as "no conflict".
   if (!rows || rows.length === 0) return [];
-  return rows.map((row) => row.resource_id);
+  // #1231: defense-in-depth — the SQL `.limit(CAP_CONFLICTING_MAPPINGS)`
+  // above is the primary bound, but a future query-builder refactor, an
+  // accidentally-dropped limit, or an over-queuing test mock could let
+  // the audit payload grow past the cap. `.slice()` makes the cap a
+  // code-level invariant (no-op in the happy path, cheap insurance).
+  return rows.map((row) => row.resource_id).slice(0, CAP_CONFLICTING_MAPPINGS);
 }
 
 /**
@@ -357,6 +362,11 @@ async function findConflictingMappings(args: {
  * back-compat with consumers wired against the original scalar field.
  * The caller must pass a non-empty array; the function's contract is
  * that `existing_epic_fhir_id` always reflects `existing_epic_fhir_ids[0]`.
+ *
+ * #1232: also emit `existing_epic_fhir_id_count: number` (always equal
+ * to `existing_epic_fhir_ids.length`) so downstream filters (alert
+ * rules, dashboards, jq pipelines) can grep the multi-mapping case
+ * without parsing the array. Schema-additive only.
  */
 async function logDedupConflict(args: {
   resourceType: string;
@@ -389,6 +399,10 @@ async function logDedupConflict(args: {
       // below for back-compat with consumers wired against #1201.
       existing_epic_fhir_ids: args.existingEpicFhirIds,
       existing_epic_fhir_id: args.existingEpicFhirIds[0],
+      // #1232: explicit count so downstream alert rules / dashboards /
+      // jq filters can match the multi-mapping case (count > 1) without
+      // parsing the array.
+      existing_epic_fhir_id_count: args.existingEpicFhirIds.length,
       matched_internal_id: args.matchedInternalId,
       fingerprint: args.fingerprint,
       resolution: "insert_new_internal_row",
@@ -687,8 +701,7 @@ async function findLabPanelByFingerprint(args: {
   if (!hit) return null;
   return {
     internalId: hit.id,
-    sourceSystem:
-      (hit as { source_system?: string | null }).source_system ?? null,
+    sourceSystem: hit.source_system ?? null,
   };
 }
 
