@@ -507,3 +507,88 @@ describe.each(CASES)(
     });
   },
 );
+// ── existing_epic_fhir_id_count audit field (#1232) ───────────────────
+//
+// #1232 adds a derived `existing_epic_fhir_id_count` field to the
+// dedup_conflict audit details: it's `existingEpicFhirIds.length` and
+// gives audit consumers a cheap numeric signal without re-counting the
+// array client-side. These two cases lock in the single-row (count===1)
+// and multi-row (count===3) shapes against the Encounter persister.
+
+describe("dedup_conflict audit surfaces existing_epic_fhir_id_count (#1232)", () => {
+  it("single conflicting mapping → existing_epic_fhir_id_count === 1", async () => {
+    const existingInternalId = "internal-enc-count-single";
+    const existingEpicId = "epic-enc-A";
+
+    db.willSelect([]); // findMapping miss
+    db.willSelect([
+      {
+        id: existingInternalId,
+        patient_id: PATIENT_ID,
+        start_time: "2026-05-20T09:00:00Z",
+        encounter_type: "AMB",
+        source_system: "epic",
+      },
+    ]); // fingerprint hit
+    db.willSelect([
+      {
+        id: `epic:Encounter:${existingEpicId}`,
+        resource_type: "Encounter",
+        resource_id: existingEpicId,
+        internal_record_id: existingInternalId,
+      },
+    ]); // conflict-mapping lookup → 1 row
+    db.willInsert(); // new encounters row
+    db.willInsert(); // new mapping
+    db.willInsert(); // audit_log dedup_conflict
+
+    await persistEncounter(ENCOUNTER_RESOURCE, PATIENT_ID);
+
+    const audit = findAuditInsert("epic_sync_dedup_conflict");
+    expect(audit).toBeDefined();
+    const details = JSON.parse(audit?.details as string);
+
+    expect(details.existing_epic_fhir_id_count).toBe(1);
+    expect(details.existing_epic_fhir_id_count).toBe(
+      details.existing_epic_fhir_ids.length,
+    );
+  });
+
+  it("multiple conflicting mappings (3 rows) → existing_epic_fhir_id_count === 3", async () => {
+    const existingInternalId = "internal-enc-count-multi";
+    const existingEpicIds = ["epic-enc-A", "epic-enc-B", "epic-enc-C"];
+
+    db.willSelect([]); // findMapping miss
+    db.willSelect([
+      {
+        id: existingInternalId,
+        patient_id: PATIENT_ID,
+        start_time: "2026-05-20T09:00:00Z",
+        encounter_type: "AMB",
+        source_system: "epic",
+      },
+    ]); // fingerprint hit
+    db.willSelect(
+      existingEpicIds.map((rid) => ({
+        id: `epic:Encounter:${rid}`,
+        resource_type: "Encounter",
+        resource_id: rid,
+        internal_record_id: existingInternalId,
+      })),
+    );
+    db.willInsert(); // new encounters row
+    db.willInsert(); // new mapping
+    db.willInsert(); // audit_log dedup_conflict
+
+    await persistEncounter(ENCOUNTER_RESOURCE, PATIENT_ID);
+
+    const audit = findAuditInsert("epic_sync_dedup_conflict");
+    expect(audit).toBeDefined();
+    const details = JSON.parse(audit?.details as string);
+
+    expect(details.existing_epic_fhir_id_count).toBe(3);
+    expect(details.existing_epic_fhir_id_count).toBe(
+      details.existing_epic_fhir_ids.length,
+    );
+  });
+});

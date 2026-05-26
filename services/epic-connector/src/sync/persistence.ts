@@ -360,6 +360,11 @@ async function findConflictingMappings(args: {
  * back-compat with consumers wired against the original scalar field.
  * The caller must pass a non-empty array; the function's contract is
  * that `existing_epic_fhir_id` always reflects `existing_epic_fhir_ids[0]`.
+ *
+ * #1232: also emit `existing_epic_fhir_id_count: number` (always equal
+ * to `existing_epic_fhir_ids.length`) so downstream filters (alert
+ * rules, dashboards, jq pipelines) can grep the multi-mapping case
+ * without parsing the array. Schema-additive only.
  */
 async function logDedupConflict(args: {
   resourceType: string;
@@ -392,6 +397,10 @@ async function logDedupConflict(args: {
       // below for back-compat with consumers wired against #1201.
       existing_epic_fhir_ids: args.existingEpicFhirIds,
       existing_epic_fhir_id: args.existingEpicFhirIds[0],
+      // #1232: explicit count so downstream alert rules / dashboards /
+      // jq filters can match the multi-mapping case (count > 1) without
+      // parsing the array.
+      existing_epic_fhir_id_count: args.existingEpicFhirIds.length,
       matched_internal_id: args.matchedInternalId,
       fingerprint: args.fingerprint,
       resolution: "insert_new_internal_row",
