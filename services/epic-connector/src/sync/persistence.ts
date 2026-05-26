@@ -201,6 +201,14 @@ async function logSourceConflict(args: {
  * logical entity as an existing CareBridge row, and we merged into it.
  * Recorded as success=true so the HIPAA audit trail shows the
  * reconciliation explicitly rather than as a failure.
+ *
+ * `overwrittenFields` (#1203) is set by callers that know exactly which
+ * columns the UPDATE rewrote and what the prior values were. When non-
+ * empty, the audit row's `details.overwritten_fields` carries
+ * `{ field: priorValue, ... }` so a HIPAA reviewer can reconstruct the
+ * clinician's pre-merge state. No-op merges (every inbound value equal
+ * to the prior value) omit the key entirely — no audit weight on a
+ * merge that didn't actually change anything.
  */
 async function logDedupMatch(args: {
   resourceType: string;
@@ -208,8 +216,22 @@ async function logDedupMatch(args: {
   internalId: string;
   patientId: string | null;
   fingerprint: Record<string, unknown>;
+  overwrittenFields?: Record<string, unknown>;
 }): Promise<void> {
   const db = getDb();
+  const details: Record<string, unknown> = {
+    reason: "fingerprint_match",
+    attempted_source: EPIC_SOURCE_SYSTEM_TAG,
+    epic_fhir_id: args.fhirId,
+    fingerprint: args.fingerprint,
+    resolution: "merge_into_existing_internal_row",
+  };
+  if (
+    args.overwrittenFields &&
+    Object.keys(args.overwrittenFields).length > 0
+  ) {
+    details.overwritten_fields = args.overwrittenFields;
+  }
   await db.insert(auditLog).values({
     id: crypto.randomUUID(),
     user_id: EPIC_SYNC_AUDIT_USER,
@@ -218,13 +240,7 @@ async function logDedupMatch(args: {
     resource_id: args.internalId,
     patient_id: args.patientId,
     success: true,
-    details: JSON.stringify({
-      reason: "fingerprint_match",
-      attempted_source: EPIC_SOURCE_SYSTEM_TAG,
-      epic_fhir_id: args.fhirId,
-      fingerprint: args.fingerprint,
-      resolution: "merge_into_existing_internal_row",
-    }),
+    details: JSON.stringify(details),
     timestamp: new Date().toISOString(),
   });
 }
@@ -283,6 +299,29 @@ async function logFingerprintSourceConflict(args: {
 interface FingerprintHit {
   internalId: string;
   sourceSystem: string | null;
+  /**
+   * Optional snapshot of the matched row's fields BEFORE a dedup-merge
+   * UPDATE rewrites them (#1203). Populated only by finders whose caller
+   * uses it for audit-payload provenance (currently allergies). Keep
+   * the shape narrow per resource — only fields the matching writer's
+   * UPDATE statement actually touches need to be carried, otherwise
+   * we'd be paying for unrelated columns on every fingerprint lookup.
+   */
+  priorAllergyRow?: PriorAllergyRow;
+}
+
+/**
+ * Subset of `allergies` columns captured before the dedup-merge UPDATE
+ * so the audit payload can carry pre-update values. Exactly the columns
+ * `persistAllergy`'s UPDATE statement rewrites today (#1203). When the
+ * UPDATE widens to a new column, add the field here AND in
+ * {@link computeAllergyOverwrittenFields} together — the diff is the
+ * single source of truth for what gets snapshotted.
+ */
+interface PriorAllergyRow {
+  allergen: string | null;
+  severity: string | null;
+  reaction: string | null;
 }
 
 async function findEncounterByFingerprint(args: {
@@ -363,11 +402,46 @@ async function findAllergyByFingerprint(args: {
     .limit(1);
   const hit = rows[0];
   if (!hit) return null;
-  return {
-    internalId: hit.id,
-    sourceSystem:
-      (hit as { source_system?: string | null }).source_system ?? null,
+  const raw = hit as {
+    id: string;
+    source_system?: string | null;
+    allergen?: string | null;
+    severity?: string | null;
+    reaction?: string | null;
   };
+  return {
+    internalId: raw.id,
+    sourceSystem: raw.source_system ?? null,
+    // #1203: snapshot the columns persistAllergy's UPDATE will rewrite.
+    priorAllergyRow: {
+      allergen: raw.allergen ?? null,
+      severity: raw.severity ?? null,
+      reaction: raw.reaction ?? null,
+    },
+  };
+}
+
+/**
+ * Diff the inbound Epic row against the matched row's pre-update values
+ * for the columns `persistAllergy`'s UPDATE rewrites (#1203). Returns a
+ * map of `{ field: priorValue }` for every field whose new value differs
+ * from the prior value. Empty when the merge is a no-op (every column
+ * already matched), in which case the caller omits the audit payload
+ * key entirely.
+ *
+ * Comparison is strict equality on plaintext values. `allergen` and
+ * `reaction` are encrypted columns at rest but the persistence layer
+ * sees plaintext on read/write, so this is a like-for-like compare.
+ */
+function computeAllergyOverwrittenFields(
+  prior: PriorAllergyRow,
+  incoming: { allergen: string; severity: string | null; reaction: string | null },
+): Record<string, unknown> {
+  const overwritten: Record<string, unknown> = {};
+  if (prior.allergen !== incoming.allergen) overwritten.allergen = prior.allergen;
+  if (prior.severity !== incoming.severity) overwritten.severity = prior.severity;
+  if (prior.reaction !== incoming.reaction) overwritten.reaction = prior.reaction;
+  return overwritten;
 }
 
 async function findMedicationByFingerprint(args: {
@@ -1301,6 +1375,17 @@ export async function persistAllergy(
         conflict: "source_system_conflict",
       };
     }
+    // #1203: snapshot the prior values BEFORE the UPDATE so we can carry
+    // them on the audit row when Epic overwrote a clinician-meaningful
+    // field. `priorAllergyRow` is captured by findAllergyByFingerprint
+    // and mirrors exactly the columns this UPDATE rewrites.
+    const overwrittenFields = fingerprintHit.priorAllergyRow
+      ? computeAllergyOverwrittenFields(fingerprintHit.priorAllergyRow, {
+          allergen: row.allergen,
+          severity: row.severity,
+          reaction: row.reaction,
+        })
+      : {};
     await db
       .update(allergies)
       .set({
@@ -1322,6 +1407,7 @@ export async function persistAllergy(
       internalId: fingerprintHit.internalId,
       patientId,
       fingerprint,
+      overwrittenFields,
     });
     return {
       internalId: fingerprintHit.internalId,
