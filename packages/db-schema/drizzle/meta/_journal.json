@@ -421,6 +421,13 @@
       "when": 1747930320000,
       "tag": "0055_fingerprint_dedup_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1747930380000,
+      "tag": "0056_diagnoses_dedup_indexes_with_onset",
+      "breakpoints": true
     }
   ]
 }

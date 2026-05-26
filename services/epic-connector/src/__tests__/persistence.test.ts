@@ -605,10 +605,17 @@ describe("persistObservation (lab) — panel-level dedup (#1202)", () => {
     expect(dedup).toBeUndefined();
   });
 
-  it("dedups single-result Observations using test_name as panel_name", async () => {
-    // Two single-test Epic Observations for the same patient at the same
-    // collected_at + test_name should resolve to the same lab_panels row.
-    const existingPanelId = "internal-panel-cbc-1";
+  it("dedups single-result Observations using test_name as panel_name — distinct test_names do NOT collapse (#1214)", async () => {
+    // The panel fingerprint is patient_id + panel_name + collected_at, and
+    // for single-result Epic Observations panel_name comes from test_name
+    // (= code.text). Two Observations with the SAME test_name MUST reuse a
+    // panel, while two Observations with DIFFERENT test_names at the same
+    // collected_at MUST NOT — otherwise we'd silently merge a Hemoglobin
+    // result and a Sodium result into one panel. Run both paths in one
+    // test so regressions on either side fail loudly.
+
+    // ── Path A: same test_name (Hemoglobin) → fingerprint HIT, reuse panel ──
+    const existingPanelId = "internal-panel-hemoglobin-1";
     db.willSelect([]); // mapping miss
     db.willSelect([
       {
@@ -622,7 +629,7 @@ describe("persistObservation (lab) — panel-level dedup (#1202)", () => {
     db.willInsert(); // mapping
     db.willInsert(); // audit
 
-    const result = await persistObservation(RESOURCE, PATIENT_ID);
+    const hemoglobinResult = await persistObservation(RESOURCE, PATIENT_ID);
 
     // Return value is the newly-inserted lab_results.id (the leaf), not
     // the reused panel id (#1207). Round-2 syncs need the leaf id to
@@ -634,10 +641,78 @@ describe("persistObservation (lab) — panel-level dedup (#1202)", () => {
     const newResultId = (
       labResultInsert!.chainArgs[0]![0] as Record<string, unknown>
     ).id as string;
-    expect(result.internalId).toBe(newResultId);
-    expect(result.internalId).not.toBe(existingPanelId);
-    expect(result.kind).toBe("lab");
-    expect(result.inserted).toBe(false);
+    expect(hemoglobinResult.internalId).toBe(newResultId);
+    expect(hemoglobinResult.internalId).not.toBe(existingPanelId);
+    expect(hemoglobinResult.kind).toBe("lab");
+    expect(hemoglobinResult.inserted).toBe(false);
+    // No new lab_panels row was inserted on the reuse path — confirmed
+    // by the absence of any insert carrying a panel_name field.
+    const panelInsertsAfterHemoglobin = db.insert.calls.filter((c) => {
+      const v = c.chainArgs[0]?.[0] as Record<string, unknown> | undefined;
+      return v?.panel_name !== undefined;
+    });
+    expect(panelInsertsAfterHemoglobin).toHaveLength(0);
+
+    // ── Path B: different test_name (Sodium), same patient + collected_at ──
+    // Different code.text ⇒ different conversion.row.test_name ⇒ the
+    // panel fingerprint lookup (patient_id + panel_name + collected_at)
+    // misses, and a NEW lab_panels row must be inserted with
+    // panel_name="Sodium". This is the actual collapse risk the test
+    // title implies — pre-#1214 the suite never exercised it because
+    // the same RESOURCE fixture was reused.
+    db.reset();
+
+    const SODIUM_RESOURCE = {
+      ...RESOURCE,
+      id: "epic-lab-sodium-1",
+      code: {
+        text: "Sodium",
+        coding: [
+          {
+            system: "http://loinc.org",
+            code: "2951-2",
+            display: "Sodium",
+          },
+        ],
+      },
+      // Same effectiveDateTime as RESOURCE on purpose — proves the
+      // fingerprint is keyed on panel_name, not just patient+collected_at.
+      valueQuantity: { value: 140, unit: "mmol/L" },
+    };
+
+    db.willSelect([]); // mapping miss
+    db.willSelect([]); // findLabPanelByFingerprint MISS — distinct test_name
+    db.willInsert(); // new lab_panels row (Sodium)
+    db.willInsert(); // new lab_results row
+    db.willInsert(); // fhir_resources mapping
+
+    const sodiumResult = await persistObservation(SODIUM_RESOURCE, PATIENT_ID);
+
+    expect(sodiumResult.kind).toBe("lab");
+    expect(sodiumResult.inserted).toBe(true);
+
+    // A NEW lab_panels row was inserted, and its panel_name is "Sodium" —
+    // NOT collapsed onto the Hemoglobin panel from path A.
+    const panelInsertSodium = db.insert.calls.find((c) => {
+      const v = c.chainArgs[0]?.[0] as Record<string, unknown> | undefined;
+      return v?.panel_name !== undefined;
+    });
+    expect(panelInsertSodium).toBeDefined();
+    const panelValues = panelInsertSodium!.chainArgs[0]![0] as Record<
+      string,
+      unknown
+    >;
+    expect(panelValues.panel_name).toBe("Sodium");
+    expect(panelValues.panel_name).not.toBe("Hemoglobin");
+    expect(panelValues.patient_id).toBe(PATIENT_ID);
+    expect(panelValues.collected_at).toBe("2026-05-20T07:30:00Z");
+
+    // No audit_log dedup-match row on the Sodium path — fingerprint missed.
+    const sodiumDedup = db.insert.calls.find((c) => {
+      const v = c.chainArgs[0]?.[0] as Record<string, unknown> | undefined;
+      return v?.action === "epic_sync_dedup_match";
+    });
+    expect(sodiumDedup).toBeUndefined();
   });
 
   it("round-2 lab Observation sync via dedup path updates the leaf row (#1207)", async () => {
