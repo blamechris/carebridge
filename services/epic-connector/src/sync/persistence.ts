@@ -13,12 +13,18 @@
  *  4. UPSERTs the `fhir_resources` mapping row so the next sync pull can
  *     find the same internal row.
  *  5. Refuses to overwrite CareBridge-originated data on BOTH the
- *     Epic-id path (step 1) AND the fingerprint path (step 2). When the
- *     existing target row has `source_system != "epic"` (or null on a
- *     table that has the column — defensively treated as non-epic), the
- *     writer skips the UPDATE, still writes the `fhir_resources`
- *     mapping (so Epic and CareBridge IDs round-trip to the same row),
- *     and logs the attempt to `audit_log`:
+ *     Epic-id path (step 1) AND the fingerprint path (step 2) for the
+ *     five resource tables that carry `source_system` (encounters,
+ *     diagnoses, allergies, medications, vitals/observations). Patient
+ *     identity is treated as Epic-owned at first import — the `patients`
+ *     table has no `source_system` column and the fingerprint hit in
+ *     `persistPatient` merges unconditionally; see
+ *     `findPatientByFingerprint` for the rationale. When the existing
+ *     target row has `source_system != "epic"` (or null on a table that
+ *     has the column — defensively treated as non-epic), the writer
+ *     skips the UPDATE, still writes the `fhir_resources` mapping (so
+ *     Epic and CareBridge IDs round-trip to the same row), and logs
+ *     the attempt to `audit_log`:
  *       • Epic-id path     → action="update", success=false,
  *                            reason="source_system_conflict" (#1183)
  *       • Fingerprint path → action="epic_sync_source_conflict" (#1200)
