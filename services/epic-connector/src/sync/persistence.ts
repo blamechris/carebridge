@@ -690,8 +690,7 @@ async function findLabPanelByFingerprint(args: {
   if (!hit) return null;
   return {
     internalId: hit.id,
-    sourceSystem:
-      (hit as { source_system?: string | null }).source_system ?? null,
+    sourceSystem: hit.source_system ?? null,
   };
 }
 
