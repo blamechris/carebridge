@@ -339,7 +339,12 @@ async function findConflictingMappings(args: {
   // Defensive: Drizzle returns [] on no rows, but unit-test mocks that
   // under-queue can return undefined. Treat both as "no conflict".
   if (!rows || rows.length === 0) return [];
-  return rows.map((row) => row.resource_id);
+  // #1231: defense-in-depth — the SQL `.limit(CAP_CONFLICTING_MAPPINGS)`
+  // above is the primary bound, but a future query-builder refactor, an
+  // accidentally-dropped limit, or an over-queuing test mock could let
+  // the audit payload grow past the cap. `.slice()` makes the cap a
+  // code-level invariant (no-op in the happy path, cheap insurance).
+  return rows.map((row) => row.resource_id).slice(0, CAP_CONFLICTING_MAPPINGS);
 }
 
 /**
