@@ -5,6 +5,12 @@
  * (https://hl7.org/fhir/R4/procedure.html). CPT codes attach to
  * Procedure.code via the AMA CPT system; ICD-10 reason codes attach to
  * Procedure.reasonCode via the CM value set.
+ *
+ * CPT emission is gated behind FHIR_CPT_EMISSION_ENABLED (issue #939).
+ * AMA licenses CPT codes; distributing them in a FHIR bundle to an
+ * external recipient may require an AMA license. Until that's confirmed
+ * the flag defaults off — Procedure.code falls back to the free-text
+ * procedure name. See docs/fhir-licensing.md.
  */
 
 import type { procedures } from "@carebridge/db-schema";
@@ -15,6 +21,10 @@ type ProcedureRow = typeof procedures.$inferSelect;
 
 const CPT_SYSTEM = "http://www.ama-assn.org/go/cpt";
 const ICD10_CM_SYSTEM = "http://hl7.org/fhir/sid/icd-10-cm";
+
+function isCptEmissionEnabled(): boolean {
+  return process.env.FHIR_CPT_EMISSION_ENABLED === "true";
+}
 
 /**
  * FHIR R4 ProcedureStatus value set. Internal statuses "scheduled" and
@@ -67,10 +77,11 @@ export function toFhirProcedure(
     },
   };
 
-  // Procedure.code: prefer CPT coding when available, otherwise surface
-  // the free-text procedure name so the resource is still useful to
-  // downstream consumers.
-  if (procedure.cpt_code) {
+  // Procedure.code: emit CPT coding only when FHIR_CPT_EMISSION_ENABLED is
+  // explicitly enabled (#939 — AMA CPT licensing gate). Otherwise fall back
+  // to the free-text procedure name so the resource stays useful to
+  // downstream consumers without distributing licensed CPT identifiers.
+  if (procedure.cpt_code && isCptEmissionEnabled()) {
     resource.code = {
       coding: [
         {
