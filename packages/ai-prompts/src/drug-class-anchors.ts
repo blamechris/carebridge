@@ -28,6 +28,14 @@ export const DRUG_CLASS_CROSS_REACTIONS: readonly DrugClassCrossReaction[] = [
   { class: "benzodiazepine", examples: ["diazepam", "lorazepam", "alprazolam", "clonazepam"] },
   { class: "iodinated contrast", examples: ["iohexol", "iopamidol", "iodixanol"] },
   { class: "latex", examples: ["natural rubber latex"] },
+  // Glycopeptide cross-reactivity (#1018 / #973 Gap 2). Vancomycin,
+  // teicoplanin, and the second-generation lipoglycopeptides
+  // (dalbavancin, oritavancin, telavancin) share a glycopeptide
+  // backbone and a documented cross-allergenic class. Cited in the
+  // FDA Prescribing Information for Dalvance (dalbavancin) § 5.2
+  // Hypersensitivity Reactions, which explicitly warns about
+  // potential cross-reactivity with other glycopeptide agents.
+  { class: "glycopeptide", examples: ["vancomycin", "teicoplanin", "dalbavancin", "oritavancin", "telavancin"] },
 ] as const;
 
 /**

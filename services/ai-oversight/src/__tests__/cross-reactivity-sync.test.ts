@@ -42,6 +42,8 @@ const CANONICAL_NAME: Record<string, string> = {
   // Shared (both maps use these directly)
   "ace-inhibitor": "ace-inhibitor",
   "iodinated-contrast": "iodinated-contrast",
+  // Glycopeptide cross-reactivity (#1018) — same name on both sides.
+  glycopeptide: "glycopeptide",
 };
 
 function canonicalise(name: string): string {

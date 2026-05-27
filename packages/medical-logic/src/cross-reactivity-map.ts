@@ -141,4 +141,17 @@ export const CROSS_REACTIVITY_MAP: readonly CrossReactivityEntry[] = [
     medicationPattern: /latex/i,
     class: "latex",
   },
+  {
+    // Glycopeptide cross-reactivity (#1018). Vancomycin, teicoplanin,
+    // and the second-generation lipoglycopeptides (dalbavancin,
+    // oritavancin, telavancin) share a glycopeptide backbone and a
+    // documented cross-allergenic class — see FDA Dalvance PI § 5.2.
+    // The allergenPattern also accepts the bare class name "glycopeptide"
+    // so allergies charted by class still hit. Symmetry with the LLM
+    // anchor in @carebridge/ai-prompts is enforced by
+    // services/ai-oversight/src/__tests__/cross-reactivity-sync.test.ts.
+    allergenPattern: /vancomycin|teicoplanin|dalbavancin|oritavancin|telavancin|glycopeptide/i,
+    medicationPattern: /vancomycin|teicoplanin|dalbavancin|oritavancin|telavancin/i,
+    class: "glycopeptide",
+  },
 ];
