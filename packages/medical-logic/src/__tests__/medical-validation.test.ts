@@ -987,6 +987,48 @@ describe("getVitalSeverity", () => {
   it("returns critical for critically low heart rate", () => {
     expect(getVitalSeverity("heart_rate", 30)).toBe("critical");
   });
+
+  // Age-aware severity (#1253) — parity with isCriticalVital/validateVital.
+  // Without the age argument the function preserves the existing adult-only
+  // behaviour; passing ageYears routes through the same age-stratified
+  // threshold table used by getVitalRangeForAge.
+
+  it("uses adult thresholds when no age is provided (HR 150 → null)", () => {
+    expect(getVitalSeverity("heart_rate", 150)).toBeNull();
+  });
+
+  it("flags HR 150 as critical for a toddler (age 2)", () => {
+    expect(getVitalSeverity("heart_rate", 150, 2)).toBe("critical");
+  });
+
+  it("does not flag HR 120 as critical for a toddler (age 2)", () => {
+    expect(getVitalSeverity("heart_rate", 120, 2)).toBeNull();
+  });
+
+  it("flags HR 165 as critical for a neonate (age 0.01)", () => {
+    expect(getVitalSeverity("heart_rate", 165, 0.01)).toBe("critical");
+  });
+
+  it("flags low SBP for a school-age child where the same value is only a warning for adults", () => {
+    // Adult: SBP 80 → warning (warningLow 90, criticalLow 55)
+    // School-age (age 8): SBP 80 → critical (criticalLow 85)
+    expect(getVitalSeverity("blood_pressure", 80)).toBe("warning");
+    expect(getVitalSeverity("blood_pressure", 80, 8)).toBe("critical");
+  });
+
+  it("returns null for an adolescent HR that is normal for age (HR 70, age 15)", () => {
+    // Adolescent criticalLow 60, criticalHigh 100 — 70 is normal.
+    expect(getVitalSeverity("heart_rate", 70, 15)).toBeNull();
+  });
+
+  it("falls back to adult range for vitals with no pediatric band", () => {
+    // blood_glucose has no pediatric override → adult criticalLow 54 applies.
+    expect(getVitalSeverity("blood_glucose", 45, 3)).toBe("critical");
+  });
+
+  it("uses adult thresholds for age 25 (HR 150 → null)", () => {
+    expect(getVitalSeverity("heart_rate", 150, 25)).toBeNull();
+  });
 });
 
 // ─── classifyAgeGroup ──────────────────────────────────────────

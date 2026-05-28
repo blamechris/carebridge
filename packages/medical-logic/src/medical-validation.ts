@@ -538,12 +538,26 @@ export function isCriticalVital(
   return false;
 }
 
-/** Return severity level for a vital value: "critical", "warning", or null if normal */
+/**
+ * Return severity level for a vital value: "critical", "warning", or null if normal.
+ *
+ * When `ageYears` is provided, age-appropriate pediatric thresholds are used
+ * (same age-stratified table as {@link isCriticalVital} and
+ * {@link validateVital}). When omitted, adult thresholds apply — preserving
+ * backwards compatibility with callers that have no age context.
+ *
+ * Issue #1253: the three severity entrypoints (`isCriticalVital`,
+ * `validateVital`, `getVitalSeverity`) now share the same age-stratified
+ * threshold lookup so a pediatric patient with a value that is normal for
+ * their age cannot be flagged "high severity" by one entrypoint while the
+ * others correctly classify it as normal.
+ */
 export function getVitalSeverity(
   type: VitalType,
-  value: number
+  value: number,
+  ageYears?: number | undefined,
 ): "critical" | "warning" | null {
-  const range = VITAL_DANGER_ZONES[type];
+  const range = getVitalRangeForAge(type, ageYears);
   if (!range) return null;
 
   if (range.criticalLow !== undefined && value <= range.criticalLow) return "critical";
