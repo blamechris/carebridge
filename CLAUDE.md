@@ -23,6 +23,13 @@ pnpm db:seed                  # Seed dev data (DVT scenario patient)
 pnpm dev                      # Start all services + apps
 ```
 
+`pnpm dev` runs `tsc --watch` for every workspace library package alongside
+`tsx watch` for each service. Editing `src/` in any `@carebridge/*` package
+rebuilds its `dist/` and the consuming service hot-reloads automatically.
+(If you ever see a fix that's on disk but isn't taking effect at runtime,
+check that the package's `dist/` mtime is newer than its `src/` — that
+contract being broken is the root cause #1264 was filed to prevent.)
+
 ## Monorepo Structure
 - `packages/` — Shared libraries (types, validators, medical-logic, db-schema, ai-prompts)
 - `services/` — Backend services (api-gateway, clinical-notes, ai-oversight, clinical-data, patient-records, auth, notifications, fhir-gateway)
