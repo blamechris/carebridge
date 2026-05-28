@@ -35,7 +35,7 @@ Scan for issues this PR should close. Check THREE sources:
 # Source 1: Issue numbers referenced in commit messages (#NNN)
 git log main..HEAD --format='%s %b' | grep -oE '#[0-9]+' | sort -u
 
-# Source 2: Issue numbers in branch name (e.g., feat/auth-rate-limit-434 → #434)
+# Source 2: Issue numbers in branch name (e.g., fix/auth-rate-limit-434 → #434)
 echo "$BRANCH" | grep -oE '[0-9]+' | while read num; do
   # Verify it's a real open issue
   gh issue view "$num" --json state,title -q 'select(.state == "OPEN") | "#\(.number // empty): \(.title // empty)"' 2>/dev/null
@@ -48,9 +48,13 @@ gh issue list --label "from-review" --state open --json number,title,body --limi
 
 **For each candidate issue:** Verify it's open and the PR's changes actually address it. Don't claim to close an issue the commits don't fix.
 
-Build the `CLOSES_LINES` list — one `Closes #N` per confirmed issue.
+Build the `CLOSES_LINES` list — one `Closes #N` per confirmed issue:
+```
+Closes #434
+Closes #447
+```
 
-If branch has commit messages referencing issues (`#NNN`) but NONE of those issues appear closable, **warn the user**.
+If branch has commit messages referencing issues (`#NNN`) but NONE of those issues appear closable, **warn the user**: "Commits reference #X but the issue is already closed / not found. Proceeding without Closes tags."
 
 ### 3. Draft PR Content
 
@@ -78,6 +82,8 @@ ${CLOSES_LINES}
 
 #### Batch Fix Template
 
+When closing multiple issues in one PR (common for from-review batches):
+
 ```markdown
 ## Summary
 
@@ -85,8 +91,9 @@ Brief overview of the batch.
 
 | Issue | What changed | Files |
 |-------|-------------|-------|
-| #434 | Added auth rate limiting | `services/auth/...` |
-| #447 | Added notification tests | `services/notifications/...` |
+| #434 | Added auth rate limiting | `ws-server.js` |
+| #447 | Added deploy rollback tests | `supervisor.test.js` |
+| #433 | Auto mode confirmation handshake | `ws-server.js`, `connection.ts`, `SettingsBar.tsx` |
 
 ${CLOSES_LINES}
 
@@ -98,7 +105,6 @@ ${CLOSES_LINES}
 ```
 
 **PR Title:** Keep under 70 characters. Use conventional commit format: `type(scope): summary`
-Branch naming: `feat/`, `fix/`, `refactor/`, `chore/`, `docs/` prefixes.
 
 For batch-fix PRs: `fix: batch from-review fixes (#N, #M, #P)` or similar.
 
@@ -113,7 +119,7 @@ Before creating the PR, show the user:
 
 Ask: "Ready to create this PR?" — wait for confirmation.
 
-**CRITICAL: Do NOT auto-create the PR without user confirmation.**
+**CRITICAL: Do NOT auto-create the PR without user confirmation.** The user may want to adjust the title, add context, or remove a Closes tag.
 
 ### 5. Push and Create PR
 
@@ -165,4 +171,4 @@ Then below the table:
 5. **Verify after creation** — Check that `closingIssuesReferences` matches expected issues.
 6. **Target main** — Always create PRs against `main` unless the user specifies otherwise.
 7. **Don't fabricate** — Only add `Closes #N` for issues the PR's changes actually address. If unsure, ask.
-<!-- skill-templates: create-pr manual-deploy 2026-04-10 -->
+<!-- skill-templates: create-pr 9652481 2026-05-27 -->

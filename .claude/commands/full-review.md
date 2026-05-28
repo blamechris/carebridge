@@ -1,6 +1,6 @@
 # /full-review
 
-Run a complete review pipeline: agent-review first, then check-pr. The agent-review pass provides thorough review while check-pr addresses any inline comments.
+Run a complete review pipeline: agent-review first, then check-pr. The agent-review pass naturally fills the ~4 minute Copilot review delay, so check-pr starts with comments already waiting.
 
 ## Arguments
 
@@ -10,7 +10,7 @@ Run a complete review pipeline: agent-review first, then check-pr. The agent-rev
 
 ### Phase 1: Agent Review
 
-Run the `/agent-review` skill on the PR. This is a deep expert review using the CareBridge Inspector persona that:
+Run the `/agent-review` skill on the PR. This is a deep expert review that:
 - Reads CLAUDE.md and the full PR diff
 - Reviews against project-specific code quality, architecture, and testing criteria
 - Posts a review comment on the PR
@@ -21,13 +21,13 @@ Run the `/agent-review` skill on the PR. This is a deep expert review using the 
 
 ### Phase 2: Check-PR
 
-After agent-review completes, run the `/check-pr` skill on the same PR. This skill:
-- Processes every review comment (human + agent-review findings if inline)
+After agent-review completes, run the `/check-pr` skill on the same PR. By now, Copilot review has typically arrived (~4 min). This skill:
+- Waits for Copilot review if still pending (Step 0 polling)
+- Processes every review comment (Copilot + human + agent-review findings if inline)
 - Fixes, dismisses, or defers each comment with inline replies
 - Pushes all fixes and verifies every thread has a reply
+- **Resolves every conversation thread via GraphQL** so branch protection's "conversations resolved" gate clears. Replies alone don't do this.
 - Cross-references fixes against open from-review issues
-
-No Copilot delay concern — Copilot review is not configured for this repo.
 
 **Capture the results:** comments processed, fixes committed, issues created/closed.
 
@@ -67,8 +67,9 @@ Then below the table:
 
 ## Execution Notes
 
-- **Sequential, not parallel.** Agent-review MUST complete before check-pr starts.
+- **Sequential, not parallel.** Agent-review MUST complete before check-pr starts. This is by design — the delay lets Copilot review arrive.
 - **Same branch.** Both skills operate on the same PR branch. Check-pr may commit fixes on top of the reviewed code.
 - **Deduplication.** If agent-review creates a follow-up issue and check-pr's fixes resolve it, close the issue in Phase 2 with a PR cross-reference.
-- **Attribution.** Follow Zero Attribution Policy throughout — no AI mentions in commits, replies, or issues.
-<!-- skill-templates: full-review manual-deploy 2026-04-10 -->
+- **Threads resolved before declaring done.** Check-pr's step 6b runs the GraphQL `resolveReviewThread` mutation for every thread. Without it, branch protection blocks merge silently — the user has to click "Resolve conversation" once per thread. If you skip this, full-review is not done; you've handed the user manual cleanup.
+- **Zero Attribution Policy.** Follow Zero Attribution Policy throughout — no AI mentions in commits, replies, or issues.
+<!-- skill-templates: full-review 9652481 2026-05-27 -->
