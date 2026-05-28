@@ -13,6 +13,7 @@
  * procedure name. See docs/fhir-licensing.md.
  */
 
+import { createLogger } from "@carebridge/logger";
 import type { procedures } from "@carebridge/db-schema";
 import type { FhirProcedure } from "../types/fhir-r4.js";
 import { US_CORE_PROCEDURE } from "./us-core-profiles.js";
@@ -22,8 +23,39 @@ type ProcedureRow = typeof procedures.$inferSelect;
 const CPT_SYSTEM = "http://www.ama-assn.org/go/cpt";
 const ICD10_CM_SYSTEM = "http://hl7.org/fhir/sid/icd-10-cm";
 
+const logger = createLogger("fhir-gateway");
+
 function isCptEmissionEnabled(): boolean {
   return process.env.FHIR_CPT_EMISSION_ENABLED === "true";
+}
+
+/**
+ * One-time-per-process operator breadcrumb for the AMA CPT licensing gate
+ * (#1251). When a procedure row carries a `cpt_code` but the gate is closed,
+ * the gateway silently falls back to the free-text procedure name. Without a
+ * log line this misconfig is undiagnosable in prod — operators can't tell
+ * whether their downstream consumer "doesn't see CPT codes" because no rows
+ * have one or because the env flag was set to "True" / "1" / "yes" instead
+ * of the literal "true" the gate requires.
+ *
+ * Intentionally:
+ *   - logged at most once per process (suppressionLoggedOnce latch)
+ *   - does NOT include the suppressed cpt_code value itself — the log
+ *     stream may have a different licensing posture than the FHIR bundle
+ *   - includes the env flag name so operators can connect log → env var
+ */
+let suppressionLoggedOnce = false;
+function noteCptSuppression(): void {
+  if (suppressionLoggedOnce) return;
+  suppressionLoggedOnce = true;
+  logger.info("CPT coding suppressed by licensing gate", {
+    flag: "FHIR_CPT_EMISSION_ENABLED",
+  });
+}
+
+/** Test-only: reset the one-shot latch so unit tests can re-trigger the log. */
+export function __resetCptSuppressionLogForTests(): void {
+  suppressionLoggedOnce = false;
 }
 
 /**
@@ -93,6 +125,11 @@ export function toFhirProcedure(
       text: procedure.name,
     };
   } else if (procedure.name) {
+    if (procedure.cpt_code) {
+      // cpt_code was present but the gate is closed — leave a one-shot
+      // breadcrumb for operators (#1251).
+      noteCptSuppression();
+    }
     resource.code = {
       text: procedure.name,
     };
