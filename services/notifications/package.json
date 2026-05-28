@@ -10,7 +10,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
-    "dev": "tsx watch src/server.ts",
+    "dev": "concurrently -n tsc,run -c blue,green \"tsc --watch --preserveWatchOutput\" \"tsx watch src/server.ts\"",
     "start": "node dist/server.js",
     "test": "vitest run"
   },
