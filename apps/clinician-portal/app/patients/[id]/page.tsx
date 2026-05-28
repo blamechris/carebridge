@@ -1015,6 +1015,14 @@ function PatientChartContent() {
                 <span>{patient.biological_sex}</span>
               </div>
             </div>
+            <div style={{ marginLeft: "auto" }}>
+              <Link
+                href={`/notes/new?patientId=${patientId}`}
+                className="btn btn-primary btn-sm"
+              >
+                + New Note
+              </Link>
+            </div>
           </div>
 
           <div className="tabs">
