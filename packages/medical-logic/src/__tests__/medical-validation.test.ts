@@ -276,6 +276,105 @@ describe("validateVital", () => {
       expect(result.warnings.some((w) => w.toLowerCase().includes("pulse pressure"))).toBe(false);
     });
   });
+
+  // ─── Age-aware severity bands (#1294) ──────────────────────────
+  // validateVital previously read VITAL_DANGER_ZONES directly for its
+  // critical/warning checks, so its severity classification disagreed
+  // with isCriticalVital and getVitalSeverity for pediatric patients.
+  // After #1294 it routes through getVitalRangeForAge so all three
+  // entrypoints share the same age-stratified threshold table.
+
+  describe("age-aware severity bands (#1294)", () => {
+    it("flags pediatric HR 150 as critically high for a toddler (age 2)", () => {
+      // Child criticalHigh 130 — 150 is critical.
+      // Adult criticalHigh 200 — 150 would be silent on adult thresholds.
+      const result = validateVital("heart_rate", 150, undefined, 2);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("critically high"))).toBe(true);
+    });
+
+    it("flags pediatric SBP 80 as critically low for a school-age child (age 8)", () => {
+      // School-age criticalLow 85 — 80 is critical.
+      // Adult criticalLow 55 — 80 would be silent on adult thresholds.
+      const result = validateVital("blood_pressure", 80, 60, 8);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("critically low"))).toBe(true);
+    });
+
+    it("flags HR 155 as critically high for an infant (age 0.5)", () => {
+      // Infant criticalHigh 150 — 155 is critical.
+      const result = validateVital("heart_rate", 155, undefined, 0.5);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("critically high"))).toBe(true);
+    });
+
+    it("flags RR 55 as critically high for an infant (age 0.5)", () => {
+      // Infant respiratory_rate criticalHigh 50 — 55 is critical.
+      const result = validateVital("respiratory_rate", 55, undefined, 0.5);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("critically high"))).toBe(true);
+    });
+
+    it("flags HR 165 as critically high for a neonate (age 0.01)", () => {
+      // Neonate criticalHigh 160 — 165 is critical.
+      const result = validateVital("heart_rate", 165, undefined, 0.01);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("critically high"))).toBe(true);
+    });
+
+    it("does not flag HR 150 as critically high for an adult (regression guard)", () => {
+      // Adult criticalHigh 200 — 150 should be silent.
+      const result = validateVital("heart_rate", 150, undefined, 30);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("critically high"))).toBe(false);
+    });
+
+    it("does not flag HR 150 as critically high when age is omitted (regression guard)", () => {
+      const result = validateVital("heart_rate", 150);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("critically high"))).toBe(false);
+    });
+
+    it("flags HR 210 as critically high for an adult (regression guard for adult thresholds)", () => {
+      // Adult criticalHigh 200 — 210 is critical.
+      const result = validateVital("heart_rate", 210, undefined, 35);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("critically high"))).toBe(true);
+    });
+
+    it("does not flag pediatric HR 120 as critical for a toddler (within child range)", () => {
+      // Child criticalLow 80, criticalHigh 130 — 120 is normal.
+      const result = validateVital("heart_rate", 120, undefined, 2);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("critically"))).toBe(false);
+    });
+
+    it("falls back to adult thresholds for vitals with no pediatric band (blood_glucose)", () => {
+      // blood_glucose has no pediatric override → adult criticalLow 54 applies.
+      const result = validateVital("blood_glucose", 45, undefined, 3);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("critically low"))).toBe(true);
+    });
+
+    it("preserves adult warningLow behaviour when age is omitted (blood_pressure)", () => {
+      // Adult warningLow 90 — SBP 85 is a warning, not critical (criticalLow 55).
+      const result = validateVital("blood_pressure", 85, 70);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("critically"))).toBe(false);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("low blood pressure"))).toBe(true);
+    });
+
+    // 18-year boundary — the easiest place to introduce a regression
+    // since classifyAgeGroup transitions adolescent → adult at exactly 18.
+
+    it("uses adolescent thresholds at age 17.99 (HR 105 → critical)", () => {
+      // Adolescent criticalHigh 100 — 105 is critical.
+      // Adult criticalHigh 200 — 105 would be silent if misclassified as adult.
+      const result = validateVital("heart_rate", 105, undefined, 17.99);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("critically high"))).toBe(true);
+    });
+
+    it("uses adult thresholds at age 18.01 (HR 105 → no warning)", () => {
+      // Adult criticalHigh 200 — 105 is normal.
+      const result = validateVital("heart_rate", 105, undefined, 18.01);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("critically"))).toBe(false);
+    });
+
+    it("uses adult thresholds at exact age 18 (HR 105 → no warning)", () => {
+      // classifyAgeGroup: age < 18 → adolescent, otherwise adult. Exact 18 → adult.
+      const result = validateVital("heart_rate", 105, undefined, 18);
+      expect(result.warnings.some((w) => w.toLowerCase().includes("critically"))).toBe(false);
+    });
+  });
 });
 
 // ─── validateMedicationDose ─────────────────────────────────────
@@ -1028,6 +1127,119 @@ describe("getVitalSeverity", () => {
 
   it("uses adult thresholds for age 25 (HR 150 → null)", () => {
     expect(getVitalSeverity("heart_rate", 150, 25)).toBeNull();
+  });
+
+  // ─── Pediatric edge-case coverage (#1295) ────────────────────
+  // Closes follow-up test gaps identified after #1290: infant band,
+  // 18-year boundary, suppressed pediatric warning tier, edge values.
+
+  // Infant band (1 month – 12 months): only neonate (0.01) and child (2)
+  // were covered. Infant has its own thresholds (HR criticalLow 100,
+  // criticalHigh 150) and was missing coverage.
+
+  it("flags HR 155 as critical for an infant (age 0.5)", () => {
+    // Infant criticalHigh 150 — 155 >= 150 → critical.
+    expect(getVitalSeverity("heart_rate", 155, 0.5)).toBe("critical");
+  });
+
+  it("flags HR 95 as critical for an infant (age 0.5, low end)", () => {
+    // Infant criticalLow 100 — 95 <= 100 → critical.
+    expect(getVitalSeverity("heart_rate", 95, 0.5)).toBe("critical");
+  });
+
+  it("does not flag HR 130 as critical for an infant (age 0.5, within range)", () => {
+    // Infant criticalLow 100, criticalHigh 150 — 130 is normal.
+    expect(getVitalSeverity("heart_rate", 130, 0.5)).toBeNull();
+  });
+
+  it("flags RR 55 as critical for an infant (age 0.5)", () => {
+    // Infant respiratory_rate criticalHigh 50 — 55 >= 50 → critical.
+    expect(getVitalSeverity("respiratory_rate", 55, 0.5)).toBe("critical");
+  });
+
+  // 18-year boundary — easiest place to introduce a regression because
+  // classifyAgeGroup transitions adolescent → adult at exactly 18.
+
+  it("uses adolescent thresholds at age 17.99 (HR 105 → critical)", () => {
+    // Adolescent criticalHigh 100 — 105 >= 100 → critical.
+    expect(getVitalSeverity("heart_rate", 105, 17.99)).toBe("critical");
+  });
+
+  it("uses adult thresholds at age 18.01 (HR 105 → null)", () => {
+    // Adult criticalHigh 200 — 105 is normal.
+    expect(getVitalSeverity("heart_rate", 105, 18.01)).toBeNull();
+  });
+
+  it("uses adult thresholds at exact age 18 (HR 105 → null)", () => {
+    // classifyAgeGroup uses `< 18` → adolescent, otherwise adult.
+    // Exact 18 should classify as adult.
+    expect(getVitalSeverity("heart_rate", 105, 18)).toBeNull();
+  });
+
+  // Suppressed warning tier in pediatric bands — PEDIATRIC_VITAL_RANGES
+  // entries have no warningLow/warningHigh so the warning band is
+  // silently suppressed for children (pediatric ranges are critical-only
+  // by design). Pin the intent with a regression-guard test so future
+  // edits do not accidentally promote a pediatric value into the
+  // warning tier — or accidentally re-add warning bands without
+  // updating these guards.
+
+  it("does not return warning for pediatric value just above critical (school-age HR 105)", () => {
+    // School-age criticalHigh 110 — 105 < 110, no warning band defined
+    // for this pediatric tier, so null (NOT warning) is the intended
+    // behaviour. Adult ranges expose a separate warning tier; pediatric
+    // ranges are critical-only.
+    expect(getVitalSeverity("heart_rate", 105, 8)).toBeNull();
+  });
+
+  it("does not return warning for pediatric SBP just above critical (school-age 88)", () => {
+    // School-age criticalLow 85, no warningLow defined — 88 > 85 → null.
+    expect(getVitalSeverity("blood_pressure", 88, 8)).toBeNull();
+  });
+
+  // Edge values — NaN value, NaN/Infinity/negative/0/130 age.
+  // classifyAgeGroup already falls back to "adult" for negative age
+  // (and by extension for NaN/Infinity since all comparisons are false),
+  // but the path through getVitalSeverity was untested.
+
+  it("returns null for NaN value (no comparison can be true)", () => {
+    // NaN >= criticalHigh and NaN <= criticalLow are both false, so the
+    // function returns null. Document this so a future edit doesn't
+    // accidentally promote NaN into a severity bucket.
+    expect(getVitalSeverity("heart_rate", NaN)).toBeNull();
+    expect(getVitalSeverity("heart_rate", NaN, 5)).toBeNull();
+  });
+
+  it("treats NaN age as unknown — falls back to adult thresholds", () => {
+    // classifyAgeGroup(NaN) → "adult" (all `<` comparisons return false).
+    // Same behaviour as omitting age entirely.
+    expect(getVitalSeverity("heart_rate", 150, NaN)).toBeNull();
+    expect(getVitalSeverity("heart_rate", 210, NaN)).toBe("critical");
+  });
+
+  it("treats Infinity age as adult", () => {
+    // classifyAgeGroup(Infinity) → "adult".
+    expect(getVitalSeverity("heart_rate", 150, Infinity)).toBeNull();
+    expect(getVitalSeverity("heart_rate", 210, Infinity)).toBe("critical");
+  });
+
+  it("treats negative age as adult (defensive fallback)", () => {
+    // classifyAgeGroup returns "adult" for negative input so that an
+    // upstream parsing bug can't accidentally apply pediatric thresholds.
+    expect(getVitalSeverity("heart_rate", 150, -5)).toBeNull();
+    expect(getVitalSeverity("heart_rate", 210, -5)).toBe("critical");
+  });
+
+  it("treats age 0 as neonate (smallest valid age)", () => {
+    // classifyAgeGroup uses `< 28/365.25` → neonate, including age 0.
+    // Neonate criticalHigh 160 — 165 >= 160 → critical.
+    expect(getVitalSeverity("heart_rate", 165, 0)).toBe("critical");
+  });
+
+  it("treats age 130 as adult (extreme upper bound)", () => {
+    // Plausible upper edge of human age — classifyAgeGroup returns "adult".
+    expect(getVitalSeverity("heart_rate", 150, 130)).toBeNull();
+    expect(getVitalSeverity("heart_rate", 210, 130)).toBe("critical");
   });
 });
 
