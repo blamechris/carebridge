@@ -12,7 +12,7 @@
     }
   },
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "concurrently -n tsc,run -c blue,green \"tsc --watch --preserveWatchOutput\" \"tsx watch src/server.ts\"",
     "start": "node dist/server.js",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
