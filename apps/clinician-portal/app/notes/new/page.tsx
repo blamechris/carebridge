@@ -155,6 +155,10 @@ function NewNoteContent() {
   const [patientId, setPatientId] = useState<string>(
     () => searchParams.get("patientId") ?? "",
   );
+  // Inline notice shown when a prefilled patientId is reconciled away
+  // because the loaded patient list doesn't contain it (deleted, no
+  // access, or malformed UUID). #1274.
+  const [patientPrefillNotice, setPatientPrefillNotice] = useState<string>("");
   const [sections, setSections] = useState<NoteSection[]>([]);
 
   const patientsQuery = trpc.patients.list.useQuery();
@@ -165,6 +169,20 @@ function NewNoteContent() {
       setSections(templateQuery.data as unknown as NoteSection[]);
     }
   }, [templateQuery.data]);
+
+  // Reconcile a prefilled patientId against the loaded patient list. If
+  // the id isn't present (deleted, not accessible, malformed), clear it
+  // and surface a small inline notice so the user picks again instead of
+  // submitting a value the server will 403. #1274.
+  useEffect(() => {
+    if (!patientsQuery.data || !patientId) return;
+    if (!patientsQuery.data.some((p) => p.id === patientId)) {
+      setPatientId("");
+      setPatientPrefillNotice(
+        "Patient not available — please pick another.",
+      );
+    }
+  }, [patientsQuery.data, patientId]);
 
   const createMutation = trpc.notes.create.useMutation({
     onSuccess: (note) => {
@@ -233,7 +251,10 @@ function NewNoteContent() {
               className="search-input"
               style={{ width: "100%" }}
               value={patientId}
-              onChange={(e) => setPatientId(e.target.value)}
+              onChange={(e) => {
+                setPatientId(e.target.value);
+                if (patientPrefillNotice) setPatientPrefillNotice("");
+              }}
               required
             >
               <option value="">Select a patient...</option>
@@ -243,6 +264,18 @@ function NewNoteContent() {
                 </option>
               ))}
             </select>
+            {patientPrefillNotice && (
+              <div
+                role="status"
+                style={{
+                  fontSize: 12,
+                  color: "var(--text-muted)",
+                  marginTop: 4,
+                }}
+              >
+                {patientPrefillNotice}
+              </div>
+            )}
           </div>
           <div className="detail-row" style={{ flexDirection: "column", gap: 4 }}>
             <label className="detail-label">Template</label>
