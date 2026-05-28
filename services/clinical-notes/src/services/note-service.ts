@@ -66,6 +66,65 @@ async function archiveVersion(params: {
 }
 
 /**
+ * Pull symptom-relevant fields out of a structured note for inclusion in
+ * the emitted clinical event. The ai-oversight worker's extractSymptoms()
+ * reads `chief_complaint`, `subjective`, and `new_symptoms` off the event
+ * payload to populate `ctx.new_symptoms` for cross-specialty rules like
+ * ONCO-VTE-NEURO-001. Without enrichment the payload is just `{resourceId}`
+ * and every note-triggered rule sees an empty symptom set (#1246).
+ *
+ * Field-key matching is template-agnostic — SOAP nests these inside a
+ * `subjective` section; H&P uses top-level `chief_complaint` / `hpi`
+ * sections. The first non-empty value wins for the string fields; ROS and
+ * `new_symptoms` arrays are concatenated.
+ */
+function extractSymptomFieldsFromSections(sections: NoteSection[]): {
+  chief_complaint?: string;
+  subjective?: string;
+  new_symptoms?: string[];
+} {
+  const out: {
+    chief_complaint?: string;
+    subjective?: string;
+    new_symptoms?: string[];
+  } = {};
+  const collectedSymptoms: string[] = [];
+
+  for (const section of sections) {
+    for (const field of section.fields ?? []) {
+      const value = field.value;
+      if (
+        field.key === "chief_complaint" &&
+        typeof value === "string" &&
+        value.trim().length > 0 &&
+        out.chief_complaint === undefined
+      ) {
+        out.chief_complaint = value;
+      } else if (
+        (field.key === "history_of_present_illness" || field.key === "hpi") &&
+        typeof value === "string" &&
+        value.trim().length > 0 &&
+        out.subjective === undefined
+      ) {
+        out.subjective = value;
+      } else if (
+        (field.key === "new_symptoms" || field.key === "ros") &&
+        Array.isArray(value)
+      ) {
+        for (const entry of value) {
+          if (typeof entry === "string" && entry.trim().length > 0) {
+            collectedSymptoms.push(entry);
+          }
+        }
+      }
+    }
+  }
+
+  if (collectedSymptoms.length > 0) out.new_symptoms = collectedSymptoms;
+  return out;
+}
+
+/**
  * Creates a new clinical note, persists it, and emits a "note.saved" event.
  */
 export async function createNote(input: CreateNoteInput): Promise<ClinicalNote> {
@@ -109,7 +168,10 @@ export async function createNote(input: CreateNoteInput): Promise<ClinicalNote> 
     patient_id: input.patient_id,
     provider_id: input.provider_id,
     timestamp: now,
-    data: { resourceId: id },
+    data: {
+      resourceId: id,
+      ...extractSymptomFieldsFromSections(input.sections),
+    },
   });
 
   return {
@@ -188,7 +250,11 @@ export async function updateNote(
     patient_id: existing.patient_id,
     provider_id: existing.provider_id,
     timestamp: now,
-    data: { resourceId: noteId, version: newVersion },
+    data: {
+      resourceId: noteId,
+      version: newVersion,
+      ...extractSymptomFieldsFromSections(input.sections),
+    },
   });
 
   return {

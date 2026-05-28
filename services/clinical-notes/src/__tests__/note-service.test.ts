@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createMockDb, type MockDb } from "@carebridge/test-utils";
+import type { NoteSection } from "@carebridge/shared-types";
 
 // ── Mock DB ──────────────────────────────────────────────────────
 // A single MockDb instance is recreated per test so queued results and call
@@ -168,6 +169,166 @@ describe("createNote", () => {
     expect(event.data.resourceId).toBe(result.id);
   });
 
+  it("enriches the note.saved payload with chief_complaint, HPI, and new_symptoms (#1246)", async () => {
+    // Realistic SOAP shape — the seed/DVT scenario writes sections like
+    // this. Before #1246's fix the publisher only sent resourceId, so
+    // ai-oversight's extractSymptoms() returned [] and ONCO-VTE-NEURO-001
+    // never fired.
+    const soapWithSymptoms: NoteSection[] = [
+      {
+        key: "subjective",
+        label: "Subjective",
+        fields: [
+          {
+            key: "chief_complaint",
+            label: "Chief Complaint",
+            value: "New onset headache x 3 days",
+            field_type: "text",
+            source: "new_entry",
+          },
+          {
+            key: "history_of_present_illness",
+            label: "History of Present Illness",
+            value: "Severe headache with left-arm weakness since this morning",
+            field_type: "textarea",
+            source: "new_entry",
+          },
+          {
+            key: "new_symptoms",
+            label: "New Symptoms",
+            value: ["headache", "numbness", "vision changes"],
+            field_type: "multiselect",
+            source: "new_entry",
+          },
+        ],
+      },
+    ];
+
+    await createNote({
+      patient_id: PATIENT_ID,
+      provider_id: PROVIDER_ID,
+      template_type: "soap",
+      sections: soapWithSymptoms,
+    });
+
+    const event = emitClinicalEvent.mock.calls[0][0];
+    expect(event.data.chief_complaint).toBe("New onset headache x 3 days");
+    expect(event.data.subjective).toBe(
+      "Severe headache with left-arm weakness since this morning",
+    );
+    expect(event.data.new_symptoms).toEqual([
+      "headache",
+      "numbness",
+      "vision changes",
+    ]);
+  });
+
+  it("omits symptom keys when the SOAP subjective section is empty", async () => {
+    // The publisher must NOT serialize `undefined` keys onto the event —
+    // downstream `extractSymptoms` does `if (event.data.new_symptoms &&
+    // Array.isArray(...))` and a stray undefined would not break it, but
+    // keeping the payload sparse mirrors the pre-#1246 shape for notes
+    // that genuinely have no symptom content.
+    const emptySoap: NoteSection[] = [
+      {
+        key: "subjective",
+        label: "Subjective",
+        fields: [
+          {
+            key: "chief_complaint",
+            label: "Chief Complaint",
+            value: null,
+            field_type: "text",
+            source: "new_entry",
+          },
+          {
+            key: "new_symptoms",
+            label: "New Symptoms",
+            value: [],
+            field_type: "multiselect",
+            source: "new_entry",
+          },
+        ],
+      },
+    ];
+
+    await createNote({
+      patient_id: PATIENT_ID,
+      provider_id: PROVIDER_ID,
+      template_type: "soap",
+      sections: emptySoap,
+    });
+
+    const event = emitClinicalEvent.mock.calls[0][0];
+    expect(event.data.chief_complaint).toBeUndefined();
+    expect(event.data.subjective).toBeUndefined();
+    expect(event.data.new_symptoms).toBeUndefined();
+  });
+
+  it("picks up H&P template fields (chief_complaint section + hpi key)", async () => {
+    // H&P puts chief_complaint and hpi at the top level (no enclosing
+    // 'subjective' section). Field-key matching must be section-agnostic
+    // so both templates emit the same payload shape.
+    const handpSections: NoteSection[] = [
+      {
+        key: "chief_complaint",
+        label: "Chief Complaint",
+        fields: [
+          {
+            key: "chief_complaint",
+            label: "Chief Complaint",
+            value: "Chest pain",
+            field_type: "text",
+            source: "new_entry",
+          },
+        ],
+      },
+      {
+        key: "hpi",
+        label: "History of Present Illness",
+        fields: [
+          {
+            key: "hpi",
+            label: "History of Present Illness",
+            value: "Substernal pressure for 2 hours, radiating to left arm",
+            field_type: "textarea",
+            source: "new_entry",
+          },
+        ],
+      },
+      {
+        key: "review_of_systems",
+        label: "Review of Systems",
+        fields: [
+          {
+            key: "ros",
+            label: "Review of Systems",
+            value: ["cardiovascular: chest pain", "neurological: numbness"],
+            field_type: "multiselect",
+            source: "new_entry",
+          },
+        ],
+      },
+    ];
+
+    await createNote({
+      patient_id: PATIENT_ID,
+      provider_id: PROVIDER_ID,
+      template_type: "h_and_p",
+      sections: handpSections,
+    });
+
+    const event = emitClinicalEvent.mock.calls[0][0];
+    expect(event.data.chief_complaint).toBe("Chest pain");
+    expect(event.data.subjective).toBe(
+      "Substernal pressure for 2 hours, radiating to left arm",
+    );
+    expect(event.data.new_symptoms).toEqual([
+      "cardiovascular: chest pain",
+      "neurological: numbness",
+    ]);
+  });
+
   it("sets encounter_id when provided", async () => {
     const result = await createNote({
       patient_id: PATIENT_ID,
@@ -236,6 +397,42 @@ describe("updateNote", () => {
     expect(event.type).toBe("note.saved");
     expect(event.data.version).toBe(4);
     expect(event.data.resourceId).toBe(NOTE_ID);
+  });
+
+  it("enriches the note.saved payload with symptom fields from the new sections (#1246)", async () => {
+    // Re-saving a draft with newly-added neurological symptoms should
+    // propagate them onto the event so ai-oversight can re-evaluate
+    // cross-specialty rules.
+    db.willSelect([existingRow]).willInsert().willUpdate([{ id: NOTE_ID }]);
+
+    const sectionsWithSymptoms: NoteSection[] = [
+      {
+        key: "subjective",
+        label: "Subjective",
+        fields: [
+          {
+            key: "chief_complaint",
+            label: "Chief Complaint",
+            value: "Sudden onset confusion",
+            field_type: "text",
+            source: "new_entry",
+          },
+          {
+            key: "new_symptoms",
+            label: "New Symptoms",
+            value: ["confusion", "speech difficulty"],
+            field_type: "multiselect",
+            source: "new_entry",
+          },
+        ],
+      },
+    ];
+
+    await updateNote(NOTE_ID, { sections: sectionsWithSymptoms });
+
+    const event = emitClinicalEvent.mock.calls[0][0];
+    expect(event.data.chief_complaint).toBe("Sudden onset confusion");
+    expect(event.data.new_symptoms).toEqual(["confusion", "speech difficulty"]);
   });
 
   it("succeeds when expectedVersion matches the current version", async () => {
