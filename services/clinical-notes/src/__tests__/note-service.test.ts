@@ -522,6 +522,10 @@ describe("signNote", () => {
     // natural flow for a quick visit. Before #1259's fix, this path emitted
     // a bare { resourceId, signedBy } payload and ai-oversight's
     // extractSymptoms returned [] — ONCO-VTE-NEURO-001 never fired.
+    //
+    // #1271: extend coverage to the `subjective` field (sourced from
+    // `history_of_present_illness` / `hpi`). Locks the payload shape so a
+    // regression to `{ resourceId, signedBy }`-only fails here.
     const signedDraftRow = {
       ...existingRow,
       sections: [
@@ -534,6 +538,13 @@ describe("signNote", () => {
               label: "Chief Complaint",
               value: "Headache with vision changes",
               field_type: "text",
+              source: "new_entry",
+            },
+            {
+              key: "history_of_present_illness",
+              label: "History of Present Illness",
+              value: "Throbbing headache x 2 days, blurred vision since AM",
+              field_type: "textarea",
               source: "new_entry",
             },
             {
@@ -552,7 +563,19 @@ describe("signNote", () => {
     await signNote(NOTE_ID, PROVIDER_ID);
 
     const event = emitClinicalEvent.mock.calls[0][0];
+    expect(event.data).toEqual(
+      expect.objectContaining({
+        resourceId: NOTE_ID,
+        signedBy: PROVIDER_ID,
+        chief_complaint: "Headache with vision changes",
+        subjective: "Throbbing headache x 2 days, blurred vision since AM",
+        new_symptoms: ["headache", "vision changes"],
+      }),
+    );
     expect(event.data.chief_complaint).toBe("Headache with vision changes");
+    expect(event.data.subjective).toBe(
+      "Throbbing headache x 2 days, blurred vision since AM",
+    );
     expect(event.data.new_symptoms).toEqual(["headache", "vision changes"]);
   });
 
@@ -928,6 +951,14 @@ describe("amendNote", () => {
     // via amendment is exactly the cross-specialty signal
     // ONCO-VTE-NEURO-001 exists to catch — but pre-#1260 the consumer's
     // extractSymptoms didn't even handle note.amended.
+    //
+    // #1271: this test also locks in `subjective` (sourced from an `hpi`
+    // or `history_of_present_illness` field). Unlike chief_complaint /
+    // new_symptoms, the `subjective` branch in ai-oversight's
+    // extractSymptoms is *gated* on event.type === "note.amended" — if
+    // that guard regresses, the symptom set the rule engine sees on
+    // amendments will silently shrink. Asserting the shape here (not
+    // just "extract was called") prevents that drift.
     db.willSelect([signedRow]);
 
     const amendedSections: NoteSection[] = [
@@ -940,6 +971,13 @@ describe("amendNote", () => {
             label: "Chief Complaint",
             value: "Now reporting numbness in left arm",
             field_type: "text",
+            source: "new_entry",
+          },
+          {
+            key: "history_of_present_illness",
+            label: "History of Present Illness",
+            value: "Sudden onset left-arm numbness this morning, no trauma",
+            field_type: "textarea",
             source: "new_entry",
           },
           {
@@ -956,8 +994,27 @@ describe("amendNote", () => {
     await amendNote(NOTE_ID, AMENDER_ID, amendedSections, AMEND_REASON);
 
     const event = emitClinicalEvent.mock.calls[0][0];
+    // Lock in payload SHAPE, not just key truthiness. A regression where
+    // extractSymptomFieldsFromSections degrades to `{ resourceId }` only
+    // (the pre-#1246/#1259/#1260 shape) would now fail this test even if
+    // the spread call itself still happens.
+    expect(event.data).toEqual(
+      expect.objectContaining({
+        resourceId: NOTE_ID,
+        amendedBy: AMENDER_ID,
+        reason: AMEND_REASON,
+        chief_complaint: "Now reporting numbness in left arm",
+        subjective: "Sudden onset left-arm numbness this morning, no trauma",
+        new_symptoms: ["numbness", "weakness"],
+      }),
+    );
+    // Belt-and-suspenders: explicit per-key assertions so a failure diff
+    // points at the specific missing field rather than the whole object.
     expect(event.data.chief_complaint).toBe(
       "Now reporting numbness in left arm",
+    );
+    expect(event.data.subjective).toBe(
+      "Sudden onset left-arm numbness this morning, no trauma",
     );
     expect(event.data.new_symptoms).toEqual(["numbness", "weakness"]);
   });
