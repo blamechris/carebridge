@@ -91,7 +91,9 @@ async function seed() {
       password_hash: devPasswordHash,
       name: "Demo Patient",
       role: "patient",
-      patient_id: dvtPatientId,
+      // patient_id is set by the deferred update below, after the patients
+      // row exists. Setting it here violates users_patient_id_fkey on a
+      // clean DB (#1245).
       is_active: true,
       created_at: now(),
       updated_at: now(),
