@@ -1023,9 +1023,15 @@ function extractSymptoms(event: ClinicalEvent): string[] {
   if (event.type === "vital.created" && event.data.notes) {
     symptoms.push(event.data.notes as string);
   }
-  // For note events, extract from sections if available
+  // For note events, extract from sections if available. note.amended is
+  // included because amendments are the only way to change content after a
+  // note is signed — a clinician adding "new onset headache + numbness" to a
+  // previously-signed note via amendment is exactly the cross-specialty
+  // signal ONCO-VTE-NEURO-001 exists to catch (#1260).
   if (
-    (event.type === "note.saved" || event.type === "note.signed") &&
+    (event.type === "note.saved" ||
+      event.type === "note.signed" ||
+      event.type === "note.amended") &&
     event.data.subjective &&
     typeof event.data.subjective === "string"
   ) {
