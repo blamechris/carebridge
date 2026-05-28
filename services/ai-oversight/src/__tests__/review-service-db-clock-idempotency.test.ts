@@ -245,4 +245,43 @@ describe("DB-clock interval derivation in idempotency probe", () => {
     // uses the constant directly.
     expect(Number.isInteger(IN_FLIGHT_WINDOW_SEC)).toBe(true);
   });
+
+  // Regression (#916, #1244, #1254): the in-flight cutoff predicate
+  // compares `review_jobs.created_at` (a `text` column) against a
+  // `timestamptz` cutoff. The fix at review-service.ts:163 is
+  //   gte(sql`${reviewJobs.created_at}::timestamptz`, inFlightCutoff)
+  // Asserting on the rendered template strings here scopes the
+  // regression check directly to the in-flight column-side cast —
+  // the captured sql template embeds `::timestamptz` immediately
+  // after the `reviewJobs.created_at` interpolation. If a future
+  // change moves the cast (e.g. onto the cutoff side) or drops it
+  // entirely from the in-flight predicate, this fails even if some
+  // other unrelated sql template adds `::timestamptz` elsewhere,
+  // because we also assert the embedded value is the
+  // `reviewJobs.created_at` column reference.
+  it("casts review_jobs.created_at to timestamptz on the in-flight predicate column side", async () => {
+    try {
+      await processReviewJob(makeEvent());
+    } catch {
+      // Downstream mocks may throw — we only care about the sql calls
+    }
+
+    // The template `sql\`${reviewJobs.created_at}::timestamptz\`` splits
+    // into strings = ["", "::timestamptz"] with values = [<column ref>].
+    // Under our mock, `reviewJobs.created_at` is the string "created_at".
+    const castCall = sqlTemplateCalls.find(
+      (call) =>
+        call.strings.length === 2 &&
+        call.strings[0] === "" &&
+        call.strings[1] === "::timestamptz" &&
+        call.values.length === 1 &&
+        call.values[0] === "created_at",
+    );
+    expect(
+      castCall,
+      "expected a sql template of shape `${reviewJobs.created_at}::timestamptz` — " +
+        "the in-flight column-side cast is missing, moved, or no longer " +
+        "bound to reviewJobs.created_at",
+    ).toBeDefined();
+  });
 });
