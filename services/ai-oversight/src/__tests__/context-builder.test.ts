@@ -554,6 +554,56 @@ describe("buildPatientContext — event-time snapshot (LLM path)", () => {
   });
 
   // ─── #515 — exclude logical retractions ────────────────────────────
+  // ─── #1270 — note.amended must produce a humanised event summary ───
+  it("summarises note.amended events with the amendment reason when present", async () => {
+    const amendedEvent: ClinicalEvent = {
+      id: "evt-amended-1",
+      type: "note.amended",
+      patient_id: "p-1",
+      timestamp: EVENT_AT,
+      data: {
+        resourceId: "note-1",
+        amendedBy: "u-1",
+        reason: "Added new onset headache + numbness",
+        previousVersion: 1,
+        newVersion: 2,
+      },
+    };
+
+    const ctx = await buildPatientContext("p-1", amendedEvent);
+
+    // Must NOT fall through to the generic "Clinical event: <type>" branch.
+    expect(ctx.triggering_event.summary).not.toBe(
+      "Clinical event: note.amended",
+    );
+    expect(ctx.triggering_event.summary).toContain("amended");
+    expect(ctx.triggering_event.summary).toContain(
+      "Added new onset headache + numbness",
+    );
+  });
+
+  it("summarises note.amended events without a reason as a bare humanised string", async () => {
+    const amendedEvent: ClinicalEvent = {
+      id: "evt-amended-2",
+      type: "note.amended",
+      patient_id: "p-1",
+      timestamp: EVENT_AT,
+      data: {
+        resourceId: "note-1",
+        amendedBy: "u-1",
+        previousVersion: 1,
+        newVersion: 2,
+      },
+    };
+
+    const ctx = await buildPatientContext("p-1", amendedEvent);
+
+    expect(ctx.triggering_event.summary).not.toBe(
+      "Clinical event: note.amended",
+    );
+    expect(ctx.triggering_event.summary).toBe("Clinical note amended");
+  });
+
   it("excludes a diagnosis with status=entered_in_error even when timestamps say active", async () => {
     diagnosesSelect.mockResolvedValue([
       {
