@@ -267,4 +267,36 @@ describe("processReviewJob — idempotency probe predicate shape", () => {
 
     expect(orMock).toHaveBeenCalled();
   });
+
+  // Regression — the in-flight cutoff is `NOW() - interval` (a
+  // `timestamp with time zone`), but `review_jobs.created_at` is a
+  // `text` column. Without an explicit cast on the column side, the
+  // query errors with `operator does not exist: text >= timestamp with
+  // time zone` and silently bricks every review job. Found during the
+  // post-Wave-8 smoke test (#916). The fix wraps the column reference
+  // in a `sql` template (the cast); this asserts the column side of
+  // the in-flight gte call is no longer the bare drizzle column.
+  it("wraps the in-flight cutoff column side in a sql template (timestamptz cast)", async () => {
+    const drizzle = await import("drizzle-orm");
+    const gteMock = vi.mocked(drizzle.gte);
+
+    try {
+      await processReviewJob(makeEvent({ id: "evt-probe-cutoff-shape" }));
+    } catch {
+      // Ignore downstream errors — we only care about the probe call.
+    }
+
+    // The dedup probe calls gte(<column-or-cast>, inFlightCutoff). The
+    // pre-fix code passed `reviewJobs.created_at` directly (a string
+    // identifier under our mock). The fix passes a sql template
+    // (our mock returns `{ __sql: true }`). Assert that at least one
+    // gte call's first argument is the sql-tagged object.
+    const sqlTaggedColumnCalls = gteMock.mock.calls.filter(
+      ([col]) =>
+        typeof col === "object" &&
+        col !== null &&
+        (col as { __sql?: boolean }).__sql === true,
+    );
+    expect(sqlTaggedColumnCalls.length).toBeGreaterThanOrEqual(1);
+  });
 });
