@@ -201,7 +201,10 @@ function NoteDetailContent() {
         <div className="detail-card">
           <div className="detail-card-title">Version History</div>
           {versions.map((v) => (
-            <div key={v.version} className="detail-row">
+            <div
+              key={`${v.version}-${v.lifecycle_event}-${v.saved_at}`}
+              className="detail-row"
+            >
               <span className="detail-label">v{v.version}</span>
               <span className="detail-value">
                 {formatDate(v.saved_at)} — {v.saved_by}
