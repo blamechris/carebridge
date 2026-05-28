@@ -51,8 +51,18 @@ const { persistEncounter, persistCondition, persistAllergy } = await import(
   "../sync/persistence.js"
 );
 
+// Marker prefix used on seeded patient.id so beforeEach can scope its DELETE
+// to rows this test owns (#1298). Encounters, diagnoses, allergies and
+// fhir_resources all carry patient_id, so the prefix flows transitively to
+// every dependent row. Replaces the older `LIKE '%'` cleanup which
+// blast-deleted every row in those tables — including parallel int tests'
+// state.
+const TEST_ROW_MARKER = "test-epic-1298-";
+
 async function seedPatient(): Promise<string> {
-  const id = crypto.randomUUID();
+  // Prefix the UUID so beforeEach can identify rows owned by this file even
+  // if a previous run crashed mid-test and left state behind.
+  const id = `${TEST_ROW_MARKER}${crypto.randomUUID()}`;
   const now = new Date().toISOString();
   await getDb().insert(patients).values({
     id,
@@ -87,14 +97,26 @@ describe.skipIf(!TEST_URL)(
     });
 
     beforeEach(async () => {
-      // Targeted cleanup — leaves other tables alone so parallel int tests
-      // don't trample each other. fhir_resources references encounters /
-      // diagnoses / allergies indirectly via internal_record_id (no FK),
-      // so order matters only for the patient FK.
-      await getDb().execute(sql`DELETE FROM fhir_resources WHERE resource_type IN ('Encounter', 'Condition', 'AllergyIntolerance')`);
-      await getDb().execute(sql`DELETE FROM encounters WHERE patient_id LIKE '%'`);
-      await getDb().execute(sql`DELETE FROM diagnoses WHERE patient_id LIKE '%'`);
-      await getDb().execute(sql`DELETE FROM allergies WHERE patient_id LIKE '%'`);
+      // Targeted cleanup scoped to rows this test owns
+      // (patient_id LIKE 'test-epic-1298-%'). Parallel integration tests
+      // touching the same tables — or dev seed data sitting in the same
+      // DB — are never trampled (#1298). Order matters for the patient FK:
+      // fhir_resources/encounters/diagnoses/allergies first, patients last.
+      await getDb().execute(
+        sql`DELETE FROM fhir_resources WHERE patient_id LIKE ${TEST_ROW_MARKER + "%"}`,
+      );
+      await getDb().execute(
+        sql`DELETE FROM encounters WHERE patient_id LIKE ${TEST_ROW_MARKER + "%"}`,
+      );
+      await getDb().execute(
+        sql`DELETE FROM diagnoses WHERE patient_id LIKE ${TEST_ROW_MARKER + "%"}`,
+      );
+      await getDb().execute(
+        sql`DELETE FROM allergies WHERE patient_id LIKE ${TEST_ROW_MARKER + "%"}`,
+      );
+      await getDb().execute(
+        sql`DELETE FROM patients WHERE id LIKE ${TEST_ROW_MARKER + "%"}`,
+      );
     });
 
     it("persistEncounter writes source_system='epic' on insert", async () => {

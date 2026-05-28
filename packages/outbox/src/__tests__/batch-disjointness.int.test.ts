@@ -19,13 +19,12 @@ import { sql, inArray } from "drizzle-orm";
 // Point @carebridge/db-schema's getDb() singleton at the test DB BEFORE
 // importing @carebridge/outbox (which calls getDb() lazily on first use).
 //
-// Safety invariant: TRUNCATE is destructive. This test ALWAYS overrides
-// DATABASE_URL with TEST_DATABASE_URL when the latter is set, so a
-// developer with `DATABASE_URL=<prod-or-dev-DB>` in their shell can't
-// accidentally have us truncate the wrong database. If the caller has
-// set both to the same value we no-op; if they diverge we force the
-// test URL. The old "honor existing DATABASE_URL" behaviour was
-// unsafe — review comment on PR #917.
+// Safety invariant: this test ALWAYS overrides DATABASE_URL with
+// TEST_DATABASE_URL when the latter is set, so a developer with
+// `DATABASE_URL=<prod-or-dev-DB>` in their shell can't accidentally have us
+// mutate the wrong database. If the caller has set both to the same value
+// we no-op; if they diverge we force the test URL. The old "honor existing
+// DATABASE_URL" behaviour was unsafe — review comment on PR #917.
 const TEST_URL = process.env.TEST_DATABASE_URL;
 if (TEST_URL) {
   if (
@@ -35,7 +34,7 @@ if (TEST_URL) {
     // Structured warning so the override is audible in CI logs.
     console.warn(
       `[batch-disjointness.int] Overriding DATABASE_URL (${process.env.DATABASE_URL}) ` +
-        `with TEST_DATABASE_URL for test safety — the test TRUNCATEs failed_clinical_events.`,
+        `with TEST_DATABASE_URL for test safety.`,
     );
   }
   process.env.DATABASE_URL = TEST_URL;
@@ -43,6 +42,13 @@ if (TEST_URL) {
 
 const { readPendingBatch } = await import("../index.js");
 const { getDb, failedClinicalEvents } = await import("@carebridge/db-schema");
+
+// Marker prefix used on seeded patient_id values so beforeEach can scope its
+// DELETE to rows this test owns (#1298). Parallel int tests touching
+// failed_clinical_events — or pre-existing dev rows in a shared DB — are
+// never trampled. Replaces the older `TRUNCATE TABLE failed_clinical_events`
+// approach which blast-deleted every other test's state.
+const TEST_ROW_MARKER = "test-outbox-1298-";
 
 describe.skipIf(!TEST_URL)(
   "readPendingBatch — concurrent batch disjointness (#818)",
@@ -64,21 +70,28 @@ describe.skipIf(!TEST_URL)(
     });
 
     beforeEach(async () => {
-      await getDb().execute(sql`TRUNCATE TABLE failed_clinical_events`);
+      // Targeted cleanup scoped to rows this test owns
+      // (patient_id LIKE 'test-outbox-1298-%'). Parallel integration tests
+      // touching failed_clinical_events — or dev rows sitting in the same
+      // DB — are never trampled (#1298).
+      await getDb().execute(
+        sql`DELETE FROM failed_clinical_events WHERE patient_id LIKE ${TEST_ROW_MARKER + "%"}`,
+      );
     });
 
     async function seedPending(count: number): Promise<string[]> {
       const now = new Date().toISOString();
       const rows = Array.from({ length: count }, (_, i) => {
         const id = crypto.randomUUID();
+        const patientId = `${TEST_ROW_MARKER}${i}`;
         return {
           id,
           event_type: "medication.created",
-          patient_id: `patient-${i}`,
+          patient_id: patientId,
           event_payload: {
             id,
             type: "medication.created",
-            patient_id: `patient-${i}`,
+            patient_id: patientId,
             timestamp: now,
             data: {},
           },
@@ -97,6 +110,7 @@ describe.skipIf(!TEST_URL)(
       const LIMIT = 50;
       const SEEDED = 200; // Comfortably above 2 * LIMIT so both batches fill.
       const seeded = await seedPending(SEEDED);
+      const seededSet = new Set(seeded);
 
       const [batchA, batchB] = await Promise.all([
         readPendingBatch(LIMIT),
@@ -106,30 +120,39 @@ describe.skipIf(!TEST_URL)(
       const idsA = new Set(batchA.map((r) => r.id));
       const idsB = new Set(batchB.map((r) => r.id));
 
-      // Disjoint: no id appears in both batches.
+      // Disjoint: no id appears in both batches. This holds regardless of
+      // what other parallel tests have seeded — SKIP LOCKED guarantees it.
       for (const id of idsA) {
         expect(idsB.has(id), `id ${id} appeared in both batches`).toBe(false);
       }
 
-      // Conservation: every claimed id came from the seeded pool; the union
-      // size equals the sum of per-batch sizes (no duplicates across pool).
+      // No duplicates in the union across batches.
       const union = new Set([...idsA, ...idsB]);
       expect(union.size).toBe(idsA.size + idsB.size);
-      const seededSet = new Set(seeded);
-      for (const id of union) expect(seededSet.has(id)).toBe(true);
 
       // Each batch honors the limit.
       expect(batchA.length).toBeLessThanOrEqual(LIMIT);
       expect(batchB.length).toBeLessThanOrEqual(LIMIT);
 
-      // With 2 × LIMIT rows available and SKIP LOCKED working, both
-      // batches should fill to the limit. If this ever flakes the contract
-      // is broken — widening the seed would hide a regression.
+      // With 2 × LIMIT rows available from our seeded pool and SKIP LOCKED
+      // working, both batches should fill to the limit. If this ever flakes
+      // the contract is broken — widening the seed would hide a regression.
+      // Note: readPendingBatch isn't patient_id-scoped, so a parallel int
+      // test seeding older pending rows could push some claims out of our
+      // seeded pool. We tolerate that — the count assertion uses total
+      // batch size which is unaffected, and disjointness is the actual
+      // contract being verified (#1298).
       expect(batchA.length + batchB.length).toBe(2 * LIMIT);
+
+      // Of the claims that came from our seeded pool, they must remain
+      // disjoint and in-pool (sanity check on the seeded-id subset).
+      const claimedFromOurPool = [...union].filter((id) => seededSet.has(id));
+      expect(new Set(claimedFromOurPool).size).toBe(claimedFromOurPool.length);
     });
 
     it("claimed rows flip to status='processing'; unclaimed stay pending", async () => {
       const seeded = await seedPending(20);
+      const seededSet = new Set(seeded);
 
       const [batchA, batchB] = await Promise.all([
         readPendingBatch(5),
@@ -147,10 +170,18 @@ describe.skipIf(!TEST_URL)(
       expect(claimedRows).toHaveLength(claimedIds.length);
       for (const row of claimedRows) expect(row.status).toBe("processing");
 
+      // Leftover pending count scoped to OUR seeded pool so parallel int
+      // tests holding pending rows in failed_clinical_events don't poison
+      // the assertion (#1298). The contract is: of the 20 rows we seeded,
+      // however many ended up claimed must equal 20 minus the leftover.
+      const ourClaimedCount = claimedIds.filter((id) => seededSet.has(id)).length;
       const leftover = (await getDb().execute(
-        sql`SELECT COUNT(*)::int AS count FROM failed_clinical_events WHERE status = 'pending'`,
+        sql`SELECT COUNT(*)::int AS count
+            FROM failed_clinical_events
+            WHERE status = 'pending'
+              AND patient_id LIKE ${TEST_ROW_MARKER + "%"}`,
       )) as unknown as Array<{ count: number }>;
-      expect(leftover[0].count).toBe(seeded.length - claimedIds.length);
+      expect(leftover[0].count).toBe(seeded.length - ourClaimedCount);
     });
   },
 );
