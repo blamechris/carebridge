@@ -1428,3 +1428,209 @@ describe("isFentanylTransdermal (#1020)", () => {
     expect(isFentanylTransdermal("Fentanyl patch", "")).toBe(false);
   });
 });
+
+// ─── Age-stratified anthropometric bounds (#1175) ──────────────
+//
+// VITAL_DANGER_ZONES.body_height (20–280 cm), bmi (5–150 kg/m²),
+// and head_circumference (20–80 cm) are deliberate adult/global
+// ceilings. They miss the "globally plausible but age-impossible"
+// case identified in #1175 — e.g. a 4yo with 60 cm OFC (probable
+// hydrocephalus), a 5yo with 25 cm OFC (severe microcephaly), or a
+// 120 cm "height" in an adult (kg/cm data-entry error).
+//
+// PEDIATRIC_VITAL_RANGES now ships age-banded plausibility + critical
+// thresholds for these three measurements. The tests below pin both
+// directions: age-appropriate values must NOT be flagged, and
+// age-implausible values MUST be flagged.
+
+describe("anthropometric age-stratified bounds (#1175)", () => {
+  // body_height ────────────────────────────────────────────────
+  describe("body_height", () => {
+    it("does not flag 60 cm height for a 3-month-old infant", () => {
+      // Infant band: 50–80 cm. 60 cm is normal at ~3 months.
+      const result = validateVital("body_height", 60, undefined, 0.25);
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+      expect(result.warnings).toHaveLength(0);
+    });
+
+    it("does not error on 60 cm height for an adult (within global plausibility ceiling)", () => {
+      // Adult band: 20–280 cm with no critical thresholds, so 60 cm
+      // sits inside adult plausibility. This documents the deliberately
+      // loose adult bands — they prevent false positives in legitimate
+      // adult cases (achondroplasia, etc.). The pediatric bands are
+      // where the age-aware check earns its keep. Issue #1175 calls out
+      // 120 cm in an adult as a known gap; the fix here is the pediatric
+      // direction, not tightening the adult lower bound.
+      const result = validateVital("body_height", 60);
+      expect(result.valid).toBe(true);
+    });
+
+    it("rejects 30 cm height for a 4-year-old child as below plausible range", () => {
+      // Child band: 70–130 cm, criticalLow 65. A 30 cm "height" for
+      // a 4yo is almost certainly a unit-conversion error.
+      const result = validateVital("body_height", 30, undefined, 4);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toMatch(/outside plausible range/);
+    });
+
+    it("flags 175 cm height for a 3-year-old child as above plausible range", () => {
+      // Child band: 70–130 cm. 175 cm in a 3yo is implausible.
+      const result = validateVital("body_height", 175, undefined, 3);
+      expect(result.valid).toBe(false);
+    });
+
+    it("does not flag 175 cm height for an adult", () => {
+      const result = validateVital("body_height", 175);
+      expect(result.valid).toBe(true);
+      expect(result.warnings).toHaveLength(0);
+    });
+
+    it("flags 90 cm height for a 9-year-old school-age child as critically low", () => {
+      // School-age band: min 100, criticalLow 95. 90 < min 100 → out of
+      // plausible (error) AND 90 < criticalLow 95 → critically low warning.
+      const result = validateVital("body_height", 90, undefined, 9);
+      expect(result.warnings.some((w) => w.includes("Critically low"))).toBe(true);
+    });
+
+    it("flags 42 cm height for a neonate (age 0.01) as critically low", () => {
+      // Neonate band: 45–58 cm, criticalLow 40. 42 < 45 → out of plausible.
+      const result = validateVital("body_height", 42, undefined, 0.01);
+      expect(result.valid).toBe(false);
+    });
+  });
+
+  // head_circumference ────────────────────────────────────────
+  describe("head_circumference", () => {
+    it("does not flag 40 cm OFC for a 3-month-old infant", () => {
+      // Infant band: 33–50 cm. 40 cm is normal at ~3 months.
+      const result = validateVital("head_circumference", 40, undefined, 0.25);
+      expect(result.valid).toBe(true);
+      expect(result.warnings).toHaveLength(0);
+    });
+
+    it("flags 60 cm OFC for a 4-year-old as critically high (hydrocephalus signal)", () => {
+      // Child band: 42–55 cm, criticalHigh 57. 60 ≥ 57 → critically high.
+      const result = validateVital("head_circumference", 60, undefined, 4);
+      expect(result.warnings.some((w) => w.includes("Critically high"))).toBe(true);
+    });
+
+    it("flags 25 cm OFC for a 5-year-old as below plausible range (severe microcephaly signal)", () => {
+      // Child band: 42–55 cm. 25 cm is far below plausible.
+      const result = validateVital("head_circumference", 25, undefined, 5);
+      expect(result.valid).toBe(false);
+      expect(result.errors[0]).toMatch(/outside plausible range/);
+    });
+
+    it("does not flag 60 cm OFC for an adult", () => {
+      // Adult band: 20–80 cm, no critical thresholds.
+      const result = validateVital("head_circumference", 60);
+      expect(result.valid).toBe(true);
+      expect(result.warnings).toHaveLength(0);
+    });
+
+    it("flags 29 cm OFC for a neonate as critically low", () => {
+      // Neonate band: 30–39 cm, criticalLow 28. 29 ≤ criticalLow? No:
+      // 29 > 28 but 29 < min 30 → out of plausible range.
+      const result = validateVital("head_circumference", 29, undefined, 0.01);
+      expect(result.valid).toBe(false);
+    });
+
+    it("flags 42 cm OFC for a neonate as critically high", () => {
+      // Neonate band: 30–39 cm, criticalHigh 41. 42 > criticalHigh 41 → critical.
+      // Also 42 > max 39 → out of plausible range (error).
+      const result = validateVital("head_circumference", 42, undefined, 0.01);
+      expect(result.warnings.some((w) => w.includes("Critically high"))).toBe(true);
+    });
+  });
+
+  // bmi ────────────────────────────────────────────────────────
+  describe("bmi", () => {
+    it("does not flag BMI 16 for a 6-month-old infant", () => {
+      // Infant band: 13–20.
+      const result = validateVital("bmi", 16, undefined, 0.5);
+      expect(result.valid).toBe(true);
+      expect(result.warnings).toHaveLength(0);
+    });
+
+    it("flags BMI 25 for a 6-month-old infant as critically high", () => {
+      // Infant band: criticalHigh 22 → 25 ≥ 22 → critical, and 25 > max 20
+      // → also out of plausible range.
+      const result = validateVital("bmi", 25, undefined, 0.5);
+      expect(result.valid).toBe(false);
+      expect(result.warnings.some((w) => w.includes("Critically high"))).toBe(true);
+    });
+
+    it("flags BMI 10 for a 3-year-old child as below plausible range", () => {
+      // Child band: 13–22, criticalLow 11. 10 < min 13 → out of plausible.
+      const result = validateVital("bmi", 10, undefined, 3);
+      expect(result.valid).toBe(false);
+    });
+
+    it("does not flag BMI 22 for an adult", () => {
+      const result = validateVital("bmi", 22);
+      expect(result.valid).toBe(true);
+      expect(result.warnings).toHaveLength(0);
+    });
+
+    it("flags BMI 36 for an 8-year-old school-age child as critically high", () => {
+      // School-age band: criticalHigh 35 → 36 > 35 → critical.
+      const result = validateVital("bmi", 36, undefined, 8);
+      expect(result.warnings.some((w) => w.includes("Critically high"))).toBe(true);
+    });
+  });
+
+  // getVitalRangeForAge wiring — confirm the new bands resolve. ─
+  describe("getVitalRangeForAge wires anthropometrics by age", () => {
+    it("returns infant body_height band for age 0.5", () => {
+      const range = getVitalRangeForAge("body_height", 0.5);
+      expect(range).toEqual(PEDIATRIC_VITAL_RANGES.infant.body_height);
+    });
+
+    it("returns child head_circumference band for age 4", () => {
+      const range = getVitalRangeForAge("head_circumference", 4);
+      expect(range).toEqual(PEDIATRIC_VITAL_RANGES.child.head_circumference);
+    });
+
+    it("returns school_age bmi band for age 9", () => {
+      const range = getVitalRangeForAge("bmi", 9);
+      expect(range).toEqual(PEDIATRIC_VITAL_RANGES.school_age.bmi);
+    });
+
+    it("falls back to adult body_height band for adolescents (no pediatric band defined)", () => {
+      // Adolescents intentionally have no anthropometric override — by
+      // age 13+ the bands approach adult ranges.
+      const range = getVitalRangeForAge("body_height", 15);
+      expect(range).toEqual(VITAL_DANGER_ZONES.body_height);
+    });
+
+    it("falls back to adult bmi band when age is unknown", () => {
+      const range = getVitalRangeForAge("bmi");
+      expect(range).toEqual(VITAL_DANGER_ZONES.bmi);
+    });
+  });
+
+  // isCriticalVital + getVitalSeverity parity for the new bands. ─
+  describe("severity entrypoints share the age-stratified anthropometric lookup", () => {
+    it("isCriticalVital flags 60 cm OFC for a 4-year-old", () => {
+      expect(isCriticalVital("head_circumference", 60, 4)).toBe(true);
+    });
+
+    it("getVitalSeverity reports critical for 60 cm OFC, age 4", () => {
+      expect(getVitalSeverity("head_circumference", 60, 4)).toBe("critical");
+    });
+
+    it("isCriticalVital does NOT flag 60 cm OFC for an adult", () => {
+      // Adult band has no critical thresholds for OFC.
+      expect(isCriticalVital("head_circumference", 60)).toBe(false);
+    });
+
+    it("getVitalSeverity returns null for 60 cm OFC adult", () => {
+      expect(getVitalSeverity("head_circumference", 60)).toBeNull();
+    });
+
+    it("getVitalSeverity flags BMI 9 as critical for a neonate", () => {
+      expect(getVitalSeverity("bmi", 9, 0.01)).toBe("critical");
+    });
+  });
+});

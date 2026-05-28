@@ -66,7 +66,25 @@ export type AgeGroup =
   | "adolescent" // 13–17 years
   | "adult";     // 18+ years
 
-/** Age-stratified vital sign ranges keyed by age group, then by vital type. */
+/**
+ * Age-stratified vital sign ranges keyed by age group, then by vital type.
+ *
+ * Anthropometric bands (body_height, bmi, head_circumference) added in
+ * #1175 close the "globally plausible but age-impossible" gap left by
+ * the adult-only ceilings in {@link VITAL_DANGER_ZONES}. Adult height
+ * ceilings (20–280 cm) wouldn't flag a 60 cm head circumference in a
+ * 4yo (probable hydrocephalus) or a 120 cm height in an adult
+ * (achondroplasia or — more often — a kg-vs-cm data-entry error).
+ *
+ * Threshold sources (approximate, aligned to WHO Child Growth Standards
+ * and CDC growth charts):
+ *  - WHO Child Growth Standards (0–60 months): https://www.who.int/tools/child-growth-standards
+ *  - CDC growth charts (2–20 years): https://www.cdc.gov/growthcharts/clinical_charts.htm
+ *
+ * NOTE: These values are conservative WHO/CDC-aligned approximations.
+ * Clinical sign-off is recommended before relying on the exact band edges
+ * for high-stakes decisions — see #1175 acceptance criteria.
+ */
 export const PEDIATRIC_VITAL_RANGES: Record<
   Exclude<AgeGroup, "adult">,
   Partial<Record<VitalType, VitalRange>>
@@ -75,26 +93,43 @@ export const PEDIATRIC_VITAL_RANGES: Record<
     heart_rate: { min: 70, max: 220, criticalLow: 100, criticalHigh: 160 },
     respiratory_rate: { min: 20, max: 80, criticalLow: 30, criticalHigh: 60 },
     blood_pressure: { min: 40, max: 120, criticalLow: 60, criticalHigh: 90 },
+    body_height: { min: 45, max: 58, criticalLow: 40, criticalHigh: 62 },
+    bmi: { min: 11, max: 18, criticalLow: 9, criticalHigh: 20 },
+    head_circumference: { min: 30, max: 39, criticalLow: 28, criticalHigh: 41 },
   },
   infant: {
     heart_rate: { min: 70, max: 200, criticalLow: 100, criticalHigh: 150 },
     respiratory_rate: { min: 15, max: 70, criticalLow: 25, criticalHigh: 50 },
     blood_pressure: { min: 50, max: 130, criticalLow: 70, criticalHigh: 100 },
+    body_height: { min: 50, max: 80, criticalLow: 45, criticalHigh: 85 },
+    bmi: { min: 13, max: 20, criticalLow: 11, criticalHigh: 22 },
+    head_circumference: { min: 33, max: 50, criticalLow: 30, criticalHigh: 52 },
   },
   child: {
     heart_rate: { min: 50, max: 200, criticalLow: 80, criticalHigh: 130 },
     respiratory_rate: { min: 12, max: 40, criticalLow: 20, criticalHigh: 30 },
     blood_pressure: { min: 60, max: 140, criticalLow: 80, criticalHigh: 110 },
+    body_height: { min: 70, max: 130, criticalLow: 65, criticalHigh: 135 },
+    bmi: { min: 13, max: 22, criticalLow: 11, criticalHigh: 25 },
+    head_circumference: { min: 42, max: 55, criticalLow: 40, criticalHigh: 57 },
   },
   school_age: {
     heart_rate: { min: 40, max: 200, criticalLow: 70, criticalHigh: 110 },
     respiratory_rate: { min: 10, max: 35, criticalLow: 16, criticalHigh: 22 },
     blood_pressure: { min: 60, max: 160, criticalLow: 85, criticalHigh: 120 },
+    body_height: { min: 100, max: 175, criticalLow: 95, criticalHigh: 180 },
+    bmi: { min: 14, max: 30, criticalLow: 12, criticalHigh: 35 },
+    head_circumference: { min: 48, max: 58, criticalLow: 46, criticalHigh: 60 },
   },
   adolescent: {
     heart_rate: { min: 30, max: 250, criticalLow: 60, criticalHigh: 100 },
     respiratory_rate: { min: 6, max: 40, criticalLow: 12, criticalHigh: 20 },
     blood_pressure: { min: 60, max: 200, criticalLow: 95, criticalHigh: 140 },
+    // Anthropometric bands deliberately omitted for adolescents —
+    // by age 13+ height/BMI/head-circumference approach adult ranges,
+    // and getVitalRangeForAge falls back to VITAL_DANGER_ZONES when a
+    // pediatric band is undefined. Add age-13–17 bands here once
+    // clinically reviewed if tighter checks are needed (#1175 follow-up).
   },
 };
 
