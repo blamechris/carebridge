@@ -1,6 +1,18 @@
 import { describe, it, expect, vi } from "vitest";
 
-// Mock the workspace dependencies before importing the rules
+// Mock the workspace dependencies before importing the rules.
+//
+// Issue #1296: keep the `getVitalSeverity` / `isCriticalVital` /
+// `getVitalRangeForAge` mock signatures in lock-step with production
+// (`packages/medical-logic`). All three accept an optional `ageYears`
+// third argument. To prevent silent drift — where rules code starts
+// forwarding `ageYears` but the mock keeps using adult thresholds —
+// we route the severity mocks through `getVitalRangeForAge` (single
+// source of truth) and stash the last-seen `ageYears` on
+// `__mockVitalSeverityCalls` so tests can assert the contract.
+type SeverityCall = { type: string; value: number; ageYears: number | undefined };
+const __mockVitalSeverityCalls: SeverityCall[] = [];
+
 vi.mock("@carebridge/shared-types", () => ({
   COMMON_LAB_TESTS: {
     Potassium: { unit: "mEq/L", typical_low: 3.5, typical_high: 5.0 },
@@ -17,6 +29,13 @@ vi.mock("@carebridge/medical-logic", () => {
     blood_pressure: { min: 60, max: 250, criticalLow: 55, criticalHigh: 180, warningLow: 90 },
     blood_glucose: { min: 10, max: 800, criticalLow: 50, criticalHigh: 350, warningLow: 70, warningHigh: 250 },
   };
+  // Single source of truth for the age-aware zone lookup. The mock is
+  // adult-only by design (no pediatric branch), but it MUST honour the
+  // 3-arg shape so a future caller that forwards `ageYears` doesn't get
+  // its argument silently dropped on the floor.
+  const getVitalRangeForAge = (vitalType: string, _ageYears?: number) => {
+    return VITAL_DANGER_ZONES[vitalType] ?? { min: 0, max: 1000 };
+  };
   return {
     VITAL_DANGER_ZONES,
     DIASTOLIC_DANGER_ZONE: {
@@ -24,15 +43,16 @@ vi.mock("@carebridge/medical-logic", () => {
       criticalHigh: 120,
       warningHigh: 90,
     },
-    isCriticalVital: (type: string, value: number, _ageYears?: number) => {
-      const zone = VITAL_DANGER_ZONES[type];
+    isCriticalVital: (type: string, value: number, ageYears?: number) => {
+      const zone = getVitalRangeForAge(type, ageYears);
       if (!zone) return false;
       if (zone.criticalLow !== undefined && value <= zone.criticalLow) return true;
       if (zone.criticalHigh !== undefined && value >= zone.criticalHigh) return true;
       return false;
     },
-    getVitalSeverity: (type: string, value: number) => {
-      const zone = VITAL_DANGER_ZONES[type];
+    getVitalSeverity: (type: string, value: number, ageYears?: number) => {
+      __mockVitalSeverityCalls.push({ type, value, ageYears });
+      const zone = getVitalRangeForAge(type, ageYears);
       if (!zone) return null;
       if (zone.criticalLow !== undefined && value <= zone.criticalLow) return "critical";
       if (zone.criticalHigh !== undefined && value >= zone.criticalHigh) return "critical";
@@ -61,15 +81,14 @@ vi.mock("@carebridge/medical-logic", () => {
       if (diffMs < 0) return undefined;
       return diffMs / (365.25 * 24 * 60 * 60 * 1000);
     },
-    getVitalRangeForAge: (vitalType: string, _ageYears?: number) => {
-      return VITAL_DANGER_ZONES[vitalType] ?? { min: 0, max: 1000 };
-    },
+    getVitalRangeForAge,
   };
 });
 
 import { checkCriticalValues } from "../rules/critical-values.js";
 import { checkCrossSpecialtyPatterns, type PatientContext } from "../rules/cross-specialty.js";
 import { checkDrugInteractions } from "../rules/drug-interactions.js";
+import * as medicalLogic from "@carebridge/medical-logic";
 
 describe("checkCriticalValues", () => {
   it("flags critically high heart rate", () => {
@@ -965,5 +984,43 @@ describe("checkDrugInteractions", () => {
     const interaction = flags.find((f) => f.rule_id === "DI-MACROLIDE-STATIN-CRITICAL");
     expect(interaction!.notify_specialties).toContain("cardiology");
     expect(interaction!.notify_specialties).toContain("infectious_disease");
+  });
+});
+
+// ─── Issue #1296: mock signature contract ───────────────────────
+//
+// These tests pin the mock's arity to the production 3-arg shape
+// `(type, value, ageYears?)`. If PR #1290's `getVitalSeverity` ever
+// widens further (or a future caller starts forwarding `ageYears`
+// through the rules pipeline) and the mock silently drops the
+// argument, these tests will fail loudly instead of green-lighting
+// adult thresholds against a pediatric input.
+describe("mock signature contract (issue #1296)", () => {
+  it("getVitalSeverity mock declares the 3-arg production signature", () => {
+    // .length excludes parameters with defaults and trailing rest/optional
+    // markers, so a 2-arg mock would report 2 and a correct 3-arg mock
+    // (with the 3rd optional) also reports 2 — we therefore verify the
+    // call path forwards `ageYears` rather than relying on Function.length.
+    __mockVitalSeverityCalls.length = 0;
+    medicalLogic.getVitalSeverity("heart_rate" as never, 165, 0.5);
+    expect(__mockVitalSeverityCalls).toEqual([
+      { type: "heart_rate", value: 165, ageYears: 0.5 },
+    ]);
+  });
+
+  it("getVitalSeverity mock accepts the 2-arg call shape for backwards compatibility", () => {
+    __mockVitalSeverityCalls.length = 0;
+    medicalLogic.getVitalSeverity("heart_rate" as never, 210);
+    expect(__mockVitalSeverityCalls).toEqual([
+      { type: "heart_rate", value: 210, ageYears: undefined },
+    ]);
+  });
+
+  it("isCriticalVital mock honours the 3-arg shape", () => {
+    // Sanity: a value above the adult criticalHigh stays critical regardless
+    // of ageYears in this adult-only mock, but the call must not throw.
+    expect(medicalLogic.isCriticalVital("heart_rate" as never, 210, 30)).toBe(true);
+    expect(medicalLogic.isCriticalVital("heart_rate" as never, 72, 30)).toBe(false);
+    expect(medicalLogic.isCriticalVital("heart_rate" as never, 72)).toBe(false);
   });
 });
