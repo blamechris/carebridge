@@ -318,7 +318,11 @@ export async function signNote(
     patient_id: existing.patient_id,
     provider_id: existing.provider_id,
     timestamp: now,
-    data: { resourceId: noteId, signedBy },
+    data: {
+      resourceId: noteId,
+      signedBy,
+      ...extractSymptomFieldsFromSections(existing.sections as NoteSection[]),
+    },
   });
 
   return {
@@ -486,6 +490,7 @@ export async function amendNote(
       reason: reason.trim(),
       previousVersion: existing.version,
       newVersion,
+      ...extractSymptomFieldsFromSections(sections),
     },
   });
 

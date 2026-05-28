@@ -517,6 +517,45 @@ describe("signNote", () => {
     expect(event.data.resourceId).toBe(NOTE_ID);
   });
 
+  it("enriches the note.signed payload with symptom fields from sections (#1259)", async () => {
+    // Compose-and-sign in one shot (no intervening updateNote) is the
+    // natural flow for a quick visit. Before #1259's fix, this path emitted
+    // a bare { resourceId, signedBy } payload and ai-oversight's
+    // extractSymptoms returned [] — ONCO-VTE-NEURO-001 never fired.
+    const signedDraftRow = {
+      ...existingRow,
+      sections: [
+        {
+          key: "subjective",
+          label: "Subjective",
+          fields: [
+            {
+              key: "chief_complaint",
+              label: "Chief Complaint",
+              value: "Headache with vision changes",
+              field_type: "text",
+              source: "new_entry",
+            },
+            {
+              key: "new_symptoms",
+              label: "New Symptoms",
+              value: ["headache", "vision changes"],
+              field_type: "multiselect",
+              source: "new_entry",
+            },
+          ],
+        },
+      ],
+    };
+    db.willSelect([signedDraftRow]);
+
+    await signNote(NOTE_ID, PROVIDER_ID);
+
+    const event = emitClinicalEvent.mock.calls[0][0];
+    expect(event.data.chief_complaint).toBe("Headache with vision changes");
+    expect(event.data.new_symptoms).toEqual(["headache", "vision changes"]);
+  });
+
   it("throws when note is not found", async () => {
     db.willSelect([]);
 
@@ -859,6 +898,46 @@ describe("amendNote", () => {
     expect(event.data.resourceId).toBe(NOTE_ID);
     expect(event.data.amendedBy).toBe(AMENDER_ID);
     expect(event.data.reason).toBe(AMEND_REASON);
+  });
+
+  it("enriches the note.amended payload with symptom fields from the new sections (#1260)", async () => {
+    // Amendments are the only way to change a signed note. A clinician
+    // adding "new onset headache + numbness" to a previously-signed note
+    // via amendment is exactly the cross-specialty signal
+    // ONCO-VTE-NEURO-001 exists to catch — but pre-#1260 the consumer's
+    // extractSymptoms didn't even handle note.amended.
+    db.willSelect([signedRow]);
+
+    const amendedSections: NoteSection[] = [
+      {
+        key: "subjective",
+        label: "Subjective",
+        fields: [
+          {
+            key: "chief_complaint",
+            label: "Chief Complaint",
+            value: "Now reporting numbness in left arm",
+            field_type: "text",
+            source: "new_entry",
+          },
+          {
+            key: "new_symptoms",
+            label: "New Symptoms",
+            value: ["numbness", "weakness"],
+            field_type: "multiselect",
+            source: "new_entry",
+          },
+        ],
+      },
+    ];
+
+    await amendNote(NOTE_ID, AMENDER_ID, amendedSections, AMEND_REASON);
+
+    const event = emitClinicalEvent.mock.calls[0][0];
+    expect(event.data.chief_complaint).toBe(
+      "Now reporting numbness in left arm",
+    );
+    expect(event.data.new_symptoms).toEqual(["numbness", "weakness"]);
   });
 
   it("allows amending a cosigned note", async () => {
