@@ -46,9 +46,11 @@ Construct the issue body based on available context.
 
 Identified during review of PR #${SOURCE_PR}.
 
+{{If comment URL provided:}}
 **Review comment:** ${COMMENT_URL}
 
-**Location:** `${FILE_PATH}:${LINE_NUMBER}`
+{{If file/line can be extracted from comment:}}
+**Location:** \`${FILE_PATH}:${LINE_NUMBER}\`
 
 ## Description
 
@@ -85,15 +87,13 @@ if [ -n "$SOURCE_PR" ] || [ -n "$COMMENT_URL" ]; then
   LABELS="$LABELS,from-review"
 fi
 
-# No complexity labels configured for this repo
-
 # Add any extra --label flags
 for extra in "${EXTRA_LABELS[@]}"; do
   LABELS="$LABELS,$extra"
 done
 ```
 
-**Verify labels exist** before using them:
+**Verify labels exist** before using them. If a label doesn't exist in the repo, skip it rather than failing:
 
 ```bash
 # Check if label exists
@@ -125,7 +125,7 @@ Output a **summary table** — this is the PRIMARY output:
 ```markdown
 | Issue | Title | Labels | Source |
 |-------|-------|--------|--------|
-| #${ISSUE_NUM} | ${ISSUE_TITLE} | from-review, enhancement | PR #${SOURCE_PR} |
+| #${ISSUE_NUM} | ${ISSUE_TITLE} | from-review | PR #${SOURCE_PR} |
 ```
 
 Then below the table:
@@ -142,4 +142,4 @@ Then below the table:
 4. **Be specific** — The issue description must be self-contained. Another developer should understand it without reading the review thread.
 5. **Always include acceptance criteria** — Even if just one checkbox. Issues without criteria are hard to close confidently.
 6. **Link to source** — If from a review, always include the PR number and comment URL in the body.
-<!-- skill-templates: create-issue manual-deploy 2026-04-10 -->
+<!-- skill-templates: create-issue b194666 2026-05-28 -->
