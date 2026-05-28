@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { toFhirProcedure } from "../generators/procedure.js";
 
 type Procedure = Parameters<typeof toFhirProcedure>[0];
@@ -47,7 +47,20 @@ describe("toFhirProcedure (#387)", () => {
     }
   });
 
-  describe("code / CPT coding", () => {
+  describe("code / CPT coding (FHIR_CPT_EMISSION_ENABLED=true)", () => {
+    let previous: string | undefined;
+    beforeEach(() => {
+      previous = process.env.FHIR_CPT_EMISSION_ENABLED;
+      process.env.FHIR_CPT_EMISSION_ENABLED = "true";
+    });
+    afterEach(() => {
+      if (previous === undefined) {
+        delete process.env.FHIR_CPT_EMISSION_ENABLED;
+      } else {
+        process.env.FHIR_CPT_EMISSION_ENABLED = previous;
+      }
+    });
+
     it("emits CPT coding when cpt_code is present", () => {
       const proc = toFhirProcedure(
         makeProcedure({ cpt_code: "44970", name: "Laparoscopic appendectomy" }),
@@ -67,6 +80,67 @@ describe("toFhirProcedure (#387)", () => {
       );
       expect(proc.code?.coding).toBeUndefined();
       expect(proc.code?.text).toBe("Wound dressing change");
+    });
+  });
+
+  // AMA CPT licensing gate (#939). Default behavior is "do not emit CPT
+  // codings" until the AMA license question is answered. The fhir-gateway
+  // still emits a useful Procedure.code via the free-text name.
+  describe("code / CPT licensing gate", () => {
+    let previous: string | undefined;
+    beforeEach(() => {
+      previous = process.env.FHIR_CPT_EMISSION_ENABLED;
+      delete process.env.FHIR_CPT_EMISSION_ENABLED;
+    });
+    afterEach(() => {
+      if (previous === undefined) {
+        delete process.env.FHIR_CPT_EMISSION_ENABLED;
+      } else {
+        process.env.FHIR_CPT_EMISSION_ENABLED = previous;
+      }
+    });
+
+    it("omits CPT coding when flag is unset (default), even when cpt_code present", () => {
+      const proc = toFhirProcedure(
+        makeProcedure({ cpt_code: "44970", name: "Laparoscopic appendectomy" }),
+        "pat1",
+      );
+      expect(proc.code?.coding).toBeUndefined();
+      expect(proc.code?.text).toBe("Laparoscopic appendectomy");
+    });
+
+    it("omits CPT coding when flag is explicitly 'false'", () => {
+      process.env.FHIR_CPT_EMISSION_ENABLED = "false";
+      const proc = toFhirProcedure(
+        makeProcedure({ cpt_code: "44970", name: "Laparoscopic appendectomy" }),
+        "pat1",
+      );
+      expect(proc.code?.coding).toBeUndefined();
+      expect(proc.code?.text).toBe("Laparoscopic appendectomy");
+    });
+
+    it("omits CPT coding when flag is a non-'true' truthy string", () => {
+      // Only the literal string "true" enables emission — anything else
+      // (including "1", "yes", "enabled") leaves the gate closed.
+      process.env.FHIR_CPT_EMISSION_ENABLED = "1";
+      const proc = toFhirProcedure(
+        makeProcedure({ cpt_code: "44970", name: "Laparoscopic appendectomy" }),
+        "pat1",
+      );
+      expect(proc.code?.coding).toBeUndefined();
+      expect(proc.code?.text).toBe("Laparoscopic appendectomy");
+    });
+
+    it("emits CPT coding when flag = 'true'", () => {
+      process.env.FHIR_CPT_EMISSION_ENABLED = "true";
+      const proc = toFhirProcedure(
+        makeProcedure({ cpt_code: "44970", name: "Laparoscopic appendectomy" }),
+        "pat1",
+      );
+      expect(proc.code?.coding?.[0]?.system).toBe(
+        "http://www.ama-assn.org/go/cpt",
+      );
+      expect(proc.code?.coding?.[0]?.code).toBe("44970");
     });
   });
 
