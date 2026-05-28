@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { trpc } from "@/lib/trpc";
 import { AuthGuard } from "@/lib/auth-guard";
 import { useAuth } from "@/lib/auth";
@@ -147,9 +147,14 @@ function FieldInput({
 
 function NewNoteContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user } = useAuth();
   const [templateType, setTemplateType] = useState<TemplateType>("soap");
-  const [patientId, setPatientId] = useState<string>("");
+  // Pre-fill the patient when arriving from a patient-chart "+ New Note"
+  // affordance (`/notes/new?patientId=...`). #1263.
+  const [patientId, setPatientId] = useState<string>(
+    () => searchParams.get("patientId") ?? "",
+  );
   const [sections, setSections] = useState<NoteSection[]>([]);
 
   const patientsQuery = trpc.patients.list.useQuery();
