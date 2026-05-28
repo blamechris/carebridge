@@ -11,6 +11,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  dev-concurrency-guard:
+    name: Dev Concurrency Guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check turbo --concurrency vs workspace dev tasks
+        run: node scripts/check-dev-concurrency.mjs
+
   typecheck:
     name: Typecheck
     runs-on: ubuntu-latest
