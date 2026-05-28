@@ -207,8 +207,22 @@ export interface ValidationResult {
 
 /**
  * Validate a vital sign value and return errors/warnings.
+ *
+ * When `ageYears` is provided, the plausibility range, critical/warning
+ * severity bands, and pulse-pressure thresholds are all routed through
+ * the age-stratified threshold table (same lookup as
+ * {@link isCriticalVital} and {@link getVitalSeverity}). When omitted,
+ * adult thresholds apply — preserving backwards compatibility with
+ * callers that have no age context.
+ *
+ * Issue #1294: validateVital previously read VITAL_DANGER_ZONES
+ * directly for its critical/warning checks even when ageYears was
+ * supplied, so a pediatric value flagged as critical by isCriticalVital
+ * and getVitalSeverity would slip through validateVital silently. All
+ * three entrypoints now share the same age-stratified threshold lookup.
+ *
  * @param ageYears - Optional patient age in years; when provided, uses
- *   age-appropriate pulse pressure thresholds for blood pressure validation.
+ *   age-appropriate ranges for severity bands AND pulse-pressure thresholds.
  */
 export function validateVital(
   type: VitalType,
@@ -218,7 +232,7 @@ export function validateVital(
 ): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
-  const range = VITAL_DANGER_ZONES[type];
+  const range = getVitalRangeForAge(type, ageYears);
 
   if (!range) return { valid: true, warnings: [], errors: [] };
 
