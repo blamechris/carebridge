@@ -80,7 +80,7 @@ import { createFlag } from "./flag-service.js";
  *     freshness window below (see IN_FLIGHT_WINDOW_MS).
  *   - `failed`: the pipeline threw before flag writes; a retry IS desired.
  */
-const TERMINAL_REVIEW_STATUSES: readonly string[] = [
+export const TERMINAL_REVIEW_STATUSES: readonly string[] = [
   "completed",
   "llm_timeout",
   "llm_error",

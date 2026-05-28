@@ -35,6 +35,10 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import crypto from "node:crypto";
 import { and, eq, gte, inArray, or, sql } from "drizzle-orm";
+import {
+  IN_FLIGHT_WINDOW_SEC,
+  TERMINAL_REVIEW_STATUSES,
+} from "../services/review-service.js";
 
 // Safety invariant identical to the other *.int.test.ts harnesses: force
 // DATABASE_URL to TEST_DATABASE_URL so a developer with DATABASE_URL pointing
@@ -62,12 +66,6 @@ if (TEST_URL && !process.env.PHI_ENCRYPTION_KEY) {
 
 const { getDb, patients, reviewJobs } = await import("@carebridge/db-schema");
 
-// Constants pulled from review-service.ts so the probe shape stays in sync
-// with the production query. If review-service.ts changes its window or
-// terminal-status set, update these together.
-const IN_FLIGHT_WINDOW_SEC = 150; // matches IN_FLIGHT_WINDOW_MS / 1000
-const TERMINAL_REVIEW_STATUSES = ["completed", "llm_timeout", "llm_error"];
-
 /**
  * Reconstruct the exact dedup probe query from
  * services/ai-oversight/src/services/review-service.ts lines 137-168.
@@ -92,7 +90,7 @@ async function runInFlightProbe(triggerEventId: string) {
       and(
         eq(reviewJobs.trigger_event_id, triggerEventId),
         or(
-          inArray(reviewJobs.status, TERMINAL_REVIEW_STATUSES),
+          inArray(reviewJobs.status, TERMINAL_REVIEW_STATUSES as string[]),
           and(
             eq(reviewJobs.status, "processing"),
             // The cast under test. Without `::timestamptz` on the column side
