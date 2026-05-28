@@ -276,6 +276,20 @@ describe("processReviewJob — idempotency probe predicate shape", () => {
   // post-Wave-8 smoke test (#916). The fix wraps the column reference
   // in a `sql` template (the cast); this asserts the column side of
   // the in-flight gte call is no longer the bare drizzle column.
+  //
+  // Precision (#1254): an earlier version of this test asserted only
+  // that *some* gte() call had a sql-tagged first argument. That
+  // caught the original regression but would also pass if a future
+  // change wrapped some other column (e.g. labResults.created_at)
+  // in `sql` for an unrelated reason while line 153 simultaneously
+  // regressed. To bind the assertion to the in-flight cutoff pair
+  // specifically, this test now requires a gte() call where BOTH
+  // arguments are sql-tagged: the in-flight gte() takes
+  // `sql\`${reviewJobs.created_at}::timestamptz\`` AND `inFlightCutoff`
+  // (itself a sql\`NOW() - ...\` template). The labResults gte() in
+  // buildPatientContextForRules calls gte(labResults.created_at,
+  // labCutoff) where labCutoff is a plain JS ISO string, so it can
+  // never match this both-sql-tagged shape.
   it("wraps the in-flight cutoff column side in a sql template (timestamptz cast)", async () => {
     const drizzle = await import("drizzle-orm");
     const gteMock = vi.mocked(drizzle.gte);
@@ -286,17 +300,32 @@ describe("processReviewJob — idempotency probe predicate shape", () => {
       // Ignore downstream errors — we only care about the probe call.
     }
 
-    // The dedup probe calls gte(<column-or-cast>, inFlightCutoff). The
-    // pre-fix code passed `reviewJobs.created_at` directly (a string
-    // identifier under our mock). The fix passes a sql template
-    // (our mock returns `{ __sql: true }`). Assert that at least one
-    // gte call's first argument is the sql-tagged object.
-    const sqlTaggedColumnCalls = gteMock.mock.calls.filter(
-      ([col]) =>
-        typeof col === "object" &&
-        col !== null &&
-        (col as { __sql?: boolean }).__sql === true,
+    const isSqlTagged = (v: unknown): v is { __sql: true } =>
+      typeof v === "object" &&
+      v !== null &&
+      (v as { __sql?: boolean }).__sql === true;
+
+    // Find the in-flight cutoff gte() call: BOTH args must be
+    // sql-tagged. This pair is unique to the dedup probe — the
+    // in-flight gte() passes `sql\`${reviewJobs.created_at}::timestamptz\``
+    // for the column side and `inFlightCutoff` (a sql\`NOW() - ...\`
+    // template) for the cutoff side. The labResults / allergies
+    // gte() calls in buildPatientContextForRules pass a bare drizzle
+    // column identifier and a plain JS ISO-string cutoff, neither
+    // of which is sql-tagged.
+    //
+    // For a deeper bind to the in-flight cutoff specifically (not
+    // just "two sql-tagged args anywhere"), see the partner test in
+    // `review-service-db-clock-idempotency.test.ts` which asserts on
+    // the rendered template `["", "::timestamptz"]` with value
+    // `reviewJobs.created_at`.
+    const inFlightCutoffCall = gteMock.mock.calls.find(
+      ([col, cutoff]) => isSqlTagged(col) && isSqlTagged(cutoff),
     );
-    expect(sqlTaggedColumnCalls.length).toBeGreaterThanOrEqual(1);
+    expect(
+      inFlightCutoffCall,
+      "expected gte(sql`...::timestamptz`, sql`NOW() - ...`) — " +
+        "in-flight cutoff column-side cast missing or moved",
+    ).toBeDefined();
   });
 });
