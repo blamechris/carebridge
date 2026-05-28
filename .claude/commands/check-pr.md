@@ -8,13 +8,45 @@ Address all PR review comments systematically and respond inline.
 
 ## Instructions
 
-### 0. Fetch Review State
+### 0. Wait for Automated Reviews
 
-No Copilot review is configured for this repository — skip all Copilot polling.
+Copilot review typically takes **3-5 minutes** after PR creation to even begin. If you run `/check-pr` immediately after creating the PR, the review won't exist yet.
+
+**IMPORTANT:** Do NOT skip this step. If no Copilot review exists and the PR was created recently (within 5 min), you MUST wait — otherwise you'll process zero comments and miss the entire review.
 
 ```bash
 PR_NUM=${1:-$(gh pr view --json number -q .number)}
 REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+
+# Check how old the PR is
+PR_AGE_SECONDS=$(gh pr view ${PR_NUM} --json createdAt \
+  --jq "((now - (.createdAt | fromdateiso8601)))")
+
+# Check Copilot review status
+COPILOT_STATUS=$(gh api repos/${REPO}/pulls/${PR_NUM}/reviews \
+  --jq '[.[] | select(.user.login == "copilot-pull-request-reviewer[bot]")] | if length == 0 then "NOT_FOUND" elif (.[0].state == "PENDING") then "IN_PROGRESS" else "COMPLETED" end')
+
+# If no review exists yet AND PR is less than 5 min old, wait for it to appear
+if [ "$COPILOT_STATUS" = "NOT_FOUND" ] && [ "${PR_AGE_SECONDS%.*}" -lt 300 ]; then
+  echo "PR is ${PR_AGE_SECONDS%.*}s old. Copilot review not yet started. Waiting (polls every 30s, max 5 min)..."
+  for i in $(seq 1 10); do
+    sleep 30
+    COPILOT_STATUS=$(gh api repos/${REPO}/pulls/${PR_NUM}/reviews \
+      --jq '[.[] | select(.user.login == "copilot-pull-request-reviewer[bot]")] | if length == 0 then "NOT_FOUND" elif (.[0].state == "PENDING") then "IN_PROGRESS" else "COMPLETED" end')
+    [ "$COPILOT_STATUS" != "NOT_FOUND" ] && echo "Copilot review detected (status: $COPILOT_STATUS)" && break
+  done
+fi
+
+# If review is in progress, wait for it to complete
+if [ "$COPILOT_STATUS" = "IN_PROGRESS" ]; then
+  echo "Copilot review in progress. Polling every 30s (max 5 min)..."
+  for i in $(seq 1 10); do
+    sleep 30
+    COPILOT_STATUS=$(gh api repos/${REPO}/pulls/${PR_NUM}/reviews \
+      --jq '[.[] | select(.user.login == "copilot-pull-request-reviewer[bot]")] | if length == 0 then "NOT_FOUND" elif (.[0].state == "PENDING") then "IN_PROGRESS" else "COMPLETED" end')
+    [ "$COPILOT_STATUS" != "IN_PROGRESS" ] && break
+  done
+fi
 ```
 
 ### 1. Fetch PR Info
@@ -56,7 +88,7 @@ Only process comments in `PENDING_COMMENTS`. If all comments already have replie
 
 ### 3. Process EVERY Pending Comment — ONE AT A TIME
 
-For each pending review comment (human reviewer), you MUST do ALL of these steps **before moving to the next comment**:
+For each pending review comment (Copilot or human), you MUST do ALL of these steps **before moving to the next comment**:
 
 1. Read the comment carefully
 2. Classify it into exactly ONE of the three valid outcomes below
@@ -69,7 +101,7 @@ For each pending review comment (human reviewer), you MUST do ALL of these steps
 **CRITICAL: There are ONLY THREE valid outcomes for each comment. Every comment MUST result in one of these:**
 
 1. **FIX** — Make the code change, commit, reply with commit hash + before/after code
-2. **FALSE POSITIVE** — Reply explaining why the suggestion is incorrect, with evidence (e.g., "per CLAUDE.md: TypeScript strict, ESM, functional style")
+2. **FALSE POSITIVE** — Reply explaining why the suggestion is incorrect, with evidence
 3. **FOLLOW-UP ISSUE** — Create a GitHub issue, reply with the issue URL
 
 **There is NO "acknowledge and move on" option.** If a suggestion is valid but out of scope, you MUST create a follow-up issue. Never reply with "good idea, maybe later" without an issue link.
@@ -109,9 +141,9 @@ Study these examples. Your replies must match this structure exactly.
 > **Reason:** The `remaining <= 0` in the dependency array is intentional — it acts as a boolean gate that prevents the effect from re-creating an interval once the countdown reaches zero.
 >
 > **Evidence:**
-> - per CLAUDE.md: TypeScript strict, ESM, functional style
 > - Without it, the effect would restart on every `expiresAt` change even after expiry
 > - Same pattern used in React docs for "run once then stop" effects
+> - The expression evaluates to a stable `true`/`false`, not a changing number
 
 #### Example: FOLLOW-UP ISSUE reply
 
@@ -167,8 +199,7 @@ gh api repos/${REPO}/pulls/${PR_NUM}/comments/${COMMENT_ID}/replies \
 
 **Evidence:**
 - per CLAUDE.md: TypeScript strict, ESM, functional style
-- Reference to docs/pattern used
-- Link to similar code in codebase"
+- Reference to similar code in codebase"
 ```
 
 ---
@@ -235,7 +266,7 @@ git push
 
 ### 5. Cross-Reference Fixes Against Open Issues
 
-After pushing fixes, check if any open `from-review` issues were resolved by the work in this PR. This commonly happens when review feedback addresses the same problem an agent-review issue was tracking.
+After pushing fixes, check if any open `from-review` issues were resolved by the work in this PR. This commonly happens when Copilot feedback addresses the same problem an agent-review issue was tracking.
 
 ```bash
 # List open from-review issues
@@ -267,6 +298,74 @@ echo "Root comments: ${ROOT_COUNT}, Replied: ${REPLIED_COUNT}"
 
 If `REPLIED_COUNT < ROOT_COUNT`, you have UNREPLIED comments. Go back to step 3 and post the missing inline replies BEFORE proceeding. **Do NOT post the summary comment until every thread has a reply.**
 
+### 6b. Resolve Conversation Threads
+
+**This step is MANDATORY whenever branch protection requires conversation resolution before merge.** Posting an inline reply does NOT auto-resolve the thread on GitHub — the REST `/replies` endpoint only adds a comment, leaving the thread state as `isResolved: false`. If you skip this step, the PR sits blocked at merge time even when every comment has a reply, every check is green, and the summary comment claims success. The user has to click "Resolve conversation" once per unresolved thread to unblock the merge. Don't make them.
+
+GraphQL is required here — REST doesn't expose thread state. Threads are GraphQL-only objects (`PRRT_*` IDs); the `resolveReviewThread` mutation needs the GraphQL node ID, not the REST `databaseId`.
+
+```bash
+# Fetch all unresolved review thread IDs (GraphQL — REST doesn't expose thread
+# state). --paginate auto-loops on pageInfo.hasNextPage so PRs with >100 threads
+# are fully covered; without it, threads on later pages stayed unresolved AND
+# unreported, so the resolve step silently appeared to succeed while the merge
+# gate stayed red. --jq runs per-page and outputs are concatenated, so we emit
+# one ID per line rather than building one mega-array across pages.
+THREAD_IDS=$(gh api graphql --paginate -f query="
+  query(\$endCursor: String) {
+    repository(owner: \"${REPO%/*}\", name: \"${REPO#*/}\") {
+      pullRequest(number: ${PR_NUM}) {
+        reviewThreads(first: 100, after: \$endCursor) {
+          nodes { id isResolved }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    }
+  }" --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .id')
+
+# Resolve each unresolved thread; surface any single-thread failure
+# instead of swallowing it (a 401/403 on one thread shouldn't be silent).
+echo "$THREAD_IDS" | while read -r tid; do
+  [ -z "$tid" ] && continue
+  gh api graphql -f query="
+    mutation {
+      resolveReviewThread(input: {threadId: \"$tid\"}) {
+        thread { isResolved }
+      }
+    }" --jq '.data.resolveReviewThread.thread | "  resolved: \(.isResolved)"' \
+    || echo "  FAILED to resolve: $tid"
+done
+
+# Verify zero unresolved threads remain. --paginate emits one length per page,
+# which we sum with awk so the count is correct on PRs with >100 threads. If
+# this stays nonzero, either the resolve loop failed on specific threads or new
+# threads landed mid-flight — re-run step 6b.
+UNRESOLVED=$(gh api graphql --paginate -f query="
+  query(\$endCursor: String) {
+    repository(owner: \"${REPO%/*}\", name: \"${REPO#*/}\") {
+      pullRequest(number: ${PR_NUM}) {
+        reviewThreads(first: 100, after: \$endCursor) {
+          nodes { isResolved }
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    }
+  }" --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length' \
+  | awk '{s+=$1} END {print s+0}')
+
+echo "Unresolved threads: ${UNRESOLVED}"
+[ "$UNRESOLVED" -eq 0 ] || { echo "FAIL: ${UNRESOLVED} threads still unresolved"; exit 1; }
+```
+
+**Pagination cap:** `gh api graphql --paginate` follows `pageInfo.hasNextPage` until exhausted — no implicit cap. On the rare PR with thousands of threads, GitHub's GraphQL rate limit (5000 points/hr) is the practical ceiling. If you see HTTP 403 with "API rate limit exceeded" from gh on step 6b, the resolve loop will short-circuit on the failing call and the verify will report nonzero — re-run after the rate limit window resets.
+
+**When to skip this step:** only if the repo's branch protection does NOT require conversation resolution AND you have explicit evidence (e.g., a memory/customization note) that unresolved threads are acceptable here. Default behavior is **always resolve**.
+
+**Edge cases:**
+- A thread you marked FALSE POSITIVE: still resolve it. The reply records the rationale; if a reviewer disagrees, they can re-open the thread.
+- A FOLLOW-UP ISSUE thread: still resolve it. The issue link in the reply is the paper trail; the conversation in the PR has served its purpose.
+- A FIX thread: resolve it after the fix commit lands and the reply with the commit SHA is posted.
+
 ### 7. Post Summary Comment
 
 After addressing ALL comments, post a summary on the PR. **Every row MUST have a commit hash or issue URL — no empty cells.**
@@ -279,7 +378,7 @@ gh pr comment ${PR_NUM} --body "$(cat <<'EOF'
 |---|---------|---------|-----------|
 | 1 | Comment 1 summary | FIX | `abc1234` |
 | 2 | Comment 2 summary | FALSE POSITIVE | Evidence: [brief] |
-| 3 | Comment 3 summary | FOLLOW-UP | [#456](https://github.com/OWNER/REPO/issues/456) |
+| 3 | Comment 3 summary | FOLLOW-UP | [#456](https://github.com/blamechris/carebridge/issues/456) |
 
 **Total:** X comments addressed
 - Fixed: Y (commit hashes above)
@@ -327,6 +426,29 @@ Then below the table, list:
 6. **FOLLOW-UP requires issue URL** — Never say "good idea" without creating an issue
 7. **Summary table has no empty cells** — Every row has a reference
 8. **Verify before summarizing** — Run the verification step (step 6) and confirm all threads have replies BEFORE posting the summary comment. If any are missing, go back and post them.
-9. **Idempotent** — Safe to re-run; already-replied comments are skipped (author-filtered)
-10. **No attribution** — Follow Zero Attribution Policy (no Co-Authored-By, no "Generated with Claude", no AI mentions anywhere)
-<!-- skill-templates: check-pr manual-deploy 2026-04-10 -->
+9. **Resolve every thread (step 6b)** — Posting a reply does NOT mark the thread resolved on GitHub. After replying to every thread, call the GraphQL `resolveReviewThread` mutation for each. Branch protection that requires conversation resolution will block merge otherwise — silently, from the user's perspective. Skip this only with explicit per-repo evidence that unresolved threads are acceptable.
+10. **Idempotent** — Safe to re-run; already-replied comments are skipped (author-filtered). Already-resolved threads are also skipped in step 6b.
+11. **No attribution** — Follow Zero Attribution Policy (no Co-Authored-By, no "Generated with Claude", no AI mentions anywhere)
+
+## Example Workflow
+
+```
+1. Run /check-pr 42
+2. Poll Copilot review... ready (state: COMPLETED)
+3. Fetch 5 comments, 2 already replied → 3 pending
+4. Comment A: "Missing null check on line 45"
+   → Outcome: FIX
+   → Commit fix, reply with **FIX** + hash + before/after diff
+5. Comment B: "This variable seems unused"
+   → Outcome: FALSE POSITIVE
+   → Reply with **FALSE POSITIVE** + evidence: "Used on line 78 in _process()"
+6. Comment C: "Add retry logic for network calls"
+   → Outcome: FOLLOW-UP ISSUE
+   → Create issue #99 with labels, reply with **FOLLOW-UP ISSUE** + URL
+7. Push fixes
+8. Verify all threads have replies (step 6)
+9. Resolve all conversation threads via GraphQL (step 6b)
+10. Post summary table (all Reference cells filled)
+11. Report to user
+```
+<!-- skill-templates: check-pr 97dfcd4 2026-05-28 -->
