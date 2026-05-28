@@ -575,6 +575,12 @@ export async function getNotesByPatient(patientId: string): Promise<ClinicalNote
 
 /**
  * Retrieves a single note by ID along with its version history.
+ *
+ * Versions are returned newest-first for UI consumers. Because signNote and
+ * cosignNote archive at the same `existing.version` (disambiguated only by
+ * lifecycle_event), `desc(version)` alone is non-deterministic for tied
+ * rows — `saved_at` is the monotonic tiebreaker that mirrors the canonical
+ * chronological ordering used by `getVersionHistory` (#1272).
  */
 export async function getNoteById(
   noteId: string,
@@ -593,7 +599,7 @@ export async function getNoteById(
     .select()
     .from(noteVersions)
     .where(eq(noteVersions.note_id, noteId))
-    .orderBy(desc(noteVersions.version));
+    .orderBy(desc(noteVersions.version), desc(noteVersions.saved_at));
 
   return {
     note: {
