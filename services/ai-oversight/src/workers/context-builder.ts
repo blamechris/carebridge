@@ -378,6 +378,20 @@ function buildEventSummary(event: ClinicalEvent): string {
     case "note.saved":
     case "note.signed":
       return `Clinical note ${event.type === "note.signed" ? "signed" : "saved"}`;
+    case "note.amended": {
+      // Amendments carry a free-text `reason` (#1266); surface it when present
+      // so the LLM-context line distinguishes a routine save from a clinically
+      // significant after-the-fact edit. Falls back to the bare verb if absent
+      // so we never propagate the placeholder "Clinical event: note.amended"
+      // (#1270).
+      const reason =
+        typeof event.data.reason === "string" && event.data.reason.trim().length > 0
+          ? event.data.reason.trim()
+          : null;
+      return reason
+        ? `Clinical note amended: ${reason}`
+        : `Clinical note amended`;
+    }
     case "diagnosis.added":
       return `New diagnosis added: ${event.data.description ?? "unknown"}`;
     case "procedure.completed":
