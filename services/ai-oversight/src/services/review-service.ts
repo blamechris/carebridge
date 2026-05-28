@@ -150,7 +150,17 @@ export async function processReviewJob(event: ClinicalEvent): Promise<void> {
           inArray(reviewJobs.status, TERMINAL_REVIEW_STATUSES as string[]),
           and(
             eq(reviewJobs.status, "processing"),
-            gte(reviewJobs.created_at, inFlightCutoff),
+            // `reviewJobs.created_at` is a `text` column; the cutoff
+            // above is `timestamp with time zone`. Cast the column at
+            // query time so PostgreSQL has a `timestamptz >= timestamptz`
+            // operator. Without this, every probe call errors with
+            // `operator does not exist: text >= timestamp with time zone`
+            // and the dedup short-circuit silently bricks every review
+            // job. Found during the post-Wave-8 smoke test (#916). PR
+            // #608 deliberately moved to DB-clock NOW() for worker/DB
+            // clock-skew safety — we keep that property and only cast
+            // the column side.
+            gte(sql`${reviewJobs.created_at}::timestamptz`, inFlightCutoff),
           ),
         ),
       ),
