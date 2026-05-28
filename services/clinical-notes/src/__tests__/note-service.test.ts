@@ -728,6 +728,28 @@ describe("getNoteById", () => {
     expect(result!.note.signed_at).toBeUndefined();
     expect(result!.note.signed_by).toBeUndefined();
   });
+
+  // ─── Regression for #1272 ────────────────────────────────────
+  // signNote and cosignNote both archive at `existing.version` without
+  // bumping it — disambiguated only by lifecycle_event — so a single note
+  // can yield multiple note_versions rows sharing the same `version`.
+  // A version-only ORDER BY is non-deterministic for those tied rows, so
+  // getNoteById must add saved_at as a tiebreaker (mirroring the
+  // saved_at-based ordering documented on getVersionHistory).
+  it("orders the versions query by saved_at as a tiebreaker for same-version rows (#1272)", async () => {
+    db.willSelect([existingRow]).willSelect([]);
+
+    await getNoteById(NOTE_ID);
+
+    // Second select is the versions query.
+    const versionsSelect = db.select.calls[1];
+    const orderByIndex = versionsSelect?.chain.indexOf("orderBy") ?? -1;
+    expect(orderByIndex).toBeGreaterThanOrEqual(0);
+    const orderByArgs = versionsSelect?.chainArgs[orderByIndex] ?? [];
+    // version-only ordering is unstable; the fix passes two ordering
+    // expressions (version desc, saved_at desc).
+    expect(orderByArgs.length).toBeGreaterThanOrEqual(2);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────
