@@ -198,8 +198,8 @@ gh api repos/${REPO}/pulls/${PR_NUM}/comments/${COMMENT_ID}/replies \
 **Reason:** Clear explanation of why this is correct
 
 **Evidence:**
-- per CLAUDE.md: TypeScript strict, ESM, functional style
-- Reference to similar code in codebase"
+- Reference to docs/pattern used (e.g., 'per CLAUDE.md: no semicolons')
+- Link to similar code in codebase"
 ```
 
 ---
@@ -378,7 +378,7 @@ gh pr comment ${PR_NUM} --body "$(cat <<'EOF'
 |---|---------|---------|-----------|
 | 1 | Comment 1 summary | FIX | `abc1234` |
 | 2 | Comment 2 summary | FALSE POSITIVE | Evidence: [brief] |
-| 3 | Comment 3 summary | FOLLOW-UP | [#456](https://github.com/blamechris/carebridge/issues/456) |
+| 3 | Comment 3 summary | FOLLOW-UP | [#456](https://github.com/OWNER/REPO/issues/456) |
 
 **Total:** X comments addressed
 - Fixed: Y (commit hashes above)
@@ -451,4 +451,4 @@ Then below the table, list:
 10. Post summary table (all Reference cells filled)
 11. Report to user
 ```
-<!-- skill-templates: check-pr 97dfcd4 2026-05-28 -->
+<!-- skill-templates: check-pr b194666 2026-05-28 -->

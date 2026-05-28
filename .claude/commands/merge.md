@@ -1,6 +1,6 @@
 # /merge
 
-Merge PRs with mandatory review gate.
+Merge PRs, verify post-merge version bump, and run post-merge actions (build, deploy, etc.).
 
 ## Arguments
 
@@ -18,12 +18,13 @@ Merge PRs with mandatory review gate.
 For each PR to be merged, check if `/full-review` has already been run:
 
 ```bash
+# Check for existing review comments (agent-review posts a structured review)
 gh api repos/${REPO}/issues/${PR_NUM}/comments --jq '[.[] | select(.body | test("Code Review|Review Comments Addressed"))] | length'
 ```
 
-If no review exists, run `/full-review ${PR_NUM}` **before proceeding to merge**.
+If no review exists, run `/full-review ${PR_NUM}` **before proceeding to merge**. For multiple PRs, run reviews in parallel (background agents), then merge sequentially after all reviews complete.
 
-**Exception:** Pure `.md` skill/doc files with zero code changes may skip review.
+Pure `.md` skill/doc files with zero code changes may skip review.
 
 ### Phase 1: Pre-Merge Preparation
 
@@ -31,38 +32,95 @@ If no review exists, run `/full-review ${PR_NUM}` **before proceeding to merge**
 REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
 ```
 
-Parse PR numbers. Pre-check CI and merge state for each.
+Parse PR numbers from arguments. For `all`:
+
+```bash
+gh pr list --base main --state open --json number,title,headRefName,mergeStateStatus
+```
+
+For each PR, pre-check:
+
+```bash
+# CI status
+gh pr checks ${PR_NUM}
+
+# Merge state
+gh pr view ${PR_NUM} --json mergeable,mergeStateStatus
+```
+
+Display summary table (no confirmation gate — user invoked the command explicitly):
+
+```markdown
+## Merge Queue ({N} PRs)
+
+| # | PR | Title | CI | Merge State |
+|---|-----|-------|----|-------------|
+| 1 | #123 | feat: add feature | PASS | CLEAN |
+```
 
 ### Phase 2: Merge Execution
 
 #### Small batch (1-2 PRs): Direct merge
 
 For each PR:
-1. Check CI — poll pending, `/fix-ci` if failed
-2. Check merge state — handle blockers
-3. Resolve review threads if blocking (use Python for GraphQL)
-4. Squash merge:
 
-```bash
-gh pr merge ${PR_NUM} --squash --delete-branch
-```
+1. **Check CI** — if any checks are pending, poll every 30s up to 3 min. If failed, run `/fix-ci` once and retry.
+2. **Check merge state** — if BLOCKED, diagnose:
 
-5. Verify merged state
+   | Error Pattern | Action | Max Retries |
+   |---|---|---|
+   | "not up to date" / "branch is behind" | `gh api repos/${REPO}/pulls/${PR_NUM}/update-branch -X PUT`, wait for CI, retry | 1 |
+   | "status check" / "required status" | `/fix-ci`, retry | 1 |
+   | "review" / "unresolved threads" | Resolve via GraphQL (see below), retry | 1 |
+   | "conflict" / "not mergeable" | Skip, report conflict | 0 |
+   | "already merged" | Skip silently | 0 |
+   | Rate limit (403/429) | Back off 60s, retry | 2 |
+   | Unknown | Log error, skip | 0 |
+
+3. **Resolve review threads** if blocking merge:
+
+   ```python
+   # MUST use Python — bash corrupts Base64 thread IDs in GraphQL mutations
+   python3 -c "
+   import subprocess, json
+   result = subprocess.run(['gh', 'api', 'graphql', '-f',
+     'query={repository(owner:\"OWNER\",name:\"REPO\"){pullRequest(number:PR_NUM){reviewThreads(first:50){nodes{id,isResolved}}}}}'],
+     capture_output=True, text=True)
+   data = json.loads(result.stdout)
+   for t in [x for x in data['data']['repository']['pullRequest']['reviewThreads']['nodes'] if not x['isResolved']]:
+       mutation = 'mutation { resolveReviewThread(input: {threadId: \"' + t['id'] + '\"}) { thread { isResolved } } }'
+       subprocess.run(['gh', 'api', 'graphql', '-f', f'query={mutation}'], capture_output=True, text=True)
+   "
+   ```
+
+4. **Squash merge:**
+   ```bash
+   gh pr merge ${PR_NUM} --squash --delete-branch
+   ```
+
+5. **Verify:** `gh pr view ${PR_NUM} --json state -q .state` should be `MERGED`
 
 #### Large batch (3+ PRs): Delegate to /batch-merge
 
+Run `/batch-merge ${PR_NUMS}` — it handles sequential merge with update-branch, CI waiting, Copilot gating, and conflict resolution. After delegation completes, continue to Phase 2b with the list of successfully merged PRs.
+
 ### Phase 2b: Version Verification
 
-No auto-version configured. Skip this phase.
+After merging, ask the user if they want to bump the version:
+
+```
+Current version: vX.Y.Z
+Bump version? (patch → vX.Y.(Z+1), or skip)
+```
+
+If `--skip-version-check` is set, skip this phase.
 
 ### Phase 3: Post-Merge Actions
 
-No post-merge build/deploy steps configured. Pull latest main:
+**Skip conditions:**
+- No PRs were merged (all skipped/blocked)
 
-```bash
-git checkout main
-git pull --ff-only origin main
-```
+No post-merge actions are required for this repository.
 
 ### Phase 4: Report
 
@@ -72,15 +130,26 @@ git pull --ff-only origin main
 | PR | Title | Status |
 |----|-------|--------|
 | #123 | feat: add feature | Merged |
+| #456 | fix: resolve crash | Skipped (conflict) |
 ```
+
+## Error Recovery
+
+| Error | Recovery |
+|---|---|
+| CI failure on PR | Run `/fix-ci`, wait, retry merge |
+| Unresolved review threads | Resolve via GraphQL Python script, retry |
+| Merge conflict | Skip PR, report to user |
+| Version bump timeout | Warn and continue to post-merge actions |
+| Divergent local branches | `git reset --hard origin/main` |
 
 ## Critical Rules
 
-1. **NEVER merge without /full-review** — every PR must be reviewed. Hard gate.
-2. **For 3+ PRs, delegate to /batch-merge**
+1. **NEVER merge without /full-review** — every PR must be reviewed before merging. This is a hard gate. Run Phase 0 first.
+2. **For 3+ PRs, delegate to /batch-merge** — don't reinvent sequential merge logic
+3. **Version verification is informational** — never block post-merge actions on it
 3. **GraphQL resolveReviewThread must use Python** — bash corrupts Base64 thread IDs
-4. **Never use --admin**
-5. **Idempotent** — safe to re-run
-6. **No attribution** — Zero Attribution Policy
-7. **/full-review is MANDATORY before every merge — no exceptions** (per CLAUDE.md merge gate)
-<!-- skill-templates: merge manual-deploy 2026-04-10 -->
+4. **Never use --admin** — respect branch protections
+5. **Idempotent** — safe to re-run; already-merged PRs detected and skipped
+6. **No attribution** — Zero Attribution Policy applies to all commits
+<!-- skill-templates: merge b194666 2026-05-28 -->

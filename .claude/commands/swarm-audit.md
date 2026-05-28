@@ -36,16 +36,16 @@ Choose AGENT_COUNT agents from this roster. Always include the first 4 (core pan
 |-------|----------|------|-------------|
 | Skeptic | "Skeptic" | Claims vs reality, false assumptions, what won't work | Cynical systems engineer who has seen too many designs fail. Cross-references every claim against actual code. |
 | Builder | "Builder" | Implementability, effort estimates, missing components, dependencies | Pragmatic full-stack dev who will implement this. Revises effort estimates, identifies file-by-file changes. |
-| Guardian | "Guardian" | Safety, failure modes, race conditions, data integrity, recovery | Paranoid security/SRE who designs for 3am pages. Finds race conditions and nuclear scenarios. Guardian should weight type safety: are package boundary contracts enforced end-to-end? |
+| Guardian | "Guardian" | Safety, failure modes, race conditions, data integrity, recovery | Paranoid security/SRE who designs for 3am pages. Finds race conditions and nuclear scenarios. |
 | Minimalist | "Minimalist" | YAGNI, complexity reduction, 80/20 cuts, simpler alternatives | Ruthless engineer who believes the best code is no code. Identifies what to cut and proposes minimal alternatives. |
 
 #### Extended Roster (pick based on relevance)
 
 | Agent | Nickname | Lens | When to Include |
 |-------|----------|------|-----------------|
-| Operator | "Operator" | UX walkthrough, daily experience, error states, accessibility. Operator should weight data integrity: are clinical events correctly emitted and consumed? | Target involves user-facing features, UI, or interaction flows |
+| Operator | "Operator" | UX walkthrough, daily experience, error states, accessibility | Target involves user-facing features, UI, or interaction flows |
 | Futurist | "Futurist" | Extensibility, technical debt forecast, plugin architecture | Target involves architecture decisions with long-term implications |
-| Domain Expert | "Expert" | Deep domain knowledge for the specific technology | Target involves specific tech. Name the agent after the domain. Expert agents should verify claims against Drizzle ORM and tRPC documentation |
+| Domain Expert | "Expert" | Deep domain knowledge for the specific technology | Target involves specific tech. Name the agent after the domain. |
 | Adversary | "Adversary" | Attack surface, abuse cases, security boundaries | Target involves auth, networking, data handling, or external interfaces |
 | Tester | "Tester" | Testability, edge cases, coverage gaps, test strategy | Target involves complex logic, state machines, or protocol design |
 | Historian | "Historian" | Precedent, prior art, industry patterns, what others have done | Target involves novel architecture or unconventional approaches |
@@ -102,22 +102,55 @@ audit-results/
   ...
 ```
 
+Each file starts with a header block:
+```markdown
+# {Nickname}'s Audit: {Target Title}
+
+**Agent**: {Nickname} -- {one-line personality}
+**Overall Rating**: X.X / 5
+**Date**: {today}
+```
+
 ### 6. Write Master Assessment
 
-Create `00-master-assessment.md` that synthesizes all agent findings.
+Create `00-master-assessment.md` that synthesizes all agent findings:
 
 #### Required Sections
 
 **a. Auditor Panel Table**
-**b. Consensus Findings** (4+ agents agree)
+List all agents with their perspective, rating, and key contribution.
+
+**b. Consensus Findings**
+Items where 4+ agents agree. These are high-confidence findings. Include:
+- What they agree on
+- Supporting evidence from multiple agents
+- Recommended action
+
 **c. Contested Points**
+Items where agents disagree. Present each position with the agent's name. Include your assessment of who is right and why.
+
 **d. Factual Corrections**
+Specific claims in the target that are wrong, with corrections and which agent found them.
+
 **e. Risk Heatmap**
+ASCII grid of likelihood vs impact for identified risks.
+
 **f. Recommended Action Plan**
-**g. Final Verdict** (weighted average: core panel 1.0x, extended 0.8x)
-**h. Appendix** (links to individual reports)
+Synthesized from all agents, prioritized by:
+1. Consensus severity (more agents agree = higher priority)
+2. Impact vs effort ratio
+3. Dependency ordering (what unblocks other work)
+
+**g. Final Verdict**
+Aggregate rating (average of all agents, weighted: core panel 1.0x, extended 0.8x).
+One-paragraph summary of whether the target is ready for implementation, needs revision, or needs fundamental rethinking.
+
+**h. Appendix**
+Table linking to each individual report file.
 
 ### 7. Commit Results
+
+Stage and commit all audit files:
 
 ```bash
 git add <audit-results-directory>/
@@ -131,6 +164,7 @@ Do NOT push unless explicitly asked.
 
 ### 8. Report to User
 
+Output a concise summary:
 - Aggregate rating
 - Agent panel (names + individual ratings)
 - Top 3 consensus findings
@@ -150,6 +184,12 @@ Do NOT push unless explicitly asked.
 | 2/5 | Concerning. Significant issues that may cause failures. |
 | 1/5 | Fundamentally broken. Needs rethinking, not patching. |
 
+### Project-Specific Grading Criteria
+
+- **Operator** should weight data integrity: are clinical events correctly emitted and consumed?
+- **Guardian** should weight type safety: are package boundary contracts enforced end-to-end?
+- **Expert agents** should verify claims against Drizzle ORM and tRPC documentation.
+
 ### Agent Behavior Rules
 
 - Agents MUST read actual source code, not just the target document
@@ -157,4 +197,13 @@ Do NOT push unless explicitly asked.
 - Agents MUST rate each major section independently
 - Agents MUST end with a concrete top-5 recommendations list
 - Agents should be opinionated, not diplomatic. Strong views, loosely held.
-<!-- skill-templates: swarm-audit manual-deploy 2026-04-10 -->
+
+## Examples
+
+```
+/swarm-audit docs/architecture/proposal.md 8
+/swarm-audit "the clinical event emission in services/clinical-workers" 4
+/swarm-audit docs/rfc-fhir-integration.md
+/swarm-audit "ai-oversight service prompt safety" 6
+```
+<!-- skill-templates: swarm-audit b194666 2026-05-28 -->
