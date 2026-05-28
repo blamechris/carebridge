@@ -1017,7 +1017,7 @@ function PatientChartContent() {
             </div>
             <div style={{ marginLeft: "auto" }}>
               <Link
-                href={`/notes/new?patientId=${patientId}`}
+                href={`/notes/new?patientId=${encodeURIComponent(patientId)}`}
                 className="btn btn-primary btn-sm"
               >
                 + New Note

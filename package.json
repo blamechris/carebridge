@@ -12,7 +12,8 @@
     "db:migrate": "pnpm --filter @carebridge/db-schema migrate",
     "db:seed": "tsx tooling/seed/index.ts",
     "clean": "turbo clean",
-    "smoke-test": "tsx tooling/smoke-test.ts"
+    "smoke-test": "tsx tooling/smoke-test.ts",
+    "check:dev-concurrency": "node scripts/check-dev-concurrency.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",
