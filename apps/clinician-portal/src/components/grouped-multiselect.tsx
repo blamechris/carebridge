@@ -52,6 +52,15 @@ export type GroupedMultiselectProps = {
   linkedOptions?: Set<string>;
   /** Click handler for the 🔗 icon. Receives the option string. */
   onUnlink?: (option: string) => void;
+  /**
+   * Suggestion highlight (#1305). Options in this set render with a
+   * colored border + "[suggested]" trailing label so users who skipped
+   * the suggestion banner can still spot the matches. The highlight is
+   * purely visual — it does NOT modify the ticked state. The caller is
+   * expected to filter already-ticked items out of this set so the
+   * highlight clears as soon as a suggestion is accepted.
+   */
+  highlightedOptions?: Set<string>;
 };
 
 const linkButtonStyle: CSSProperties = {
@@ -75,6 +84,7 @@ export function GroupedMultiselect({
   defaultExpanded,
   linkedOptions,
   onUnlink,
+  highlightedOptions,
 }: GroupedMultiselectProps) {
   // Bucket options by body system, preserving original option order
   // within each bucket so the curated NS ordering survives.
@@ -196,15 +206,30 @@ export function GroupedMultiselect({
                 {rows.map(({ option, display }) => {
                   const checked = selectedSet.has(option);
                   const linked = linkedOptions?.has(option) ?? false;
+                  const highlighted =
+                    highlightedOptions?.has(option) ?? false;
                   return (
                     <label
                       key={option}
-                      className="grouped-multiselect-option"
+                      className={
+                        "grouped-multiselect-option" +
+                        (highlighted
+                          ? " grouped-multiselect-option--suggested"
+                          : "")
+                      }
+                      data-suggested={highlighted ? "true" : undefined}
                       style={{
                         fontSize: 12,
                         display: "flex",
                         alignItems: "center",
                         gap: 4,
+                        ...(highlighted
+                          ? {
+                              border: "1px solid var(--accent, #2b6cb0)",
+                              borderRadius: 4,
+                              padding: "2px 6px",
+                            }
+                          : null),
                       }}
                     >
                       <input
@@ -215,6 +240,19 @@ export function GroupedMultiselect({
                         }
                       />
                       <span>{display}</span>
+                      {highlighted && (
+                        <span
+                          className="grouped-multiselect-option-suggested-label"
+                          style={{
+                            fontSize: 11,
+                            color: "var(--accent, #2b6cb0)",
+                            fontStyle: "italic",
+                          }}
+                          data-testid={`suggested-label-${option}`}
+                        >
+                          [suggested]
+                        </span>
+                      )}
                       {linked && (
                         <button
                           type="button"
