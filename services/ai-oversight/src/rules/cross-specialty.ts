@@ -12,6 +12,7 @@ import {
   parseFrequencyText,
   deserializeFrequency,
   estimateDailyDose,
+  hasUnnegatedMention,
 } from "@carebridge/medical-logic";
 import { QTC_PATTERN } from "./drug-interactions.js";
 import { METFORMIN_PATTERN, NSAID_PATTERN } from "./shared-drug-patterns.js";
@@ -216,8 +217,31 @@ const ANTICOAGULANT_PATTERN =
 const CHEMO_MED_PATTERN =
   /chemo|capecitabine|xeloda|cisplatin|carboplatin|doxorubicin|cyclophosphamide|paclitaxel|docetaxel|methotrexate|5-fu|fluorouracil/i;
 
-/** Fever-symptom pattern shared across CHEMO-* rules. */
-const FEVER_SYMPTOM_PATTERN = /fever|febrile|temperature|chills/i;
+/**
+ * Fever-equivalent terms checked by the negation-aware matcher. Each entry
+ * is tested independently via `hasUnnegatedMention` so that HPI phrasing
+ * like "no fever, denies chills, temperature 98.6 on admission" does not
+ * trigger the CHEMO-* fever rules (#1307).
+ */
+const FEVER_TERMS = ["fever", "febrile", "temperature", "chills"] as const;
+
+/**
+ * Returns true when any string in `symptoms` contains a non-negated mention
+ * of a fever-equivalent term. Replaces a substring scan that false-
+ * positived on negated mentions — see #1307. Each symptom entry is checked
+ * independently because the clinical-notes service concatenates
+ * chief-complaint, HPI, and structured new-symptom items into the same
+ * `new_symptoms` array; per-entry scanning keeps negation windows local
+ * to a single field.
+ */
+function hasUnnegatedFever(symptoms: readonly string[]): boolean {
+  for (const entry of symptoms) {
+    for (const term of FEVER_TERMS) {
+      if (hasUnnegatedMention(entry, term)) return true;
+    }
+  }
+  return false;
+}
 
 /** ICD-10 pattern for active VTE / DVT / PE diagnoses. */
 const VTE_ICD10_PATTERN = /^(I26|I80|I82)\./;
@@ -723,9 +747,9 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       const onChemo = ctx.active_medications.some((m) =>
         CHEMO_MED_PATTERN.test(m),
       );
-      const hasFever = ctx.new_symptoms.some((s) =>
-        FEVER_SYMPTOM_PATTERN.test(s),
-      );
+      // Negation-aware match (#1307): a SOAP HPI of "no fever, no chills"
+      // must not trip this rule even though the substring "fever" is present.
+      const hasFever = hasUnnegatedFever(ctx.new_symptoms);
       if (!onChemo || !hasFever) return false;
       const anc = ctx.recent_labs?.find((l) => /\bANC\b/i.test(l.name))?.value;
       // ANC >= 1500 → normal neutrophil count, suppress (avoid alert fatigue).
@@ -754,9 +778,8 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       const onChemo = ctx.active_medications.some((m) =>
         CHEMO_MED_PATTERN.test(m),
       );
-      const hasFever = ctx.new_symptoms.some((s) =>
-        FEVER_SYMPTOM_PATTERN.test(s),
-      );
+      // Negation-aware (#1307) — see CHEMO-FEVER-001 above.
+      const hasFever = hasUnnegatedFever(ctx.new_symptoms);
       if (!onChemo || !hasFever) return false;
       const anc = ctx.recent_labs?.find((l) => /\bANC\b/i.test(l.name))?.value;
       // Only fire when ANC is known AND below the febrile-neutropenia threshold.
@@ -1481,7 +1504,9 @@ const CROSS_SPECIALTY_RULES: CrossSpecialtyRule[] = [
       );
       const onChemo = ctx.active_medications.some((m) => CHEMO_MED_PATTERN.test(m));
       if (hasCancerDx && onChemo) return false;
-      return ctx.new_symptoms.some((s) => FEVER_SYMPTOM_PATTERN.test(s));
+      // Negation-aware (#1307) — keeps a SOAP HPI that says "no fever"
+      // from firing the non-chemo immunosuppressant fever rule too.
+      return hasUnnegatedFever(ctx.new_symptoms);
     },
     severity: "warning" as const,
     category: "cross-specialty" as const,

@@ -7,3 +7,4 @@ export * from "./medication-frequency.js";
 export * from "./allergen-synonyms.js";
 export * from "./cross-reactivity-map.js";
 export * from "./patient-education.js";
+export * from "./symptom-negation.js";

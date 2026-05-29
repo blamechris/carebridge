@@ -970,6 +970,121 @@ describe("CHEMO-FEVER-001 / CHEMO-NEUTRO-FEVER-001 — ANC-aware rules", () => {
       flags.find((f) => f.rule_id === "CHEMO-NEUTRO-FEVER-001"),
     ).toBeUndefined();
   });
+
+  // ── #1307 negation regression suite ────────────────────────────────────
+  describe("negation handling for fever mention in free-text symptoms (#1307)", () => {
+    // Reproduction case: Margaret Chen, Stage III breast cancer on chemo,
+    // signed SOAP note whose HPI lists "no fever, no neck stiffness, ...".
+    // ANC unknown so CHEMO-FEVER-001 was firing as a warning before #1307.
+    const reproductionCtx = (
+      overrides: Partial<PatientContext> = {},
+    ): PatientContext => ({
+      active_diagnoses: ["Stage III breast cancer"],
+      active_diagnosis_codes: ["C50.911"],
+      active_medications: ["Cisplatin"],
+      new_symptoms: [
+        "New onset severe headache, started this morning, 8/10 intensity. Numbness in left arm.",
+        "No prior headache history of this severity, no migraine history, no recent head trauma, no fever, no neck stiffness, no nausea or vomiting.",
+        "headache",
+        "numbness",
+      ],
+      care_team_specialties: ["oncology"],
+      ...overrides,
+    });
+
+    it("does NOT fire CHEMO-FEVER-001 on the smoke-test reproduction case", () => {
+      const flags = checkCrossSpecialtyPatterns(reproductionCtx());
+      expect(
+        flags.find((f) => f.rule_id === "CHEMO-FEVER-001"),
+      ).toBeUndefined();
+      expect(
+        flags.find((f) => f.rule_id === "CHEMO-NEUTRO-FEVER-001"),
+      ).toBeUndefined();
+    });
+
+    it("STILL fires CHEMO-FEVER-001 when the chief complaint is positive fever", () => {
+      // Regression guard: ensure the negation fix didn't silence true
+      // fever presentations.
+      const ctx = reproductionCtx({
+        new_symptoms: ["fever 102 x 2 days, productive cough"],
+      });
+      const flag = checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CHEMO-FEVER-001",
+      );
+      expect(flag).toBeDefined();
+      expect(flag!.severity).toBe("warning");
+    });
+
+    it("does NOT fire on 'denies fever'", () => {
+      const ctx = reproductionCtx({
+        new_symptoms: ["denies fever, denies chills"],
+      });
+      expect(
+        checkCrossSpecialtyPatterns(ctx).find(
+          (f) => f.rule_id === "CHEMO-FEVER-001",
+        ),
+      ).toBeUndefined();
+    });
+
+    it("does NOT fire on 'without fever'", () => {
+      const ctx = reproductionCtx({
+        new_symptoms: ["admitted without fever or other constitutional symptoms"],
+      });
+      expect(
+        checkCrossSpecialtyPatterns(ctx).find(
+          (f) => f.rule_id === "CHEMO-FEVER-001",
+        ),
+      ).toBeUndefined();
+    });
+
+    it("does NOT fire on 'negative for fever'", () => {
+      const ctx = reproductionCtx({
+        new_symptoms: ["ROS negative for fever, chills, night sweats"],
+      });
+      expect(
+        checkCrossSpecialtyPatterns(ctx).find(
+          (f) => f.rule_id === "CHEMO-FEVER-001",
+        ),
+      ).toBeUndefined();
+    });
+
+    it("does NOT fire on 'fever-free'", () => {
+      const ctx = reproductionCtx({
+        new_symptoms: ["patient has been fever-free x 24 hours"],
+      });
+      expect(
+        checkCrossSpecialtyPatterns(ctx).find(
+          (f) => f.rule_id === "CHEMO-FEVER-001",
+        ),
+      ).toBeUndefined();
+    });
+
+    it("does NOT fire on 'no h/o fever'", () => {
+      const ctx = reproductionCtx({
+        new_symptoms: ["no h/o fever this admission"],
+      });
+      expect(
+        checkCrossSpecialtyPatterns(ctx).find(
+          (f) => f.rule_id === "CHEMO-FEVER-001",
+        ),
+      ).toBeUndefined();
+    });
+
+    it("FIRES when an early negated mention is followed by a later positive mention", () => {
+      // Mixed-signal case: HPI denies fever on admission but nurse charts
+      // an overnight fever later in the same note. The positive mention
+      // wins — the patient currently has a fever and the rule must fire.
+      const ctx = reproductionCtx({
+        new_symptoms: [
+          "No fever on admission. Six hours later T 102.1 with rigors, now febrile.",
+        ],
+      });
+      const flag = checkCrossSpecialtyPatterns(ctx).find(
+        (f) => f.rule_id === "CHEMO-FEVER-001",
+      );
+      expect(flag).toBeDefined();
+    });
+  });
 });
 
 describe("ONCO-VTE-NEURO-001 — Cancer + VTE + neurological symptom", () => {

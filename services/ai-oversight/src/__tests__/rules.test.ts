@@ -82,6 +82,24 @@ vi.mock("@carebridge/medical-logic", () => {
       return diffMs / (365.25 * 24 * 60 * 60 * 1000);
     },
     getVitalRangeForAge,
+    // Stubs for symbols that cross-specialty.ts imports but rules.test.ts
+    // does not exercise directly. parseFrequencyText/deserializeFrequency/
+    // estimateDailyDose are only hit by medication-daily-dose rules whose
+    // tests live elsewhere; returning sentinels keeps the module load
+    // happy without changing behavior in this file.
+    parseFrequencyText: () => null,
+    deserializeFrequency: () => null,
+    estimateDailyDose: () => null,
+    // #1307: negation-aware symptom matcher used by CHEMO-FEVER-* and
+    // CROSS-IMMUNOSUPPRESSED-FEVER-001. Tests in this file feed structured
+    // single-term entries like "fever 101.5" rather than free-text HPI, so
+    // a simple case-insensitive substring check preserves prior behavior
+    // while exposing the export name the rule module imports.
+    hasUnnegatedMention: (text: string, term: string) =>
+      typeof text === "string" &&
+      typeof term === "string" &&
+      term.length > 0 &&
+      text.toLowerCase().includes(term.toLowerCase()),
   };
 });
 
