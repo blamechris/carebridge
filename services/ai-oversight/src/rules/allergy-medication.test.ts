@@ -145,6 +145,32 @@ describe("allergy-medication allergen normalization (#232)", () => {
     expect(flags.length).toBeGreaterThan(0);
   });
 
+  it("Vancomycin allergy flags a teicoplanin Rx via glycopeptide cross-reactivity (#1018)", () => {
+    // Sentinel for the glycopeptide class. Vancomycin → teicoplanin is
+    // the most clinically common scenario; FDA Dalvance PI § 5.2 warns
+    // about the shared backbone driving cross-allergenic hypersensitivity.
+    const ctx = makeContext(
+      [{ allergen: "Vancomycin", severity: "severe", reaction: "DRESS / red-man syndrome" }],
+      ["Teicoplanin 400mg IV daily"],
+    );
+    const flags = checkAllergyMedication(ctx);
+    expect(flags.length).toBeGreaterThan(0);
+    const summary = flags.map((f) => f.summary).join(" ");
+    expect(summary).toMatch(/cross.?react|glycopeptide|teicoplanin/i);
+  });
+
+  it("Vancomycin allergy flags a dalbavancin Rx (second-generation lipoglycopeptide)", () => {
+    // Covers the lipoglycopeptide sub-class — dalbavancin / oritavancin /
+    // telavancin all share the glycopeptide backbone and the same
+    // cross-allergenic class per FDA labelling.
+    const ctx = makeContext(
+      [{ allergen: "Vancomycin", severity: "severe", reaction: "anaphylaxis" }],
+      ["Dalbavancin 1500mg IV"],
+    );
+    const flags = checkAllergyMedication(ctx);
+    expect(flags.length).toBeGreaterThan(0);
+  });
+
   it("unknown allergen keeps existing behavior (pass-through)", () => {
     // Salmon isn't in our synonym table; no cross-reactive med should trip
     // the allergy-med rule spuriously.

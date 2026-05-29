@@ -32,6 +32,25 @@ to reconstruct them.
 
 <!-- Newest first. Add at the top when you merge a clinical-safety PR. -->
 
+### PR #1243 — glycopeptide drug-class cross-reactivity anchor (merge SHA pending)
+
+**Subsystem:** LLM prompt anchors + deterministic cross-reactivity rule
+
+- `packages/ai-prompts/src/drug-class-anchors.ts` (`DRUG_CLASS_CROSS_REACTIONS`)
+- `packages/medical-logic/src/cross-reactivity-map.ts` (`CROSS_REACTIVITY_MAP`)
+- Bumps `PROMPT_VERSION` 1.2.0 → 1.3.0
+
+**Citations:** FDA Prescribing Information for DALVANCE (dalbavancin), revision 11 (2021), § 5.2 Hypersensitivity Reactions. https://www.accessdata.fda.gov/drugsatfda_docs/label/2021/021883s011lbl.pdf
+
+> "Serious hypersensitivity (anaphylactic) and skin reactions have been reported with glycopeptide antibacterial agents, including DALVANCE. ... If an allergic reaction to DALVANCE occurs, discontinue DALVANCE."
+
+**What needs attestation:** Class membership (vancomycin, teicoplanin, dalbavancin, oritavancin, telavancin treated as a single cross-reactive glycopeptide class, including the lipoglycopeptide subclass) and the severity / `medication-safety` category mapping.
+
+- [ ] PharmD or clinical informaticist confirms class membership per FDA labeling + other primary references (Lexicomp / Micromedex)
+- [ ] Confirms severity / flag category appropriate
+- [ ] Reviews `PROMPT_VERSION` 1.2.0 → 1.3.0 bump scope
+- [ ] Signed by: __________________  Date: __________
+
 ### PR #1242 — age-stratified anthropometric bounds + age-aware validateVital (merge SHA pending)
 
 **Subsystem:** Clinical validators — `packages/medical-logic/src/medical-validation.ts`

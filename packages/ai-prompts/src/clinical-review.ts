@@ -7,7 +7,12 @@ import type { AllergyStatus } from "@carebridge/shared-types";
 import { PROMPT_SECTIONS } from "./prompt-sections.js";
 import { renderDrugClassAnchors } from "./drug-class-anchors.js";
 
-export const PROMPT_VERSION = "1.2.0";
+// Bump policy per docs/ai-prompt-editing.md § "Prompt version bump":
+//   - patch: wording-only tweaks
+//   - minor: new drug class or removed entry
+//   - major: structural prompt change
+// 1.3.0 — adds glycopeptide drug class anchor (#1018).
+export const PROMPT_VERSION = "1.3.0";
 
 export const CLINICAL_REVIEW_SYSTEM_PROMPT = `You are a clinical decision support system reviewing a patient's medical record.
 Your role is to identify potential clinical concerns that might be missed when
