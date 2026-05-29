@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { trpc } from "@/lib/trpc";
 import { AuthGuard } from "@/lib/auth-guard";
@@ -16,6 +16,14 @@ import {
   getSymptomSystem,
   parseROSOption,
 } from "@/lib/symptom-systems";
+import {
+  findNSOptionForROS,
+  findROSOptionForSymptom,
+} from "@/lib/symptom-normalization";
+import {
+  usePersistedRecord,
+  usePersistedStringSet,
+} from "@/lib/use-persisted-symptom-state";
 
 type FieldType =
   | "text"
@@ -57,41 +65,20 @@ const ROS_CAPTION =
   "Full systems review for the visit (“all systems negative” allowed).";
 
 /**
- * Find the ROS option (e.g. "neurological: headache") whose suffix
- * after the colon matches the bare NS symptom string. Used for the
- * NS → ROS arm of the auto-mirror.
- */
-function findROSOptionForSymptom(
-  symptom: string,
-  rosOptions: string[],
-): string | undefined {
-  const needle = symptom.toLowerCase().trim();
-  return rosOptions.find((opt) => {
-    const { symptom: suffix } = parseROSOption(opt);
-    return suffix.toLowerCase() === needle;
-  });
-}
-
-/**
- * Reverse direction: given a positive ROS option, find the NS option
- * whose label matches the ROS suffix. NS options are bare strings
- * (no prefix) so the match is a direct equality.
- */
-function findNSOptionForROS(
-  rosOption: string,
-  nsOptions: string[],
-): string | undefined {
-  const { symptom } = parseROSOption(rosOption);
-  const needle = symptom.toLowerCase().trim();
-  return nsOptions.find((opt) => opt.toLowerCase() === needle);
-}
-
-/**
  * Stable key for a NS-ROS pair (used as the unlinked-pair identifier).
  */
 function pairKey(nsOption: string, rosOption: string): string {
   return `${nsOption}||${rosOption}`;
 }
+
+/**
+ * localStorage keys for the persisted symptom UX state. A single global
+ * key per slot (rather than per-draft) means a clinician's collapse and
+ * unlink preferences follow them across drafts, which matches the
+ * specialty-driven workflow the affordance was designed for. #1311.
+ */
+const COLLAPSE_STORAGE_KEY = "cb-symptom-collapse-state";
+const UNLINKED_PAIRS_STORAGE_KEY = "cb-symptom-unlinked-pairs";
 
 function FieldInput({
   field,
@@ -222,19 +209,19 @@ function NewNoteContent() {
   const [sections, setSections] = useState<NoteSection[]>([]);
 
   // Per-field collapsed state for body-system groups, keyed as
-  // `{ [fieldKey]: { [BodySystem]: collapsed } }`. Lives in component
-  // state so the toggle state persists for the lifetime of the draft
-  // (closing/reopening the form during a single session keeps the
-  // user's view). #1306.
-  const [sectionCollapseState, setSectionCollapseState] = useState<
+  // `{ [fieldKey]: { [BodySystem]: collapsed } }`. Persisted to
+  // localStorage so the affordance survives template changes, remounts,
+  // and tab reloads. #1311.
+  const [sectionCollapseState, setSectionCollapseState] = usePersistedRecord<
     Record<string, Partial<Record<BodySystem, boolean>>>
-  >({});
+  >(COLLAPSE_STORAGE_KEY, {});
 
   // Pairs the user has explicitly unlinked via the 🔗 icon. Stored as
-  // `"<nsOption>||<rosOption>"` strings so the set is membership-cheap
-  // and easy to serialise if we later persist it. #1306.
-  const [unlinkedPairs, setUnlinkedPairs] = useState<Set<string>>(
-    () => new Set(),
+  // `"<nsOption>||<rosOption>"` strings so the set is membership-cheap.
+  // Persisted to localStorage so the unlink choice survives remounts
+  // and reloads. #1311.
+  const [unlinkedPairs, setUnlinkedPairs] = usePersistedStringSet(
+    UNLINKED_PAIRS_STORAGE_KEY,
   );
 
   // Sticky dismiss state for the symptom-suggestion banner (#1305).
@@ -249,16 +236,33 @@ function NewNoteContent() {
   const patientsQuery = trpc.patients.list.useQuery();
   const templateQuery = trpc.notes.templates.get.useQuery({ type: templateType });
 
+  // Track the template type that produced the currently-loaded sections
+  // so we only reset per-field UI state when the user actually switches
+  // template type. On a fresh mount the template fetch resolves with
+  // the SAME type that's already selected; without this guard the reset
+  // would clobber persisted state restored from localStorage. #1311.
+  const lastLoadedTemplateType = useRef<TemplateType | null>(null);
+
   useEffect(() => {
-    if (templateQuery.data) {
-      setSections(templateQuery.data as unknown as NoteSection[]);
+    if (!templateQuery.data) return;
+    setSections(templateQuery.data as unknown as NoteSection[]);
+    if (
+      lastLoadedTemplateType.current !== null &&
+      lastLoadedTemplateType.current !== templateType
+    ) {
       // Switching templates resets per-field UI state so a draft with
       // a different field shape doesn't inherit stale toggles.
       setSectionCollapseState({});
       setUnlinkedPairs(new Set());
       setDismissedBannerText(null);
     }
-  }, [templateQuery.data]);
+    lastLoadedTemplateType.current = templateType;
+  }, [
+    templateQuery.data,
+    templateType,
+    setSectionCollapseState,
+    setUnlinkedPairs,
+  ]);
 
   // Reconcile a prefilled patientId against the loaded patient list. If
   // the id isn't present (deleted, not accessible, malformed), clear it
@@ -438,7 +442,7 @@ function NewNoteContent() {
         };
       });
     },
-    [],
+    [setSectionCollapseState],
   );
 
   /**
@@ -470,7 +474,7 @@ function NewNoteContent() {
         return next;
       });
     },
-    [fieldLocations, sections],
+    [fieldLocations, sections, setUnlinkedPairs],
   );
 
   /**

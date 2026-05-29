@@ -63,6 +63,12 @@ export type GroupedMultiselectProps = {
   highlightedOptions?: Set<string>;
 };
 
+/**
+ * 🔗 unlink button hit area must meet WCAG 2.5.5 (44×44 CSS pixels).
+ * The emoji itself stays visually small via flex centering so the row
+ * height isn't bloated — the increased size lives in the click target,
+ * not the visible glyph. #1312.
+ */
 const linkButtonStyle: CSSProperties = {
   marginLeft: 4,
   padding: 0,
@@ -71,6 +77,11 @@ const linkButtonStyle: CSSProperties = {
   cursor: "pointer",
   fontSize: 12,
   lineHeight: 1,
+  minWidth: 44,
+  minHeight: 44,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
 };
 
 export function GroupedMultiselect({
