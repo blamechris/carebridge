@@ -11,3 +11,5 @@ export * from "./ai-flags.schemas.js";
 export * from "./auth.schemas.js";
 export * from "./care-team.schemas.js";
 export * from "./scheduling.schemas.js";
+export * from "./bridge-protocol.js";
+export * from "./bridge-protocol.schemas.js";
