@@ -1,0 +1,124 @@
+/*
+ * Clinician Bridge — bedside-first styling.
+ *
+ * Dark default reduces glare in low-light bedside use (per scope doc
+ * M6 plan, but applied from M1 since it costs nothing to do early).
+ * Honors prefers-color-scheme: light if the device explicitly opts in.
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  min-height: 100vh;
+}
+
+body.bridge-body {
+  background: #0b0f14;
+  color: #e6edf3;
+}
+
+@media (prefers-color-scheme: light) {
+  body.bridge-body {
+    background: #f6f8fa;
+    color: #1f2328;
+  }
+}
+
+.bridge-landing {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.bridge-landing__header h1 {
+  font-size: 1.75rem;
+  margin: 0 0 0.25rem;
+  letter-spacing: -0.01em;
+}
+
+.bridge-landing__tagline {
+  margin: 0;
+  opacity: 0.85;
+  font-size: 1rem;
+}
+
+.bridge-landing__pair-cta {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+}
+
+@media (prefers-color-scheme: light) {
+  .bridge-landing__pair-cta {
+    background: #ffffff;
+    border-color: #d0d7de;
+  }
+}
+
+.bridge-landing__pair-cta h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.125rem;
+}
+
+.bridge-landing__pair-cta p {
+  margin: 0 0 0.75rem;
+  line-height: 1.5;
+}
+
+.bridge-landing__milestone-note {
+  font-size: 0.85rem;
+  opacity: 0.7;
+  font-style: italic;
+}
+
+.bridge-banner {
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  line-height: 1.45;
+}
+
+.bridge-banner--disclaimer {
+  background: rgba(255, 200, 87, 0.12);
+  border: 1px solid rgba(255, 200, 87, 0.35);
+  color: #f7d774;
+}
+
+@media (prefers-color-scheme: light) {
+  .bridge-banner--disclaimer {
+    background: #fff8e1;
+    border-color: #d4a017;
+    color: #5a3d00;
+  }
+}
+
+.bridge-banner--disclaimer strong {
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.bridge-banner--disclaimer p {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.bridge-landing__footer {
+  margin-top: 1rem;
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+.bridge-landing__footer a {
+  color: inherit;
+  text-decoration: underline;
+}
