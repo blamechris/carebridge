@@ -94,15 +94,29 @@ an EHR account, a CareBridge account, or any persistent infrastructure.
   self-identification land in `audit_log` (append-only, 7-year
   retention per `docs/hipaa-retention.md`).
 
-## Out-of-Repo Dependencies
+## Relay Endpoints (live on the bridge app)
 
-- **MedLens** must expose two endpoints for the bridge to work:
-  1. `POST /v1/pair` (caregiver-driven, returns a token + code + QR
-     payload).
-  2. `GET /v1/captures/:id?token=...` (token-scoped, returns the
-     timeline JSON the bridge expects).
-- These belong in the MedLens repo. File a tracking issue there once
-  this doc lands.
+Per **D1 — relay transport**, the relay endpoints live on the bridge
+app itself (Next.js API routes on the same Vercel deployment), not on
+MedLens. MedLens is a client to these endpoints:
+
+| Endpoint | Caller | Purpose |
+|---|---|---|
+| `POST /api/v1/pair` | MedLens | Caregiver phone uploads an encrypted ciphertext blob, gets back `{ capture_id, display_code, expires_at, decryption_key }`. The relay keeps the ciphertext for 15 min and never sees the decryption key after this response. |
+| `GET /api/v1/captures/[id]` | Bridge UI | Bridge fetches the encrypted envelope by `capture_id`; decryption happens client-side using the key from the QR/code. |
+
+Wire contract types: `BridgePairRecord`, `BridgePairRequest`,
+`BridgeCaptureEnvelope`, `BridgeQrPayload` — see
+`packages/shared-types/src/bridge-protocol.ts` and the Zod schemas in
+`bridge-protocol.schemas.ts`. The decrypted payload is a FHIR R4 Bundle
+(MedLens already emits this via its outbox builder; the bridge consumes
+it through the existing `services/fhir-gateway` mappers).
+
+**Out-of-repo work**: MedLens needs a "Share with clinician" UI that
+(a) builds a FHIR R4 bundle from the local timeline, (b) AES-256-GCM
+encrypts the bundle with a freshly-generated 256-bit key, (c) POSTs the
+ciphertext to `/api/v1/pair`, (d) renders the returned token as a QR +
+6-char display code. Tracked as a sibling PR in the MedLens repo.
 
 ## File Layout
 
@@ -158,19 +172,21 @@ a clinician partner asks for it.
 
 - **M1 — Scaffold.** Empty Next.js app, "Hello bridge" landing page,
   deployed to Vercel under `bridge.carebridge.health`.
-- **M2 — Pairing.** QR/code entry → mocked capture fetch → static
-  timeline render.
-- **M3 — Rule wiring.** Real tRPC call to `api-gateway`, real rule
-  output rendered with citations.
-- **M4 — MedLens endpoint.** Real `POST /v1/pair` and
-  `GET /v1/captures/:id` in MedLens; bridge wired to live capture.
+- **M2 — Pairing.** Relay endpoints (`POST /api/v1/pair`,
+  `GET /api/v1/captures/[id]`), QR/code entry on the landing page,
+  session route renders a captured FHIR bundle from a local fixture.
+- **M3 — MedLens client.** "Share with clinician" UI in MedLens —
+  builds a FHIR bundle from the local timeline, encrypts client-side,
+  POSTs to the relay, renders QR + 6-char code.
+- **M4 — Rule wiring.** Bridge calls `api-gateway`/`ai-oversight`
+  against the decrypted bundle, real rule output rendered with
+  citations.
 - **M5 — Audit log + capture-hash.** Audit writes confirmed,
   `capture_hash` schema add merged.
-- **M6 — Disclaimer + self-ID UI.** PostMortemBanner, optional
-  clinician name/role input.
+- **M6 — Self-ID UI polish.** Optional clinician name/role input.
 
-Each milestone is one PR. M1–M3 are CareBridge-side; M4 is MedLens-side;
-M5 spans both repos.
+Each milestone is one PR. M1, M2, M4, M5, M6 are CareBridge-side;
+M3 is MedLens-side; M5 spans both repos.
 
 ## What This Doc Is Not
 
