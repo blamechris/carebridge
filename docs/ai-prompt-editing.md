@@ -52,9 +52,27 @@ description:
 
 ### 5. Reviewer requirements
 
-- [ ] At least one reviewer with clinical domain knowledge (physician, PharmD,
-      or clinical informaticist) has approved the change.
+CareBridge is pre-launch and currently does not have an on-staff clinician.
+The reviewer requirement is split into a **merge gate** (must hold before the
+PR lands on `main`) and a **launch gate** (must hold before live patient use).
+
+**Merge gate (required for every PR):**
+
 - [ ] At least one engineering reviewer has approved the code change.
+- [ ] Sections 1–4 above are complete, including primary-source citations
+      (FDA labeling, WHO/CDC reference data, Lexicomp/Micromedex, or
+      peer-reviewed literature) for any clinical content.
+
+**Launch gate (required before production patient use):**
+
+- [ ] A reviewer with clinical domain knowledge (physician, PharmD, or
+      clinical informaticist) has attested to the clinical content of every
+      merged `clinical-safety` PR.
+
+When a clinical-safety PR is merged pre-launch, the author MUST add an entry
+to [`LAUNCH-CHECKLIST.md`](../LAUNCH-CHECKLIST.md) so the clinician
+attestation can be done in batch before launch. The merged commit serves as
+the audit trail; the launch checklist tracks what still needs walk-through.
 
 ## Quick Reference — Adding a Drug Class
 
