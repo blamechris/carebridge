@@ -1028,7 +1028,11 @@ tr:hover td {
 .grouped-multiselect-header:hover {
   background: var(--surface-3, rgba(0, 0, 0, 0.04));
 }
-@media (max-width: 599px) {
+@media (max-width: 767px) {
+  /* #1313 — align the GroupedMultiselect stacking rule with the
+     portal-standard 767px breakpoint so 600-767px devices (small
+     landscape tablets, foldable inner displays) get the same column
+     layout as phones. */
   .grouped-multiselect-options {
     flex-direction: column !important;
     align-items: flex-start;

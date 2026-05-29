@@ -147,6 +147,9 @@ beforeEach(() => {
       if (f.field_type === "multiselect") f.value = [];
     }
   }
+  // Clear persisted UI state (#1311) so prior tests in this file don't
+  // leak collapse/unlink state into the next test's render.
+  localStorage.clear();
 });
 
 afterEach(() => cleanup());
