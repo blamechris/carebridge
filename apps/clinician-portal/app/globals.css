@@ -1017,3 +1017,23 @@ tr:hover td {
     animation-duration: 3s;
   }
 }
+
+/* GroupedMultiselect — issue #1306.
+   Below ~600px the section headers stay row-flow but each section's
+   option grid stacks vertically so a clinician on a phone doesn't get a
+   horizontally-cramped checkbox flow. */
+.grouped-multiselect {
+  width: 100%;
+}
+.grouped-multiselect-header:hover {
+  background: var(--surface-3, rgba(0, 0, 0, 0.04));
+}
+@media (max-width: 599px) {
+  .grouped-multiselect-options {
+    flex-direction: column !important;
+    align-items: flex-start;
+  }
+  .grouped-multiselect-option {
+    width: 100%;
+  }
+}
