@@ -4,7 +4,7 @@
 
 ## Why this exists
 
-> _Personal foreword from Chris Bowen, project founder. This section is
+> _Personal foreword from Chris Pishaki, project founder. This section is
 > first-person and intentionally not technical. The rest of the document is._
 
 My mom died from a care coordination failure.
@@ -17,7 +17,7 @@ I built CareBridge because computers don't get tired. They don't skip iterations
 
 This project is not a replacement for clinicians. It's a checklist made by a grieving family member, written so that the next family doesn't have to do the post-mortem I did.
 
-— Chris Bowen, 2026
+— Chris Pishaki, 2026
 
 ## The failure class
 
