@@ -781,10 +781,42 @@ export const patientRecordsRbacRouter = t.router({
         // who can see demographics can see who the patient's providers are.
         await enforcePatientAccess(ctx.user, input.patientId, "view_summary", ctx.clientIp);
         const db = getDb();
-        return db
-          .select()
+        // Issue #1304: the portal renders this list as "Care Team" and was
+        // showing raw `provider_id` UUIDs because the roster row carries no
+        // human-readable identity. LEFT JOIN users so we surface
+        // `provider_name` + a `provider_specialty` that prefers the
+        // roster-level specialty (per-patient role context) and falls back
+        // to the user's profile specialty. LEFT (not INNER) so a stale
+        // roster entry for a deleted user still renders ("Unknown
+        // provider") rather than silently vanishing — important for chart
+        // continuity audits.
+        const rows = await db
+          .select({
+            id: careTeamMembers.id,
+            patient_id: careTeamMembers.patient_id,
+            provider_id: careTeamMembers.provider_id,
+            role: careTeamMembers.role,
+            specialty: careTeamMembers.specialty,
+            is_active: careTeamMembers.is_active,
+            started_at: careTeamMembers.started_at,
+            ended_at: careTeamMembers.ended_at,
+            created_at: careTeamMembers.created_at,
+            provider_name: users.name,
+            provider_user_specialty: users.specialty,
+          })
           .from(careTeamMembers)
+          .leftJoin(users, eq(users.id, careTeamMembers.provider_id))
           .where(eq(careTeamMembers.patient_id, input.patientId));
+
+        return rows.map((row) => {
+          const { provider_user_specialty, ...rest } = row;
+          return {
+            ...rest,
+            // Roster-level specialty wins; fall back to the provider's
+            // profile specialty when the roster row left it null.
+            provider_specialty: rest.specialty ?? provider_user_specialty ?? null,
+          };
+        });
       }),
   }),
 
