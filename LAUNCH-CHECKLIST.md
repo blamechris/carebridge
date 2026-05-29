@@ -32,7 +32,21 @@ to reconstruct them.
 
 <!-- Newest first. Add at the top when you merge a clinical-safety PR. -->
 
-<!-- Entries seeded with the inaugural pre-launch merges go here. -->
+### PR #1242 — age-stratified anthropometric bounds + age-aware validateVital (merge SHA pending)
+
+**Subsystem:** Clinical validators — `packages/medical-logic/src/medical-validation.ts`
+
+**Citations:**
+
+- WHO Child Growth Standards (MGRS), head_circumference + body_height, 0–60 months. https://www.who.int/tools/child-growth-standards
+- CDC growth charts, body_height + BMI, 2–20 years. https://www.cdc.gov/growthcharts/clinical_charts.htm
+- AAP Bright Futures / CDC pediatric OFC guidance, WHO→CDC handoff at 24 months.
+
+**What needs attestation:** Numeric band edges in `PEDIATRIC_VITAL_RANGES` (neonate / infant / child / school_age / adolescent) for `body_height`, `head_circumference`, and `bmi`, plus the adult `body_height.criticalLow = 140 cm` and `bmi.criticalLow = 12 / warningLow = 16` additions to `VITAL_DANGER_ZONES`.
+
+- [ ] Clinician (pref. peds) reviews the band table head-to-toe and concurs with critical / plausibility thresholds
+- [ ] Specifically reviews OFC bands per #1175 AC ("Nurse sign-off on age-stratified thresholds, especially OFC bands")
+- [ ] Signed by: __________________  Date: __________
 
 ## Completed Attestations
 

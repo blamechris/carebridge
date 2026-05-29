@@ -42,17 +42,30 @@ export const VITAL_DANGER_ZONES: Record<VitalType, VitalRange> = {
   respiratory_rate: { min: 4, max: 60, criticalLow: 8, criticalHigh: 30 },
   pain_level: { min: 0, max: 10 },
   blood_glucose: { min: 10, max: 800, criticalLow: 54, criticalHigh: 350, warningLow: 70, warningHigh: 250 },
-  // US Core 5+ vital types (#1165). Bounds are plausibility checks only —
-  // no critical/warning thresholds because a single anthropometric
-  // measurement isn't a critical-value signal on its own. The min/max
-  // exist to reject sensor / unit-conversion noise.
+  // US Core 5+ anthropometric vital types (#1165, #1175). The min/max
+  // bounds are global plausibility (sensor / unit-conversion noise);
+  // critical/warning bands are tuned for the adult population. See
+  // PEDIATRIC_VITAL_RANGES below for age-banded thresholds — those
+  // catch readings that are globally plausible but age-impossible
+  // (e.g. body_height = 120 cm in a healthy adult, OFC = 25 cm in a
+  // 5yo).
+  //
   // body_height: 20 cm (extreme preemie at ~22 wks ≈ 28 cm; pad down)
-  //              to 280 cm (tallest documented human, Robert Wadlow, 272 cm).
-  body_height: { min: 20, max: 280 },
-  // bmi: 5 kg/m² (extreme cachexia) to 150 kg/m² (super-morbid obesity).
-  bmi: { min: 5, max: 150 },
+  //              to 280 cm (tallest documented human, Robert Wadlow,
+  //              272 cm). criticalLow = 140 cm catches achondroplasia
+  //              and the very common unit-confusion case (weight kg
+  //              entered as height cm).
+  body_height: { min: 20, max: 280, criticalLow: 140 },
+  // bmi: 5 kg/m² (extreme cachexia) to 150 kg/m² (super-morbid
+  //      obesity). warningLow = 16 (WHO underweight class I), and
+  //      criticalLow = 12 catches severe wasting / calculation error
+  //      per #1175 acceptance criteria.
+  bmi: { min: 5, max: 150, criticalLow: 12, warningLow: 16 },
   // head_circumference: 20 cm (extreme microcephaly preemie) to 80 cm
   //                     (extreme macrocephaly; covers hydrocephalus).
+  //                     Adult OFC is rarely measured; pediatric bands
+  //                     in PEDIATRIC_VITAL_RANGES below carry the
+  //                     clinical work.
   head_circumference: { min: 20, max: 80 },
 };
 
@@ -66,7 +79,36 @@ export type AgeGroup =
   | "adolescent" // 13–17 years
   | "adult";     // 18+ years
 
-/** Age-stratified vital sign ranges keyed by age group, then by vital type. */
+/**
+ * Age-stratified vital sign ranges keyed by age group, then by vital type.
+ *
+ * Anthropometric bands (body_height, head_circumference, bmi) close the
+ * gap called out in #1175: the global plausibility ceilings in
+ * VITAL_DANGER_ZONES are appropriate for sensor noise but allow
+ * globally-plausible-but-age-impossible readings to slip through (e.g.
+ * head_circumference = 60 cm in a 4-year-old, body_height = 120 cm in
+ * a healthy adult).
+ *
+ * The bands below are conservative envelopes derived from:
+ *   - WHO Child Growth Standards (MGRS), head_circumference + body_height,
+ *     0–60 months. https://www.who.int/tools/child-growth-standards
+ *   - CDC growth charts, body_height + BMI, 2–20 years.
+ *     https://www.cdc.gov/growthcharts/clinical_charts.htm
+ *   - AAP Bright Futures / CDC pediatric OFC guidance for the WHO→CDC
+ *     handoff at 24 months.
+ *
+ * `min`/`max` are wide plausibility envelopes (errors); `criticalLow`/
+ * `criticalHigh` are clinical-alert thresholds (warnings) — set near the
+ * 5th and 95th percentile of the age band so single sentinel readings
+ * (concerning microcephaly, hydrocephalus, severe stunting) get flagged
+ * without flooding clinicians with normal-percentile-tail noise.
+ *
+ * NOTE: BMI in growing children is normally expressed as an age-and-sex
+ * specific percentile, not a fixed numeric range. The pediatric BMI
+ * entries here are intentionally permissive plausibility guards only,
+ * intended to catch unit errors and gross calculation mistakes — not
+ * to replace percentile-based assessment.
+ */
 export const PEDIATRIC_VITAL_RANGES: Record<
   Exclude<AgeGroup, "adult">,
   Partial<Record<VitalType, VitalRange>>
@@ -75,26 +117,60 @@ export const PEDIATRIC_VITAL_RANGES: Record<
     heart_rate: { min: 70, max: 220, criticalLow: 100, criticalHigh: 160 },
     respiratory_rate: { min: 20, max: 80, criticalLow: 30, criticalHigh: 60 },
     blood_pressure: { min: 40, max: 120, criticalLow: 60, criticalHigh: 90 },
+    // head_circumference: extreme preemie (~22 wk ≈ 19–22 cm) through
+    // term-newborn 99th %ile (~38 cm). Critical bands flag concerning
+    // micro- or macrocephaly at birth.
+    head_circumference: { min: 22, max: 42, criticalLow: 30, criticalHigh: 39 },
+    // body_height: extreme preemie (~30 cm) through term-newborn 99th
+    // %ile (~56 cm).
+    body_height: { min: 28, max: 60, criticalLow: 40, criticalHigh: 56 },
   },
   infant: {
     heart_rate: { min: 70, max: 200, criticalLow: 100, criticalHigh: 150 },
     respiratory_rate: { min: 15, max: 70, criticalLow: 25, criticalHigh: 50 },
     blood_pressure: { min: 50, max: 130, criticalLow: 70, criticalHigh: 100 },
+    // head_circumference 1–12 mo: ~36 cm (1mo 5th %ile) to ~48 cm
+    // (12mo 95th %ile). criticalLow at 35 catches sentinel microcephaly.
+    head_circumference: { min: 32, max: 52, criticalLow: 36, criticalHigh: 50 },
+    // body_height 1–12 mo: ~50 cm (1mo 5th) to ~80 cm (12mo 95th).
+    body_height: { min: 45, max: 90, criticalLow: 50, criticalHigh: 85 },
   },
   child: {
     heart_rate: { min: 50, max: 200, criticalLow: 80, criticalHigh: 130 },
     respiratory_rate: { min: 12, max: 40, criticalLow: 20, criticalHigh: 30 },
     blood_pressure: { min: 60, max: 140, criticalLow: 80, criticalHigh: 110 },
+    // head_circumference 1–5 yr: ~43 cm (1yr 5th) to ~54 cm (5yr 95th).
+    // criticalHigh = 56 catches sentinel hydrocephalus per #1175 example:
+    // "60 cm OFC in 4-year-old". criticalLow = 44 catches severe
+    // microcephaly per #1175 example: "25 cm OFC in 5-year-old" trips
+    // the plausibility error (min = 40).
+    head_circumference: { min: 40, max: 58, criticalLow: 44, criticalHigh: 56 },
+    // body_height 1–5 yr: ~70 cm (1yr 5th) to ~120 cm (5yr 95th).
+    body_height: { min: 65, max: 130, criticalLow: 72, criticalHigh: 125 },
+    // bmi 1–5 yr: percentile-based clinically; numeric guard only.
+    bmi: { min: 10, max: 30, criticalLow: 11, criticalHigh: 25 },
   },
   school_age: {
     heart_rate: { min: 40, max: 200, criticalLow: 70, criticalHigh: 110 },
     respiratory_rate: { min: 10, max: 35, criticalLow: 16, criticalHigh: 22 },
     blood_pressure: { min: 60, max: 160, criticalLow: 85, criticalHigh: 120 },
+    // head_circumference 6–12 yr: converging toward adult ~51–57 cm.
+    head_circumference: { min: 45, max: 62, criticalLow: 48, criticalHigh: 60 },
+    // body_height 6–12 yr: ~108 cm (6yr 5th) to ~160 cm (12yr 95th).
+    body_height: { min: 100, max: 175, criticalLow: 108, criticalHigh: 165 },
+    // bmi 6–12 yr: percentile-based clinically; numeric guard only.
+    bmi: { min: 10, max: 40, criticalLow: 12, criticalHigh: 30 },
   },
   adolescent: {
     heart_rate: { min: 30, max: 250, criticalLow: 60, criticalHigh: 100 },
     respiratory_rate: { min: 6, max: 40, criticalLow: 12, criticalHigh: 20 },
     blood_pressure: { min: 60, max: 200, criticalLow: 95, criticalHigh: 140 },
+    // head_circumference 13–17 yr: adult-like, ~52–60 cm.
+    head_circumference: { min: 48, max: 64, criticalLow: 50, criticalHigh: 62 },
+    // body_height 13–17 yr: ~140 cm (13yr 5th) to ~195 cm (17yr 95th).
+    body_height: { min: 130, max: 205, criticalLow: 140, criticalHigh: 198 },
+    // bmi 13–17 yr.
+    bmi: { min: 12, max: 50, criticalLow: 14, criticalHigh: 35 },
   },
 };
 
