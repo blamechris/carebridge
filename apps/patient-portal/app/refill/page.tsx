@@ -100,7 +100,7 @@ export default function RefillPage() {
   return (
     <div style={{ maxWidth: 700, margin: "0 auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
-        <h2 style={{ margin: 0 }}>Request Medication Refill</h2>
+        <h2 style={{ margin: 0 }}>Message Your Provider About a Refill</h2>
         <button
           onClick={() => router.push("/")}
           style={{ background: "none", border: "1px solid #444", color: "#999", padding: "0.5rem 1rem", borderRadius: 6, cursor: "pointer" }}
@@ -109,9 +109,31 @@ export default function RefillPage() {
         </button>
       </div>
 
+      <div
+        role="note"
+        style={{
+          backgroundColor: "#3b2a0f",
+          border: "1px solid #b45309",
+          borderRadius: 8,
+          padding: "0.75rem 1rem",
+          marginBottom: "1.5rem",
+          color: "#fef3c7",
+          fontSize: "0.85rem",
+          lineHeight: 1.5,
+        }}
+      >
+        <strong style={{ color: "#fbbf24" }}>Important:</strong> This sends a
+        message to your care team. It does <strong>not</strong> submit a
+        prescription to your pharmacy. Your provider will review your request
+        and either order a refill through their normal e-prescribing workflow
+        or respond with questions. If you are running out of an urgent
+        medication, call your provider directly.
+      </div>
+
       <p style={{ color: "#999", fontSize: "0.85rem", marginBottom: "1.5rem" }}>
-        Select a medication to request a refill. Your prescribing provider will receive
-        the request and can approve or deny it.
+        Select a medication to message your provider about. The message goes to
+        your prescribing provider (or your primary care team member if the
+        prescriber is unavailable).
       </p>
 
       {isUnlinked && (
@@ -151,11 +173,11 @@ export default function RefillPage() {
 
             {successMedId === med.id ? (
               <span role="status" aria-live="polite" style={{ color: "#22c55e", fontSize: "0.8rem", fontWeight: 600 }}>
-                &#x2713; Refill requested!
+                &#x2713; Message sent to provider
               </span>
             ) : errorMedId === med.id ? (
               <span role="alert" style={{ color: "#ef4444", fontSize: "0.8rem", fontWeight: 600 }}>
-                &#x2717; Request failed. Try again.
+                &#x2717; Could not send message. Try again.
               </span>
             ) : (
               <button
@@ -172,7 +194,7 @@ export default function RefillPage() {
                   opacity: submittingMedId === med.id ? 0.6 : 1,
                 }}
               >
-                {submittingMedId === med.id ? "Requesting..." : "Request Refill"}
+                {submittingMedId === med.id ? "Sending..." : "Message Provider"}
               </button>
             )}
           </div>
