@@ -8,6 +8,10 @@ import { AuthGuard } from "@/lib/auth-guard";
 import { useAuth } from "@/lib/auth";
 import { GroupedMultiselect } from "@/components/grouped-multiselect";
 import {
+  detectSuggestions,
+  SymptomSuggestionBanner,
+} from "@/components/symptom-suggestion-banner";
+import {
   type BodySystem,
   getSymptomSystem,
   parseROSOption,
@@ -46,6 +50,7 @@ type TemplateType = "soap" | "progress";
  */
 const NEW_SYMPTOMS_KEY = "new_symptoms";
 const ROS_KEY = "ros";
+const CHIEF_COMPLAINT_KEY = "chief_complaint";
 
 const NS_CAPTION = "Symptoms the patient is reporting today.";
 const ROS_CAPTION =
@@ -232,6 +237,15 @@ function NewNoteContent() {
     () => new Set(),
   );
 
+  // Sticky dismiss state for the symptom-suggestion banner (#1305).
+  // Holds the Chief Complaint text against which the user clicked
+  // "Dismiss". The banner hides itself when the CC text still equals
+  // this string; any subsequent edit clears the dismissal naturally
+  // because the equality check fails.
+  const [dismissedBannerText, setDismissedBannerText] = useState<string | null>(
+    null,
+  );
+
   const patientsQuery = trpc.patients.list.useQuery();
   const templateQuery = trpc.notes.templates.get.useQuery({ type: templateType });
 
@@ -242,6 +256,7 @@ function NewNoteContent() {
       // a different field shape doesn't inherit stale toggles.
       setSectionCollapseState({});
       setUnlinkedPairs(new Set());
+      setDismissedBannerText(null);
     }
   }, [templateQuery.data]);
 
@@ -292,6 +307,21 @@ function NewNoteContent() {
     });
     return out;
   }, [sections]);
+
+  /**
+   * Resolve the current Chief Complaint free-text value out of the
+   * sections array. Used by the symptom-suggestion banner (#1305) and
+   * by the inline highlight that flags suggested checkboxes inside the
+   * New Symptoms group. Returns an empty string when CC is absent so
+   * downstream callers don't need to null-guard.
+   */
+  const chiefComplaintText = useMemo(() => {
+    const loc = fieldLocations.get(CHIEF_COMPLAINT_KEY);
+    if (!loc) return "";
+    const field = sections[loc.sIdx]?.fields[loc.fIdx];
+    if (!field) return "";
+    return typeof field.value === "string" ? field.value : "";
+  }, [fieldLocations, sections]);
 
   /**
    * NS ↔ ROS auto-mirror.
@@ -596,6 +626,24 @@ function NewNoteContent() {
                   const collapsed =
                     sectionCollapseState[field.key] ?? {};
                   const linked = linkedOptionsFor(field.key);
+                  // Suggestions for the New Symptoms field only (#1305).
+                  // Recompute here from the live CC text + options so the
+                  // banner and the inline highlight stay in lockstep.
+                  // Already-ticked items are excluded so the highlight
+                  // disappears the moment a suggestion is accepted.
+                  const suggestionsForField =
+                    isNS && field.options
+                      ? detectSuggestions(
+                          chiefComplaintText,
+                          field.options,
+                        )
+                      : [];
+                  const selectedSet = new Set(selected);
+                  const highlightedForField = new Set(
+                    suggestionsForField.filter(
+                      (s) => !selectedSet.has(s),
+                    ),
+                  );
                   return (
                     <div
                       key={field.key}
@@ -617,6 +665,26 @@ function NewNoteContent() {
                       >
                         {isNS ? NS_CAPTION : ROS_CAPTION}
                       </p>
+                      {isNS && (
+                        <SymptomSuggestionBanner
+                          chiefComplaintText={chiefComplaintText}
+                          allSymptomOptions={field.options ?? []}
+                          currentlyTicked={selected}
+                          dismissedForText={dismissedBannerText}
+                          onTickAll={(suggestions) => {
+                            // Union with current selection so existing
+                            // ticks are preserved; the auto-mirror in
+                            // handleMultiselectChange fans the change
+                            // out to ROS.
+                            const next = [...selected];
+                            for (const s of suggestions) {
+                              if (!next.includes(s)) next.push(s);
+                            }
+                            handleMultiselectChange(sIdx, fIdx, field, next);
+                          }}
+                          onDismiss={(text) => setDismissedBannerText(text)}
+                        />
+                      )}
                       <GroupedMultiselect
                         fieldKey={field.key}
                         options={field.options ?? []}
@@ -645,6 +713,9 @@ function NewNoteContent() {
                         defaultExpanded={defaultExpanded}
                         linkedOptions={linked}
                         onUnlink={(opt) => handleUnlink(field, opt)}
+                        highlightedOptions={
+                          isNS ? highlightedForField : undefined
+                        }
                       />
                     </div>
                   );
