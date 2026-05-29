@@ -243,12 +243,24 @@ function OverviewTab({
         {careTeamQuery.isLoading ? (
           <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading...</div>
         ) : careTeam.length > 0 ? (
-          careTeam.map((member, i) => (
-            <div key={i} className="detail-row">
-              <span className="detail-label">{member.role}</span>
-              <span className="detail-value">{member.provider_id}</span>
-            </div>
-          ))
+          careTeam.map((member, i) => {
+            // Issue #1304: render provider name + specialty rather than
+            // the raw UUID. The gateway's careTeam.getByPatient now
+            // LEFT JOINs `users`, so `provider_name` + `provider_specialty`
+            // may be null when the linked user row is missing (stale
+            // roster entry, deleted user). Fall back to "Unknown provider"
+            // so clinicians get an explicit signal instead of an empty cell.
+            const name = member.provider_name ?? "Unknown provider";
+            const specialty = member.provider_specialty;
+            return (
+              <div key={i} className="detail-row">
+                <span className="detail-label">{member.role}</span>
+                <span className="detail-value">
+                  {specialty ? `${name} — ${specialty}` : name}
+                </span>
+              </div>
+            );
+          })
         ) : (
           <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
             No care team members assigned
