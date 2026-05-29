@@ -125,32 +125,34 @@ apps/clinician-bridge/
     └── rule-client.ts            # tRPC client to api-gateway
 ```
 
-## Open Questions
+## Decisions
 
-**Q1 — Token transport.** Three options for how the bridge fetches the
-capture from MedLens:
+**D1 — Token transport: relay.** Caregiver phone uploads an
+encrypted-at-rest blob to a CareBridge edge cache (Cloudflare R2 or
+Vercel KV with a 15-min TTL) when the share button is pressed. Bridge
+fetches from the relay with the paired token. Considered alternatives:
+local-net HTTP server on the caregiver phone (rejected — hospital WiFi
+is too unreliable) and multi-frame QR (rejected — capture payloads
+will routinely exceed safe QR scan reliability).
 
-| Option | Where capture lives | Bridge fetches from | Notes |
-|---|---|---|---|
-| **(a) Relay** | Caregiver phone uploads encrypted blob to CareBridge edge cache when share-button pressed; cache expires in 15 min | CareBridge edge cache | Simplest UX, requires us to run a relay (still $0 on Cloudflare R2 / Vercel KV with TTL). |
-| **(b) Local net** | Capture stays on caregiver phone; phone runs a tiny HTTP server | Caregiver phone over local WiFi | No infra, but flaky on hospital networks. |
-| **(c) QR-embedded** | Capture serialized into a multi-frame QR | Camera scan | Works offline, but limited to ~3 KB per frame; only viable for small captures. |
+Privacy posture: the relay holds an opaque encrypted blob; the
+decryption key travels in the paired token, which expires in 15
+minutes and is single-use. The relay sees ciphertext only.
 
-Recommend (a) for MVP; revisit if cost or privacy review pushes back.
+**D2 — Clinician self-ID: optional, logged.** Bridge prompts for
+clinician name + role at session start but does not require it. If
+entered, it is written prominently to `audit_log`. Friction at the
+bedside is a real safety risk (clinicians abandon tools that get in
+the way during acute care); a soft prompt + permanent audit trail
+balances both concerns.
 
-**Q2 — Clinician self-ID.** Should the bridge require the clinician to
-type a name + role before viewing? Pros: better audit trail. Cons:
-friction at the bedside. Recommend optional self-ID at session start,
-prominently logged to `audit_log` but not blocking.
+**D3 — Audit log capture-hash add.** `audit_log` schema gains a
+nullable `capture_hash` column (sha256 of the MedLens capture body).
+Lets us correlate bridge sessions to flag firings without storing the
+capture itself. Tracked as a follow-up issue once this scope merges.
 
-**Q3 — Audit log writes.** Bridge runs rules via `api-gateway`, which
-already writes `audit_log` rows for rule firings. Confirm the audit row
-includes a `capture_hash` field (sha256 of the MedLens capture) so we
-can correlate later without storing the capture itself. May need a
-small `audit_log` schema add — track in a follow-up issue.
-
-**Q4 — DEA/NPI capture.** Out of scope for MVP. Defer until a
-clinician partner asks for it.
+**D4 — DEA/NPI capture: deferred.** Out of scope for MVP. Defer until
+a clinician partner asks for it.
 
 ## Milestones
 
@@ -172,8 +174,9 @@ M5 spans both repos.
 
 ## What This Doc Is Not
 
-This is a scope doc, not a design doc. It deliberately leaves the
-following open:
+This is a scope doc, not a design doc. The four core decisions
+(transport, self-ID, audit, DEA/NPI) are now locked above. It
+deliberately leaves the following implementation-level details open:
 
 - Exact rule selection on the bridge (probably the full DETERIORATION
   family + cross-specialty + critical-value rules — TBD on M3).
