@@ -3,7 +3,8 @@ import {
   bridgeDisplayCodeSchema,
   bridgeDecryptionKeySchema,
   bridgeCiphertextSchema,
-  bridgePairRecordSchema,
+  bridgePairResponseSchema,
+  bridgePairTokenSchema,
   bridgePairRequestSchema,
   bridgeCaptureEnvelopeSchema,
   bridgeQrPayloadSchema,
@@ -73,7 +74,24 @@ describe("bridgeCiphertextSchema", () => {
   });
 });
 
-describe("bridgePairRecordSchema", () => {
+describe("bridgePairResponseSchema (relay → client, no key)", () => {
+  const valid = {
+    capture_id: VALID_UUID,
+    display_code: "K7M4QZ",
+    expires_at: VALID_TIMESTAMP,
+  };
+
+  it("accepts a complete valid response", () => {
+    expect(bridgePairResponseSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it("rejects on a missing required field", () => {
+    const { display_code: _omit, ...partial } = valid;
+    expect(bridgePairResponseSchema.safeParse(partial).success).toBe(false);
+  });
+});
+
+describe("bridgePairTokenSchema (client-built QR payload, has key)", () => {
   const valid = {
     capture_id: VALID_UUID,
     display_code: "K7M4QZ",
@@ -81,13 +99,13 @@ describe("bridgePairRecordSchema", () => {
     decryption_key: VALID_KEY,
   };
 
-  it("accepts a complete valid record", () => {
-    expect(bridgePairRecordSchema.safeParse(valid).success).toBe(true);
+  it("accepts a complete valid token", () => {
+    expect(bridgePairTokenSchema.safeParse(valid).success).toBe(true);
   });
 
-  it("rejects on a missing field", () => {
+  it("rejects when the decryption_key is absent", () => {
     const { decryption_key: _omit, ...partial } = valid;
-    expect(bridgePairRecordSchema.safeParse(partial).success).toBe(false);
+    expect(bridgePairTokenSchema.safeParse(partial).success).toBe(false);
   });
 });
 

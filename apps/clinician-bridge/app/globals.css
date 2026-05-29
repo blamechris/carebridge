@@ -122,3 +122,85 @@ body.bridge-body {
   color: inherit;
   text-decoration: underline;
 }
+
+/* ─── Pair-code form ────────────────────────────────────────── */
+
+.pair-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.pair-form__label {
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+
+.pair-form__input {
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-size: 1.5rem;
+  letter-spacing: 0.25em;
+  padding: 0.75rem 0.9rem;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  color: inherit;
+  text-transform: uppercase;
+}
+
+@media (prefers-color-scheme: light) {
+  .pair-form__input {
+    background: #ffffff;
+    border-color: #d0d7de;
+  }
+}
+
+.pair-form__input:focus {
+  outline: 2px solid #f7d774;
+  outline-offset: 1px;
+}
+
+.pair-form__submit {
+  align-self: flex-start;
+  padding: 0.6rem 1.1rem;
+  font-size: 1rem;
+  font-weight: 600;
+  background: #f7d774;
+  color: #0b0f14;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.pair-form__submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pair-form__error {
+  color: #ff6b6b;
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+/* ─── Capture metadata (session route placeholder) ──────────── */
+
+.bridge-capture-meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.4rem 1rem;
+  margin: 0.5rem 0 1rem;
+  font-size: 0.9rem;
+}
+
+.bridge-capture-meta dt {
+  opacity: 0.7;
+  font-weight: 500;
+}
+
+.bridge-capture-meta dd {
+  margin: 0;
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  word-break: break-all;
+}

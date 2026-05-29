@@ -1,4 +1,5 @@
 import { PostMortemBanner } from "./components/PostMortemBanner";
+import { PairCodeForm } from "./components/PairCodeForm";
 
 export default function LandingPage() {
   return (
@@ -16,11 +17,12 @@ export default function LandingPage() {
         <h2 id="pair-heading">Pair a MedLens capture</h2>
         <p>
           Ask the patient or family caregiver to open MedLens and tap
-          <strong> Share with clinician</strong>. They will show you a QR code
-          or a 6-character code.
+          <strong> Share with clinician</strong>. They will show you a 6-character
+          code or a QR. Enter the code here:
         </p>
+        <PairCodeForm />
         <p className="bridge-landing__milestone-note">
-          Pairing flow ships in milestone M2. This is the M1 scaffold.
+          QR scanning ships in a follow-up. M2 supports typed-code entry.
         </p>
       </section>
 
