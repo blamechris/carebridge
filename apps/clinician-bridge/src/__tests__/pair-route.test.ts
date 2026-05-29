@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { POST } from "../../app/api/v1/pair/route";
 import { GET as GET_CAPTURE } from "../../app/api/v1/captures/[code]/route";
 import { relayStore } from "../lib/relay-store";
-import { bridgePairRecordSchema } from "@carebridge/shared-types";
+import { bridgePairResponseSchema } from "@carebridge/shared-types";
 
 function jsonReq(body: unknown): Request {
   return new Request("http://localhost:3002/api/v1/pair", {
@@ -34,13 +34,14 @@ describe("POST /api/v1/pair", () => {
     expect(res.status).toBe(400);
   });
 
-  it("returns a pair record on a valid request and stores the envelope", async () => {
+  it("returns a pair response on a valid request and stores the envelope", async () => {
     const res = await POST(
       jsonReq({ ciphertext: VALID_CIPHERTEXT, caregiver_label: "Test" }),
     );
     expect(res.status).toBe(201);
     const body = await res.json();
-    expect(bridgePairRecordSchema.safeParse(body).success).toBe(true);
+    expect(bridgePairResponseSchema.safeParse(body).success).toBe(true);
+    expect("decryption_key" in body).toBe(false);
     expect(relayStore._size()).toBe(1);
   });
 
@@ -80,7 +81,8 @@ describe("GET /api/v1/captures/[code]", () => {
     const postRes = await POST(jsonReq({ ciphertext: VALID_CIPHERTEXT }));
     const pair = await postRes.json();
 
-    const lower = pair.display_code.toLowerCase();
+    const response = pair as { display_code: string };
+    const lower = response.display_code.toLowerCase();
     const res = await GET_CAPTURE(new Request("http://localhost/x"), {
       params: Promise.resolve({ code: lower }),
     });

@@ -49,12 +49,23 @@ export const bridgeCiphertextSchema = z
 /** Caregiver-set label; bridge displays verbatim, capped to keep UI tidy. */
 export const bridgeCaregiverLabelSchema = z.string().max(80).optional();
 
-export const bridgePairRecordSchema = z.object({
+/** Relay → client (no key). */
+export const bridgePairResponseSchema = z.object({
+  capture_id: bridgeCaptureIdSchema,
+  display_code: bridgeDisplayCodeSchema,
+  expires_at: z.string().datetime(),
+});
+
+/** Client-built (has key) — what the QR encodes. */
+export const bridgePairTokenSchema = z.object({
   capture_id: bridgeCaptureIdSchema,
   display_code: bridgeDisplayCodeSchema,
   expires_at: z.string().datetime(),
   decryption_key: bridgeDecryptionKeySchema,
 });
+
+/** @deprecated Use `bridgePairResponseSchema` or `bridgePairTokenSchema`. */
+export const bridgePairRecordSchema = bridgePairTokenSchema;
 
 export const bridgePairRequestSchema = z.object({
   ciphertext: bridgeCiphertextSchema,
@@ -70,5 +81,5 @@ export const bridgeCaptureEnvelopeSchema = z.object({
 
 export const bridgeQrPayloadSchema = z.object({
   v: z.literal("1"),
-  token: bridgePairRecordSchema,
+  token: bridgePairTokenSchema,
 });

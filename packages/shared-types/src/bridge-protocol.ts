@@ -17,33 +17,38 @@
  */
 
 /**
- * The pair record returned by `POST /api/v1/pair` to the MedLens client.
- *
- * The caregiver's phone shows `display_code` to the clinician (and/or
- * encodes everything into a QR for scanning).
+ * The pair response returned by `POST /api/v1/pair` to the MedLens
+ * client. Deliberately does NOT contain the decryption key — the key
+ * is generated client-side by MedLens and never crosses the wire to
+ * the relay (D1 in `docs/clinician-bridge-mvp.md` says "the relay
+ * sees ciphertext only").
  */
-export interface BridgePairRecord {
-  /** Opaque capture identifier; bridge fetches from `/api/v1/captures/{capture_id}`. */
+export interface BridgePairResponse {
+  /** Opaque capture identifier; for audit and debugging only. */
   capture_id: string;
   /** 6-character base32 code, e.g. "K7M4QZ". Excludes 0/O/1/I. */
   display_code: string;
   /** ISO 8601 timestamp; 15 minutes from issuance. */
   expires_at: string;
-  /**
-   * Base64url-encoded AES-256-GCM key. Never sent to the relay after
-   * pair creation — the relay rotates it out of memory and only retains
-   * the encrypted ciphertext. The bridge receives this key via the
-   * QR/code payload and decrypts client-side.
-   */
-  decryption_key: string;
 }
 
 /**
- * The QR/code-embedded token the clinician's bridge device parses.
- * Identical to BridgePairRecord — kept as a distinct name to make the
- * "moving over the air gap (QR scan)" intent obvious at call sites.
+ * The QR-encoded token the clinician's bridge device parses. The
+ * MedLens client builds this client-side by combining the relay's
+ * `BridgePairResponse` with the AES-256-GCM key it generated locally
+ * and used to encrypt the ciphertext before upload. The relay never
+ * sees this combined form.
  */
-export type BridgePairToken = BridgePairRecord;
+export interface BridgePairToken {
+  capture_id: string;
+  display_code: string;
+  expires_at: string;
+  /**
+   * Base64url-encoded AES-256-GCM key (43 chars = 32 bytes). Generated
+   * on the MedLens device, embedded in the QR, never sent to the relay.
+   */
+  decryption_key: string;
+}
 
 /**
  * The envelope the relay actually stores. Contains only ciphertext and
@@ -98,3 +103,10 @@ export interface BridgeQrPayload {
   v: "1";
   token: BridgePairToken;
 }
+
+/**
+ * @deprecated Use `BridgePairResponse` (relay → client, no key) or
+ *   `BridgePairToken` (client-built, has key). Kept temporarily for
+ *   call sites that imported the old name.
+ */
+export type BridgePairRecord = BridgePairToken;

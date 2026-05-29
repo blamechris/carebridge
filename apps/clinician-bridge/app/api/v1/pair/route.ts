@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import {
   bridgePairRequestSchema,
-  type BridgePairRecord,
+  type BridgePairResponse,
   type BridgeCaptureEnvelope,
 } from "@carebridge/shared-types";
-import { generatePairRecord } from "@/lib/pair-token";
+import { generatePairResponse } from "@/lib/pair-token";
 import { relayStore, RELAY_TTL_MS } from "@/lib/relay-store";
 
 export const runtime = "nodejs";
@@ -14,13 +14,14 @@ export const dynamic = "force-dynamic";
  * POST /api/v1/pair
  *
  * Caregiver phone uploads an encrypted ciphertext blob. The relay
- * generates a pair record (capture_id, display_code, decryption_key,
- * expires_at), stores the envelope under display_code with a 15-min
- * TTL, and returns the pair record.
+ * mints a capture_id + display_code + expires_at, stores the envelope
+ * under display_code with a 15-min TTL, and returns those three
+ * fields.
  *
- * The decryption key is in the response body — once returned, the
- * relay does not retain it. The MedLens client embeds it in the QR
- * payload, which is the only place it lives until the bridge scans.
+ * The relay deliberately does NOT see the AES-256-GCM key that
+ * encrypted the ciphertext. The MedLens client generates the key
+ * locally, encrypts locally, posts ciphertext only, and embeds the
+ * key in the QR payload alongside the response fields.
  */
 export async function POST(req: Request): Promise<Response> {
   let body: unknown;
@@ -47,20 +48,20 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const now = Date.now();
-  const pair: BridgePairRecord = generatePairRecord({
+  const response: BridgePairResponse = generatePairResponse({
     now,
     ttl_ms: RELAY_TTL_MS,
     crypto,
   });
 
   const envelope: BridgeCaptureEnvelope = {
-    capture_id: pair.capture_id,
+    capture_id: response.capture_id,
     ciphertext: parsed.data.ciphertext,
     uploaded_at: new Date(now).toISOString(),
-    expires_at: pair.expires_at,
+    expires_at: response.expires_at,
   };
 
-  relayStore.put(pair.display_code, envelope, parsed.data.caregiver_label, now);
+  relayStore.put(response.display_code, envelope, parsed.data.caregiver_label, now);
 
-  return NextResponse.json(pair, { status: 201 });
+  return NextResponse.json(response, { status: 201 });
 }
