@@ -1,11 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { trpc } from "@/lib/trpc";
 import { AuthGuard } from "@/lib/auth-guard";
 import { useAuth } from "@/lib/auth";
+import { GroupedMultiselect } from "@/components/grouped-multiselect";
+import {
+  type BodySystem,
+  getSymptomSystem,
+  parseROSOption,
+} from "@/lib/symptom-systems";
 
 type FieldType =
   | "text"
@@ -32,6 +38,55 @@ type NoteSection = {
 };
 
 type TemplateType = "soap" | "progress";
+
+/**
+ * NS and ROS field keys recognised by the SOAP template (see
+ * services/clinical-notes/src/templates/soap.ts). Keeping these as
+ * named constants lets the auto-mirror logic stay readable.
+ */
+const NEW_SYMPTOMS_KEY = "new_symptoms";
+const ROS_KEY = "ros";
+
+const NS_CAPTION = "Symptoms the patient is reporting today.";
+const ROS_CAPTION =
+  "Full systems review for the visit (“all systems negative” allowed).";
+
+/**
+ * Find the ROS option (e.g. "neurological: headache") whose suffix
+ * after the colon matches the bare NS symptom string. Used for the
+ * NS → ROS arm of the auto-mirror.
+ */
+function findROSOptionForSymptom(
+  symptom: string,
+  rosOptions: string[],
+): string | undefined {
+  const needle = symptom.toLowerCase().trim();
+  return rosOptions.find((opt) => {
+    const { symptom: suffix } = parseROSOption(opt);
+    return suffix.toLowerCase() === needle;
+  });
+}
+
+/**
+ * Reverse direction: given a positive ROS option, find the NS option
+ * whose label matches the ROS suffix. NS options are bare strings
+ * (no prefix) so the match is a direct equality.
+ */
+function findNSOptionForROS(
+  rosOption: string,
+  nsOptions: string[],
+): string | undefined {
+  const { symptom } = parseROSOption(rosOption);
+  const needle = symptom.toLowerCase().trim();
+  return nsOptions.find((opt) => opt.toLowerCase() === needle);
+}
+
+/**
+ * Stable key for a NS-ROS pair (used as the unlinked-pair identifier).
+ */
+function pairKey(nsOption: string, rosOption: string): string {
+  return `${nsOption}||${rosOption}`;
+}
 
 function FieldInput({
   field,
@@ -161,12 +216,32 @@ function NewNoteContent() {
   const [patientPrefillNotice, setPatientPrefillNotice] = useState<string>("");
   const [sections, setSections] = useState<NoteSection[]>([]);
 
+  // Per-field collapsed state for body-system groups, keyed as
+  // `{ [fieldKey]: { [BodySystem]: collapsed } }`. Lives in component
+  // state so the toggle state persists for the lifetime of the draft
+  // (closing/reopening the form during a single session keeps the
+  // user's view). #1306.
+  const [sectionCollapseState, setSectionCollapseState] = useState<
+    Record<string, Partial<Record<BodySystem, boolean>>>
+  >({});
+
+  // Pairs the user has explicitly unlinked via the 🔗 icon. Stored as
+  // `"<nsOption>||<rosOption>"` strings so the set is membership-cheap
+  // and easy to serialise if we later persist it. #1306.
+  const [unlinkedPairs, setUnlinkedPairs] = useState<Set<string>>(
+    () => new Set(),
+  );
+
   const patientsQuery = trpc.patients.list.useQuery();
   const templateQuery = trpc.notes.templates.get.useQuery({ type: templateType });
 
   useEffect(() => {
     if (templateQuery.data) {
       setSections(templateQuery.data as unknown as NoteSection[]);
+      // Switching templates resets per-field UI state so a draft with
+      // a different field shape doesn't inherit stale toggles.
+      setSectionCollapseState({});
+      setUnlinkedPairs(new Set());
     }
   }, [templateQuery.data]);
 
@@ -204,6 +279,212 @@ function NewNoteContent() {
       next[sectionIdx].fields[fieldIdx].source = "modified";
       return next;
     });
+  }
+
+  // Resolve which section + field index a key lives at. Used by the
+  // NS↔ROS auto-mirror to update the paired field in one render.
+  const fieldLocations = useMemo(() => {
+    const out = new Map<string, { sIdx: number; fIdx: number }>();
+    sections.forEach((s, sIdx) => {
+      s.fields.forEach((f, fIdx) => {
+        out.set(f.key, { sIdx, fIdx });
+      });
+    });
+    return out;
+  }, [sections]);
+
+  /**
+   * NS ↔ ROS auto-mirror.
+   *
+   * When the user ticks a NS option (e.g. "headache"), look up the
+   * matching ROS option ("neurological: headache") and tick that too,
+   * unless the pair has been explicitly unlinked. Untick mirrors the
+   * same way (positive on one side → positive on the other, untick on
+   * one side → untick on the other). Either direction works.
+   *
+   * The save payload still contains two independent arrays — the link
+   * is purely a UI affordance, so on submit the server sees whatever
+   * the final ticked state was.
+   */
+  const handleMultiselectChange = useCallback(
+    (
+      sIdx: number,
+      fIdx: number,
+      field: NoteField,
+      nextValue: string[],
+    ) => {
+      const prevValue = Array.isArray(field.value)
+        ? (field.value as string[])
+        : [];
+
+      // Compute additions / removals on this field.
+      const added = nextValue.filter((v) => !prevValue.includes(v));
+      const removed = prevValue.filter((v) => !nextValue.includes(v));
+
+      // Mirror only fires for the two known fields.
+      const isNS = field.key === NEW_SYMPTOMS_KEY;
+      const isROS = field.key === ROS_KEY;
+
+      // Apply this field's own change first.
+      setSections((prev) => {
+        const next = prev.map((s) => ({
+          ...s,
+          fields: s.fields.map((f) => ({ ...f })),
+        }));
+        next[sIdx].fields[fIdx].value = nextValue;
+        next[sIdx].fields[fIdx].source = "modified";
+
+        if (!(isNS || isROS)) return next;
+
+        // Find the paired field on the same section.
+        const partnerKey = isNS ? ROS_KEY : NEW_SYMPTOMS_KEY;
+        const loc = fieldLocations.get(partnerKey);
+        if (!loc) return next;
+
+        const partner = next[loc.sIdx].fields[loc.fIdx];
+        const partnerOptions = partner.options ?? [];
+        const partnerSelected = Array.isArray(partner.value)
+          ? [...(partner.value as string[])]
+          : [];
+
+        for (const add of added) {
+          const partnerOpt = isNS
+            ? findROSOptionForSymptom(add, partnerOptions)
+            : findNSOptionForROS(add, partnerOptions);
+          if (!partnerOpt) continue;
+          // The pair key is always nsOption||rosOption regardless of
+          // which side we came from.
+          const key = isNS
+            ? pairKey(add, partnerOpt)
+            : pairKey(partnerOpt, add);
+          if (unlinkedPairs.has(key)) continue;
+          if (!partnerSelected.includes(partnerOpt)) {
+            partnerSelected.push(partnerOpt);
+          }
+        }
+        for (const drop of removed) {
+          const partnerOpt = isNS
+            ? findROSOptionForSymptom(drop, partnerOptions)
+            : findNSOptionForROS(drop, partnerOptions);
+          if (!partnerOpt) continue;
+          const key = isNS
+            ? pairKey(drop, partnerOpt)
+            : pairKey(partnerOpt, drop);
+          if (unlinkedPairs.has(key)) continue;
+          const idx = partnerSelected.indexOf(partnerOpt);
+          if (idx >= 0) partnerSelected.splice(idx, 1);
+        }
+
+        next[loc.sIdx].fields[loc.fIdx] = {
+          ...partner,
+          value: partnerSelected,
+          source: "modified",
+        };
+        return next;
+      });
+    },
+    [fieldLocations, unlinkedPairs],
+  );
+
+  /**
+   * Toggle one body-system group's collapsed state. Falls back to the
+   * default expansion (NS expanded / ROS collapsed) on first touch so
+   * the first click feels intentional rather than no-op.
+   */
+  const toggleSection = useCallback(
+    (fieldKey: string, system: BodySystem, defaultExpanded: boolean) => {
+      setSectionCollapseState((prev) => {
+        const fieldState = prev[fieldKey] ?? {};
+        const current =
+          fieldState[system] !== undefined
+            ? fieldState[system]!
+            : !defaultExpanded;
+        return {
+          ...prev,
+          [fieldKey]: {
+            ...fieldState,
+            [system]: !current,
+          },
+        };
+      });
+    },
+    [],
+  );
+
+  /**
+   * Unlink a NS/ROS pair via the 🔗 icon. The icon dispatches the bare
+   * option the user clicked on; we resolve the partner and record the
+   * pair as unlinked. Future ticks on either side no longer mirror.
+   */
+  const handleUnlink = useCallback(
+    (sourceField: NoteField, option: string) => {
+      const isNS = sourceField.key === NEW_SYMPTOMS_KEY;
+      const isROS = sourceField.key === ROS_KEY;
+      if (!(isNS || isROS)) return;
+      const partnerKey = isNS ? ROS_KEY : NEW_SYMPTOMS_KEY;
+      const loc = fieldLocations.get(partnerKey);
+      if (!loc) return;
+      const partnerOptions =
+        sections[loc.sIdx].fields[loc.fIdx].options ?? [];
+      const partnerOpt = isNS
+        ? findROSOptionForSymptom(option, partnerOptions)
+        : findNSOptionForROS(option, partnerOptions);
+      if (!partnerOpt) return;
+      const key = isNS
+        ? pairKey(option, partnerOpt)
+        : pairKey(partnerOpt, option);
+      setUnlinkedPairs((prev) => {
+        if (prev.has(key)) return prev;
+        const next = new Set(prev);
+        next.add(key);
+        return next;
+      });
+    },
+    [fieldLocations, sections],
+  );
+
+  /**
+   * Compute the set of currently-linked option strings (within a given
+   * field) for the 🔗 indicator. A row is "linked" when (a) it is
+   * ticked, (b) the partner field also has its analog ticked, and (c)
+   * the pair is not in `unlinkedPairs`.
+   */
+  function linkedOptionsFor(fieldKey: string): Set<string> {
+    const out = new Set<string>();
+    const nsLoc = fieldLocations.get(NEW_SYMPTOMS_KEY);
+    const rosLoc = fieldLocations.get(ROS_KEY);
+    if (!nsLoc || !rosLoc) return out;
+    const nsField = sections[nsLoc.sIdx].fields[nsLoc.fIdx];
+    const rosField = sections[rosLoc.sIdx].fields[rosLoc.fIdx];
+    const nsSelected = Array.isArray(nsField.value)
+      ? (nsField.value as string[])
+      : [];
+    const rosSelected = Array.isArray(rosField.value)
+      ? (rosField.value as string[])
+      : [];
+    const rosOptions = rosField.options ?? [];
+    const nsOptions = nsField.options ?? [];
+    for (const ns of nsSelected) {
+      const ros = findROSOptionForSymptom(ns, rosOptions);
+      if (!ros) continue;
+      if (!rosSelected.includes(ros)) continue;
+      if (unlinkedPairs.has(pairKey(ns, ros))) continue;
+      if (fieldKey === NEW_SYMPTOMS_KEY) out.add(ns);
+      if (fieldKey === ROS_KEY) out.add(ros);
+    }
+    // Cover ROS-side selections that also have a NS analog — usually
+    // the same pair the loop above already added, but guards against
+    // ROS-only entries with a matching NS that the NS-side loop missed
+    // due to ordering quirks.
+    for (const ros of rosSelected) {
+      const ns = findNSOptionForROS(ros, nsOptions);
+      if (!ns) continue;
+      if (!nsSelected.includes(ns)) continue;
+      if (unlinkedPairs.has(pairKey(ns, ros))) continue;
+      if (fieldKey === NEW_SYMPTOMS_KEY) out.add(ns);
+      if (fieldKey === ROS_KEY) out.add(ros);
+    }
+    return out;
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -299,19 +580,90 @@ function NewNoteContent() {
           sections.map((section, sIdx) => (
             <div key={section.key} className="detail-card" style={{ marginBottom: 16 }}>
               <div className="detail-card-title">{section.label}</div>
-              {section.fields.map((field, fIdx) => (
-                <div
-                  key={field.key}
-                  className="detail-row"
-                  style={{ flexDirection: "column", gap: 4, alignItems: "stretch" }}
-                >
-                  <label className="detail-label">{field.label}</label>
-                  <FieldInput
-                    field={field}
-                    onChange={(v) => updateField(sIdx, fIdx, v)}
-                  />
-                </div>
-              ))}
+              {section.fields.map((field, fIdx) => {
+                const isNS = field.key === NEW_SYMPTOMS_KEY;
+                const isROS = field.key === ROS_KEY;
+                const isGrouped =
+                  (isNS || isROS) &&
+                  field.field_type === "multiselect" &&
+                  Array.isArray(field.options);
+
+                if (isGrouped) {
+                  const defaultExpanded = isNS;
+                  const selected = Array.isArray(field.value)
+                    ? (field.value as string[])
+                    : [];
+                  const collapsed =
+                    sectionCollapseState[field.key] ?? {};
+                  const linked = linkedOptionsFor(field.key);
+                  return (
+                    <div
+                      key={field.key}
+                      className="detail-row"
+                      style={{
+                        flexDirection: "column",
+                        gap: 4,
+                        alignItems: "stretch",
+                      }}
+                    >
+                      <label className="detail-label">{field.label}</label>
+                      <p
+                        className="grouped-multiselect-caption"
+                        style={{
+                          fontSize: 12,
+                          color: "var(--text-muted)",
+                          margin: 0,
+                        }}
+                      >
+                        {isNS ? NS_CAPTION : ROS_CAPTION}
+                      </p>
+                      <GroupedMultiselect
+                        fieldKey={field.key}
+                        options={field.options ?? []}
+                        selected={selected}
+                        onChange={(next) =>
+                          handleMultiselectChange(sIdx, fIdx, field, next)
+                        }
+                        groupOf={
+                          isNS
+                            ? (opt) => ({
+                                system: getSymptomSystem(opt),
+                                display: opt,
+                              })
+                            : (opt) => {
+                                const parsed = parseROSOption(opt);
+                                return {
+                                  system: parsed.system,
+                                  display: parsed.symptom,
+                                };
+                              }
+                        }
+                        collapsed={collapsed}
+                        onToggleSection={(system) =>
+                          toggleSection(field.key, system, defaultExpanded)
+                        }
+                        defaultExpanded={defaultExpanded}
+                        linkedOptions={linked}
+                        onUnlink={(opt) => handleUnlink(field, opt)}
+                      />
+                    </div>
+                  );
+                }
+
+                return (
+                  <div
+                    key={field.key}
+                    className="detail-row"
+                    style={{ flexDirection: "column", gap: 4, alignItems: "stretch" }}
+                  >
+                    <label className="detail-label">{field.label}</label>
+                    <FieldInput
+                      field={field}
+                      onChange={(v) => updateField(sIdx, fIdx, v)}
+                    />
+                  </div>
+                );
+              })}
             </div>
           ))
         )}
