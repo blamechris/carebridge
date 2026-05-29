@@ -8,3 +8,4 @@ export * from "./allergen-synonyms.js";
 export * from "./cross-reactivity-map.js";
 export * from "./patient-education.js";
 export * from "./symptom-negation.js";
+export * from "./deterioration-patterns.js";

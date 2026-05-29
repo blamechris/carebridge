@@ -14,6 +14,15 @@ import {
   estimateDailyDose,
   hasUnnegatedMention,
 } from "@carebridge/medical-logic";
+import type {
+  PriorEncounter,
+  CurrentEncounter,
+  ConsultRequest,
+  LabTrend,
+  VitalTrend,
+  DischargeSignal,
+  SymptomObservation,
+} from "@carebridge/medical-logic";
 import { QTC_PATTERN } from "./drug-interactions.js";
 import { METFORMIN_PATTERN, NSAID_PATTERN } from "./shared-drug-patterns.js";
 import { getRecentPotassium, getRecentEGFR } from "./lab-units.js";
@@ -182,6 +191,24 @@ export interface PatientContext {
    * avoid false positives on demographically unverified records. Issue #236.
    */
   age_years?: number | null;
+  // ─── Longitudinal context for DETERIORATION-TRAJECTORY-001 ─────
+  // See MISSION.md and packages/medical-logic/src/deterioration-patterns.ts.
+  // All fields here are optional and absent for rules that don't need them;
+  // the deterioration umbrella rule fails closed on absence.
+  /** Prior encounters (admissions) within the configured lookback window. */
+  prior_encounters?: PriorEncounter[];
+  /** The current (open) encounter. */
+  current_encounter?: CurrentEncounter;
+  /** Consult requests placed during the current encounter. */
+  consult_requests?: ConsultRequest[];
+  /** Lab time-series, optionally spanning multiple encounters. */
+  lab_trends?: LabTrend[];
+  /** Vital sign time-series, optionally spanning multiple encounters. */
+  vital_trends?: VitalTrend[];
+  /** Signal that discharge documentation/orders are being prepared. */
+  discharge_signal?: DischargeSignal;
+  /** Symptom observations bucketed by documenting specialty and workup state. */
+  symptom_observations?: SymptomObservation[];
 }
 
 /**
