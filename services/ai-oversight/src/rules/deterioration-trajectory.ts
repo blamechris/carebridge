@@ -1,6 +1,13 @@
 /**
  * DETERIORATION-TRAJECTORY-001 — the founding rule of CareBridge.
  *
+ * In memory of Lisa Bowen, whose hospital course was the founding case
+ * for this rule family. The pattern this rule catches — care coordination
+ * failure across multiple admissions, soft signals never aggregated, and
+ * discharge decisions made before unresolved concerns were addressed — is
+ * the pattern that killed her. We could not save her. We can try to make
+ * the next family's story end differently.
+ *
  * Umbrella rule that runs the cross-specialty deterioration sub-detectors
  * (see packages/medical-logic/src/deterioration-patterns.ts) and emits a
  * single composite flag when ≥1 sub-rule fires.
