@@ -95,11 +95,11 @@ gh api repos/${REPO}/actions/runs/${RUN_ID}/jobs --jq '.jobs[] | select(.conclus
 **Pattern match against known failures:**
 
 CareBridge-specific patterns:
-- `TypeScript strict violation` / `TS[0-9]{4}` → FIX (add type annotations or fix type error)
-- `missing .js extension` / `Cannot find module` (ESM import) → FIX (add `.js` to relative imports)
-- `Drizzle schema drift` / `migration mismatch` → FIX (regenerate migrations or sync schema)
-- `pnpm typecheck failed` → FIX (type safety issue, likely in package boundary)
-- `pnpm lint failed` → FIX (code style issue, run `pnpm lint --fix` locally)
+- `TS\d+:` (TypeScript error code) → FIX (strict mode violation, likely missing `.js` extension in ESM import or type error)
+- `Cannot find module.*\.js` → FIX (missing `.js` extension in import)
+- `Drizzle schema mismatch` / `migration pending` → FIX (schema drift, run migrations)
+- `pnpm typecheck failed` → FIX (type safety issue)
+- `pnpm lint failed` → FIX (code style issue)
 
 Generic patterns (apply to all repos):
 - `rate limit` / `API rate limit exceeded` → RETRIGGER (transient)
@@ -268,4 +268,4 @@ Start
 6. **Composable** — Works standalone (`/fix-ci 42`) or from `/full-review` (Phase 2.5).
 7. **Idempotent** — Safe to re-run. If CI is already green, reports success and exits.
 8. **No attribution** — Follow project attribution policy in all commits.
-<!-- skill-templates: fix-ci b194666 2026-05-28 -->
+<!-- skill-templates: fix-ci ebdb14e 2026-06-02 -->

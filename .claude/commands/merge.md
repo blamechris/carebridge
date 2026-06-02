@@ -120,8 +120,6 @@ If `--skip-version-check` is set, skip this phase.
 **Skip conditions:**
 - No PRs were merged (all skipped/blocked)
 
-No post-merge actions are required for this repository.
-
 ### Phase 4: Report
 
 ```markdown
@@ -140,16 +138,16 @@ No post-merge actions are required for this repository.
 | CI failure on PR | Run `/fix-ci`, wait, retry merge |
 | Unresolved review threads | Resolve via GraphQL Python script, retry |
 | Merge conflict | Skip PR, report to user |
-| Version bump timeout | Warn and continue to post-merge actions |
 | Divergent local branches | `git reset --hard origin/main` |
 
 ## Critical Rules
 
 1. **NEVER merge without /full-review** — every PR must be reviewed before merging. This is a hard gate. Run Phase 0 first.
 2. **For 3+ PRs, delegate to /batch-merge** — don't reinvent sequential merge logic
-3. **Version verification is informational** — never block post-merge actions on it
 3. **GraphQL resolveReviewThread must use Python** — bash corrupts Base64 thread IDs
 4. **Never use --admin** — respect branch protections
 5. **Idempotent** — safe to re-run; already-merged PRs detected and skipped
 6. **No attribution** — Zero Attribution Policy applies to all commits
-<!-- skill-templates: merge b194666 2026-05-28 -->
+7. **Always squash merge** — maintains clean linear history for monorepo
+8. **Clinical data integrity** — verify that merged PRs correctly emit ClinicalEvent to Redis queue if they mutate patient data
+<!-- skill-templates: merge ebdb14e 2026-06-02 -->

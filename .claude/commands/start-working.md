@@ -136,7 +136,7 @@ Scan for TODO/FIXME/HACK markers in source code:
 
 ```bash
 # Search for actionable markers in source files
-find packages services apps -type f \( -name "*.ts" -o -name "*.tsx" \) ! -path "*/node_modules/*" ! -path "*/.next/*" ! -path "*/dist/*" ! -path "*/build/*" -exec grep -Hn "TODO\|FIXME\|HACK\|XXX\|WORKAROUND" {} \;
+find packages services apps -type f \( -name "*.ts" -o -name "*.tsx" \) -not -path "*/node_modules/*" -not -path "*/.next/*" -not -path "*/dist/*" -exec grep -Hn "TODO\|FIXME\|HACK\|XXX\|WORKAROUND" {} \;
 ```
 
 Use Grep to find `TODO`, `FIXME`, `HACK`, `XXX`, and `WORKAROUND` markers in source files. Exclude:
@@ -155,8 +155,8 @@ Map every finding to a unified priority tier:
 | Tier | Label | Signals |
 |------|-------|---------|
 | P0 | Immediate | PRs with `CHANGES_REQUESTED`, open `bug` issues, failing CI on open PRs |
-| P1 | High | `from-review` issues, unblocked unassigned `enhancement` issues, stale PRs |
-| P2 | Normal | `enhancement` issues with acceptance criteria, `from-audit` issues, roadmap items |
+| P1 | High | `from-review` issues, `enhancement` issues with acceptance criteria, stale PRs |
+| P2 | Normal | `enhancement` issues without acceptance criteria, `from-audit` issues, roadmap items |
 | P3 | Exploratory | Codebase TODOs, vague issues without criteria, audit recommendations without issues |
 
 If `focus=AREA` was specified, boost items matching that area by one tier (P2→P1, P3→P2).
@@ -197,7 +197,7 @@ Output the primary summary table, then detail sections for each source.
 | P0 | Issue | #12 — Login broken on Android | Bug, reported 2 days ago |
 | P1 | Issue | #18 — Add retry logic to API | from-review, has acceptance criteria |
 | P1 | PR | #38 — Draft PR stale 14 days | Needs decision: finish or close |
-| P2 | Issue | #25 — Improve error messages | enhancement, milestone v1.2 |
+| P2 | Issue | #25 — Improve error messages | enhancement, has acceptance criteria |
 | P2 | Roadmap | Add rate limiting | In ROADMAP.md, no issue yet |
 | P3 | TODO | 5× FIXME in src/auth/ | Scattered workarounds for token refresh |
 | P3 | Audit | Upgrade vulnerable deps | From project-audit, no issue created |
@@ -212,8 +212,8 @@ After the summary table, provide detail sections only for sources that had findi
 ### Open Issues ({N} total, {M} ready, {K} blocked)
 
 **Ready to work on:**
-- #18 — Add retry logic to API (`from-review`, `complexity:low`) — has 3 acceptance criteria
-- #25 — Improve error messages (`enhancement`) — milestone v1.2
+- #18 — Add retry logic to API (`from-review`, `bug`) — has 3 acceptance criteria
+- #25 — Improve error messages (`enhancement`) — clear scope
 
 **Blocked / Needs input:**
 - #30 — Choose auth provider (`needs-design`) — requires decision
@@ -246,9 +246,9 @@ Items from planning docs without corresponding GitHub issues:
 
 | Marker | Count | Top Locations |
 |--------|-------|---------------|
-| TODO | 12 | src/auth/ (5), src/api/ (4), src/utils/ (3) |
-| FIXME | 3 | src/auth/token.js (2), src/db/migrate.js (1) |
-| HACK | 1 | src/api/retry.js:42 |
+| TODO | 12 | packages/validators/ (5), services/ai-oversight/ (4), apps/clinician-portal/ (3) |
+| FIXME | 3 | services/api-gateway/routes.ts (2), packages/db-schema/migrations.ts (1) |
+| HACK | 1 | services/clinical-workers/event-handler.ts:42 |
 ```
 
 #### Recommended Next Action
@@ -261,7 +261,7 @@ End with a concrete recommendation:
 Based on the work queue:
 - **If you want to fix what's broken:** Address P0 items first — {description}
 - **If you want to build features:** Run `/autonomous-dev-flow {issue_numbers}` for the P1/P2 ready issues
-- **If you want to clean up:** The {N} TODOs in src/auth/ suggest a refactoring pass
+- **If you want to clean up:** The {N} TODOs in services/api-gateway/ suggest a refactoring pass
 ```
 
 ### 4. Quick Audit (Fallback — Only If Queue Is Empty)
@@ -273,6 +273,7 @@ When the queue is truly empty, perform a lightweight codebase scan to surface po
 #### 4a. Test Coverage Gaps
 
 ```bash
+# TypeScript strict check and linting
 pnpm typecheck && pnpm lint
 ```
 
@@ -283,6 +284,7 @@ pnpm typecheck && pnpm lint
 #### 4b. Dependency Health
 
 ```bash
+# Check for outdated dependencies
 pnpm outdated
 ```
 
@@ -312,14 +314,14 @@ No actionable items found in the standard work sources. Here's what a quick code
 
 | Area | Status | Finding |
 |------|--------|---------|
-| Test Coverage | ⚠️ | {N} source files have no test counterpart |
+| Type Safety | ⚠️ | {N} TypeScript strict violations |
 | Dependencies | ✅ | All up to date |
 | Code Quality | ⚠️ | {N} files over 500 lines |
 | Documentation | ⚠️ | README missing setup instructions |
 
 ### Suggested Investigations
 
-1. **Add tests for {module}** — {N} files in `src/{path}/` have no tests. Effort: M
+1. **Fix TypeScript strict violations in {module}** — {N} files have errors. Effort: M
 2. **Split {file}** — {file} is {N} lines. Consider extracting {concept}. Effort: S
 3. **Update README** — Missing: setup instructions, environment variables. Effort: S
 
@@ -338,4 +340,4 @@ Run `/project-audit` for a comprehensive multi-agent analysis with detailed reco
 6. **Respect blocked/assigned** — Show blocked and assigned items for context but clearly separate them from the actionable queue. Never recommend working on a blocked or assigned item.
 7. **Composable output** — The "Recommended Next Action" section should include copy-pasteable commands (e.g., `/autonomous-dev-flow #12 #18 #25`) so the user can immediately act on the findings.
 8. **No file writes** — The fallback audit in Phase 4 outputs to the conversation only. Unlike `/project-audit`, it does NOT write report files or create a `docs/` directory.
-<!-- skill-templates: start-working b194666 2026-05-28 -->
+<!-- skill-templates: start-working ebdb14e 2026-06-02 -->

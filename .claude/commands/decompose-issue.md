@@ -82,7 +82,7 @@ Read the parent body, then explore the codebase enough to understand the work:
 
 - Grep for files / symbols the issue names.
 - Read `CLAUDE.md` for project conventions if not already in context.
-- Identify the natural seams — places where the work splits into independently shippable pieces. In CareBridge, natural seams follow the Turborepo build order: `packages/*` (shared types, validators, medical-logic, ai-prompts, db-schema) → `services/*` (api-gateway, ai-oversight, clinical workers) → `apps/*` (clinician-portal). Also consider commit scopes (`db`, `ai`, `notes`, `clinical`, `auth`, `gateway`, `portal`, `infra`) as sub-issue boundaries. Clinical-data event-emission changes always warrant a separate sub-issue from the producer and consumer to make the contract review-able in isolation.
+- Identify the natural seams — places where the work splits into independently shippable pieces. In CareBridge, seams follow the Turborepo build order: `packages/*` (shared types, validators, medical-logic, ai-prompts, db-schema) → `services/*` (api-gateway, ai-oversight, clinical workers) → `apps/*` (clinician-portal). Also consider commit scopes (`db`, `ai`, `notes`, `clinical`, `auth`, `gateway`, `portal`, `infra`) and clinical-data event-emission boundaries (producer, contract, consumer).
 
 Propose **2-5 sub-issues**. Each sub-issue must be:
 
@@ -144,7 +144,7 @@ done
 Label set for each sub-issue:
 
 ```bash
-# Use the parent's primary label (enhancement, bug, or from-review)
+# Match the parent's primary label (enhancement, bug, or from-review)
 SUB_LABELS="${PARENT_PRIMARY_LABEL}"
 
 # Add any --label flags the user passed
@@ -213,4 +213,4 @@ Next: `/autonomous-dev-flow #${SUB_1} #${SUB_2} #${SUB_3}` to implement them, or
 - The parent describes a single atomic operation (a migration, a one-line config change, a single test) → it doesn't decompose, it just gets done.
 - The parent already has a "Decomposed into" comment → use the existing sub-issues unless they're wrong.
 - The work spans multiple repos → that's a coordination problem, not a decomposition problem. Open issues in each repo separately.
-<!-- skill-templates: decompose-issue b194666 2026-05-28 -->
+<!-- skill-templates: decompose-issue ebdb14e 2026-06-02 -->

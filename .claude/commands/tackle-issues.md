@@ -69,7 +69,7 @@ Display the marathon queue:
 | # | Issue | Labels | Action |
 |---|-------|--------|--------|
 | 1 | #12 — Add retry logic | enhancement | Implement |
-| 2 | #15 — Add leaderboard | enhancement | Decompose → sub-issues |
+| 2 | #15 — Add leaderboard | from-review | Decompose → sub-issues |
 | 3 | #18 — Auth integration tests | bug | Implement |
 | — | #16 — Refactor auth module | enhancement | Assigned to @user (skipped) |
 
@@ -331,7 +331,7 @@ These issues could not be implemented after {W} waves. Each has a detailed comme
 
 ### Decomposition Log
 
-- **#15** (enhancement) → #20, #21, #22 — all completed in W1
+- **#15** (from-review) → #20, #21, #22 — all completed in W1
 
 ### Wave-by-Wave Summary
 
@@ -387,4 +387,4 @@ This makes the skill **idempotent** — safe to re-run without duplicating work.
 15. **Pre-Skill Checkpoint** — Re-read CLAUDE.md and skill files before running `/full-review` in every wave.
 16. **Sync before every branch** — Always `git checkout main && git pull` before starting each issue in each wave.
 17. **Morning summary is mandatory** — Even if interrupted, output the best summary possible with data collected so far.
-<!-- skill-templates: tackle-issues b194666 2026-05-28 -->
+<!-- skill-templates: tackle-issues ebdb14e 2026-06-02 -->

@@ -390,4 +390,4 @@ This makes the skill **idempotent** — safe to re-run without duplicating work.
 13. **Comment on skips** — Every skipped issue gets a GitHub comment explaining why.
 14. **Pre-Skill Checkpoint** — Re-read CLAUDE.md and skill files before each /full-review run.
 15. **Compose existing skills** — /full-review is called as-is. Don't reinvent its logic.
-<!-- skill-templates: parallel-dev b194666 2026-05-28 -->
+<!-- skill-templates: parallel-dev ebdb14e 2026-06-02 -->

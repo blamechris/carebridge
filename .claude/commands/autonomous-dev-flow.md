@@ -400,4 +400,4 @@ This makes the skill **idempotent** — safe to re-run without duplicating work.
 13. **Comment on skips** — Every skipped issue gets a GitHub comment explaining why. The user sees the reason.
 14. **Pre-Skill Checkpoint** — Re-read CLAUDE.md and skill files before running /full-review to prevent context drift.
 15. **Sync before branching** — Always `git checkout main && git pull` before starting each issue. Check for merged PRs first.
-<!-- skill-templates: autonomous-dev-flow b194666 2026-05-28 -->
+<!-- skill-templates: autonomous-dev-flow ebdb14e 2026-06-02 -->

@@ -184,7 +184,7 @@ Output a concise summary:
 | 2/5 | Concerning. Significant issues that may cause failures. |
 | 1/5 | Fundamentally broken. Needs rethinking, not patching. |
 
-### Project-Specific Grading Criteria
+### CareBridge-Specific Grading Criteria
 
 - **Operator** should weight data integrity: are clinical events correctly emitted and consumed?
 - **Guardian** should weight type safety: are package boundary contracts enforced end-to-end?
@@ -203,7 +203,7 @@ Output a concise summary:
 ```
 /swarm-audit docs/architecture/proposal.md 8
 /swarm-audit "the clinical event emission in services/clinical-workers" 4
-/swarm-audit docs/rfc-fhir-integration.md
-/swarm-audit "ai-oversight service prompt safety" 6
+/swarm-audit docs/rfc-fhir-gateway.md
+/swarm-audit "ai-oversight service rule engine" 6
 ```
-<!-- skill-templates: swarm-audit b194666 2026-05-28 -->
+<!-- skill-templates: swarm-audit ebdb14e 2026-06-02 -->
