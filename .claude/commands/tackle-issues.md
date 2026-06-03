@@ -13,7 +13,7 @@ Composes `/autonomous-dev-flow` logic internally but adds multi-wave retry with 
   - `milestone:"v1.2"` (all open issues in milestone)
   - `#12 #15 #18` or `12 15 18` (specific issues by number)
   - `label:bug max:10 sort:created-asc` (with options)
-  - If empty, auto-detect: scan open issues sorted by complexity (low first, then medium, skip high)
+  - If empty, auto-detect: scan open issues sorted by priority (bug > from-review > enhancement, then by complexity)
   - Options: `max:N` (default 20, hard cap 30), `sort:created-asc` (default) or `sort:created-desc`
   - `waves:N` (default 3, max 4) — maximum retry waves
   - `merge:true` — run `/batch-merge all` after final wave (default: false)
@@ -43,8 +43,12 @@ REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
 REPO_NAME=$(basename "$REPO")
 SESSION_START=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 
-# Branch prefix for session branches — uses feat/, fix/, refactor/, chore/, docs/ prefixes
+# Branch prefix for NEW session branches this skill creates
 BRANCH_PREFIX="feat/"
+
+# Regex of EVERY prefix a session branch might carry, for the
+# merge/resume SCANS below. CareBridge uses feat/, fix/, refactor/, chore/, docs/
+BRANCH_PREFIX_RE="^(feat|fix|refactor|chore|docs)/"
 ```
 
 Parse `$ARGUMENTS` — same as `/autonomous-dev-flow` but with higher defaults:
@@ -69,8 +73,8 @@ Display the marathon queue:
 | # | Issue | Labels | Action |
 |---|-------|--------|--------|
 | 1 | #12 — Add retry logic | enhancement | Implement |
-| 2 | #15 — Add leaderboard | enhancement | Decompose → sub-issues |
-| 3 | #18 — Auth integration tests | bug | Implement |
+| 2 | #15 — Add leaderboard | bug | Decompose → sub-issues |
+| 3 | #18 — Auth integration tests | from-review | Implement |
 | — | #16 — Refactor auth module | enhancement | Assigned to @user (skipped) |
 
 **Mode:** Unattended marathon (up to {W} waves)
@@ -155,8 +159,8 @@ Add new unassigned issues to the queue if they match the original filter criteri
 
 ```bash
 gh pr list --state merged --json number,headRefName,mergedAt --limit 30 \
-  | jq --arg start "$SESSION_START" --arg prefix "$BRANCH_PREFIX" \
-    '[.[] | select(.mergedAt > $start) | select(.headRefName | startswith($prefix))]'
+  | jq --arg start "$SESSION_START" --arg prefix "$BRANCH_PREFIX_RE" \
+    '[.[] | select(.mergedAt > $start) | select(.headRefName | test($prefix))]'
 ```
 
 Note merged PRs. If a merged PR's issue is in the retry queue, remove it — the user handled it.
@@ -331,7 +335,7 @@ These issues could not be implemented after {W} waves. Each has a detailed comme
 
 ### Decomposition Log
 
-- **#15** (enhancement) → #20, #21, #22 — all completed in W1
+- **#15** (bug) → #20, #21, #22 — all completed in W1
 
 ### Wave-by-Wave Summary
 
@@ -355,7 +359,7 @@ This skill uses **GitHub state** for resume — no local state files. Same as `/
 
 If a marathon session is interrupted (crash, timeout, user stops it), re-running with the same arguments will:
 
-1. Query GitHub for existing session branches (matching `BRANCH_PREFIX`) and PRs referencing each issue
+1. Query GitHub for existing session branches (matching `BRANCH_PREFIX_RE`) and PRs referencing each issue
 2. Detect which wave the session was in by counting attempts per issue
 3. Skip issues that already have merged or clean open PRs
 4. Resume from the first unfinished issue in the current wave
@@ -387,4 +391,4 @@ This makes the skill **idempotent** — safe to re-run without duplicating work.
 15. **Pre-Skill Checkpoint** — Re-read CLAUDE.md and skill files before running `/full-review` in every wave.
 16. **Sync before every branch** — Always `git checkout main && git pull` before starting each issue in each wave.
 17. **Morning summary is mandatory** — Even if interrupted, output the best summary possible with data collected so far.
-<!-- skill-templates: tackle-issues b194666 2026-05-28 -->
+<!-- skill-templates: tackle-issues 21fa678 2026-06-03 -->
