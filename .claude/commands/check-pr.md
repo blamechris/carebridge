@@ -323,18 +323,18 @@ THREAD_IDS=$(gh api graphql --paginate -f query="
     }
   }" --jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | .id')
 
-# Resolve each unresolved thread; surface any single-thread failure
-# instead of swallowing it (a 401/403 on one thread shouldn't be silent).
-echo "$THREAD_IDS" | while read -r tid; do
-  [ -z "$tid" ] && continue
-  gh api graphql -f query="
-    mutation {
-      resolveReviewThread(input: {threadId: \"$tid\"}) {
-        thread { isResolved }
-      }
-    }" --jq '.data.resolveReviewThread.thread | "  resolved: \(.isResolved)"' \
-    || echo "  FAILED to resolve: $tid"
-done
+# Resolve each unresolved thread via Python — bash interpolation of the
+# Base64-ish thread IDs (PRRT_*) into the GraphQL mutation string can corrupt
+# them, so the ID never touches the shell (merge.md Critical Rule 4). The
+# THREAD_IDS fetch above stays in bash (it only emits IDs, never interpolates
+# them). Each failure is surfaced per-thread rather than swallowed.
+echo "$THREAD_IDS" | python3 -c "
+import sys, subprocess
+for tid in sys.stdin.read().split():
+    mutation = 'mutation { resolveReviewThread(input: {threadId: \"' + tid + '\"}) { thread { isResolved } } }'
+    r = subprocess.run(['gh', 'api', 'graphql', '-f', 'query=' + mutation], capture_output=True, text=True)
+    print('  resolved: ' + tid if r.returncode == 0 else '  FAILED to resolve: ' + tid)
+"
 
 # Verify zero unresolved threads remain. --paginate emits one length per page,
 # which we sum with awk so the count is correct on PRs with >100 threads. If
@@ -359,7 +359,7 @@ echo "Unresolved threads: ${UNRESOLVED}"
 
 **Pagination cap:** `gh api graphql --paginate` follows `pageInfo.hasNextPage` until exhausted — no implicit cap. On the rare PR with thousands of threads, GitHub's GraphQL rate limit (5000 points/hr) is the practical ceiling. If you see HTTP 403 with "API rate limit exceeded" from gh on step 6b, the resolve loop will short-circuit on the failing call and the verify will report nonzero — re-run after the rate limit window resets.
 
-**When to skip this step:** only if the repo's branch protection does NOT require conversation resolution AND you have explicit evidence (e.g., a memory/customization note) that unresolved threads are acceptable here. Default behavior is **always resolve**. CareBridge has branch protection configured with merge gate via `scripts/require-review-before-merge.sh` — **always resolve threads here**.
+**When to skip this step:** only if the repo's branch protection does NOT require conversation resolution AND you have explicit evidence (e.g., a memory/customization note) that unresolved threads are acceptable here. Default behavior is **always resolve**.
 
 **Edge cases:**
 - A thread you marked FALSE POSITIVE: still resolve it. The reply records the rationale; if a reviewer disagrees, they can re-open the thread.
@@ -422,11 +422,11 @@ Then below the table, list:
 2. **Reply IMMEDIATELY after each comment** — Process one comment at a time: read → fix/defer → post inline reply → next. Do NOT batch all fixes and try to reply later.
 3. **Exactly 3 valid outcomes** — FIX, FALSE POSITIVE, or FOLLOW-UP ISSUE. Nothing else.
 4. **FIX requires commit hash + code diff** — Both mandatory in reply
-5. **FALSE POSITIVE requires evidence** — No bare dismissals. Per CLAUDE.md: TypeScript strict, ESM, functional style — cite these patterns when defending code.
+5. **FALSE POSITIVE requires evidence** — No bare dismissals
 6. **FOLLOW-UP requires issue URL** — Never say "good idea" without creating an issue
 7. **Summary table has no empty cells** — Every row has a reference
 8. **Verify before summarizing** — Run the verification step (step 6) and confirm all threads have replies BEFORE posting the summary comment. If any are missing, go back and post them.
-9. **Resolve every thread (step 6b)** — Posting a reply does NOT mark the thread resolved on GitHub. After replying to every thread, call the GraphQL `resolveReviewThread` mutation for each. CareBridge branch protection requires conversation resolution — this is mandatory.
+9. **Resolve every thread (step 6b)** — Posting a reply does NOT mark the thread resolved on GitHub. After replying to every thread, call the GraphQL `resolveReviewThread` mutation for each. Branch protection that requires conversation resolution will block merge otherwise — silently, from the user's perspective. Skip this only with explicit per-repo evidence that unresolved threads are acceptable.
 10. **Idempotent** — Safe to re-run; already-replied comments are skipped (author-filtered). Already-resolved threads are also skipped in step 6b.
 11. **No attribution** — Follow Zero Attribution Policy (no Co-Authored-By, no "Generated with Claude", no AI mentions anywhere)
 
@@ -451,4 +451,4 @@ Then below the table, list:
 10. Post summary table (all Reference cells filled)
 11. Report to user
 ```
-<!-- skill-templates: check-pr 0a76684 2026-06-03 -->
+<!-- skill-templates: check-pr f7a7edc 2026-06-03 -->
