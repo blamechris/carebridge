@@ -37,6 +37,14 @@ every skill into every repo, a repo pulls a skill the moment it needs one and th
   layout and notes in its report that a profile would sharpen future installs.
 - **Lockfile** — `.claude/skills.lock` (JSON): the manifest of what's installed and
   at which template hash. Lets `outdated`/`update` work from repo-local state.
+- **Targets** — the coding agents a skill is compiled for. `.claude/commands/<name>.md`
+  (the customized install) is the provider-NEUTRAL source; `scripts/compile-skill-targets.mjs`
+  emits each agent's NATIVE custom-command format: `claude` → `.claude/skills/<name>/SKILL.md`,
+  `gemini` → `.gemini/commands/<name>.toml`, `codex` → `.codex/skills/<name>/SKILL.md`. The active
+  list comes from the `targets:` line in `.claude/skill-profile.md` (prompt the user if absent;
+  the compiler falls back to `claude`). This is what makes a skill model-agnostic — author once,
+  run under any model. The neutral arg token is `$ARGUMENTS`; the compiler maps it per agent
+  (e.g. Gemini `{{args}}`). The compiler ships in the registry at `assets/compile-skill-targets.mjs`.
 
 ## Resolving the registry
 
@@ -116,16 +124,120 @@ note in the report that hashes may be stale. Record which source you used.
    `<!-- skill-templates: <name> <hash> <date> -->` (today's date, `YYYY-MM-DD`).
 6. **Lint (deterministic gate).** Run the registry's mechanical linter on the file just
    written — it re-checks markers, attribution, the stamp, and guards independently of
-   the agent's judgment: `"$REG/scripts/skill-lint.sh" <name> .claude/commands/<name>.md`
+   the agent's judgment. From a **local clone** (the preferred path):
+   `"$REG/scripts/skill-lint.sh" <name> .claude/commands/<name>.md`
    (where `$REG` is the resolved registry clone). If it exits non-zero, fix the reported
    issues and re-lint before recording the lockfile — do not lock a skill that fails lint.
    Consumers can run the same linter as a pre-commit hook or in CI.
-7. **Record in the lockfile.** Create `.claude/skills.lock` (schema below) if absent,
-   then upsert `<name>` with the template `hash` and, when a `.claude/skill-profile.md`
-   exists, its `profileHash` (so `update` can tell when the *profile* changed, not just
-   the template).
-8. **Report.** State the skill, the hash installed, the registry source used, and any
-   markers dropped for lack of repo context.
+
+   On the **network-only path** (source 3 — no clone on disk, so `$REG` is unset and
+   that command expands to `/scripts/skill-lint.sh`: exit 127, gate not run at all),
+   fetch the linter the way step 7 fetches the compiler, and pass `registry.json`
+   **explicitly as the third argument** — the index from step 1 has to exist as a
+   *file* here, not just in context:
+
+   ```bash
+   set -o pipefail
+   lintdir="$(mktemp -d)"
+   gh api repos/blamechris/skill-templates/contents/scripts/skill-lint.sh \
+     --jq '.content' | base64 -d > "$lintdir/skill-lint.sh" || exit 1
+   gh api repos/blamechris/skill-templates/contents/registry.json \
+     --jq '.content' | base64 -d > "$lintdir/registry.json" || exit 1
+   [ -s "$lintdir/skill-lint.sh" ] && [ -s "$lintdir/registry.json" ] || {
+     echo "lint gate unavailable: a fetch produced an empty file" >&2; exit 1; }
+   bash "$lintdir/skill-lint.sh" <name> .claude/commands/<name>.md "$lintdir/registry.json"
+   ```
+
+   Three details are load-bearing:
+   - **The fetch guards** — `gh` failing (offline, 404, rate limit) leaves a 0-byte
+     file behind, and `bash` on an empty file exits **0** printing nothing, which
+     this document's own outcome table below reads as *"clean, all four checks
+     passed"*. Unguarded, the network path's failure mode is a silent green gate —
+     worse than the exit 127 this section exists to fix, because 127 is at least
+     loud. Source 3 is reached exactly when there is no clone to fall back on, and
+     "Resolving the registry" above explicitly contemplates being offline.
+   - **`bash <path>`** — a redirected fetch lands non-executable (the exact mode is
+     umask-dependent; what matters is that no execute bit is set), so running it directly
+     exits 126 (permission denied), not 127. Same skipped gate, different code.
+   - **The third argument** — with it omitted the linter defaults its registry to
+     `<the script's own dir>/../registry.json`, which for a copy under a temp dir is
+     not this registry. Either that path is absent, and the run exits 2 printing
+     `ERROR: registry not found …` on **stderr** with an **empty stdout** — the
+     findings it had already collected are discarded unprinted, so a caller watching
+     the output sees exactly what a pass looks like — or some unrelated
+     `registry.json` sits there and gets loaded instead, in which case a skill it
+     happens to name with no guards of its own lints `✓ <name>: clean (0 guard(s) ok)`
+     at **exit 0**, with this registry's guards never applied.
+
+   The linter has three outcomes. **Key on the exit code, not on the output
+   markers** — `ERROR:` is printed for an unknown skill *and* then followed by
+   findings at exit 1, and a usage error exits 2 printing no marker at all. Only
+   `~` is exclusive to exit 2.
+   - **exit 0** (`✓`) — clean, all four checks passed.
+   - **exit 1** (`✗`) — real findings. Fix and re-lint; never lock. This includes a
+     file that is **stamped but absent from the index**: a stamp is proof of a
+     registry install, so an index that has never heard of the skill means a stale
+     clone, a renamed or retired skill, a typo'd `<name>`, or the wrong
+     `registry.json` — and its guards went unapplied. The reported findings name
+     which, and the stamp checks are applied on this path too.
+   - **exit 2** — could not be fully verified. Five causes, and only one is benign:
+     an **unstamped** skill absent from the index (the `~` line — a repo-only skill,
+     with genuinely nothing to verify), plus missing registry file, missing
+     `python3`, unreadable skill file, and usage error. The last four are
+     environment breakage.
+
+   For `skill add`, exit 2 is always a failure: `add` stops before writing if the
+   name is absent from the index, so by lint time the skill is in the index by
+   construction — exit 2 there means a stale index, a wrong name, or a broken
+   environment.
+
+   For a **pre-commit hook or CI** linting a whole `.claude/commands/` directory,
+   exit 2 is far narrower than it was: a *stale index* — which used to turn a real
+   `✗ guard miss` into a clean-looking `~` — is now reported as a finding at exit 1.
+   What remains at 2 is a genuinely repo-only file **or** environment breakage
+   (missing/wrong-path registry, no `python3`, unreadable file), and the linter
+   cannot tell a hook which of those it hit. So keep the version-stamp test: a
+   stamped file can no longer legitimately exit 2, because provenance means the
+   index should know it. Tolerating 2 unconditionally re-opens the hole this change
+   closes — for the 270 stamped files in the current fleet, a mistyped registry path
+   would go from caught to silently green.
+
+   ```bash
+   scripts/skill-lint.sh "$name" "$file" ; rc=$?
+   if [ "$rc" -eq 1 ]; then exit 1; fi   # includes a stamped file the index does not know
+   ```
+
+   Earlier revisions of this step told the hook to re-test the file itself with
+   `grep -q '^<!-- skill-templates: '` and fail on a *stamped* exit 2. That existed
+   only because exit 2 covered both conditions and the caller had to re-derive
+   which one it had hit. Do not reintroduce it: it re-implements, less accurately,
+   a check the linter already runs — the grep cannot see a stamp behind leading
+   whitespace, and cannot distinguish a well-formed stamp from a mangled one.
+7. **Compile to native targets.** Ensure the compiler exists in this repo (create `scripts/` if
+   absent). If `scripts/compile-skill-targets.mjs` is missing — or you're running `update`, so it
+   stays current with the registry — (re)fetch it: from a local clone,
+   `cp "$REG/assets/compile-skill-targets.mjs" scripts/`; on the network-only path (no local
+   clone), fetch it like the templates —
+   `gh api repos/blamechris/skill-templates/contents/assets/compile-skill-targets.mjs --jq '.content' | base64 -d > scripts/compile-skill-targets.mjs`.
+   Write it to `scripts/` and track it in VCS so it travels with the repo. Read the `targets:` line
+   from `.claude/skill-profile.md`;
+   if there is none, **ask the user** which agents to compile for (claude / gemini / codex) and
+   offer to record the choice in the profile (the compiler falls back to `claude` if unset). Then
+   run `node scripts/compile-skill-targets.mjs --name <name>` (it reads the profile targets), or
+   `--targets <list>` to override. It writes the native artifact per target and exits non-zero on
+   any emit failure — treat that as a hard gate: fix and re-run before locking. Codex emits a
+   repo-tracked skill folder under `.codex/skills/` so it can be reviewed, copied into
+   `~/.codex/skills`, or used by runners that support repo-local Codex skills. Keep the list of
+   `targets` you compiled with for the next step.
+8. **Record in the lockfile.** Only after a successful compile, create `.claude/skills.lock`
+   (schema below) if absent and upsert `<name>` **atomically** with: the template `hash`; the
+   `profileHash` when a `.claude/skill-profile.md` exists (so `update` can tell when the *profile*
+   changed, not just the template); and the `targets` you just compiled with (so `remove` cleans
+   exactly the right native artifacts and `outdated` can detect target drift). Writing the entry
+   only after compile succeeds means a failed compile never leaves a half-written or
+   `targets`-less entry.
+9. **Report.** State the skill, the hash installed, the registry source used, the targets
+   compiled (with output paths), and any markers dropped for lack of repo context.
 
 ### `skill outdated`
 
@@ -137,9 +249,17 @@ note in the report that hashes may be stale. Record which source you used.
      `.claude/skill-profile.md` hash (the skill was tailored against an older profile);
    - **corruption drift** — the installed file fails a registry `guard` (some guard's
      `anyOf` regexes no longer match — a load-bearing section was lost).
+   - **target drift** — *only when the lock entry has a `targets` array* (a pre-`targets` install
+     with no such field is treated as "unknown" — fall back to disk inspection, never flagged just
+     for the field's absence): the profile's `targets:` list has an agent not in the lock entry's
+     `targets` (added to the profile but never compiled), or a recorded target's native artifact is
+     missing on disk — **excluding targets the compiler intentionally skips** (e.g. Gemini for a
+     body containing `{{…}}` / `!{…}` / `@{…}`, which is never emitted and so isn't real drift). A
+     plain recompile fixes genuine target drift — no registry fetch needed.
 3. Print the drifted skills with the reason, e.g. `name  abc1234 → def5678 (version)` or
-   `name  (guard miss: idempotency)`. If none, say so. (This is the consumer-side port of
-   the registry's `sync.sh` drift check — version stamp **and** content guards.)
+   `name  (guard miss: idempotency)` or `name  (target drift: gemini not compiled)`. If none, say
+   so. (This is the consumer-side port of the registry's `sync.sh` drift check — version stamp
+   **and** content guards.)
 
 ### `skill update [name]`
 
@@ -150,7 +270,11 @@ note in the report that hashes may be stale. Record which source you used.
 
 ### `skill remove <name>`
 
-Delete `.claude/commands/<name>.md` and its `.claude/skills.lock` entry. Report.
+Read the skill's `targets` from its `.claude/skills.lock` entry, then delete
+`.claude/commands/<name>.md`, its lock entry, and exactly the native artifacts for those targets:
+`claude` → `.claude/skills/<name>/` (dir), `gemini` → `.gemini/commands/<name>.toml`,
+`codex` → `.codex/skills/<name>/` (dir). If the lock entry has no `targets` (an older install),
+fall back to removing whichever of those three exist. Report what was removed.
 
 ## Lockfile schema (`.claude/skills.lock`)
 
@@ -158,8 +282,8 @@ Delete `.claude/commands/<name>.md` and its `.claude/skills.lock` entry. Report.
 {
   "registry": "blamechris/skill-templates",
   "skills": {
-    "full-review": { "hash": "cc062bc", "installed": "2026-06-04", "profileHash": "3f1a9c2" },
-    "check-pr":    { "hash": "a10ef75", "installed": "2026-06-04" }
+    "full-review": { "hash": "cc062bc", "installed": "2026-06-04", "profileHash": "3f1a9c2", "targets": ["claude", "gemini"] },
+    "check-pr":    { "hash": "a10ef75", "installed": "2026-06-04", "targets": ["claude"] }
   }
 }
 ```
@@ -170,6 +294,10 @@ Delete `.claude/commands/<name>.md` and its `.claude/skills.lock` entry. Report.
 - `profileHash` *(optional)* — short hash of `.claude/skill-profile.md` at install time.
   Present only when a profile existed. `outdated` flags profile drift when it no longer
   matches the current profile, so a changed profile triggers a re-tailor on `update`.
+- `targets` *(optional)* — the agents this skill was compiled for at install time
+  (e.g. `["claude", "gemini"]`). Written by the `add` compile step; `remove` uses it to delete
+  exactly the right native artifacts, and `outdated` uses it to detect target drift. Absent on
+  pre-targets installs — treat a missing `targets` as "unknown" and fall back to disk inspection.
 - The lockfile is the authoritative manifest; the per-file stamp is a convenient
   inline mirror. Keep them in agreement.
 
@@ -178,12 +306,19 @@ Delete `.claude/commands/<name>.md` and its `.claude/skills.lock` entry. Report.
 - **The agent is the customizer.** No Haiku/API key — the agent running `/skill`
   tailors the template with full repo context, which is richer than a context-blind
   batch job. The self-validation step replaces the registry's automated `validate_output`.
-- **Auto-install on miss.** A repo or global `CLAUDE.md` rule should say: *asked to run
-  `/X` and it's not in `.claude/commands/`? Run `skill add X` first, then invoke.* That
-  makes "use /full-review in a repo that lacks it" just work.
+- **Auto-install on miss.** A repo or global `CLAUDE.md` rule should say: *asked to run `/X`?
+  Check the neutral source `.claude/commands/X.md`. Missing → not installed → `skill add X`.
+  Present but the native artifact (`.claude/skills/X/SKILL.md`) is missing → just not compiled →
+  recompile with `node scripts/compile-skill-targets.mjs --name X` (no registry fetch). Then invoke.* That
+  makes "use /full-review in a repo that lacks it" just work without re-fetching when a recompile
+  suffices.
+- **Compile is deterministic.** The generic→native transform lives in
+  `scripts/compile-skill-targets.mjs`, not in agent judgment, so the native artifacts are
+  reproducible. Edited a skill's generic source (`.claude/commands/<name>.md`) by hand? Recompile
+  with `node scripts/compile-skill-targets.mjs --name <name>` (`--dry-run` previews).
 - **Idempotent.** Re-running `add` for a current skill is a no-op re-render; re-running
   for a moved template updates it. Safe to run anytime.
 - **Self-contained on first use.** `/skill` needs no customization to work — it ships
   with sane registry defaults so it can bootstrap a repo that has nothing else installed.
 
-<!-- skill-templates: skill 18b9f3e 2026-06-04 -->
+<!-- skill-templates: skill 987eb2b 2026-07-29 -->
