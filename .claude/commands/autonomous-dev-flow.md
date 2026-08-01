@@ -369,9 +369,9 @@ After all issues are processed (or the queue is exhausted), output final summary
 
 | # | Issue | PR | Review Verdict | Status |
 |---|-------|----|---------------|--------|
-| 1 | #12 — Retry BullMQ consumer | [#45](url) | Approve | Open — ready for review |
+| 1 | #12 — Retry BullMQ consumer | [#45](url) | Approve | Open — ready for you to merge |
 | 2 | #15 — Medication reconciliation | — | — | Decomposed → #20, #21, #22 |
-| 3 | #20 — Reconciliation data model | [#46](url) | Approve | Open — ready for review |
+| 3 | #20 — Reconciliation data model | [#46](url) | Approve | Open — ready for you to merge |
 | 4 | #18 — Auth MFA integration tests | [#47](url) | Request Changes | Needs attention |
 
 ### Summary

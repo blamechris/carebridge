@@ -330,10 +330,10 @@ Output a comprehensive summary designed for the user to read when they return. T
 
 | Issue | PR | Wave | Review | Status |
 |-------|-----|------|--------|--------|
-| #12 — Retry BullMQ consumer | [#45](url) | W1 | Approve | Open — ready for review |
-| #20 — Reconciliation data model | [#46](url) | W1→W2 | Approve | Open — ready for review (fixed in W2) |
+| #12 — Retry BullMQ consumer | [#45](url) | W1 | Approve | Open — ready for you to merge |
+| #20 — Reconciliation data model | [#46](url) | W1→W2 | Approve | Open — ready for you to merge (fixed in W2) |
 | #18 — Auth MFA tests | [#47](url) | W1 | Request Changes | Needs attention |
-| #21 — Reconciliation portal view | [#48](url) | W1 | Approve | Open — ready for review |
+| #21 — Reconciliation portal view | [#48](url) | W1 | Approve | Open — ready for you to merge |
 
 ### Needs Attention ({K} PRs)
 
