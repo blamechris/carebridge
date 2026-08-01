@@ -68,7 +68,7 @@ BRANCH_PREFIX="feat/"
 # SCANS below must see every one of them or they miss merged session branches.
 # Observed across this repo's PR history plus the documented convention:
 # feat/, fix/, refactor/, chore/, docs/, test/.
-BRANCH_PREFIX_RE="^(feat|fix|refactor|chore|docs|test)/"
+BRANCH_PREFIX_RE="^(feat|fix|refactor|chore|docs|test|style|perf)/"
 ```
 
 Parse `$ARGUMENTS` — same as `/autonomous-dev-flow` but with higher defaults:
