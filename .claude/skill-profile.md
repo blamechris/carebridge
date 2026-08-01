@@ -112,8 +112,39 @@ Mindset: "Is this type-safe end-to-end? Does it handle clinical data correctly, 
 
 ## autonomous-dev-flow Customizations
 
+### Self-merge posture
+- **Withheld.** This repo does NOT grant unattended merge authority. Critical Rule 5
+  must be written in its WITHHELD form: the session never merges, the Unattended Merge
+  Gate does not apply, and every finished PR is flagged in the session report and left
+  open for the user. Because there are no session merges, the skill also OMITS the
+  `### Merged by this session` report section — an empty merge table reads as though a
+  merge happened.
+- **Why this is recorded here and not only in the skill file:** `.claude/commands/` is
+  regenerated wholesale on every `skill update`, while this profile is not. Without this
+  block, the next update silently takes the template's default posture (gated
+  self-merge) and re-enables unattended merges on a repo that never granted them. This
+  profile entry is the durable record; the command file is the derived artifact.
+
 ### Branch Prefix
 - Uses `feat/` (not `auto/`) — matches existing naming conventions
+- `BRANCH_PREFIX_RE` for merge/resume scans covers every prefix a session branch can
+  carry: `^(feat|fix|refactor|chore|docs|test)/`
+
+### Smoke Test
+- None. There is no per-PR UI smoke-test harness and no `/smoke-test` skill in this
+  repo, so the template's Phase 4.5 is dropped rather than pointed at something that
+  cannot serve. `pnpm smoke-test` (`tooling/smoke-test.ts`) is a hand-maintained
+  post-merge script pinned to specific merged PRs and requires a live Postgres plus
+  running services — do not wire it in as a per-PR gate.
+
+### Session Boundary Paths
+- Handoff note: `$CLAUDE_BRIEF_DIR/../handoffs/carebridge-<YYYY-MM-DD>-handoff.md`
+- Durable queue: `$CLAUDE_BRIEF_DIR/../handoffs/carebridge-<YYYY-MM-DD>-queue.json`
+- Both live outside the repo — `scratchpad/` is not in this repo's `.gitignore`, so an
+  in-tree queue file would surface in `git status`
+- Wave re-launcher: none configured (no cron entry, no LaunchAgent, no `/loop` wrapper)
+- Cost source: the statusline (`cost.total_cost_usd`). No per-session budget is set, so
+  the circuit breaker fires only against a budget named at invocation
 
 ### Decomposition Trigger
 - Treat issues touching 3+ packages/services as decomposition candidates
@@ -179,6 +210,22 @@ Shares all customization points with `autonomous-dev-flow` above.
 - Max concurrent: 3 (monorepo, parallel package builds safe)
 - Priority labels: `bug` > `from-review` > `enhancement`
 - Test gate: `pnpm typecheck && pnpm lint`
+- Session ledger: `$CLAUDE_BRIEF_DIR/../handoffs/carebridge-<YYYY-MM-DD>-session-ledger.md`
+  — kept outside the repo (nothing at the repo root is gitignored for it)
+
+### Self-merge posture
+- **Withheld.** This repo does NOT grant unattended merge authority. Critical Rule 5
+  must be written in its WITHHELD form: nothing merges inline during waves, the
+  Unattended Merge Gate never engages, `merge:on` is NOT honoured (an invocation flag
+  cannot grant authority the repo withholds), and `merge:off` is redundant rather than
+  required. Every PR accumulates for `/batch-merge` or user review. Because there are no
+  session merges, the Morning Summary also OMITS the `### Merged by this session`
+  section — an empty merge table reads as though a merge happened.
+- **Why this is recorded here and not only in the skill file:** `.claude/commands/` is
+  regenerated wholesale on every `skill update`, while this profile is not. Without this
+  block, the next update silently takes the template's default posture (gated
+  self-merge) and re-enables unattended merges on a repo that never granted them. This
+  profile entry is the durable record; the command file is the derived artifact.
 
 ## fix-ci Customizations
 - CI config: `.github/workflows/`
