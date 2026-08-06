@@ -1,18 +1,43 @@
 # CareBridge
 
-A modern healthcare platform built to replace legacy systems like Epic MyChart, with an AI oversight layer that proactively detects cross-specialty clinical gaps — the kind that individual specialists often miss.
+> [!WARNING]
+> **Pre-launch research software — not for clinical use.**
+>
+> CareBridge is a **research platform for cross-specialty clinical safety**. It is
+> pre-launch, has not been reviewed or cleared by any regulator, and must not be used
+> to inform the care of a real patient.
+>
+> - **Every patient in this repository is synthetic.** All patient scenarios, seed
+>   data, and documentation examples shipped in this repository — including
+>   "Margaret Chen" and her chart — are fabricated for development and testing.
+>   Real patient data, PHI, and clinical records must never be added.
+> - **Every AI flag requires human review before any clinical action.** Flags are
+>   surfaced to a qualified clinician for independent review; `requires_human_review`
+>   defaults to `true` on AI-generated flags. CareBridge does not act on a flag, does
+>   not write to a chart on its own, and does not replace clinician judgment.
+> - **Production use is gated.** Patient-facing deployment requires the clinician
+>   attestations tracked in [`LAUNCH-CHECKLIST.md`](LAUNCH-CHECKLIST.md).
+>
+> Scope and regulatory positioning are documented in
+> [`docs/cds-exemption.md`](docs/cds-exemption.md) — CareBridge is positioned as
+> non-device Clinical Decision Support under 21st Century Cures Act §3060 — and in
+> [`MISSION.md`](MISSION.md).
+
+A research platform for cross-specialty clinical safety: a deterministic rules engine paired with an explainable AI oversight layer that surfaces cross-chart inconsistencies for clinician review. It is a first-pass safety net flagging known dangerous patterns — a checklist for the reviewing clinician, not a diagnosis, a verdict, or a second opinion.
 
 ## The Problem It Solves
 
-A cancer patient with a known DVT history presents with a new headache. Her oncologist adjusts her chemo. Her interventional radiologist checks her IVC filter. Neither flags the headache. But the combination — malignancy-driven hypercoagulability, established venous thromboembolism, and new neurological symptoms — is a textbook stroke risk pattern.
+*The scenario below is synthetic. It is the seeded test case used to exercise rule `ONCO-VTE-NEURO-001` end to end.*
 
-CareBridge catches this automatically.
+A cancer patient with a known DVT history presents with a new headache. Her oncologist adjusts her chemo. Her interventional radiologist checks her IVC filter. Neither has the other's note in front of them. The combination — malignancy-driven hypercoagulability, established venous thromboembolism, and new neurological symptoms — spans three specialties, and no single specialty's chart view puts the three side by side.
+
+CareBridge encodes that combination as a deterministic rule. When it matches, the system raises a flag carrying its severity, its rationale, and the `rule_id` that produced it, and routes it to a clinician. The clinician reads the basis, decides, and records the decision. Nothing is ordered, changed, or dismissed without them.
 
 ---
 
 ## Architecture Overview
 
-CareBridge is a TypeScript fullstack monorepo. All clinical data mutations flow through an event queue where a hybrid rules engine and Claude LLM review evaluate the patient's complete picture across specialties — not just the latest chart entry.
+CareBridge is a TypeScript fullstack monorepo. All clinical data mutations flow through an event queue where a hybrid rules engine and LLM review evaluate the patient's recorded cross-specialty context — not just the latest chart entry.
 
 ```
 Clinician enters data
@@ -406,7 +431,8 @@ refactor(db): normalize care team member table
 
 ## Testing the AI Oversight System
 
-The seed data creates **Margaret Chen**, a 67-year-old patient with:
+The seed data creates **Margaret Chen** — a synthetic patient, fabricated for testing,
+with a fabricated MRN and no relationship to any real person — a 67-year-old with:
 - Stage III breast cancer (Capecitabine / Xeloda)
 - DVT, right lower extremity (IVC filter placed Feb 2026)
 - Enoxaparin (Lovenox) anticoagulation — LMWH is preferred over warfarin
@@ -507,7 +533,12 @@ This is an active development project. Some services are fully implemented; othe
 
 ## License
 
-MIT
+MIT — see [`LICENSE`](LICENSE).
+
+## Security
+
+To report a vulnerability, see [`SECURITY.md`](SECURITY.md). Please do not open a
+public issue for security reports.
 
 ---
 
