@@ -10,7 +10,7 @@ including the conditions under which rotation becomes mandatory — is the final
 comment on issue #135. Rotation procedure, if ever needed: `docs/phi-key-rotation.md`.
 
 ## Project Overview
-Healthcare platform replacing Epic MyChart. Interconnected microservice-style apps
+Research platform for cross-specialty clinical safety. Interconnected microservice-style apps
 with an AI oversight layer that catches cross-specialty clinical gaps.
 
 Read the plan at `.claude/plans/smooth-giggling-sunset.md` for full architecture.
