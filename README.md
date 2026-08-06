@@ -541,9 +541,11 @@ Documentation
 AI Oversight
   clinical_flags     id, patient_id, source, severity, category, summary,
                      rationale, suggested_action, status, rule_id,
-                     acknowledged_by, resolved_by, dismiss_reason
+                     acknowledged_by, resolved_by, dismiss_reason,
+                     model_id, prompt_version
   review_jobs        id, patient_id, status, rules_fired, flags_generated,
-                     prompt_tokens, completion_tokens, elapsed_ms
+                     prompt_tokens, completion_tokens, elapsed_ms,
+                     redacted_prompt
 
 Notifications
   notifications      id, recipient_id, recipient_type, type, content, status
