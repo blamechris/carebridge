@@ -9,6 +9,14 @@ accepted and the secrets were not rotated. The complete investigation record —
 including the conditions under which rotation becomes mandatory — is the final
 comment on issue #135. Rotation procedure, if ever needed: `docs/phi-key-rotation.md`.
 
+## Records archive
+
+Durable investigations, decision records, and post-mortems live in `docs/records/`
+(`YYYY-MM-DD-<type>-<slug>.md`, frontmatter-indexed). **Before starting any
+investigation, `ls docs/records/` and grep frontmatter `scope:` for overlap — a
+prior session may have already answered it.** Records are conclusions + evidence
+chains (<=150 lines), never session logs. (Fleet convention: skill-templates#198.)
+
 ## Project Overview
 Research platform for cross-specialty clinical safety. Interconnected microservice-style apps
 with an AI oversight layer that catches cross-specialty clinical gaps.
