@@ -1,5 +1,10 @@
 # CareBridge
 
+**Research platform for cross-specialty clinical safety — rules engine, explainable AI oversight, synthetic patient scenarios.**
+
+[![CI](https://github.com/blamechris/carebridge/actions/workflows/ci.yml/badge.svg)](https://github.com/blamechris/carebridge/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 > [!WARNING]
 > **Pre-launch research software — not for clinical use.**
 >
@@ -23,15 +28,87 @@
 > non-device Clinical Decision Support under 21st Century Cures Act §3060 — and in
 > [`MISSION.md`](MISSION.md).
 
-A research platform for cross-specialty clinical safety: a deterministic rules engine paired with an explainable AI oversight layer that surfaces cross-chart inconsistencies for clinician review. It is a first-pass safety net flagging known dangerous patterns — a checklist for the reviewing clinician, not a diagnosis, a verdict, or a second opinion.
+<!-- Hero visual: a live capture of the clinician-portal flag-review workflow is
+     tracked in #1331 and will be embedded here once it exists. No placeholder. -->
 
-## The Problem It Solves
+A deterministic rules engine paired with an explainable AI oversight layer that surfaces cross-chart inconsistencies for clinician review. It is a first-pass safety net flagging known dangerous patterns — a checklist for the reviewing clinician, not a diagnosis, a verdict, or a second opinion.
+
+## Why CareBridge
 
 *The scenario below is synthetic. It is the seeded test case used to exercise rule `ONCO-VTE-NEURO-001` end to end.*
 
 A cancer patient with a known DVT history presents with a new headache. Her oncologist adjusts her chemo. Her interventional radiologist checks her IVC filter. Neither has the other's note in front of them. The combination — malignancy-driven hypercoagulability, established venous thromboembolism, and new neurological symptoms — spans three specialties, and no single specialty's chart view puts the three side by side.
 
 CareBridge encodes that combination as a deterministic rule. When it matches, the system raises a flag carrying its severity, its rationale, and the `rule_id` that produced it, and routes it to a clinician. The clinician reads the basis, decides, and records the decision. Nothing is ordered, changed, or dismissed without them.
+
+What distinguishes the approach:
+
+- **Deterministic rules first, LLM second.** Known dangerous patterns are pure functions over a patient-context snapshot, evaluated synchronously before any LLM call. They are auditable, reproducible, and independent of model behavior. The LLM pass handles nuance the rules cannot encode — and never acts on its own.
+- **Explainable by construction.** Every flag carries a human-readable `rationale`. Rule flags carry a stable `rule_id` traceable to source code; LLM flags record `model_id` and `prompt_version`, and the redacted prompt is persisted, so a reviewer can reconstruct why a flag exists. The mechanisms are itemized in [`docs/cds-exemption.md`](docs/cds-exemption.md).
+- **Human review is enforced, not aspirational.** `requires_human_review` defaults to `true` on AI-generated flags, a clinician must record a reason to dismiss or resolve a flag, and the patient portal never surfaces AI flags.
+- **Cross-specialty context, not threshold alerts.** Rules evaluate the patient's recorded cross-specialty context — diagnoses, medications, vitals, symptoms together — not just the latest chart entry, which is the gap single-value EHR alerts leave open.
+- **Synthetic scenarios as fixtures.** Seeded synthetic patients exercise each rule end to end, so the safety behavior is testable in CI without ever touching real data.
+
+## Quick Start
+
+### Prerequisites
+
+- [Node.js](https://nodejs.org) 20+
+- [pnpm](https://pnpm.io) 9+ (`npm install -g pnpm`)
+- [Docker](https://docker.com) and Docker Compose
+
+### Setup
+
+```bash
+# 1. Clone the repo
+git clone https://github.com/blamechris/carebridge.git
+cd carebridge
+
+# 2. Install dependencies
+pnpm install
+
+# 3. Configure environment
+cp .env.example .env
+# Edit .env: set ANTHROPIC_API_KEY, and generate PHI_ENCRYPTION_KEY —
+# it is left empty in .env.example and services throw on boot without it:
+#   openssl rand -hex 32
+# DATABASE_URL, REDIS_URL, and JWT_SECRET ship with working local-dev defaults.
+
+# 4. Start PostgreSQL + Redis
+docker-compose up -d
+
+# 5. Run migrations
+pnpm db:migrate
+
+# 6. Seed development data
+pnpm db:seed
+
+# 7. Start everything
+pnpm dev
+```
+
+### Running Services
+
+After `pnpm dev`:
+
+| Service | URL |
+|---------|-----|
+| API Gateway | http://localhost:4000 |
+| API Health | http://localhost:4000/health |
+| Clinician Portal | http://localhost:3000 |
+| Patient Portal | http://localhost:3001 |
+| Clinician Bridge | http://localhost:3002 |
+
+### Dev Accounts
+
+All accounts are synthetic and use password `password123`.
+
+| Email | Role | Specialty |
+|-------|------|-----------|
+| `dr.smith@carebridge.dev` | Physician | Hematology/Oncology |
+| `dr.jones@carebridge.dev` | Specialist | Interventional Radiology |
+| `nurse.rachel@carebridge.dev` | Nurse | Oncology |
+| `patient@carebridge.dev` | Patient | — |
 
 ---
 
@@ -62,6 +139,47 @@ Clinician enters data
  Notifications → Clinician Portal (flags dashboard)
 ```
 
+### Status
+
+This is an active development project. Statuses are coarse; the issue tracker reflects current work.
+
+| Component | Status |
+|-----------|--------|
+| DB schema + migrations | Complete |
+| Seed data (DVT scenario) | Complete |
+| AI oversight rules engine | Complete |
+| AI oversight LLM review | Complete |
+| clinical-data service | Complete |
+| clinical-notes service | Complete |
+| api-gateway | Complete |
+| auth service | Complete |
+| patient-records service | Complete |
+| notifications service | In progress |
+| fhir-gateway service | In progress |
+| scheduling service | In progress |
+| clinician-portal UI | In progress |
+| patient-portal UI | In progress |
+| clinician-bridge app | In progress (MVP) |
+
+---
+
+## Documentation
+
+The deeper design and policy docs — where most of the decisions actually live:
+
+| Document | What it covers |
+|----------|----------------|
+| [`MISSION.md`](MISSION.md) | Why the project exists and the class of clinical failure it targets |
+| [`docs/cds-exemption.md`](docs/cds-exemption.md) | Regulatory positioning: the four non-device CDS criteria, independent-review mechanisms, approved language |
+| [`docs/hipaa-retention.md`](docs/hipaa-retention.md) | Audit-log immutability and 7-year retention policy |
+| [`docs/fhir-interop.md`](docs/fhir-interop.md) | FHIR R4 identifier namespace and interop conventions |
+| [`docs/golden-eval.md`](docs/golden-eval.md) | Record-and-replay eval harness for the clinical-review prompt builder |
+| [`docs/ai-prompt-editing.md`](docs/ai-prompt-editing.md) | How versioned prompts are edited and reviewed |
+| [`docs/phi-key-rotation.md`](docs/phi-key-rotation.md) | PHI encryption-key rotation procedure |
+| [`docs/clinician-bridge-mvp.md`](docs/clinician-bridge-mvp.md) | Scope of the bedside clinician-bridge app |
+| [`LAUNCH-CHECKLIST.md`](LAUNCH-CHECKLIST.md) | Gates that must pass before any patient-facing deployment |
+| [`docs/records/`](docs/records/) | Durable investigation and decision records |
+
 ---
 
 ## Monorepo Structure
@@ -89,7 +207,8 @@ carebridge/
 │
 ├── apps/
 │   ├── clinician-portal    # Next.js 15 app for physicians and nurses (port 3000)
-│   └── patient-portal      # Next.js 15 app for patients (port 3001)
+│   ├── patient-portal      # Next.js 15 app for patients (port 3001)
+│   └── clinician-bridge    # Bedside record-handoff app (MVP in progress)
 │
 ├── tooling/
 │   ├── seed/               # Database seeding with DVT scenario patient
@@ -219,56 +338,22 @@ Appointment scheduling — create/read appointments by patient or provider.
 ## Apps
 
 ### `clinician-portal` — Port 3000
-Next.js 15 app for physicians, nurses, and care coordinators. Uses tRPC client + React Query for data fetching.
-
-Planned features: patient search, chart review (vitals/labs/meds/notes/procedures), structured note entry and signing, clinical flags dashboard with severity color-coding, flag acknowledgment and resolution workflows, care team management.
+Next.js 15 app for physicians, nurses, and care coordinators. Uses tRPC client + React Query for data fetching. Under active development: patient list and chart pages, note entry, inbox, messages, schedule, and settings, plus the flag-review workflow (dismissing or resolving a flag requires a recorded reason) and vitals trend charting.
 
 ### `patient-portal` — Port 3001
-Next.js 15 app for patients. Planned features: view own medical record, appointment booking, message center, symptom tracking, medication reminders.
+Next.js 15 app for patients. Under active development: appointments (booking, rescheduling, cancellation), labs, symptom tracking, messages, notes, refill requests, and health summary views. The patient portal does not surface AI flags.
+
+### `clinician-bridge`
+Early-stage MVP for a bedside record handoff: a family caregiver hands a captured patient record to a clinician via a pair code and short-lived session, without the clinician needing an EHR or CareBridge account. Scope is defined in [`docs/clinician-bridge-mvp.md`](docs/clinician-bridge-mvp.md); the pair-code form, relay endpoints, and session route have landed.
 
 ---
 
-## Getting Started
-
-### Prerequisites
-
-- [Node.js](https://nodejs.org) 20+
-- [pnpm](https://pnpm.io) 9+ (`npm install -g pnpm`)
-- [Docker](https://docker.com) and Docker Compose
-
-### Setup
-
-```bash
-# 1. Clone the repo
-git clone https://github.com/blamechris/carebridge.git
-cd carebridge
-
-# 2. Install dependencies
-pnpm install
-
-# 3. Configure environment
-cp .env.example .env
-# Edit .env with your DATABASE_URL, REDIS_URL, ANTHROPIC_API_KEY, JWT_SECRET
-
-# 4. Start PostgreSQL + Redis
-docker-compose up -d
-
-# 5. Run migrations
-pnpm db:migrate
-
-# 6. Seed development data
-pnpm db:seed
-
-# 7. Start everything
-pnpm dev
-```
-
-### Environment Variables
+## Environment Variables
 
 Cross-reference: rotation procedure for every value below tagged "secret" is
 `docs/phi-key-rotation.md`; the 2026-04 exposure question is closed (see issue #135).
 
-#### Required to boot
+### Required to boot
 
 | Variable | Description | Example |
 |----------|-------------|---------|
@@ -277,7 +362,7 @@ Cross-reference: rotation procedure for every value below tagged "secret" is
 | `PHI_ENCRYPTION_KEY` | 64-char hex (32 bytes) for AES-256 PHI column encryption. Throws on missing | `openssl rand -hex 32` (secret) |
 | `ANTHROPIC_API_KEY` | Claude API key for the AI oversight review pipeline | `sk-ant-...` (secret) |
 
-#### Required in production
+### Required in production
 
 | Variable | Description | Example |
 |----------|-------------|---------|
@@ -285,14 +370,14 @@ Cross-reference: rotation procedure for every value below tagged "secret" is
 | `PHI_HMAC_KEY` | HMAC key for MRN index lookups. Throws when `NODE_ENV=production` | `openssl rand -hex 32` (secret) |
 | `REDIS_PASSWORD` | Required when the Redis instance has AUTH enabled | (secret) |
 
-#### Required for key rotation
+### Required for key rotation
 
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `PHI_ENCRYPTION_KEY_PREVIOUS` | Prior PHI key during rotation; missing means rows encrypted under the old key cannot be decrypted | `openssl rand -hex 32` (secret) |
 | `REFRESH_TOKEN_HMAC_KEY` | Signs refresh tokens. Falls back to `SESSION_SECRET` if unset, so production deployments should set both explicitly | (secret) |
 
-#### Redis connection (alternative to `REDIS_URL`)
+### Redis connection (alternative to `REDIS_URL`)
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -301,7 +386,7 @@ Cross-reference: rotation procedure for every value below tagged "secret" is
 | `REDIS_PORT` | Port | `6379` |
 | `REDIS_TLS` | `"true"` to require TLS | `"false"` |
 
-#### Operational / observability
+### Operational / observability
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -313,7 +398,7 @@ Cross-reference: rotation procedure for every value below tagged "secret" is
 | `SCHEDULING_HEALTH_PORT` | scheduling reminder worker health check port | `4003` |
 | `CORS_ORIGIN` | Allowed origin for the gateway CORS plugin | none (locked down) |
 
-#### Clinical-rule tuning
+### Clinical-rule tuning
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -322,35 +407,13 @@ Cross-reference: rotation procedure for every value below tagged "secret" is
 
 Invalid overrides fall back to default and log a structured `invalid_ratio_override` warning so the misconfiguration surfaces in CI / startup logs. Rejected forms: non-decimal-literal strings (including partial-numerics like `"2.0x"`, locale-typos like `"2,0"`, scientific notation `"1e3"`, sign-prefix `"+1.5"`), values ≤ 1.0 (collapsed warning band), and values > 10 (catches decimal-point typos like `OPIOID_CRITICAL_RATIO=120` intended as `1.20`, which would otherwise silently disable critical escalation). Flag rationale surfaces the active value when an override is in effect.
 
-#### Dev-mode flags
+### Dev-mode flags
 
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `CAREBRIDGE_DEV_AUTH` | Set to `"true"` (with `NODE_ENV != production`) to enable the `x-dev-user-id` header bypass for local development | `"true"` |
 | `NEXT_PUBLIC_API_URL` | Browser-side API base URL injected into Next.js apps | `http://localhost:4000` |
 | `TEST_DATABASE_URL` | Separate database URL for integration tests that need a real Postgres | `postgresql://...` |
-
-### Running Services
-
-After `pnpm dev`:
-
-| Service | URL |
-|---------|-----|
-| API Gateway | http://localhost:4000 |
-| API Health | http://localhost:4000/health |
-| Clinician Portal | http://localhost:3000 |
-| Patient Portal | http://localhost:3001 |
-
-### Dev Accounts
-
-All accounts use password `password123`.
-
-| Email | Role | Specialty |
-|-------|------|-----------|
-| `dr.smith@carebridge.dev` | Physician | Hematology/Oncology |
-| `dr.jones@carebridge.dev` | Specialist | Interventional Radiology |
-| `nurse.rachel@carebridge.dev` | Nurse | Oncology |
-| `patient@carebridge.dev` | Patient | — |
 
 ---
 
@@ -361,6 +424,7 @@ All accounts use password `password123`.
 ```bash
 pnpm dev             # Start all services + apps (persistent, hot reload)
 pnpm build           # Build all packages, services, apps
+pnpm test            # Vitest across all workspaces
 pnpm typecheck       # TypeScript type checking across all packages
 pnpm lint            # ESLint across all packages
 
@@ -481,9 +545,11 @@ Documentation
 AI Oversight
   clinical_flags     id, patient_id, source, severity, category, summary,
                      rationale, suggested_action, status, rule_id,
-                     acknowledged_by, resolved_by, dismiss_reason
+                     acknowledged_by, resolved_by, dismiss_reason,
+                     model_id, prompt_version
   review_jobs        id, patient_id, status, rules_fired, flags_generated,
-                     prompt_tokens, completion_tokens, elapsed_ms
+                     prompt_tokens, completion_tokens, elapsed_ms,
+                     redacted_prompt
 
 Notifications
   notifications      id, recipient_id, recipient_type, type, content, status
@@ -508,37 +574,14 @@ FHIR
 
 ---
 
-## Status
-
-This is an active development project. Some services are fully implemented; others are scaffolded for future work:
-
-| Component | Status |
-|-----------|--------|
-| DB schema + migrations | Complete |
-| Seed data (DVT scenario) | Complete |
-| AI oversight rules engine | Complete |
-| AI oversight LLM review | Complete |
-| clinical-data service | Complete |
-| clinical-notes service | Complete |
-| api-gateway | Complete |
-| auth service | Complete |
-| patient-records service | Complete |
-| notifications service | Scaffolded |
-| fhir-gateway service | Scaffolded |
-| scheduling service | Scaffolded |
-| clinician-portal UI | Scaffolded |
-| patient-portal UI | Scaffolded |
-
----
-
-## License
-
-MIT — see [`LICENSE`](LICENSE).
-
 ## Security
 
 To report a vulnerability, see [`SECURITY.md`](SECURITY.md). Please do not open a
 public issue for security reports.
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).
 
 ---
 
