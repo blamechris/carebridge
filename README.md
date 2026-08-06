@@ -69,7 +69,10 @@ pnpm install
 
 # 3. Configure environment
 cp .env.example .env
-# Edit .env with your DATABASE_URL, REDIS_URL, ANTHROPIC_API_KEY, JWT_SECRET
+# Edit .env: set ANTHROPIC_API_KEY, and generate PHI_ENCRYPTION_KEY —
+# it is left empty in .env.example and services throw on boot without it:
+#   openssl rand -hex 32
+# DATABASE_URL, REDIS_URL, and JWT_SECRET ship with working local-dev defaults.
 
 # 4. Start PostgreSQL + Redis
 docker-compose up -d
@@ -94,6 +97,7 @@ After `pnpm dev`:
 | API Health | http://localhost:4000/health |
 | Clinician Portal | http://localhost:3000 |
 | Patient Portal | http://localhost:3001 |
+| Clinician Bridge | http://localhost:3002 |
 
 ### Dev Accounts
 
