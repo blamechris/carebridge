@@ -6,7 +6,10 @@ Please report security vulnerabilities privately through GitHub's private
 vulnerability reporting:
 
 **[Open a security advisory](https://github.com/blamechris/carebridge/security/advisories/new)**
-(repository → **Security** tab → **Report a vulnerability**)
+
+If you're reporting against a fork, use that repository's own **Security** tab →
+**Report a vulnerability** instead — the link above always targets
+`blamechris/carebridge`.
 
 Do **not** open a public issue, pull request, or discussion for a security
 report. Public disclosure before a fix is available puts every deployment at

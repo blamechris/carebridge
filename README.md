@@ -8,9 +8,9 @@
 > to inform the care of a real patient.
 >
 > - **Every patient in this repository is synthetic.** All patient scenarios, seed
->   data, and documentation examples — including "Margaret Chen" and her chart — are
->   fabricated for development and testing. No real patient data, PHI, or clinical
->   record appears anywhere in this codebase.
+>   data, and documentation examples shipped in this repository — including
+>   "Margaret Chen" and her chart — are fabricated for development and testing.
+>   Real patient data, PHI, and clinical records must never be added.
 > - **Every AI flag requires human review before any clinical action.** Flags are
 >   surfaced to a qualified clinician for independent review; `requires_human_review`
 >   defaults to `true` on AI-generated flags. CareBridge does not act on a flag, does
@@ -37,7 +37,7 @@ CareBridge encodes that combination as a deterministic rule. When it matches, th
 
 ## Architecture Overview
 
-CareBridge is a TypeScript fullstack monorepo. All clinical data mutations flow through an event queue where a hybrid rules engine and Claude LLM review evaluate the patient's recorded cross-specialty context — not just the latest chart entry.
+CareBridge is a TypeScript fullstack monorepo. All clinical data mutations flow through an event queue where a hybrid rules engine and LLM review evaluate the patient's recorded cross-specialty context — not just the latest chart entry.
 
 ```
 Clinician enters data
