@@ -593,7 +593,7 @@ This project exists because of her — and because of what the medical system fa
 
 Lisa was Chris's mother. She was let down by a system that was fragmented, inattentive, and too slow to connect the dots across her care. She died not from a condition that was untreatable, but from one that was unnoticed. The gaps between specialties, the missed signals, the absence of anyone looking at the full picture — these are not rare failures. They happen every day, to people whose names we never learn.
 
-CareBridge is Chris's answer to that. Not as a tribute built in grief and set aside, but as a working system designed to catch exactly the kind of clinical gaps that took her life. Every rule in the AI oversight engine, every cross-specialty alert, every flag raised before a patient falls through the cracks — it is all built with her in mind.
+CareBridge is Chris's answer to that. Not as a tribute built in grief and set aside, but as a working system built to surface exactly the kind of clinical gaps that took her life. Every rule in the AI oversight engine, every cross-specialty alert, every flag raised before a patient falls through the cracks — it is all built with her in mind.
 
 No matter how large this system grows, no matter how many institutions or professionals use it, this will always be where it came from: a son who lost his mother to neglect, and decided to build something that might keep that from happening to someone else.
 
