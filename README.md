@@ -265,8 +265,8 @@ pnpm dev
 
 ### Environment Variables
 
-Cross-reference: the secret-rotation list in `CLAUDE.md > SECURITY NOTICE`
-covers every value below tagged "secret".
+Cross-reference: rotation procedure for every value below tagged "secret" is
+`docs/phi-key-rotation.md`; the 2026-04 exposure question is closed (see issue #135).
 
 #### Required to boot
 

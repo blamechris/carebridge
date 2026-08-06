@@ -1,12 +1,13 @@
 # CareBridge
 
-## SECURITY NOTICE — Secret Rotation Required
-The `.env` file was previously tracked in git history and contained secrets
-(`PHI_ENCRYPTION_KEY`, `JWT_SECRET`, `REDIS_PASSWORD`, `SESSION_SECRET`).
-Although `.env` has been removed from tracking and added to `.gitignore`,
-the historical contents remain in git history. All of these secrets MUST be
-rotated after merging the fix for issue #135. Git history is intentionally
-not rewritten to avoid destructive operations on shared branches.
+## Security note — 2026-04 `.env` exposure: investigated & closed (2026-08-05)
+A notice here previously mandated rotating `PHI_ENCRYPTION_KEY`, `JWT_SECRET`,
+`REDIS_PASSWORD`, and `SESSION_SECRET` after `.env` was believed tracked in git
+history. A full forensic sweep (2026-08-05) found no tracked `.env` in any
+retrievable history and no real-shaped secret ever committed; the risk was
+accepted and the secrets were not rotated. The complete investigation record —
+including the conditions under which rotation becomes mandatory — is the final
+comment on issue #135. Rotation procedure, if ever needed: `docs/phi-key-rotation.md`.
 
 ## Project Overview
 Healthcare platform replacing Epic MyChart. Interconnected microservice-style apps
