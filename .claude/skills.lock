@@ -1,0 +1,133 @@
+{
+  "registry": "blamechris/skill-templates",
+  "skills": {
+    "agent-review": {
+      "hash": "81d191b",
+      "installed": "2026-11-03",
+      "profileHash": "e98fa26",
+      "targets": [
+        "claude"
+      ]
+    },
+    "autonomous-dev-flow": {
+      "hash": "bcb8822",
+      "installed": "2026-11-03",
+      "profileHash": "e98fa26",
+      "targets": [
+        "claude"
+      ]
+    },
+    "batch-merge": {
+      "hash": "37866a5",
+      "installed": "2026-11-03",
+      "profileHash": "e98fa26",
+      "targets": [
+        "claude"
+      ]
+    },
+    "check-pr": {
+      "hash": "bcb8822",
+      "installed": "2026-11-03",
+      "profileHash": "e98fa26",
+      "targets": [
+        "claude"
+      ]
+    },
+    "create-issue": {
+      "hash": "881d289",
+      "installed": "2026-11-03",
+      "profileHash": "e98fa26",
+      "targets": [
+        "claude"
+      ]
+    },
+    "create-pr": {
+      "hash": "37866a5",
+      "installed": "2026-11-03",
+      "profileHash": "e98fa26",
+      "targets": [
+        "claude"
+      ]
+    },
+    "decompose-issue": {
+      "hash": "699a5ca",
+      "installed": "2026-11-03",
+      "profileHash": "e98fa26",
+      "targets": [
+        "claude"
+      ]
+    },
+    "fix-ci": {
+      "hash": "bcb8822",
+      "installed": "2026-11-03",
+      "profileHash": "e98fa26",
+      "targets": [
+        "claude"
+      ]
+    },
+    "full-review": {
+      "hash": "37866a5",
+      "installed": "2026-11-03",
+      "profileHash": "e98fa26",
+      "targets": [
+        "claude"
+      ]
+    },
+    "learn": {
+      "hash": "df2de5e",
+      "installed": "2026-11-03",
+      "profileHash": "e98fa26",
+      "targets": [
+        "claude"
+      ]
+    },
+    "merge": {
+      "hash": "37866a5",
+      "installed": "2026-11-03",
+      "profileHash": "e98fa26",
+      "targets": [
+        "claude"
+      ]
+    },
+    "parallel-dev": {
+      "hash": "37866a5",
+      "installed": "2026-11-03",
+      "profileHash": "e98fa26",
+      "targets": [
+        "claude"
+      ]
+    },
+    "skill": {
+      "hash": "af9c1e4",
+      "installed": "2026-11-03",
+      "profileHash": "e98fa26",
+      "targets": [
+        "claude"
+      ]
+    },
+    "start-working": {
+      "hash": "5df829a",
+      "installed": "2026-11-03",
+      "profileHash": "e98fa26",
+      "targets": [
+        "claude"
+      ]
+    },
+    "swarm-audit": {
+      "hash": "a0b98e6",
+      "installed": "2026-11-03",
+      "profileHash": "e98fa26",
+      "targets": [
+        "claude"
+      ]
+    },
+    "tackle-issues": {
+      "hash": "84fe5f4",
+      "installed": "2026-11-03",
+      "profileHash": "e98fa26",
+      "targets": [
+        "claude"
+      ]
+    }
+  }
+}
