@@ -9,7 +9,7 @@ This skill is **read-only** — it never writes files, creates issues, or commit
 - `$ARGUMENTS` - Optional filters. Space-separated tokens:
   - `focus=AREA` — Narrow to a specific area (e.g., `focus=testing`, `focus=security`, `focus=performance`)
   - `limit=N` — Max items to show per source (default: 10)
-  - `include-closed` — Also scan recently closed issues (last 7 days) for context
+  - `include-closed` — Also scan recently closed issues for context
   - If empty, scan everything with defaults
 
 Examples:
@@ -27,7 +27,6 @@ Examples:
 ```bash
 REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
 REPO_NAME=$(basename "$REPO")
-DEFAULT_BRANCH=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name)
 ```
 
 Parse `$ARGUMENTS` for `focus`, `limit` (default 10), and `include-closed` flag.
@@ -52,9 +51,9 @@ Categorize each open issue:
 
 | Category | Detection |
 |----------|-----------|
-| Blocked | Has label matching: `blocked`, `wontfix`, `needs-design` |
+| Blocked | Has label matching: `blocked`, `wontfix`, `needs-design`, `on-hold` |
 | Assigned | Has assignees (someone is already working on it) |
-| Ready | Unblocked, unassigned `enhancement` or `bug` issues; or `from-review` issues |
+| Ready | Unblocked, unassigned `enhancement` or `bug` issues; `from-review` issues rank higher (deferred PR feedback) |
 | Backlog | Open, unassigned, not blocked, but no explicit "ready" signal |
 
 For "Ready" and "Backlog" issues, read the issue body to check for acceptance criteria:
@@ -101,6 +100,7 @@ done
 for d in docs/roadmap docs/planning docs/TODO; do
   test -d "$d" && echo "Found: $d/" && ls "$d"
 done
+
 ```
 
 Search for these files (check existence, don't fail if missing):
@@ -135,8 +135,8 @@ If audit reports exist, read the master assessment for any unaddressed recommend
 Scan for TODO/FIXME/HACK markers in source code:
 
 ```bash
+# Source patterns: packages/**/*.ts, services/**/*.ts, apps/**/*.tsx, apps/**/*.ts
 # Search for actionable markers in source files
-find packages services apps -type f \( -name "*.ts" -o -name "*.tsx" \) ! -path "*/node_modules/*" ! -path "*/.next/*" ! -path "*/dist/*" ! -path "*/build/*" -exec grep -Hn "TODO\|FIXME\|HACK\|XXX\|WORKAROUND" {} \;
 ```
 
 Use Grep to find `TODO`, `FIXME`, `HACK`, `XXX`, and `WORKAROUND` markers in source files. Exclude:
@@ -154,8 +154,8 @@ Map every finding to a unified priority tier:
 
 | Tier | Label | Signals |
 |------|-------|---------|
-| P0 | Immediate | PRs with `CHANGES_REQUESTED`, open `bug` issues, failing CI on open PRs |
-| P1 | High | `from-review` issues, unblocked unassigned `enhancement` issues, stale PRs |
+| P0 | Immediate | PRs with `CHANGES_REQUESTED`, open `bug`/`critical` issues, failing CI on open PRs |
+| P1 | High | Unblocked, unassigned `enhancement` issues, `from-review` issues, milestone-assigned issues, stale PRs |
 | P2 | Normal | `enhancement` issues with acceptance criteria, `from-audit` issues, roadmap items |
 | P3 | Exploratory | Codebase TODOs, vague issues without criteria, audit recommendations without issues |
 
@@ -179,7 +179,7 @@ If `focus=AREA` is set, filter to only show items related to that area. Match ag
 
 ### 3. Present Work Queue
 
-Output the primary summary table, then detail sections for each source.
+Output the primary summary table, then detail sections for each source. Cap each detail section to the top `limit` items (default 10) by priority — the queries fetch a wide net so categorization is accurate, but only the most relevant `limit` rows per source are shown. Note any truncation (e.g. "showing top 10 of 23").
 
 #### Primary Output — Work Queue Table
 
@@ -283,11 +283,12 @@ pnpm typecheck && pnpm lint
 #### 4b. Dependency Health
 
 ```bash
+# Check for outdated dependencies (language-specific)
 pnpm outdated
 ```
 
 - Count outdated dependencies
-- Check for known vulnerabilities if tooling is available
+- Check for known vulnerabilities if tooling is available (`npm audit`, `pip-audit`, etc.)
 
 #### 4c. Code Quality Signals
 
@@ -338,4 +339,5 @@ Run `/project-audit` for a comprehensive multi-agent analysis with detailed reco
 6. **Respect blocked/assigned** — Show blocked and assigned items for context but clearly separate them from the actionable queue. Never recommend working on a blocked or assigned item.
 7. **Composable output** — The "Recommended Next Action" section should include copy-pasteable commands (e.g., `/autonomous-dev-flow #12 #18 #25`) so the user can immediately act on the findings.
 8. **No file writes** — The fallback audit in Phase 4 outputs to the conversation only. Unlike `/project-audit`, it does NOT write report files or create a `docs/` directory.
-<!-- skill-templates: start-working b194666 2026-05-28 -->
+
+<!-- skill-templates: start-working 5df829a 2026-11-03 -->

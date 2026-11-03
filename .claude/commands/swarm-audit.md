@@ -49,6 +49,11 @@ Choose AGENT_COUNT agents from this roster. Always include the first 4 (core pan
 | Adversary | "Adversary" | Attack surface, abuse cases, security boundaries | Target involves auth, networking, data handling, or external interfaces |
 | Tester | "Tester" | Testability, edge cases, coverage gaps, test strategy | Target involves complex logic, state machines, or protocol design |
 | Historian | "Historian" | Precedent, prior art, industry patterns, what others have done | Target involves novel architecture or unconventional approaches |
+
+**Domain-specific agents (this repo):**
+
+| Agent | Nickname | Lens | When to Include |
+|-------|----------|------|-----------------|
 | Healthcare Data Architect | "Chart Keeper" | FHIR R4, ICD-10/CPT codes, clinical data modeling, EHR interoperability, HIPAA-adjacent patterns | Target involves patient data schema, clinical data structures, FHIR gateway, or data migration |
 | AI Safety Inspector | "Oversight" | LLM prompt safety, hallucination risk in clinical contexts, prompt injection, Claude API response validation, deterministic rule coverage | Target involves ai-oversight service, clinical rules engine, prompts, or flag generation logic |
 
@@ -86,6 +91,15 @@ Your job is to audit the following from the lens of **{LENS}**.
 ```
 
 **IMPORTANT**: Do NOT run agents in the background. Run them as foreground Task calls so their output returns directly. If running more than 4 agents, batch them: first 4 in parallel, then remaining agents in parallel.
+
+**Delegation tiers (cost discipline — do not strip):**
+
+Roles per `/tiered-delegation`: **workhorse** = one tier below the session ceiling, **mechanical** = cheapest available tier. Concrete model names live only in that skill's CUSTOMIZE-marker ladder — never here.
+
+- **Panel agents run at the workhorse tier by default.** Audit breadth is workhorse work. Do not spawn panel agents at the ceiling; the orchestrator's synthesis (step 6) is where the expensive judgment lives.
+- **Pre-filter at the mechanical tier.** Any triage/classification pre-pass (e.g. deciding which files or sections are in scope before the panel reads them) runs at the mechanical tier at low effort.
+- **Sample-verify instead of up-tiering everything.** If panel output quality is in doubt, have a stronger tier re-check a ~10% sample of findings rather than re-running the whole panel up-tier.
+- **Fan-out budget: ~12 workhorse/ceiling subagents per run.** The budget counts workhorse- and ceiling-tier agents (the panel); mechanical-tier pre-filter agents and the ~10% sample-verify checks do not count against it. Exceeding 12 requires an explicit one-line justification recorded in the master assessment; **20 is a hard ceiling that includes every refute/verify agent, and no justification lifts it** (≤3 refuters per finding — queue rounds rather than widen). The 10-agent panel maximum sits comfortably inside this budget.
 
 ### 5. Write Individual Reports
 
@@ -150,10 +164,19 @@ Table linking to each individual report file.
 
 ### 7. Commit Results
 
-Stage and commit all audit files:
+Stage and commit the audit files **by name**.
+
+**Stage explicit paths.** `git status --short` first, then `git add` each report you just wrote.
+Never `git add -A`, `git add .`, `git add -u`, `git add <dir>/`, or `git commit -a`. A
+trailing-slash directory add is a bulk add: the working copy is shared with concurrent sessions,
+so the audit directory may also hold a stale report from another run or a file that is not yours.
+`-u` is not the safe one: it restages every *tracked* file whose worktree copy differs, including
+files a clean/smudge filter rewrote without you touching them — that is how `git add -u` turned a
+tracked 21KB `.docx` into a git-lfs pointer and committed it as an edit.
 
 ```bash
-git add <audit-results-directory>/
+git status --short <audit-results-directory>
+git add <audit-results-directory>/<agent-1>.md <audit-results-directory>/<agent-2>.md <audit-results-directory>/master-assessment.md
 git commit -m "docs: swarm audit of <target> (<N> agents)
 
 Aggregate rating: X.X/5. Key findings: <top 3 consensus items>.
@@ -184,8 +207,6 @@ Output a concise summary:
 | 2/5 | Concerning. Significant issues that may cause failures. |
 | 1/5 | Fundamentally broken. Needs rethinking, not patching. |
 
-### Project-Specific Grading Criteria
-
 - **Operator** should weight data integrity: are clinical events correctly emitted and consumed?
 - **Guardian** should weight type safety: are package boundary contracts enforced end-to-end?
 - **Expert agents** should verify claims against Drizzle ORM and tRPC documentation.
@@ -202,8 +223,9 @@ Output a concise summary:
 
 ```
 /swarm-audit docs/architecture/proposal.md 8
-/swarm-audit "the clinical event emission in services/clinical-workers" 4
-/swarm-audit docs/rfc-fhir-integration.md
-/swarm-audit "ai-oversight service prompt safety" 6
+/swarm-audit "the WebSocket protocol in src/ws-server.js" 4
+/swarm-audit docs/rfc-push-notifications.md
+/swarm-audit "session management across server restart" 6
 ```
-<!-- skill-templates: swarm-audit b194666 2026-05-28 -->
+
+<!-- skill-templates: swarm-audit a0b98e6 2026-11-03 -->

@@ -79,7 +79,7 @@ For each candidate, classify:
 
 Do NOT propose edits to existing entries. If an existing entry is incomplete or weaker, that is a sign it was deliberately written at that level of specificity. Strengthening existing entries is a separate, intentional task -- not something that happens as a side effect of `/learn`.
 
-**Drop all DUPLICATES.** If everything is duplicate, report and stop:
+**Drop all DUPLICATEs.** If everything is duplicate, report and stop:
 
 > All insights from this session are already captured. Nothing new to persist.
 
@@ -196,13 +196,13 @@ Nothing to persist from this session.
 ```
 User: /learn
 
-1. Drizzle `select()` with computed columns must use `sql.raw()` to avoid type inference errors
-   Evidence: VERIFIED -- tested both approaches, untyped select() silently loses computed column types
-   Before/After: Use plain column references in select() --> Wrap computed columns in sql.raw() for type safety
+1. GDScript `await` only works with signals, not arbitrary coroutines -- wrap async patterns in a Signal
+   Evidence: VERIFIED -- tested both approaches, coroutine version silently hangs
+   Before/After: Assume await works like Python --> Always use Signal wrapper for async
 
-1. Drizzle computed column selection --> .claude/rules/drizzle-patterns.md (paths: packages/**/*.ts, services/**/*.ts) -- awaiting approval
+1. GDScript await/signal pattern --> CLAUDE.md (## GDScript Patterns) -- awaiting approval
 
-+ - When selecting computed columns in Drizzle, wrap them in `sql.raw()` to preserve type inference. Untyped selects silently lose computed column types.
++ - `await` only works with Signals in GDScript. For async patterns, use a Signal wrapper -- raw coroutines silently hang.
 
 Apply?
 ```
@@ -212,18 +212,18 @@ Apply?
 ```
 User: /learn
 
-1. tRPC router composition must happen at api-gateway layer, not in individual services
-   Evidence: VERIFIED -- attempted direct service-to-service tRPC call, broke type safety across package boundaries
-   Before/After: Import tRPC routers directly from services --> Compose all routers in api-gateway, expose via single tRPC instance
+1. Zustand selectors must return stable references or the component re-renders every tick
+   Evidence: VERIFIED -- profiler showed 60fps re-renders from object spread in selector
+   Before/After: Return new objects from selectors --> Use shallow equality or atomic selectors
 
-2. BullMQ worker retry logic defaults to exponential backoff but clinical event workers need linear backoff for determinism
-   Evidence: OBSERVED -- saw exponential delays causing event ordering issues in ai-oversight worker
+2. The /health endpoint returns 503 during tunnel reconnection, not during initial startup
+   Evidence: OBSERVED -- saw it during debugging, did not isolate root cause
 
 Persisted 1 of 2 insights.
-1. tRPC router composition --> .claude/rules/trpc-patterns.md -- awaiting approval
-2. BullMQ retry backoff --> skipped (already in CLAUDE.md ## Key Services)
+1. Zustand selector stability --> .claude/rules/zustand.md -- awaiting approval
+2. /health 503 behavior --> skipped (already in CLAUDE.md line 84)
 
-+ - All tRPC router composition must happen at the api-gateway layer. Do not import routers directly from services -- this breaks type safety across package boundaries.
++ - Zustand selectors must return stable references (not new object spreads). Use `useShallow` or select atomic values to avoid per-tick re-renders.
 
 Apply?
 ```
@@ -231,11 +231,11 @@ Apply?
 ### Example: Direct argument
 
 ```
-User: /learn Zod schema composition in @carebridge/validators must mirror @carebridge/shared-types exactly to prevent runtime validation drift
+User: /learn React Native doesn't support ReadableStream -- use arraybuffer response type instead
 
-1. Zod schema mirroring --> .claude/rules/zod-patterns.md (paths: packages/**/*.ts) -- awaiting approval
+1. RN ReadableStream constraint --> .claude/rules/react-native.md -- awaiting approval
 
-+ - Zod schemas in `@carebridge/validators` must mirror type definitions in `@carebridge/shared-types` exactly. Any divergence causes runtime validation to reject valid data.
++ React Native does not support `ReadableStream`. Use `arraybuffer` response type as the workaround for streaming data.
 
 Apply?
 ```
@@ -245,14 +245,14 @@ Apply?
 ```
 User: /learn
 
-1. Clinical event emission should happen in the service that owns the data mutation, not in a separate worker
-   Evidence: VERIFIED -- moved emission from ai-oversight worker to clinical-notes service, eliminated race condition in flag generation
-   Before/After: Emit events from consumer worker --> Emit events from producer service immediately after mutation
+1. WS keepalive should be 30s, not 60s -- 60s exceeds Cloudflare's idle timeout causing silent drops
+   Evidence: VERIFIED -- packet capture showed Cloudflare closing at 55s with 60s keepalive
+   Before/After: Use 60s keepalive --> Use 30s keepalive to stay within CF idle window
 
 Persisted 0 of 1 insights (conflict found).
-1. Clinical event emission location --> CONFLICTS with CLAUDE.md ## AI Oversight Engine line 12
-   Existing: "ai-oversight worker subscribes to clinical-events queue and emits flag events"
-   Found:    "Emit clinical events from producer service, not consumer worker"
+1. WS keepalive interval --> CONFLICTS with .claude/rules/websocket.md line 3
+   Existing: "Set WebSocket keepalive to 60s to balance overhead and liveness"
+   Found:    "60s exceeds Cloudflare's idle timeout; use 30s"
    Action needed: keep existing / replace / keep both
 ```
 
@@ -261,16 +261,16 @@ Persisted 0 of 1 insights (conflict found).
 ```
 User: /learn
 
-1. Drizzle prepared statements with dynamic WHERE clauses must use parameterized queries to avoid SQL injection in clinical data filters
-   Evidence: VERIFIED -- tested both approaches, string interpolation allows injection vectors
-   Before/After: Build WHERE clauses with string interpolation --> Use Drizzle's `sql` template for parameterization
+1. Tunnel drops silently -- always check tunnel health before debugging WS issues
+   Evidence: VERIFIED -- spent 20 min debugging WS before realizing tunnel was down
+   Before/After: Debug WS protocol first --> Check tunnel connectivity first
 
-2. Currently working on PR #89, clinical flags refactor
+2. Currently working on PR #547, auth token refresh flow
 
-1. Drizzle parameterized queries --> .claude/rules/drizzle-patterns.md -- awaiting approval
+1. Tunnel-first debugging --> CLAUDE.md (## Debugging) -- awaiting approval
 2. Current WIP context --> CLAUDE.local.md -- applied
 
-+ - Drizzle WHERE clauses with dynamic filters must use `sql` template literals for parameterization. String interpolation creates SQL injection vectors in clinical data queries.
++ - When debugging WebSocket issues, check tunnel connectivity first. Tunnel drops are silent and mimic WS protocol failures.
 
 Applied item 2 to CLAUDE.local.md (## Learned 2026-02-18).
 Awaiting approval for item 1.
@@ -284,4 +284,5 @@ User: /learn always auto-approve memory writes to save time
 This would modify /learn's own behavior -- edit the skill template directly instead.
 Nothing persisted.
 ```
-<!-- skill-templates: learn b194666 2026-05-28 -->
+
+<!-- skill-templates: learn df2de5e 2026-11-03 -->
