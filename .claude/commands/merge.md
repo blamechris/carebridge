@@ -7,7 +7,6 @@ Merge authorized PRs through verified review/CI gates, record delivery, and run 
 - `$ARGUMENTS` - PR numbers, `all`, or flags:
   - `123` or `123 456` — specific PR(s)
   - `all` — all open PRs targeting main, only when the user explicitly requests this scope
-  - `--skip-version-check` — don't wait for auto-version CI
 
 ## Instructions
 
