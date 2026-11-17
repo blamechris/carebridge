@@ -82,7 +82,7 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
     ],
     links: [
       { label: "MedlinePlus: Type 2 Diabetes", url: "https://medlineplus.gov/diabetestype2.html" },
-      { label: "CDC: Type 2 Diabetes", url: "https://www.cdc.gov/diabetes/basics/type2.html" },
+      { label: "CDC: Type 2 Diabetes", url: "https://www.cdc.gov/diabetes/about/about-type-2-diabetes.html" },
     ],
   },
   E10: {
@@ -102,7 +102,7 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
     ],
     links: [
       { label: "MedlinePlus: Type 1 Diabetes", url: "https://medlineplus.gov/diabetestype1.html" },
-      { label: "CDC: Type 1 Diabetes", url: "https://www.cdc.gov/diabetes/basics/type1.html" },
+      { label: "CDC: Type 1 Diabetes", url: "https://www.cdc.gov/diabetes/about/about-type-1-diabetes.html" },
     ],
   },
 
@@ -203,7 +203,7 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
     ],
     links: [
       { label: "MedlinePlus: High Blood Pressure", url: "https://medlineplus.gov/highbloodpressure.html" },
-      { label: "CDC: High Blood Pressure", url: "https://www.cdc.gov/bloodpressure/index.htm" },
+      { label: "CDC: High Blood Pressure", url: "https://www.cdc.gov/high-blood-pressure/about/index.html" },
     ],
   },
   I48: {
@@ -301,7 +301,7 @@ const DIAGNOSIS_CONTENT: Record<string, EducationContent> = {
     ],
     links: [
       { label: "MedlinePlus: Asthma", url: "https://medlineplus.gov/asthma.html" },
-      { label: "CDC: Asthma", url: "https://www.cdc.gov/asthma/default.htm" },
+      { label: "CDC: Asthma", url: "https://www.cdc.gov/asthma/about/index.html" },
     ],
   },
   J44: {
