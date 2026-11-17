@@ -24,7 +24,18 @@ with an AI oversight layer that catches cross-specialty clinical gaps.
 Read the plan at `.claude/plans/smooth-giggling-sunset.md` for full architecture.
 
 ## Quick Start
+
+Run from the repository root. Root migration, seed, maintenance and Turbo service
+commands do not automatically load `.env`. Use an already-exported deployment
+environment or explicitly source only a trusted, shell-compatible `.env` prepared
+from `.env.example` (see README Setup). Sourcing executes shell code; quote values
+as needed and define referenced variables before use, including `REDIS_PASSWORD`
+before `REDIS_URL`.
+
 ```bash
+set -a
+. ./.env
+set +a
 docker-compose up -d          # PostgreSQL + Redis
 pnpm install                  # Dependencies
 pnpm db:migrate               # Run Drizzle migrations

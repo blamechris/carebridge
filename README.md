@@ -59,6 +59,12 @@ What distinguishes the approach:
 
 ### Setup
 
+Run these commands from the repository root. Root migration, seed, maintenance
+and Turbo service commands do not automatically load `.env`. Use an already-exported
+deployment environment, or explicitly source only a trusted, shell-compatible file
+as shown below. Sourcing executes shell code; quote values as needed and define
+referenced variables before use (for example, `REDIS_PASSWORD` before `REDIS_URL`).
+
 ```bash
 # 1. Clone the repo
 git clone https://github.com/blamechris/carebridge.git
@@ -73,6 +79,10 @@ cp .env.example .env
 # it is left empty in .env.example and services throw on boot without it:
 #   openssl rand -hex 32
 # DATABASE_URL, REDIS_URL, and JWT_SECRET ship with working local-dev defaults.
+# Source only your trusted, shell-compatible .env.
+set -a
+. ./.env
+set +a
 
 # 4. Start PostgreSQL + Redis
 docker-compose up -d

@@ -70,22 +70,30 @@ fallback can eventually be removed.
 
 ### 1.4 Re-encrypt historical rows
 
-Before running the script, ensure `DATABASE_URL` is set in your shell.
-`re-encrypt-phi.ts` exits immediately with `DATABASE_URL is not set` if
-it is missing. Use the same production connection string you would use
-for other maintenance tasks, including any required SSL parameters.
+Run from the repository root using an already-exported deployment environment
+containing `DATABASE_URL`, `PHI_ENCRYPTION_KEY`, `PHI_ENCRYPTION_KEY_PREVIOUS`,
+and the unchanged `PHI_HMAC_KEY`. The script and pnpm do not automatically load
+`.env`. If these values are in a file, explicitly source only a trusted,
+shell-compatible file in your maintenance shell before invoking pnpm:
 
 ```bash
-export DATABASE_URL='<postgres connection string>'
-# Example if your environment requires SSL:
-# export DATABASE_URL='postgres://user:pass@host:5432/dbname?sslmode=require'
+set -a
+. ./.env
+set +a
 ```
 
-Run the re-encryption script:
+Use the path to your trusted environment file in place of `./.env` as needed.
+Sourcing executes shell code; quote values and define referenced variables before
+use. Use the same database connection settings as other maintenance tasks,
+including any required SSL parameters. The script exits with
+`DATABASE_URL is not set` if that variable is missing.
+
+Run the re-encryption script (`exec` resolves `tsx` in the scripts workspace,
+where the `src/` path is relative to `tooling/scripts`):
 
 ```bash
-pnpm --filter @carebridge/scripts tsx src/re-encrypt-phi.ts --dry-run
-pnpm --filter @carebridge/scripts tsx src/re-encrypt-phi.ts
+pnpm --filter @carebridge/scripts exec tsx src/re-encrypt-phi.ts --dry-run
+pnpm --filter @carebridge/scripts exec tsx src/re-encrypt-phi.ts
 ```
 
 The script iterates every table with encrypted columns, reads the stored
@@ -194,15 +202,16 @@ the KMS migration once the runbook + re-encrypt script land).
 Run these before declaring rotation complete:
 
 ```bash
-# Round-trip a known-PHI test write (or use the smoke test harness)
+# Run the schema tests (synthetic encryption round-trips)
 pnpm --filter @carebridge/db-schema test
 
 # Application health
 curl -fsS https://<env>/health
-
-# Sample PHI read from a known-seeded patient
-pnpm --filter @carebridge/api-gateway tsx scripts/smoke-phi-read.ts
 ```
+
+Using the application's normal authenticated workflow, verify that a known
+synthetic seeded patient's encrypted fields remain readable. There is no
+dedicated PHI-read smoke script in this repository.
 
 If any check fails, do NOT remove `PHI_ENCRYPTION_KEY_PREVIOUS` — it is
 the recovery path. Roll back the deploy, restore the previous values, and

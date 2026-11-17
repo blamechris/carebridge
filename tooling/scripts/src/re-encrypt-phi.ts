@@ -17,10 +17,11 @@
  *   Pagination is keyset (WHERE id > $lastId) rather than LIMIT/OFFSET so
  *   the runtime stays linear on large tables.
  *
- * Usage:
- *   pnpm --filter @carebridge/scripts tsx src/re-encrypt-phi.ts --dry-run
- *   pnpm --filter @carebridge/scripts tsx src/re-encrypt-phi.ts
- *   pnpm --filter @carebridge/scripts tsx src/re-encrypt-phi.ts --table=patients --batch-size=200
+ * Usage (from the repository root, with the deployment environment already
+ * exported; no automatic .env loading — see the runbook for trusted shell files):
+ *   pnpm --filter @carebridge/scripts exec tsx src/re-encrypt-phi.ts --dry-run
+ *   pnpm --filter @carebridge/scripts exec tsx src/re-encrypt-phi.ts
+ *   pnpm --filter @carebridge/scripts exec tsx src/re-encrypt-phi.ts --table=patients --batch-size=200
  *
  * Safety:
  *   - Idempotent: re-running is a no-op on rows already under the new key.
@@ -55,9 +56,8 @@ interface EncryptedColumn {
  * are the actual pgTable names, NOT the Drizzle constant names. If a
  * schema adds a new encrypted column, update this list — there is no
  * runtime reflection of Drizzle custom types that would let us discover
- * them. A drift check lives in the integration tests; run
- *   pnpm --filter @carebridge/scripts test
- * after editing this list.
+ * them. Review this list against the schema after editing encrypted columns;
+ * the scripts workspace does not currently define a test command.
  */
 const ENCRYPTED_COLUMNS: EncryptedColumn[] = [
   // packages/db-schema/src/schema/auth.ts
