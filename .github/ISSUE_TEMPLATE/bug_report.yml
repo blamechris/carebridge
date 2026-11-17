@@ -1,0 +1,68 @@
+name: Bug report
+description: Report a software problem with wholly synthetic reproduction details.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use only wholly synthetic examples and fabricated data. Never submit real
+        patient records or PHI, screenshots or recordings of real people, personal
+        contact data, credentials, or access links. Do not paste logs or attach files.
+
+        **Security vulnerability? Do not submit a public issue.** Follow the
+        [security policy](https://github.com/blamechris/carebridge/blob/main/SECURITY.md)
+        and use [private vulnerability reporting](https://github.com/blamechris/carebridge/security/advisories/new).
+        For a fork, use that repository's Security tab as explained in the policy.
+  - type: input
+    id: component_version
+    attributes:
+      label: Affected component and version
+      description: Name the package, service, or page and commit/version if known. Use unknown if needed; omit deployment URLs.
+      placeholder: Example — patient-portal health-summary, version unknown
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Software problem
+      description: Briefly describe the software behavior that is wrong, using only fabricated details.
+    validations:
+      required: true
+  - type: textarea
+    id: synthetic_steps
+    attributes:
+      label: Wholly synthetic reproduction steps
+      description: Give minimal steps and fabricated inputs that someone can reproduce without real records, accounts, or access links. Do not paste logs or attach files.
+    validations:
+      required: true
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: Expected behavior
+      description: What should the software do in this synthetic example?
+    validations:
+      required: true
+  - type: textarea
+    id: actual_behavior
+    attributes:
+      label: Actual behavior
+      description: What did the software do instead? Describe the result in plain text using fabricated details.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: What would show this is fixed?
+      description: State an observable software result for the synthetic example.
+    validations:
+      required: true
+  - type: checkboxes
+    id: synthetic_acknowledgement
+    attributes:
+      label: Submission checks
+      options:
+        - label: I used only wholly synthetic examples and omitted real records/PHI, images or recordings of real people, contact data, credentials, and access links.
+          required: true
+        - label: This is a software issue, not a security vulnerability report.
+          required: true

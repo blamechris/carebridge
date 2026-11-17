@@ -1,0 +1,60 @@
+name: Feature request
+description: Propose a focused software improvement with wholly synthetic examples.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use only wholly synthetic examples and fabricated data. Never submit real
+        patient records or PHI, screenshots or recordings of real people, personal
+        contact data, credentials, or access links. Do not paste logs or attach files.
+
+        **Security vulnerability? Do not submit a public issue.** Follow the
+        [security policy](https://github.com/blamechris/carebridge/blob/main/SECURITY.md)
+        and use [private vulnerability reporting](https://github.com/blamechris/carebridge/security/advisories/new).
+        For a fork, use that repository's Security tab as explained in the policy.
+  - type: input
+    id: affected_area
+    attributes:
+      label: Affected area
+      description: Name the package, service, page, or documentation area. Use unknown if needed; omit deployment URLs.
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Software problem or need
+      description: Briefly describe the software problem this proposal would address, using only fabricated details.
+    validations:
+      required: true
+  - type: textarea
+    id: synthetic_example
+    attributes:
+      label: Wholly synthetic example
+      description: Describe a minimal fictional workflow and fabricated inputs. Do not include real records, personal details, logs, files, or access links.
+    validations:
+      required: true
+  - type: textarea
+    id: proposed_behavior
+    attributes:
+      label: Proposed behavior
+      description: Explain what the software should do in that synthetic example. A request does not authorize real-data use or deployment.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Observable acceptance criteria
+      description: What specific software behavior would demonstrate the proposed improvement?
+    validations:
+      required: true
+  - type: checkboxes
+    id: synthetic_acknowledgement
+    attributes:
+      label: Submission checks
+      options:
+        - label: I used only wholly synthetic examples and omitted real records/PHI, images or recordings of real people, contact data, credentials, and access links.
+          required: true
+        - label: This is a software issue, not a security vulnerability report.
+          required: true
