@@ -28,6 +28,15 @@
 > non-device Clinical Decision Support under 21st Century Cures Act §3060 — and in
 > [`MISSION.md`](MISSION.md).
 
+**Working direction: patient and family first.** People bring information they can
+access; the intended system helps them understand it, notice concerning patterns,
+and prepare questions for their care team. CareBridge may be the underlying system.
+This is a direction for future product work, not a patient-ready capability or a
+selected first use case. See [the working direction and fictional discussion
+examples](docs/direction/patient-family-first.md). The research implementation
+described below and all clinical-use and deployment restrictions above remain in
+effect.
+
 <!-- Hero visual: a live capture of the clinician-portal flag-review workflow is
      tracked in #1331 and will be embedded here once it exists. No placeholder. -->
 

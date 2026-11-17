@@ -1,5 +1,23 @@
 # CareBridge Mission
 
+**Current working direction: patient and family first.** People bring information
+they can access; the intended system helps them understand it, notice concerning
+patterns, and prepare questions for their care team. CareBridge may be the
+underlying system. [The working direction](docs/direction/patient-family-first.md)
+separates that intent from the current research implementation and unresolved
+product choices; no first patient use case or clinical rule has been selected.
+
+The personal foreword below preserves the founder's motivation. The subsequent
+technical sections record the historical clinician-focused research architecture
+and proposals, including their rule priorities and bridge design; they are not a
+current implementation inventory or the selected patient-product roadmap. Personal
+motivation is distinct from clinical validation. Clinical efficacy and outcomes
+require separate evidence. The [README's research warning](README.md)
+and [deployment gates](LAUNCH-CHECKLIST.md) remain in effect; the legal and
+regulatory position of a future patient-facing product is unresolved.
+
+**Historical research ambition:**
+
 > The system should force the surfacing of cross-specialty deterioration patterns that tired or siloed clinicians miss, especially during inpatient stays and discharge decisions.
 
 ## Why this exists
@@ -19,7 +37,7 @@ This project is not a replacement for clinicians. It's a checklist made by a gri
 
 — Chris Pishaki, 2026
 
-## The failure class
+## Historical research focus: the failure class
 
 CareBridge addresses **cross-specialty deterioration patterns** — a class of clinical failure that single-specialist EHR notes structurally cannot catch because:
 
@@ -31,7 +49,7 @@ CareBridge addresses **cross-specialty deterioration patterns** — a class of c
 
 These are the failure modes CareBridge is designed to catch. None are diagnoses. All are pattern-recognition tasks that benefit from a system that never gets tired.
 
-## What CareBridge does
+## Historical research architecture
 
 Mechanically, CareBridge is a **deterministic clinical pattern engine** with three layers:
 
@@ -51,7 +69,7 @@ CareBridge is positioned as **non-device clinical decision support** under the 2
 - **Does not auto-act.** Every flag requires a clinician to read and decide. Nothing happens in the chart without human action.
 - **Does not replace clinician judgment.** Flags are checklists, not verdicts.
 
-## Architecture: MedLens + CareBridge + the bridge
+## Historical architecture proposal: MedLens + CareBridge + the bridge
 
 CareBridge does not exist alone. It is one half of a **two-app patient-safety stack**:
 
@@ -61,11 +79,12 @@ CareBridge does not exist alone. It is one half of a **two-app patient-safety st
 
 The longitudinal-across-admissions property — the thing hospitals structurally cannot see — comes from MedLens being on the family caregiver's phone, not the hospital's server. The family follows the patient across admissions; MedLens captures across admissions; CareBridge runs deterioration-trajectory rules across that longitudinal data; the clinician gets it in one summary.
 
-## First rule: DETERIORATION-TRAJECTORY-001
+## Historical rule milestone: DETERIORATION-TRAJECTORY-001
 
-The first major rule in the deterioration-trajectory family is an **umbrella** that runs six sub-checks at three triggers (new admission with priors, shift change, discharge decision):
+The ordering below records research-rule priorities, not a selected first patient
+use case or product priority. In that research plan, the first major rule in the deterioration-trajectory family is an **umbrella** that runs six sub-checks at three triggers (new admission with priors, shift change, discharge decision):
 
-| Sub-rule | What it catches | Priority |
+| Sub-rule | What it catches | Historical priority |
 |---|---|:---:|
 | READMISSION-TRAJECTORY | Patient readmitted within 30/60/90d with worsening labs/vitals/symptoms across admissions | **1st** |
 | DISCHARGE-READINESS | Discharge language appearing while labs are trending wrong, consults are open, or symptoms are unresolved | **2nd** |
@@ -74,7 +93,7 @@ The first major rule in the deterioration-trajectory family is an **umbrella** t
 | COPY-FORWARD-DRIFT | Note text > 80% similarity to prior shift's note where at least one clinical signal has changed since | future |
 | CONSULT-LOOP-OPEN | Consult requested ≥24h ago without a closing note linked back | future |
 
-The scaffolding for all six lives in `packages/medical-logic/src/deterioration-patterns.ts`. The first three ship as the founding milestone. The other three follow as the data model fills out.
+The research source in `packages/medical-logic/src/deterioration-patterns.ts` contains implementations of the first three detectors. The older plan proposed the remaining three as later work. That research sequence is historical context, not a commitment for the patient/family-first direction.
 
 ## Status & how to contribute
 
