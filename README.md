@@ -419,6 +419,9 @@ Invalid overrides fall back to default and log a structured `invalid_ratio_overr
 
 ## Development Workflow
 
+For contribution scope, branches, pull requests, validation, and review expectations,
+see [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ### Key Commands
 
 ```bash
@@ -467,29 +470,13 @@ Rules are evaluated synchronously before the LLM review, so they fire with zero 
 
 ### Code Conventions
 
-- **TypeScript strict mode** everywhere
-- **ESM** — `type: "module"` in all `package.json`, `.js` extensions in imports
-- **Functional style** — prefer functions over classes
-- **Dates** — always ISO 8601 strings (`new Date().toISOString()`)
-- **UUIDs** — `crypto.randomUUID()` (no external packages)
-- **Workspace packages** — import as `@carebridge/*`
+See [Code conventions in CONTRIBUTING.md](CONTRIBUTING.md#code-conventions) for
+TypeScript, ESM, functional style, dates, UUIDs, and workspace imports.
 
 ### Commit Format
 
-```
-type(scope): short summary in present tense
-```
-
-Types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `style`, `perf`
-
-Scopes: `db`, `ai`, `notes`, `clinical`, `auth`, `gateway`, `portal`, `infra`
-
-Examples:
-```
-feat(ai): add cross-specialty rule for cancer+vte+neuro pattern
-fix(clinical): correct unit validation for blood pressure readings
-refactor(db): normalize care team member table
-```
+See [Commit format in CONTRIBUTING.md](CONTRIBUTING.md#commit-format) for the
+required format, supported types/scopes, and examples.
 
 ---
 
