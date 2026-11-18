@@ -192,6 +192,7 @@ The deeper design and policy docs — where most of the decisions actually live:
 | [`docs/cds-exemption.md`](docs/cds-exemption.md) | Regulatory positioning: the four non-device CDS criteria, independent-review mechanisms, approved language |
 | [`docs/hipaa-retention.md`](docs/hipaa-retention.md) | Audit-log immutability and 7-year retention policy |
 | [`docs/fhir-interop.md`](docs/fhir-interop.md) | FHIR R4 identifier namespace and interop conventions |
+| [`docs/patient-education-url-check.md`](docs/patient-education-url-check.md) | Run and triage the curated patient-education URL check |
 | [`docs/golden-eval.md`](docs/golden-eval.md) | Record-and-replay eval harness for the clinical-review prompt builder |
 | [`docs/ai-prompt-editing.md`](docs/ai-prompt-editing.md) | How versioned prompts are edited and reviewed |
 | [`docs/phi-key-rotation.md`](docs/phi-key-rotation.md) | PHI encryption-key rotation procedure |
