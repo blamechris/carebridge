@@ -70,7 +70,9 @@ writes, use the local command.
 4. Keep content-review notes separate from probe and browser results. Record
    whether the page still matches the intended diagnosis or medication topic
    and which suitability questions need review. Consolidate the evidence in
-   the open tracking issue linked below.
+   the tracking issue the workflow opened or updated for that run. For a local
+   probe, use the matching current tracking issue; the issue below belongs to
+   the historical snapshot.
 
 ## Historical snapshot
 
