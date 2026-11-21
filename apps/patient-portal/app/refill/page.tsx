@@ -2,13 +2,15 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { AuthGuard } from "@carebridge/portal-shared/auth-guard";
 import { useAuth } from "@/lib/auth";
 import { trpc } from "@/lib/trpc";
 import { useMyPatientRecord } from "@/lib/use-my-patient";
 
-export default function RefillPage() {
+function RefillContent() {
   const { user } = useAuth();
   const router = useRouter();
+  const canRequestRefill = user?.role === "patient";
 
   const { patient: myRecord, isUnlinked } = useMyPatientRecord();
 
@@ -19,7 +21,7 @@ export default function RefillPage() {
 
   const recipientsQuery = trpc.messaging.listRecipients.useQuery(
     undefined,
-    { enabled: !!myRecord && user?.role === "patient" },
+    { enabled: !!myRecord && canRequestRefill },
   );
 
   const createConvoMutation = trpc.messaging.createConversation.useMutation();
@@ -30,17 +32,12 @@ export default function RefillPage() {
   const [errorMedId, setErrorMedId] = useState<string | null>(null);
   const [note, setNote] = useState("");
 
-  if (!user) {
-    router.push("/login");
-    return null;
-  }
-
   const activeMeds = (medsQuery.data ?? []).filter((m) => m.status === "active");
   const recipients = recipientsQuery.data ?? [];
 
   function findRecipient(orderingProviderId?: string | null, prescribedBy?: string | null): string | null {
-    const prescriber = recipients.find((recipient) => recipient.provider_id === orderingProviderId)
-      ?? recipients.find((recipient) => recipient.provider_id === prescribedBy);
+    const prescriberId = orderingProviderId ?? prescribedBy;
+    const prescriber = recipients.find((recipient) => recipient.provider_id === prescriberId);
     if (prescriber) return prescriber.provider_id;
 
     const primary = recipients.find((recipient) => recipient.role === "primary");
@@ -56,7 +53,7 @@ export default function RefillPage() {
     prescribed_by?: string | null;
     ordering_provider_id?: string | null;
   }) {
-    if (user?.role !== "patient" || !myRecord) return;
+    if (!canRequestRefill || !myRecord) return;
 
     const recipientId = findRecipient(med.ordering_provider_id, med.prescribed_by);
     if (!recipientId) return;
@@ -181,7 +178,7 @@ export default function RefillPage() {
             ) : (
               <button
                 onClick={() => handleRequestRefill(med)}
-                disabled={user.role !== "patient" || !myRecord || recipients.length === 0 || submittingMedId === med.id}
+                disabled={!canRequestRefill || !myRecord || recipients.length === 0 || submittingMedId === med.id}
                 style={{
                   padding: "6px 14px",
                   backgroundColor: "#2563eb",
@@ -224,5 +221,13 @@ export default function RefillPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function RefillPage() {
+  return (
+    <AuthGuard>
+      <RefillContent />
+    </AuthGuard>
   );
 }
