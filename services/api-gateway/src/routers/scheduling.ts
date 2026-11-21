@@ -26,7 +26,7 @@ import {
   familyRelationships,
   users,
 } from "@carebridge/db-schema";
-import { eq, and, gte, lte, desc, ne } from "drizzle-orm";
+import { eq, and, gt, gte, lt, lte, desc, ne, sql } from "drizzle-orm";
 import crypto from "node:crypto";
 import {
   hasScope,
@@ -57,6 +57,12 @@ const isAuthenticated = t.middleware(({ ctx, next }) => {
 });
 
 const protectedProcedure = t.procedure.use(isAuthenticated);
+
+// READ COMMITTED gives the overlap query a fresh snapshot after this lock is granted.
+function providerBookingLock(providerId: string) {
+  const lockKey = `carebridge:scheduling:${providerId}`;
+  return sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+}
 
 /**
  * Resolve the active family_relationships row linking the caregiver to the
@@ -230,18 +236,27 @@ export const schedulingRbacRouter = t.router({
         const now = new Date().toISOString();
 
         return db.transaction(async (tx) => {
-          const overlapping = await tx.select().from(appointments)
+          await tx.execute(providerBookingLock(input.providerId));
+
+          const overlapping = await tx
+            .select({ id: appointments.id })
+            .from(appointments)
             .where(
               and(
                 eq(appointments.provider_id, input.providerId),
                 ne(appointments.status, "cancelled"),
-                lte(appointments.start_time, input.endTime),
-                gte(appointments.end_time, input.startTime),
+                // Half-open intervals match the availability check.
+                lt(appointments.start_time, input.endTime),
+                gt(appointments.end_time, input.startTime),
               ),
-            );
+            )
+            .limit(1);
 
           if (overlapping.length > 0) {
-            throw new Error("Time slot conflicts with an existing appointment");
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: "Time slot conflicts with an existing appointment",
+            });
           }
 
           const appointment: typeof appointments.$inferInsert & {
@@ -288,7 +303,7 @@ export const schedulingRbacRouter = t.router({
           }
 
           return appointment;
-        });
+        }, { isolationLevel: "read committed" });
       }),
 
     cancel: protectedProcedure
@@ -412,39 +427,51 @@ export const schedulingRbacRouter = t.router({
         const now = new Date().toISOString();
 
         return db.transaction(async (tx) => {
-          // Re-read inside the tx so the row is visible to the cancel
-          // UPDATE below. If the row disappeared between the pre-check and
-          // the tx (rare — someone else cancelled), treat as conflict.
+          await tx.execute(providerBookingLock(existing.provider_id));
+
+          // Lock and re-read the original before replacing it. A cancellation
+          // or another reschedule may have won while this request waited.
           const [current] = await tx
             .select()
             .from(appointments)
             .where(eq(appointments.id, input.appointmentId))
+            .for("update")
             .limit(1);
           if (!current) {
-            throw new Error("Appointment no longer exists");
+            throw new TRPCError({
+              code: "NOT_FOUND",
+              message: "Appointment no longer exists",
+            });
+          }
+          if (current.status === "cancelled") {
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: "Appointment has already been cancelled",
+            });
           }
 
           // Overlap check on the new slot against the same provider's
-          // active appointments. Exclude the appointment we're about to
-          // cancel so a self-reschedule onto an overlapping slot doesn't
-          // race against its own row.
+          // active appointments. Exclude the original to allow a move that
+          // overlaps only its own previous slot.
           const overlapping = await tx
-            .select()
+            .select({ id: appointments.id })
             .from(appointments)
             .where(
               and(
                 eq(appointments.provider_id, current.provider_id),
                 ne(appointments.status, "cancelled"),
                 ne(appointments.id, input.appointmentId),
-                lte(appointments.start_time, input.newEndTime),
-                gte(appointments.end_time, input.newStartTime),
+                lt(appointments.start_time, input.newEndTime),
+                gt(appointments.end_time, input.newStartTime),
               ),
-            );
+            )
+            .limit(1);
 
           if (overlapping.length > 0) {
-            throw new Error(
-              "New time slot conflicts with an existing appointment",
-            );
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: "New time slot conflicts with an existing appointment",
+            });
           }
 
           // 1. Cancel the original row (also nulls reminder columns).
@@ -517,7 +544,7 @@ export const schedulingRbacRouter = t.router({
           }
 
           return newAppt;
-        });
+        }, { isolationLevel: "read committed" });
       }),
   }),
 

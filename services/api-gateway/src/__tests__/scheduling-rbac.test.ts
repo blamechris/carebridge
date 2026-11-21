@@ -88,6 +88,7 @@ const mocks = vi.hoisted(() => {
   // db.transaction(cb) — invokes cb with a tx object that mimics select/insert.
   const transactionFn = fn(async (cb: (tx: unknown) => Promise<unknown>) => {
     const tx: Record<string, unknown> = {
+      execute: fn(async () => undefined),
       select: fn(() => makeSelectChain()),
       insert: insertFn,
     };
@@ -99,6 +100,8 @@ const mocks = vi.hoisted(() => {
     makeSelectChain,
     insertFn,
     transactionFn,
+    scheduleReminders: fn(async () => ({})),
+    cancelReminders: fn(async () => undefined),
     assertCareTeamAccess: fn(async () => true),
     mockDb: {
       select: fn(() => makeSelectChain()),
@@ -147,10 +150,18 @@ vi.mock("@carebridge/db-schema", () => ({
 vi.mock("drizzle-orm", () => ({
   eq: (col: unknown, val: unknown) => ({ op: "eq", col, val }),
   and: (...args: unknown[]) => ({ op: "and", args }),
+  gt: (col: unknown, val: unknown) => ({ op: "gt", col, val }),
   gte: (col: unknown, val: unknown) => ({ op: "gte", col, val }),
+  lt: (col: unknown, val: unknown) => ({ op: "lt", col, val }),
   lte: (col: unknown, val: unknown) => ({ op: "lte", col, val }),
   ne: (col: unknown, val: unknown) => ({ op: "ne", col, val }),
   desc: (col: unknown) => ({ op: "desc", col }),
+  sql: vi.fn(),
+}));
+
+vi.mock("@carebridge/scheduling", () => ({
+  scheduleReminders: mocks.scheduleReminders,
+  cancelReminders: mocks.cancelReminders,
 }));
 
 vi.mock("../middleware/rbac.js", () => ({
@@ -227,6 +238,19 @@ describe("schedulingRbacRouter.appointments.create — patient-ownership enforce
       patientId: PATIENT_RECORD_ID,
     });
     expect(result).toMatchObject({ patient_id: PATIENT_RECORD_ID });
+  });
+
+  it("returns CONFLICT before inserting or scheduling reminders for an occupied slot", async () => {
+    const patient = makeUser("patient", PATIENT_USER_ID, {
+      patient_id: PATIENT_RECORD_ID,
+    });
+    mocks.state.queue = [[{ id: APPOINTMENT_ID }]];
+
+    await expect(
+      callerFor(patient).appointments.create(BOOK_INPUT),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(mocks.insertFn).not.toHaveBeenCalled();
+    expect(mocks.scheduleReminders).not.toHaveBeenCalled();
   });
 
   it("defaults patient_id from ctx.user.patient_id when omitted", async () => {
