@@ -21,6 +21,12 @@ import {
 } from "@testing-library/react";
 
 const routerReplace = vi.fn();
+let isAuthenticated = true;
+const observeQueryOptions = vi.fn();
+
+vi.mock("@/lib/auth", () => ({
+  useAuth: () => ({ isAuthenticated }),
+}));
 let searchParamsMock = new URLSearchParams();
 
 vi.mock("next/navigation", () => ({
@@ -48,7 +54,10 @@ vi.mock("@/lib/trpc", () => ({
   trpc: {
     epicAuth: {
       getLaunchContext: {
-        useQuery: (_input: unknown, _opts: unknown) => getLaunchContextQuery(),
+        useQuery: (_input: unknown, opts: unknown) => {
+          observeQueryOptions(opts);
+          return getLaunchContextQuery();
+        },
       },
     },
   },
@@ -77,6 +86,8 @@ function makeStorage(): {
 
 beforeEach(() => {
   routerReplace.mockClear();
+  observeQueryOptions.mockClear();
+  isAuthenticated = true;
   searchParamsMock = new URLSearchParams();
 });
 
@@ -85,6 +96,18 @@ afterEach(() => {
 });
 
 describe("EpicLaunchBanner", () => {
+  it("waits for the session before querying or rendering cached launch context", () => {
+    isAuthenticated = false;
+    const { rerender } = render(<EpicLaunchBanner />);
+    expect(observeQueryOptions).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: false }));
+    expect(screen.queryByTestId("epic-launch-banner")).toBeNull();
+
+    isAuthenticated = true;
+    rerender(<EpicLaunchBanner />);
+    expect(observeQueryOptions).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: true }));
+    expect(screen.queryByTestId("epic-launch-banner")).not.toBeNull();
+  });
+
   it("returns null when no URL params AND server has no launch context", () => {
     getLaunchContextQuery.mockReturnValueOnce({
       data: null,

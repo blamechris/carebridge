@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { AuthGuard } from "@carebridge/portal-shared/auth-guard";
 import { useAuth } from "@/lib/auth";
 import { trpc } from "@/lib/trpc";
 import { useMyPatientRecord } from "@/lib/use-my-patient";
@@ -259,24 +259,9 @@ function PatientDashboard() {
 }
 
 export default function PatientHome() {
-  const { isAuthenticated, hydrated } = useAuth();
-  const router = useRouter();
-
-  useEffect(() => {
-    if (hydrated && !isAuthenticated) {
-      router.replace("/login");
-    }
-  }, [hydrated, isAuthenticated, router]);
-
-  if (!hydrated || !isAuthenticated) {
-    return (
-      <div>
-        <p style={{ color: "#999" }}>
-          {hydrated ? "Redirecting to login..." : "Loading..."}
-        </p>
-      </div>
-    );
-  }
-
-  return <PatientDashboard />;
+  return (
+    <AuthGuard>
+      <PatientDashboard />
+    </AuthGuard>
+  );
 }

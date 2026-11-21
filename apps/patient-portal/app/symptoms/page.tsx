@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useAuth } from "@/lib/auth";
+import { AuthGuard } from "@carebridge/portal-shared/auth-guard";
 import { trpc } from "@/lib/trpc";
 import { useMyPatientRecord } from "@/lib/use-my-patient";
 import { useActivePatient } from "@/lib/active-patient";
@@ -26,8 +26,7 @@ const SEVERITY_OPTIONS = [
 
 type ObservationType = typeof OBSERVATION_TYPES[number]["value"];
 
-export default function SymptomsPage() {
-  const { user } = useAuth();
+function SymptomsContent() {
   const router = useRouter();
   const utils = trpc.useUtils();
 
@@ -58,11 +57,6 @@ export default function SymptomsPage() {
   const [location, setLocation] = useState("");
   const [duration, setDuration] = useState("");
   const [submitted, setSubmitted] = useState(false);
-
-  if (!user) {
-    router.push("/login");
-    return null;
-  }
 
   function handleSubmit() {
     if (!myRecord || !description.trim()) return;
@@ -337,5 +331,13 @@ export default function SymptomsPage() {
         ))
       )}
     </div>
+  );
+}
+
+export default function SymptomsPage() {
+  return (
+    <AuthGuard>
+      <SymptomsContent />
+    </AuthGuard>
   );
 }

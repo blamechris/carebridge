@@ -2,45 +2,34 @@ import React from "react";
 import { describe, it, expect, afterEach, vi, beforeEach } from "vitest";
 import { render, cleanup, screen } from "@testing-library/react";
 
-// next/navigation
+const replace = vi.fn();
+const usePatientRecord = vi.fn();
+const authState = { isAuthenticated: true, hydrated: true, verifying: false };
+
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
+  useRouter: () => ({ push: vi.fn(), replace }),
 }));
 
-// Auth — signed-in caregiver (role controls write-path toggling).
-vi.mock("@/lib/auth", () => ({
-  useAuth: () => ({
-    user: {
-      id: "caregiver-1",
-      email: "c@carebridge.dev",
-      name: "C",
-      role: "family_caregiver",
-      is_active: true,
-      created_at: "2026-01-01T00:00:00.000Z",
-      updated_at: "2026-01-01T00:00:00.000Z",
-    },
-    isAuthenticated: true,
-    sessionId: "s-1",
-    setSession: vi.fn(),
-    clearSession: vi.fn(),
-    hydrated: true,
-    verifying: false,
-  }),
+vi.mock("@carebridge/portal-shared/auth", () => ({
+  useAuth: () => authState,
 }));
 
 vi.mock("@/lib/use-my-patient", () => ({
-  useMyPatientRecord: () => ({
-    patient: {
-      id: "linked-1",
-      name: "Jane Doe",
-      mrn: "MRN001",
-      date_of_birth: "1960-01-01",
-      biological_sex: "female",
-    },
-    isLoading: false,
-    isError: false,
-    isUnlinked: false,
-  }),
+  useMyPatientRecord: () => {
+    usePatientRecord();
+    return {
+      patient: {
+        id: "linked-1",
+        name: "Jane Doe",
+        mrn: "MRN001",
+        date_of_birth: "1960-01-01",
+        biological_sex: "female",
+      },
+      isLoading: false,
+      isError: false,
+      isUnlinked: false,
+    };
+  },
 }));
 
 // Controllable active-patient mock — flipped per test.
@@ -96,9 +85,49 @@ import SymptomsPage from "../../app/symptoms/page";
 describe("SymptomsPage — caregiver read-only state", () => {
   beforeEach(() => {
     activePatientState.isViewingAsCaregiver = true;
+    authState.isAuthenticated = true;
+    authState.hydrated = true;
+    authState.verifying = false;
+    replace.mockClear();
+    usePatientRecord.mockClear();
   });
 
   afterEach(() => cleanup());
+
+  it.each([
+    ["caregiver", true],
+    ["patient", false],
+  ])("waits for the %s session on direct navigation", (_role, isViewingAsCaregiver) => {
+    activePatientState.isViewingAsCaregiver = isViewingAsCaregiver;
+    authState.isAuthenticated = false;
+    authState.hydrated = false;
+    const { rerender } = render(<SymptomsPage />);
+
+    expect(screen.queryByText("How Are You Feeling?")).toBeNull();
+    expect(replace).not.toHaveBeenCalled();
+    expect(usePatientRecord).not.toHaveBeenCalled();
+
+    authState.hydrated = true;
+    authState.verifying = true;
+    rerender(<SymptomsPage />);
+    expect(replace).not.toHaveBeenCalled();
+    expect(usePatientRecord).not.toHaveBeenCalled();
+
+    authState.verifying = false;
+    authState.isAuthenticated = true;
+    rerender(<SymptomsPage />);
+    expect(screen.getByText("How Are You Feeling?")).toBeDefined();
+    expect(!!screen.queryByTestId("symptoms-caregiver-readonly-notice")).toBe(isViewingAsCaregiver);
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("redirects after restoration completes without a session", () => {
+    authState.isAuthenticated = false;
+    render(<SymptomsPage />);
+    expect(replace).toHaveBeenCalledWith("/login");
+    expect(usePatientRecord).not.toHaveBeenCalled();
+  });
+
 
   it("shows the read-only notice when viewing as caregiver", () => {
     render(<SymptomsPage />);

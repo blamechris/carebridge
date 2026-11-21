@@ -40,14 +40,13 @@ export interface User {
 export interface AuthContextValue {
   user: User | null;
   sessionId: string | null;
-  setSession: (user: User, sessionId: string) => void;
+  setSession: (user: User, sessionId: string) => Promise<void>;
   clearSession: () => void;
   isAuthenticated: boolean;
   /** True after the initial localStorage read completes on the client. */
   hydrated: boolean;
   /**
-   * True while the `/auth/me` server round-trip is in progress. Consumers
-   * should wait for `!verifying` before trusting `user`.
+   * True while the browser session is being established or restored.
    */
   verifying: boolean;
 }
@@ -68,12 +67,13 @@ const HAS_SESSION_KEY = "carebridge_has_session";
  */
 async function setSessionCookie(token: string): Promise<void> {
   const baseUrl = getApiBaseUrl();
-  await fetch(`${baseUrl}/auth/session`, {
+  const response = await fetch(`${baseUrl}/auth/session`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify({ token }),
   });
+  if (!response.ok) throw new Error("Could not establish a browser session. Please try again.");
 }
 
 /**
@@ -121,9 +121,15 @@ export function AuthProvider({ children, queryClient }: AuthProviderProps) {
   const [hydrated, setHydrated] = useState(false);
   const [verifying, setVerifying] = useState(false);
 
-  // Keep a ref to the previous user id so we can detect identity changes and
-  // clear the query cache when a different user takes over.
-  const prevUserIdRef = useRef<string | null>(null);
+  // An older restore or login must not publish auth state after a newer action.
+  const sessionOperation = useRef(0);
+  const cookieQueue = useRef(Promise.resolve());
+
+  const enqueueCookieOperation = useCallback((run: () => Promise<void>) => {
+    const result = cookieQueue.current.then(run);
+    cookieQueue.current = result.catch(() => {});
+    return result;
+  }, []);
 
   /**
    * Internal helper: clears the QueryClient cache if supplied.
@@ -152,91 +158,91 @@ export function AuthProvider({ children, queryClient }: AuthProviderProps) {
     }
   }, [clearQueryCache]);
 
-  // --- Hydrate from localStorage then validate against `/auth/me` ---
   useEffect(() => {
     let cancelled = false;
-
+    const operation = sessionOperation.current;
+    let hasSession: string | null = null;
+    let storedUser: string | null = null;
     try {
-      const stored = localStorage.getItem(USER_KEY);
-      if (stored) setUser(JSON.parse(stored) as User);
-      // The actual session token lives in an HttpOnly cookie. We use a flag
-      // in localStorage only to know whether we believe we have an active
-      // session (for hydration / isAuthenticated on the client).
-      const hasSession = localStorage.getItem(HAS_SESSION_KEY);
-      if (hasSession) setSessionId(hasSession);
-    } catch { /* corrupt / blocked storage — stay logged out */ }
+      hasSession = localStorage.getItem(HAS_SESSION_KEY);
+      storedUser = localStorage.getItem(USER_KEY);
+    } catch { /* blocked storage — stay logged out */ }
+
+    setVerifying(!!hasSession);
     setHydrated(true);
-
-    // Always round-trip to the server to verify the stored identity.
-    const hasSession = localStorage.getItem(HAS_SESSION_KEY);
     if (hasSession) {
-      setVerifying(true);
       fetchAuthMe().then((serverUser) => {
-        if (cancelled) return;
-        setVerifying(false);
+        if (cancelled || operation !== sessionOperation.current) return;
 
-        if (!serverUser) {
-          // Session is invalid/expired — clear everything.
-          invalidateAndRedirect();
-          return;
-        }
-
-        // Check if the server identity matches what localStorage claims.
-        const storedRaw = localStorage.getItem(USER_KEY);
-        if (storedRaw) {
-          try {
-            const storedUser = JSON.parse(storedRaw) as User;
-            if (storedUser.id !== serverUser.id) {
-              // Identity mismatch — someone tampered with localStorage.
-              invalidateAndRedirect();
-              return;
-            }
-          } catch {
+        try {
+          if (!serverUser || (storedUser && JSON.parse(storedUser).id !== serverUser.id)) {
             invalidateAndRedirect();
             return;
           }
-        }
 
-        // Update local state with the server-authoritative user data.
-        localStorage.setItem(USER_KEY, JSON.stringify(serverUser));
-        setUser(serverUser);
+          localStorage.setItem(USER_KEY, JSON.stringify(serverUser));
+          setUser(serverUser);
+          setSessionId(hasSession);
+        } catch {
+          invalidateAndRedirect();
+        } finally {
+          setVerifying(false);
+        }
       });
     }
 
     return () => { cancelled = true; };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Detect user identity changes and clear the query cache.
-  useEffect(() => {
-    const currentUserId = user?.id ?? null;
-    if (prevUserIdRef.current !== null && prevUserIdRef.current !== currentUserId) {
-      clearQueryCache();
-    }
-    prevUserIdRef.current = currentUserId;
-  }, [user, clearQueryCache]);
+  }, [invalidateAndRedirect]);
 
   const setSession = useCallback((u: User, sid: string) => {
-    // Write the session token into an HttpOnly cookie via the API gateway.
-    // The token is NOT stored in localStorage — only a flag indicating an
-    // active session exists (the flag itself is not the token).
-    setSessionCookie(sid).catch(() => {
-      // If the cookie endpoint fails, the Authorization header fallback in
-      // the auth middleware will still work for the current page session.
+    const operation = ++sessionOperation.current;
+    setVerifying(true);
+    setUser(null);
+    setSessionId(null);
+    clearQueryCache();
+
+    return enqueueCookieOperation(async () => {
+      let cookieInstalled = false;
+      try {
+        if (operation !== sessionOperation.current) throw new Error("Sign-in was interrupted.");
+        localStorage.removeItem(USER_KEY);
+        localStorage.removeItem(HAS_SESSION_KEY);
+        await setSessionCookie(sid);
+        cookieInstalled = true;
+        if (operation !== sessionOperation.current) throw new Error("Sign-in was interrupted.");
+
+        const serverUser = await fetchAuthMe();
+        if (operation !== sessionOperation.current) throw new Error("Sign-in was interrupted.");
+        if (!serverUser || serverUser.id !== u.id) {
+          throw new Error("Could not verify the browser session. Please try again.");
+        }
+
+        localStorage.setItem(USER_KEY, JSON.stringify(serverUser));
+        localStorage.setItem(HAS_SESSION_KEY, "true");
+        setUser(serverUser);
+        setSessionId(sid);
+      } catch (error) {
+        if (cookieInstalled) {
+          // Complete rollback before a later action can write its cookie.
+          await clearSessionCookie();
+        }
+        throw error;
+      } finally {
+        if (operation === sessionOperation.current) setVerifying(false);
+      }
     });
-    localStorage.setItem(USER_KEY, JSON.stringify(u));
-    localStorage.setItem(HAS_SESSION_KEY, "true");
-    setUser(u);
-    setSessionId(sid);
-  }, []);
+  }, [clearQueryCache, enqueueCookieOperation]);
 
   const clearSession = useCallback(() => {
-    clearSessionCookie();
+    ++sessionOperation.current;
+    setVerifying(false);
+    void enqueueCookieOperation(clearSessionCookie);
     localStorage.removeItem(USER_KEY);
     localStorage.removeItem(HAS_SESSION_KEY);
     setUser(null);
     setSessionId(null);
     clearQueryCache();
-  }, [clearQueryCache]);
+  }, [clearQueryCache, enqueueCookieOperation]);
 
   return (
     <AuthContext.Provider
@@ -245,7 +251,7 @@ export function AuthProvider({ children, queryClient }: AuthProviderProps) {
         sessionId,
         setSession,
         clearSession,
-        isAuthenticated: !!user && !!sessionId,
+        isAuthenticated: hydrated && !verifying && !!user && !!sessionId,
         hydrated,
         verifying,
       }}

@@ -37,6 +37,9 @@ describe("resolveActivePatientId", () => {
 // Mocks must be set up before the component module is imported because the
 // hook captures `trpc.patients.getMyPatients.useQuery` at module load.
 
+const observePatientQuery = vi.fn();
+let isAuthenticated = true;
+
 const trpcState = {
   getMyPatientsData: [] as Array<{
     id: string;
@@ -50,10 +53,10 @@ vi.mock("@/lib/trpc", () => ({
   trpc: {
     patients: {
       getMyPatients: {
-        useQuery: () => ({
-          data: trpcState.getMyPatientsData,
-          isLoading: false,
-        }),
+        useQuery: (_input: unknown, options: unknown) => {
+          observePatientQuery(options);
+          return { data: trpcState.getMyPatientsData, isLoading: false };
+        },
       },
       getById: {
         useQuery: () => ({ data: null, isLoading: false, isError: false }),
@@ -73,7 +76,7 @@ vi.mock("@/lib/auth", () => ({
       created_at: "2026-01-01T00:00:00.000Z",
       updated_at: "2026-01-01T00:00:00.000Z",
     },
-    isAuthenticated: true,
+    isAuthenticated,
     sessionId: "s-1",
     setSession: vi.fn(),
     clearSession: vi.fn(),
@@ -106,11 +109,28 @@ describe("ActivePatientProvider + useActivePatient", () => {
   beforeEach(() => {
     window.localStorage.clear();
     trpcState.getMyPatientsData = [];
+    isAuthenticated = true;
+    observePatientQuery.mockClear();
   });
 
   afterEach(() => {
     cleanup();
     window.localStorage.clear();
+  });
+
+  it("enables the linked patient query only after authentication", () => {
+    isAuthenticated = false;
+    const tree = () => (
+      <ActivePatientProvider>
+        <Probe />
+      </ActivePatientProvider>
+    );
+    const { rerender } = render(tree());
+    expect(observePatientQuery).toHaveBeenLastCalledWith({ enabled: false });
+
+    isAuthenticated = true;
+    rerender(tree());
+    expect(observePatientQuery).toHaveBeenLastCalledWith({ enabled: true });
   });
 
   it("uses the localStorage-stored id when it is in the candidate list", async () => {

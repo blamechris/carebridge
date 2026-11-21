@@ -3,6 +3,7 @@
 import { useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
+import { AuthGuard } from "@carebridge/portal-shared/auth-guard";
 import { trpc } from "@/lib/trpc";
 import { useMyPatientRecord } from "@/lib/use-my-patient";
 import { AppointmentsPageInner } from "@/components/appointments/appointments-page-inner";
@@ -11,8 +12,8 @@ import type { AppointmentRow } from "@/components/appointments/appointment-list"
 
 const capitalize = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
-export default function AppointmentsPage() {
-  const { user, hydrated, isAuthenticated } = useAuth();
+function AppointmentsContent() {
+  const { user } = useAuth();
   const router = useRouter();
   const utils = trpc.useUtils();
 
@@ -56,8 +57,6 @@ export default function AppointmentsPage() {
     [rescheduleMutation],
   );
 
-  if (!hydrated) return <p style={{ color: "#999" }}>Loading...</p>;
-  if (!isAuthenticated) { router.replace("/login"); return null; }
   if (patientLoading) return <p style={{ color: "#999" }}>Loading your record...</p>;
   if (isUnlinked || !myRecord) {
     return (
@@ -120,5 +119,13 @@ export default function AppointmentsPage() {
         />
       )}
     </div>
+  );
+}
+
+export default function AppointmentsPage() {
+  return (
+    <AuthGuard>
+      <AppointmentsContent />
+    </AuthGuard>
   );
 }

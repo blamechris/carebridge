@@ -128,18 +128,20 @@ describe("AuthProvider /auth/me hydration", () => {
     // Pre-populate localStorage as if a previous session existed.
     localStorage.setItem("carebridge_user", JSON.stringify(TEST_USER));
     localStorage.setItem("carebridge_has_session", "true");
-    mockAuthMeResponse(TEST_USER);
+    let respond!: (response: Pick<Response, "ok" | "json">) => void;
+    fetchMock.mockReturnValue(new Promise((resolve) => { respond = resolve; }));
 
     const { result } = renderHook(() => useAuth(), {
       wrapper: makeWrapper(),
     });
 
-    // Should hydrate immediately from localStorage.
-    await waitFor(() => expect(result.current.hydrated).toBe(true));
-    expect(result.current.user?.id).toBe("user-1");
+    expect(result.current.hydrated).toBe(true);
+    expect(result.current.verifying).toBe(true);
+    expect(result.current.user).toBeNull();
+    expect(result.current.isAuthenticated).toBe(false);
 
-    // Wait for /auth/me verification to complete.
-    await waitFor(() => expect(result.current.verifying).toBe(false));
+    await act(async () => respond({ ok: true, json: async () => TEST_USER }));
+    expect(result.current.verifying).toBe(false);
     expect(result.current.user?.id).toBe("user-1");
     expect(result.current.isAuthenticated).toBe(true);
   });
@@ -316,28 +318,190 @@ describe("AuthProvider /auth/me hydration", () => {
     expect(stored.patient_id).toBe("patient-abc-123");
   });
 
-  it("preserves all extended fields through setSession (login path)", async () => {
-    mockAuthMeResponse(null);
+  it("waits for the cookie POST and server identity before publishing a new session", async () => {
+    let finishCookie!: (response: Pick<Response, "ok">) => void;
+    let finishIdentity!: (response: Pick<Response, "ok" | "json">) => void;
+    fetchMock
+      .mockReturnValueOnce(new Promise((resolve) => { finishCookie = resolve; }))
+      .mockReturnValueOnce(new Promise((resolve) => { finishIdentity = resolve; }));
 
     const { result } = renderHook(() => useAuth(), {
       wrapper: makeWrapper(),
     });
-
-    await waitFor(() => expect(result.current.hydrated).toBe(true));
-
+    let login!: Promise<void>;
     act(() => {
-      result.current.setSession(CLINICIAN_USER, "test-session-token");
+      login = result.current.setSession(CLINICIAN_USER, "test-session-token");
     });
 
-    expect(result.current.user?.specialty).toBe("Hematology/Oncology");
-    expect(result.current.user?.department).toBe("Oncology");
-    expect(result.current.isAuthenticated).toBe(true);
+    expect(result.current.verifying).toBe(true);
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(localStorage.getItem("carebridge_has_session")).toBeNull();
+    await waitFor(() => expect(fetchMock.mock.calls).toHaveLength(1));
+    expect(fetchMock.mock.calls[0]?.[0]).toContain("/auth/session");
 
-    const stored = JSON.parse(
-      localStorage.getItem("carebridge_user") ?? "{}",
-    ) as User;
-    expect(stored.specialty).toBe("Hematology/Oncology");
-    expect(stored.department).toBe("Oncology");
+    await act(async () => finishCookie({ ok: true }));
+    expect(fetchMock.mock.calls[1]?.[0]).toContain("/auth/me");
+    expect(result.current.isAuthenticated).toBe(false);
+
+    await act(async () => {
+      finishIdentity({ ok: true, json: async () => CLINICIAN_USER });
+      await login;
+    });
+
+    expect(result.current.user).toEqual(CLINICIAN_USER);
+    expect(result.current.isAuthenticated).toBe(true);
+    expect(localStorage.getItem("carebridge_has_session")).toBe("true");
+  });
+
+  it("keeps the browser signed out when the cookie POST fails", async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 500 });
+    const { result } = renderHook(() => useAuth(), { wrapper: makeWrapper() });
+
+    await act(async () => {
+      await expect(result.current.setSession(CLINICIAN_USER, "test-session-token"))
+        .rejects.toThrow("Could not establish a browser session");
+    });
+
+    expect(result.current.verifying).toBe(false);
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(localStorage.getItem("carebridge_has_session")).toBeNull();
+    expect(fetchMock.mock.calls).toHaveLength(1);
+  });
+
+  it.each([
+    ["unavailable", null],
+    ["a different user", DIFFERENT_USER],
+  ])("rejects login when the browser identity is %s", async (_case, serverUser) => {
+    mockAuthMeResponse(serverUser);
+    const { result } = renderHook(() => useAuth(), { wrapper: makeWrapper() });
+
+    await act(async () => {
+      await expect(result.current.setSession(CLINICIAN_USER, "test-session-token"))
+        .rejects.toThrow("Could not verify the browser session");
+    });
+
+    expect(result.current.verifying).toBe(false);
+    expect(result.current.user).toBeNull();
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(localStorage.getItem("carebridge_has_session")).toBeNull();
+  });
+
+  it("finishes a failed login's cookie rollback before a newer login writes", async () => {
+    let finishRollback!: (response: Pick<Response, "ok">) => void;
+    fetchMock
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: false })
+      .mockReturnValueOnce(new Promise((resolve) => { finishRollback = resolve; }))
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: true, json: async () => DIFFERENT_USER });
+
+    const { result } = renderHook(() => useAuth(), { wrapper: makeWrapper() });
+    let firstLogin!: Promise<unknown>;
+    act(() => {
+      firstLogin = result.current.setSession(CLINICIAN_USER, "first-token").catch((error) => error);
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/auth/session/clear"),
+      expect.objectContaining({ method: "POST" }),
+    ));
+
+    let secondLogin!: Promise<void>;
+    act(() => {
+      secondLogin = result.current.setSession(DIFFERENT_USER, "second-token");
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(result.current.isAuthenticated).toBe(false);
+
+    await act(async () => {
+      finishRollback({ ok: true });
+      await secondLogin;
+    });
+    expect(await firstLogin).toEqual(new Error("Could not verify the browser session. Please try again."));
+    expect(fetchMock.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
+      "/auth/session", "/auth/me", "/auth/session/clear", "/auth/session", "/auth/me",
+    ]);
+    expect(result.current.user).toEqual(DIFFERENT_USER);
+    expect(result.current.isAuthenticated).toBe(true);
+  });
+
+  it("orders logout after a pending cookie write and before the next login", async () => {
+    let finishWrite!: (response: Pick<Response, "ok">) => void;
+    let finishLogout!: (response: Pick<Response, "ok">) => void;
+    fetchMock
+      .mockReturnValueOnce(new Promise((resolve) => { finishWrite = resolve; }))
+      .mockResolvedValueOnce({ ok: true })
+      .mockReturnValueOnce(new Promise((resolve) => { finishLogout = resolve; }))
+      .mockResolvedValueOnce({ ok: true })
+      .mockResolvedValueOnce({ ok: true, json: async () => DIFFERENT_USER });
+    const { result } = renderHook(() => useAuth(), { wrapper: makeWrapper() });
+
+    let firstLogin!: Promise<unknown>;
+    act(() => {
+      firstLogin = result.current.setSession(CLINICIAN_USER, "first-token").catch((error) => error);
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    let secondLogin!: Promise<void>;
+    act(() => {
+      result.current.clearSession();
+      secondLogin = result.current.setSession(DIFFERENT_USER, "second-token");
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.current.isAuthenticated).toBe(false);
+
+    await act(async () => finishWrite({ ok: true }));
+    expect(await firstLogin).toEqual(new Error("Sign-in was interrupted."));
+    expect(fetchMock.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
+      "/auth/session", "/auth/session/clear", "/auth/session/clear",
+    ]);
+    expect(result.current.user).toBeNull();
+
+    await act(async () => {
+      finishLogout({ ok: true });
+      await secondLogin;
+    });
+    expect(result.current.user).toEqual(DIFFERENT_USER);
+    expect(result.current.isAuthenticated).toBe(true);
+  });
+
+  it("rolls back the cookie when persisting the verified session fails", async () => {
+    mockAuthMeResponse(CLINICIAN_USER);
+    vi.spyOn(localStorage, "setItem").mockImplementationOnce(() => {
+      throw new Error("Storage unavailable");
+    });
+    const { result } = renderHook(() => useAuth(), { wrapper: makeWrapper() });
+
+    await act(async () => {
+      await expect(result.current.setSession(CLINICIAN_USER, "test-session-token"))
+        .rejects.toThrow("Storage unavailable");
+    });
+
+    expect(fetchMock.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
+      "/auth/session", "/auth/me", "/auth/session/clear",
+    ]);
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(localStorage.getItem("carebridge_has_session")).toBeNull();
+  });
+
+  it("ignores a successful restoration response after logout", async () => {
+    localStorage.setItem("carebridge_user", JSON.stringify(TEST_USER));
+    localStorage.setItem("carebridge_has_session", "true");
+    let respond!: (response: Pick<Response, "ok" | "json">) => void;
+    fetchMock
+      .mockReturnValueOnce(new Promise((resolve) => { respond = resolve; }))
+      .mockResolvedValue({ ok: true });
+
+    const { result } = renderHook(() => useAuth(), { wrapper: makeWrapper() });
+    expect(result.current.verifying).toBe(true);
+    act(() => result.current.clearSession());
+
+    await act(async () => respond({ ok: true, json: async () => TEST_USER }));
+
+    expect(result.current.verifying).toBe(false);
+    expect(result.current.user).toBeNull();
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(localStorage.getItem("carebridge_user")).toBeNull();
+    expect(localStorage.getItem("carebridge_has_session")).toBeNull();
   });
 
   it("skips /auth/me when no session flag exists in localStorage", async () => {

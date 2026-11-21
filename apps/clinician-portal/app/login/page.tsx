@@ -37,7 +37,7 @@ export default function LoginPage() {
         user: { id: string; name: string; email: string; role: UserRole };
         session: { id: string };
       };
-      setSession(loginResult.user, loginResult.session.id);
+      await setSession(loginResult.user, loginResult.session.id);
       router.push("/");
     } catch (err: unknown) {
       const message =
@@ -54,18 +54,24 @@ export default function LoginPage() {
     setError(null);
     setLoading(true);
 
+    let challengeConsumed = false;
     try {
       const result = await trpcVanilla.auth.mfaCompleteLogin.mutate({
         mfaSessionId,
         code: totpCode.trim(),
       });
-      setSession(result.user, result.session.id);
+      challengeConsumed = true;
+      await setSession(result.user, result.session.id);
       router.push("/");
     } catch (err: unknown) {
       const message =
         err instanceof Error ? err.message : "Verification failed. Please try again.";
       setError(message);
       setTotpCode("");
+      if (challengeConsumed) {
+        setMfaSessionId(null);
+        setStep("credentials");
+      }
     } finally {
       setLoading(false);
     }
