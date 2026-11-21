@@ -25,7 +25,7 @@ vi.mock("@/lib/trpc", () => ({
       medications: { getByPatient: { useQuery: () => ({ data: [medication] }) } },
     },
     messaging: {
-      listRecipients: { useQuery: listRecipients },
+      listRecipients: { useQuery: (...args: Parameters<typeof listRecipients>) => listRecipients(...args) },
       createConversation: { useMutation: () => ({ mutateAsync: createConversation }) },
       sendMessage: { useMutation: () => ({ mutateAsync: sendMessage }) },
     },
