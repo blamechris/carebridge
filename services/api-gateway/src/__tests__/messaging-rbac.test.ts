@@ -68,6 +68,7 @@ const mocks = vi.hoisted(() => {
           return inner;
         }),
         limit: vi.fn(async () => next),
+        for: vi.fn(async () => next),
       };
       return wrapper;
     });
@@ -76,9 +77,17 @@ const mocks = vi.hoisted(() => {
     return chain;
   }
 
+  const transactionValues = vi.fn(async (_value: unknown) => undefined);
+  const tx = {
+    select: vi.fn(() => makeChain()),
+    insert: vi.fn((_table: unknown) => ({ values: transactionValues })),
+  };
   const mockDb = {
     select: vi.fn(() => makeChain()),
     insert: vi.fn(() => ({ values: vi.fn(async () => undefined) })),
+    transaction: vi.fn(async (operation: (transaction: typeof tx) => Promise<unknown>) => (
+      operation(tx)
+    )),
     update: vi.fn(() => ({
       set: vi.fn(() => ({ where: vi.fn(async () => undefined) })),
     })),
@@ -86,6 +95,8 @@ const mocks = vi.hoisted(() => {
 
   return {
     mockDb,
+    tx,
+    transactionValues,
     setQueue: (q: unknown[][]) => {
       queue = [...q];
     },
@@ -128,7 +139,23 @@ vi.mock("@carebridge/db-schema", () => ({
   users: {
     id: "users.id",
     patient_id: "users.patient_id",
+    role: "users.role",
+    is_active: "users.is_active",
+    specialty: "users.specialty",
   },
+  careTeamMembers: {
+    patient_id: "care_team_members.patient_id",
+    provider_id: "care_team_members.provider_id",
+    is_active: "care_team_members.is_active",
+    role: "care_team_members.role",
+    specialty: "care_team_members.specialty",
+  },
+  careTeamAssignments: {
+    user_id: "care_team_assignments.user_id",
+    patient_id: "care_team_assignments.patient_id",
+    removed_at: "care_team_assignments.removed_at",
+  },
+  patients: { id: "patients.id" },
 }));
 
 vi.mock("drizzle-orm", () => ({
@@ -136,6 +163,7 @@ vi.mock("drizzle-orm", () => ({
   and: (...args: unknown[]) => ({ op: "and", args }),
   desc: (col: unknown) => ({ op: "desc", col }),
   inArray: (col: unknown, vals: unknown) => ({ op: "inArray", col, vals }),
+  isNull: (col: unknown) => ({ op: "isNull", col }),
 }));
 
 vi.mock("@carebridge/redis-config", () => ({
@@ -405,6 +433,130 @@ describe("messaging router — caregiver view_and_message scope (issue #909)", (
         expect(message).not.toContain(CONVERSATION_ID);
       }
     });
+  });
+});
+
+describe("messaging router — recipient listing", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.setQueue([]);
+  });
+
+  it("returns recipient identity, roster role, and specialty", async () => {
+    mocks.setQueue([
+      [], // Embedded patient lookup. The recipient statement returns its filtered rows.
+      [{ provider_id: CLINICIAN_ID, role: "primary", specialty: null, providerSpecialty: "General" }],
+    ]);
+
+    await expect(caller(makeUser("patient", PATIENT_USER_ID)).listRecipients()).resolves.toEqual([
+      { provider_id: CLINICIAN_ID, role: "primary", specialty: "General" },
+    ]);
+  });
+
+  it("returns an empty list for a patient with no eligible recipient", async () => {
+    await expect(caller(makeUser("patient", PATIENT_USER_ID)).listRecipients()).resolves.toEqual([]);
+  });
+
+  it.each(["family_caregiver", "physician", "admin"] as const)(
+    "returns no recipients for a %s account",
+    async (role) => {
+      await expect(caller(makeUser(role, CAREGIVER_ID)).listRecipients()).resolves.toEqual([]);
+      expect(mocks.mockDb.select).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe("messaging router — conversation creation", () => {
+  const patientAccount = { id: PATIENT_USER_ID, role: "patient", patientId: PATIENT_RECORD_ID };
+  const clinicianAccount = { id: CLINICIAN_ID, role: "physician", patientId: null };
+  const patientUser = makeUser("patient", PATIENT_USER_ID, { patient_id: PATIENT_RECORD_ID });
+  const input = { patientId: PATIENT_RECORD_ID, subject: "Follow-up", participantIds: [CLINICIAN_ID] };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.setQueue([]);
+  });
+
+  it("creates a conversation with one row per care-team participant", async () => {
+    mocks.setQueue([
+      [clinicianAccount, patientAccount],
+      [{ id: CLINICIAN_ID }],
+      [{ id: CLINICIAN_ID }],
+    ]);
+
+    const conversation = await caller(patientUser).createConversation({
+      ...input,
+      participantIds: [PATIENT_USER_ID, CLINICIAN_ID, CLINICIAN_ID],
+    });
+
+    expect(mocks.mockDb.transaction).toHaveBeenCalledTimes(1);
+    expect(mocks.mockDb.insert).not.toHaveBeenCalled();
+    expect(mocks.transactionValues).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      id: conversation.id,
+      patient_id: PATIENT_RECORD_ID,
+      subject: input.subject,
+      created_by: PATIENT_USER_ID,
+    }));
+    expect(mocks.transactionValues).toHaveBeenNthCalledWith(2, [
+      expect.objectContaining({ conversation_id: conversation.id, user_id: CLINICIAN_ID, role: "provider" }),
+      expect.objectContaining({ conversation_id: conversation.id, user_id: PATIENT_USER_ID, role: "patient" }),
+    ]);
+  });
+
+  it.each(["physician", "specialist", "nurse"] as const)(
+    "allows an assigned %s to create a conversation with the linked patient",
+    async (role) => {
+      mocks.setQueue([
+        [{ ...clinicianAccount, role }, patientAccount],
+        [{ id: CLINICIAN_ID }],
+      ]);
+
+      const conversation = await caller(makeUser(role, CLINICIAN_ID)).createConversation({
+        ...input,
+        participantIds: [PATIENT_USER_ID],
+      });
+
+      expect(mocks.transactionValues).toHaveBeenNthCalledWith(2, [
+        expect.objectContaining({ conversation_id: conversation.id, user_id: CLINICIAN_ID, role: "provider" }),
+        expect.objectContaining({ conversation_id: conversation.id, user_id: PATIENT_USER_ID, role: "patient" }),
+      ]);
+    },
+  );
+
+  it("requires a recipient distinct from the creator", async () => {
+    await expect(caller(patientUser).createConversation({
+      ...input,
+      participantIds: [PATIENT_USER_ID],
+    })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(mocks.mockDb.transaction).not.toHaveBeenCalled();
+  });
+
+  it("requires the patient account to match the selected record", async () => {
+    mocks.setQueue([[{ ...patientAccount, patientId: OTHER_PATIENT_RECORD_ID }, clinicianAccount]]);
+
+    await expect(caller(patientUser).createConversation(input)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mocks.tx.insert).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { eligibility: "an active account", rows: [[patientAccount]] },
+    { eligibility: "an active roster membership", rows: [[patientAccount, clinicianAccount], []] },
+    { eligibility: "an active assignment", rows: [[patientAccount, clinicianAccount], [{ id: CLINICIAN_ID }], []] },
+  ])("requires the patient's recipient to have $eligibility", async ({ rows }) => {
+    mocks.setQueue(rows);
+
+    await expect(caller(patientUser).createConversation(input)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mocks.tx.insert).not.toHaveBeenCalled();
+  });
+
+  it("requires a current assignment for clinical creators", async () => {
+    mocks.setQueue([[clinicianAccount, patientAccount], []]);
+
+    await expect(caller(makeUser("physician", CLINICIAN_ID)).createConversation({
+      ...input,
+      participantIds: [PATIENT_USER_ID],
+    })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mocks.tx.insert).not.toHaveBeenCalled();
   });
 });
 

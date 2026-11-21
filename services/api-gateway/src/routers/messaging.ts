@@ -32,9 +32,12 @@ import {
   conversationParticipants,
   messages,
   familyRelationships,
+  careTeamAssignments,
+  careTeamMembers,
+  patients,
   users,
 } from "@carebridge/db-schema";
-import { eq, and, desc, inArray } from "drizzle-orm";
+import { eq, and, desc, inArray, isNull } from "drizzle-orm";
 import { Queue } from "bullmq";
 import {
   getRedisConnection,
@@ -67,6 +70,15 @@ const clinicalEventsQueue = new Queue("clinical-events", {
 
 /** Scope required for a caregiver to access a patient's messaging resources. */
 const MESSAGING_REQUIRED_SCOPE: ScopeToken = "view_and_message";
+
+const CLINICIAN_ROLES = new Set(["physician", "specialist", "nurse"]);
+
+function denyConversationCreation(): never {
+  throw new TRPCError({
+    code: "FORBIDDEN",
+    message: "This conversation could not be created for the patient and participants provided",
+  });
+}
 
 /** Verify the authenticated user is a direct participant in the conversation. */
 async function assertConversationAccess(userId: string, conversationId: string): Promise<void> {
@@ -186,6 +198,41 @@ async function assertMessagingReadAccess(
 }
 
 export const messagingRbacRouter = t.router({
+  listRecipients: protectedProcedure.query(async ({ ctx }) => {
+    if (ctx.user.role !== "patient") return [];
+
+    const { db, user } = ctx;
+    const linkedPatient = db
+      .select({ id: users.patient_id })
+      .from(users)
+      .where(and(eq(users.id, user.id), eq(users.role, "patient"), eq(users.is_active, true)));
+    const rows = await db
+      .select({
+        provider_id: careTeamMembers.provider_id,
+        role: careTeamMembers.role,
+        specialty: careTeamMembers.specialty,
+        providerSpecialty: users.specialty,
+      })
+      .from(careTeamMembers)
+      .innerJoin(users, eq(users.id, careTeamMembers.provider_id))
+      .innerJoin(careTeamAssignments, and(
+        eq(careTeamAssignments.patient_id, careTeamMembers.patient_id),
+        eq(careTeamAssignments.user_id, careTeamMembers.provider_id),
+        isNull(careTeamAssignments.removed_at),
+      ))
+      .where(and(
+        inArray(careTeamMembers.patient_id, linkedPatient),
+        eq(careTeamMembers.is_active, true),
+        eq(users.is_active, true),
+        inArray(users.role, [...CLINICIAN_ROLES]),
+      ));
+
+    return rows.map(({ providerSpecialty, ...recipient }) => ({
+      ...recipient,
+      specialty: recipient.specialty ?? providerSpecialty,
+    }));
+  }),
+
   listConversations: protectedProcedure.query(async ({ ctx }) => {
     const db = getDb();
 
@@ -283,34 +330,90 @@ export const messagingRbacRouter = t.router({
         });
       }
 
-      const db = getDb();
-      const now = new Date().toISOString();
-      const conversationId = crypto.randomUUID();
-
-      await db.insert(conversations).values({
-        id: conversationId,
-        patient_id: input.patientId,
-        subject: input.subject,
-        status: "open",
-        created_by: ctx.user.id,
-        created_at: now,
-        updated_at: now,
-      });
-
-      const allParticipantIds = new Set([ctx.user.id, ...input.participantIds]);
-      for (const userId of allParticipantIds) {
-        await db.insert(conversationParticipants).values({
-          id: crypto.randomUUID(),
-          conversation_id: conversationId,
-          user_id: userId,
-          role: userId === ctx.user.id
-            ? (ctx.user.role === "patient" ? "patient" : "provider")
-            : "provider",
-          joined_at: now,
-        });
+      const { user, db } = ctx;
+      const patientInitiated = user.role === "patient";
+      if (!patientInitiated && !CLINICIAN_ROLES.has(user.role)) {
+        denyConversationCreation();
       }
 
-      return { id: conversationId };
+      const participantIds = [...new Set([user.id, ...input.participantIds])];
+      if (participantIds.length < 2) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Select a recipient" });
+      }
+
+      return db.transaction(async (tx) => {
+        // Hold the eligibility rows until the conversation and its participants are saved.
+        const participants = await tx
+          .select({ id: users.id, role: users.role, patientId: users.patient_id })
+          .from(users)
+          .where(and(inArray(users.id, participantIds), eq(users.is_active, true)))
+          .for("share");
+        const creator = participants.find((participant) => participant.id === user.id);
+        if (creator?.role !== user.role || participants.length !== participantIds.length) {
+          denyConversationCreation();
+        }
+
+        const clinicianIds: string[] = [];
+        for (const participant of participants) {
+          if (CLINICIAN_ROLES.has(participant.role)) {
+            clinicianIds.push(participant.id);
+          } else if (
+            participant.role !== "patient" ||
+            participant.patientId !== input.patientId ||
+            (patientInitiated && participant.id !== user.id)
+          ) {
+            denyConversationCreation();
+          }
+        }
+
+        if (patientInitiated) {
+          const roster = await tx
+            .select({ id: careTeamMembers.provider_id })
+            .from(careTeamMembers)
+            .where(and(
+              eq(careTeamMembers.patient_id, input.patientId),
+              inArray(careTeamMembers.provider_id, clinicianIds),
+              eq(careTeamMembers.is_active, true),
+            ))
+            .for("share");
+          if (roster.length !== clinicianIds.length) denyConversationCreation();
+        }
+
+        const assignments = await tx
+          .select({ id: careTeamAssignments.user_id })
+          .from(careTeamAssignments)
+          .innerJoin(patients, eq(careTeamAssignments.patient_id, patients.id))
+          .where(and(
+            eq(careTeamAssignments.patient_id, input.patientId),
+            inArray(careTeamAssignments.user_id, clinicianIds),
+            isNull(careTeamAssignments.removed_at),
+          ))
+          .for("share");
+        if (assignments.length !== clinicianIds.length) denyConversationCreation();
+
+        const now = new Date().toISOString();
+        const conversationId = crypto.randomUUID();
+        await tx.insert(conversations).values({
+          id: conversationId,
+          patient_id: input.patientId,
+          subject: input.subject,
+          status: "open",
+          created_by: user.id,
+          created_at: now,
+          updated_at: now,
+        });
+        await tx.insert(conversationParticipants).values(
+          participants.map((participant) => ({
+            id: crypto.randomUUID(),
+            conversation_id: conversationId,
+            user_id: participant.id,
+            role: participant.role === "patient" ? "patient" : "provider",
+            joined_at: now,
+          })),
+        );
+
+        return { id: conversationId };
+      });
     }),
 
   listMessages: protectedProcedure

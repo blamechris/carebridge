@@ -32,9 +32,9 @@ function PatientMessagesContent() {
     { enabled: !!user },
   );
 
-  const careTeamQuery = trpc.patients.careTeam.getByPatient.useQuery(
-    { patientId: myRecord?.id ?? "" },
-    { enabled: !!myRecord && !isReadOnly },
+  const recipientsQuery = trpc.messaging.listRecipients.useQuery(
+    undefined,
+    { enabled: !!myRecord && user?.role === "patient" },
   );
 
   const [selectedConvoId, setSelectedConvoId] = useState<string | null>(null);
@@ -79,7 +79,7 @@ function PatientMessagesContent() {
 
   const conversations = conversationsQuery.data ?? [];
   const messages = messagesQuery.data ?? [];
-  const careTeam = careTeamQuery.data ?? [];
+  const recipients = recipientsQuery.data ?? [];
   const isComposeOpen = !isReadOnly && showCompose;
 
   function handleSend() {
@@ -165,7 +165,7 @@ function PatientMessagesContent() {
               style={{ ...inputStyle, cursor: "pointer" }}
             >
               <option value="">Select care team member...</option>
-              {careTeam.map((member) => (
+              {recipients.map((member) => (
                 <option key={member.provider_id} value={member.provider_id}>
                   {member.role} — {member.specialty ?? "General"}
                 </option>
