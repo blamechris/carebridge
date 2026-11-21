@@ -54,11 +54,13 @@ export default function LoginPage() {
     setError(null);
     setLoading(true);
 
+    let challengeConsumed = false;
     try {
       const result = await trpcVanilla.auth.mfaCompleteLogin.mutate({
         mfaSessionId,
         code: totpCode.trim(),
       });
+      challengeConsumed = true;
       await setSession(result.user, result.session.id);
       router.push("/");
     } catch (err: unknown) {
@@ -66,6 +68,10 @@ export default function LoginPage() {
         err instanceof Error ? err.message : "Verification failed. Please try again.";
       setError(message);
       setTotpCode("");
+      if (challengeConsumed) {
+        setMfaSessionId(null);
+        setStep("credentials");
+      }
     } finally {
       setLoading(false);
     }

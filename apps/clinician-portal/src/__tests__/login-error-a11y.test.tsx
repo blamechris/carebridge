@@ -76,3 +76,49 @@ describe("clinician-portal login error a11y (WCAG 3.3.1)", () => {
     expect(alert.textContent).toMatch(/invalid email or password/i);
   });
 });
+
+
+describe("MFA browser session recovery", () => {
+  afterEach(() => {
+    cleanup();
+    loginMutate.mockReset();
+    mfaCompleteMutate.mockReset();
+    vi.unstubAllGlobals();
+  });
+
+  it.each([false, true])("handles MFA errors when the challenge was consumed: %s", async (consumed) => {
+    loginMutate.mockResolvedValueOnce({ requiresMFA: true, mfaSessionId: "challenge-1" });
+    if (consumed) {
+      mfaCompleteMutate.mockResolvedValueOnce({ user: { id: "user-1" }, session: { id: "session-1" } });
+    } else {
+      mfaCompleteMutate.mockRejectedValueOnce(new Error("Invalid verification code"));
+    }
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { container } = render(
+      <AuthProvider>
+        <LoginPage />
+      </AuthProvider>,
+    );
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "x@example.com" } });
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "example" } });
+    fireEvent.submit(container.querySelector("form")!);
+
+    const input = await screen.findByLabelText("Verification Code");
+    fireEvent.change(input, { target: { value: "123456" } });
+    fireEvent.submit(container.querySelector("form")!);
+    const alert = await screen.findByRole("alert");
+
+    expect(mfaCompleteMutate).toHaveBeenCalledWith({ mfaSessionId: "challenge-1", code: "123456" });
+    if (consumed) {
+      expect(alert.textContent).toMatch(/could not establish a browser session/i);
+      expect(screen.queryByLabelText("Verification Code")).toBeNull();
+      expect(screen.getByLabelText("Email")).toBeDefined();
+    } else {
+      expect(alert.textContent).toMatch(/invalid verification code/i);
+      expect(screen.getByLabelText("Verification Code")).toBeDefined();
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  });
+});

@@ -123,6 +123,13 @@ export function AuthProvider({ children, queryClient }: AuthProviderProps) {
 
   // An older restore or login must not publish auth state after a newer action.
   const sessionOperation = useRef(0);
+  const cookieQueue = useRef(Promise.resolve());
+
+  const enqueueCookieOperation = useCallback((run: () => Promise<void>) => {
+    const result = cookieQueue.current.then(run);
+    cookieQueue.current = result.catch(() => {});
+    return result;
+  }, []);
 
   /**
    * Internal helper: clears the QueryClient cache if supplied.
@@ -187,44 +194,55 @@ export function AuthProvider({ children, queryClient }: AuthProviderProps) {
     return () => { cancelled = true; };
   }, [invalidateAndRedirect]);
 
-  const setSession = useCallback(async (u: User, sid: string) => {
+  const setSession = useCallback((u: User, sid: string) => {
     const operation = ++sessionOperation.current;
     setVerifying(true);
     setUser(null);
     setSessionId(null);
     clearQueryCache();
 
-    try {
-      localStorage.removeItem(USER_KEY);
-      localStorage.removeItem(HAS_SESSION_KEY);
-      await setSessionCookie(sid);
-      if (operation !== sessionOperation.current) throw new Error("Sign-in was interrupted.");
+    return enqueueCookieOperation(async () => {
+      let cookieInstalled = false;
+      try {
+        if (operation !== sessionOperation.current) throw new Error("Sign-in was interrupted.");
+        localStorage.removeItem(USER_KEY);
+        localStorage.removeItem(HAS_SESSION_KEY);
+        await setSessionCookie(sid);
+        cookieInstalled = true;
+        if (operation !== sessionOperation.current) throw new Error("Sign-in was interrupted.");
 
-      const serverUser = await fetchAuthMe();
-      if (operation !== sessionOperation.current) throw new Error("Sign-in was interrupted.");
-      if (!serverUser || serverUser.id !== u.id) {
-        throw new Error("Could not verify the browser session. Please try again.");
+        const serverUser = await fetchAuthMe();
+        if (operation !== sessionOperation.current) throw new Error("Sign-in was interrupted.");
+        if (!serverUser || serverUser.id !== u.id) {
+          throw new Error("Could not verify the browser session. Please try again.");
+        }
+
+        localStorage.setItem(USER_KEY, JSON.stringify(serverUser));
+        localStorage.setItem(HAS_SESSION_KEY, "true");
+        setUser(serverUser);
+        setSessionId(sid);
+      } catch (error) {
+        if (cookieInstalled) {
+          // Complete rollback before a later action can write its cookie.
+          await clearSessionCookie();
+        }
+        throw error;
+      } finally {
+        if (operation === sessionOperation.current) setVerifying(false);
       }
-
-      localStorage.setItem(USER_KEY, JSON.stringify(serverUser));
-      localStorage.setItem(HAS_SESSION_KEY, "true");
-      setUser(serverUser);
-      setSessionId(sid);
-    } finally {
-      if (operation === sessionOperation.current) setVerifying(false);
-    }
-  }, [clearQueryCache]);
+    });
+  }, [clearQueryCache, enqueueCookieOperation]);
 
   const clearSession = useCallback(() => {
     ++sessionOperation.current;
     setVerifying(false);
-    clearSessionCookie();
+    void enqueueCookieOperation(clearSessionCookie);
     localStorage.removeItem(USER_KEY);
     localStorage.removeItem(HAS_SESSION_KEY);
     setUser(null);
     setSessionId(null);
     clearQueryCache();
-  }, [clearQueryCache]);
+  }, [clearQueryCache, enqueueCookieOperation]);
 
   return (
     <AuthContext.Provider
