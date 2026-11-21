@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { AuthGuard } from "@carebridge/portal-shared/auth-guard";
 import { useAuth } from "@/lib/auth";
 import { trpc } from "@/lib/trpc";
 import { useMyPatientRecord } from "@/lib/use-my-patient";
@@ -18,12 +19,13 @@ function formatRelative(iso: string): string {
   return `${Math.floor(hr / 24)}d ago`;
 }
 
-export default function PatientMessagesPage() {
+function PatientMessagesContent() {
   const { user } = useAuth();
+  const isReadOnly = user?.role === "family_caregiver";
   const router = useRouter();
   const utils = trpc.useUtils();
 
-  const { patient: myRecord, isLoading: patientLoading, isUnlinked } = useMyPatientRecord();
+  const { patient: myRecord, isUnlinked } = useMyPatientRecord();
 
   const conversationsQuery = trpc.messaging.listConversations.useQuery(
     undefined,
@@ -32,7 +34,7 @@ export default function PatientMessagesPage() {
 
   const careTeamQuery = trpc.patients.careTeam.getByPatient.useQuery(
     { patientId: myRecord?.id ?? "" },
-    { enabled: !!myRecord },
+    { enabled: !!myRecord && !isReadOnly },
   );
 
   const [selectedConvoId, setSelectedConvoId] = useState<string | null>(null);
@@ -63,10 +65,9 @@ export default function PatientMessagesPage() {
       setComposeRecipient("");
       setSelectedConvoId(data.id);
       // Send the initial message
-      if (user && composeBody.trim()) {
+      if (user && !isReadOnly && composeBody.trim()) {
         sendMutation.mutate({
           conversationId: data.id,
-
           body: composeBody.trim(),
         });
       }
@@ -74,17 +75,15 @@ export default function PatientMessagesPage() {
     },
   });
 
-  if (!user) {
-    router.push("/login");
-    return null;
-  }
+  if (!user) return null;
 
   const conversations = conversationsQuery.data ?? [];
   const messages = messagesQuery.data ?? [];
   const careTeam = careTeamQuery.data ?? [];
+  const isComposeOpen = !isReadOnly && showCompose;
 
   function handleSend() {
-    if (!selectedConvoId || !user || !replyText.trim()) return;
+    if (!selectedConvoId || !user || isReadOnly || !replyText.trim()) return;
     sendMutation.mutate({
       conversationId: selectedConvoId,
       body: replyText.trim(),
@@ -92,7 +91,7 @@ export default function PatientMessagesPage() {
   }
 
   function handleCompose() {
-    if (!user || !myRecord || !composeSubject.trim() || !composeRecipient) return;
+    if (!user || isReadOnly || !myRecord || !composeSubject.trim() || !composeRecipient) return;
     createConvoMutation.mutate({
       patientId: myRecord.id,
       subject: composeSubject.trim(),
@@ -115,20 +114,22 @@ export default function PatientMessagesPage() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
         <h2 style={{ margin: 0 }}>Messages</h2>
         <div style={{ display: "flex", gap: 8 }}>
-          <button
-            onClick={() => setShowCompose(!showCompose)}
-            style={{
-              padding: "6px 14px",
-              backgroundColor: "#2563eb",
-              border: "none",
-              borderRadius: 6,
-              color: "#fff",
-              cursor: "pointer",
-              fontSize: "0.8rem",
-            }}
-          >
-            {showCompose ? "Cancel" : "New Message"}
-          </button>
+          {!isReadOnly && (
+            <button
+              onClick={() => setShowCompose(!showCompose)}
+              style={{
+                padding: "6px 14px",
+                backgroundColor: "#2563eb",
+                border: "none",
+                borderRadius: 6,
+                color: "#fff",
+                cursor: "pointer",
+                fontSize: "0.8rem",
+              }}
+            >
+              {isComposeOpen ? "Cancel" : "New Message"}
+            </button>
+          )}
           <button
             onClick={() => router.push("/")}
             style={{ background: "none", border: "1px solid #444", color: "#999", padding: "6px 14px", borderRadius: 6, cursor: "pointer", fontSize: "0.8rem" }}
@@ -138,6 +139,12 @@ export default function PatientMessagesPage() {
         </div>
       </div>
 
+      {isReadOnly && (
+        <p role="note" style={{ color: "#999", fontSize: "0.85rem" }}>
+          Messages are read-only for family caregivers.
+        </p>
+      )}
+
       {isUnlinked && (
         <p style={{ color: "#ef4444" }}>
           Your account is not linked to a patient record. Please contact your care team.
@@ -145,7 +152,7 @@ export default function PatientMessagesPage() {
       )}
 
       {/* Compose new message */}
-      {showCompose && (
+      {isComposeOpen && (
         <div style={{ backgroundColor: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: 8, padding: "1.25rem", marginBottom: "1.5rem" }}>
           <h3 style={{ margin: "0 0 1rem", fontSize: "0.95rem" }}>New Message to Care Team</h3>
 
@@ -213,13 +220,13 @@ export default function PatientMessagesPage() {
         <p role="alert" style={{ color: "#ef4444" }}>Failed to load conversations. Please try refreshing.</p>
       )}
 
-      {sendMutation.isError && (
+      {!isReadOnly && sendMutation.isError && (
         <div role="alert" style={{ backgroundColor: "#ef444420", border: "1px solid #ef4444", borderRadius: 8, padding: "0.75rem", marginBottom: "1rem", color: "#ef4444" }}>
           Failed to send message. Please try again.
         </div>
       )}
 
-      {createConvoMutation.isError && (
+      {!isReadOnly && createConvoMutation.isError && (
         <div role="alert" style={{ backgroundColor: "#ef444420", border: "1px solid #ef4444", borderRadius: 8, padding: "0.75rem", marginBottom: "1rem", color: "#ef4444" }}>
           Failed to create conversation. Please try again.
         </div>
@@ -227,9 +234,10 @@ export default function PatientMessagesPage() {
 
       {conversationsQuery.isLoading && <p style={{ color: "#999" }}>Loading conversations...</p>}
 
-      {conversations.length === 0 && !conversationsQuery.isLoading && !showCompose && (
+      {conversations.length === 0 && !conversationsQuery.isLoading && !isComposeOpen && (
         <p style={{ color: "#999", fontSize: "0.85rem" }}>
-          No messages yet. Use &quot;New Message&quot; to contact your care team.
+          No messages yet.
+          {!isReadOnly && <> Use &quot;New Message&quot; to contact your care team.</>}
         </p>
       )}
 
@@ -292,36 +300,46 @@ export default function PatientMessagesPage() {
                 })}
               </div>
 
-              <div style={{ display: "flex", gap: 8 }}>
-                <input
-                  type="text"
-                  value={replyText}
-                  onChange={(e) => setReplyText(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleSend()}
-                  placeholder="Reply..."
-                  aria-label="Reply to conversation"
-                  style={{ ...inputStyle, flex: 1 }}
-                />
-                <button
-                  onClick={handleSend}
-                  disabled={!replyText.trim() || sendMutation.isPending}
-                  style={{
-                    padding: "8px 16px",
-                    backgroundColor: replyText.trim() ? "#2563eb" : "#333",
-                    border: "none",
-                    borderRadius: 6,
-                    color: replyText.trim() ? "#fff" : "#666",
-                    cursor: replyText.trim() ? "pointer" : "not-allowed",
-                    fontSize: "0.85rem",
-                  }}
-                >
-                  Send
-                </button>
-              </div>
+              {!isReadOnly && (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    type="text"
+                    value={replyText}
+                    onChange={(e) => setReplyText(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleSend()}
+                    placeholder="Reply..."
+                    aria-label="Reply to conversation"
+                    style={{ ...inputStyle, flex: 1 }}
+                  />
+                  <button
+                    onClick={handleSend}
+                    disabled={!replyText.trim() || sendMutation.isPending}
+                    style={{
+                      padding: "8px 16px",
+                      backgroundColor: replyText.trim() ? "#2563eb" : "#333",
+                      border: "none",
+                      borderRadius: 6,
+                      color: replyText.trim() ? "#fff" : "#666",
+                      cursor: replyText.trim() ? "pointer" : "not-allowed",
+                      fontSize: "0.85rem",
+                    }}
+                  >
+                    Send
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
       ))}
     </div>
+  );
+}
+
+export default function PatientMessagesPage() {
+  return (
+    <AuthGuard>
+      <PatientMessagesContent />
+    </AuthGuard>
   );
 }
