@@ -32,6 +32,9 @@ let conversations = [conversation];
 const push = vi.fn();
 const replace = vi.fn();
 const listConversations = vi.fn(() => ({ data: conversations, isLoading: false }));
+const listRecipients = vi.fn((_input: undefined, options: { enabled: boolean }) => ({
+  data: options.enabled ? [{ provider_id: "provider-1", role: "primary", specialty: "General" }] : undefined,
+}));
 const listMessages = vi.fn((input: { conversationId: string }, options: { enabled: boolean }) => ({
   data: options.enabled && input.conversationId === conversation.id ? [message] : [],
   isLoading: false,
@@ -61,6 +64,9 @@ vi.mock("@/lib/trpc", () => ({
     }),
     messaging: {
       listConversations: { useQuery: () => listConversations() },
+      listRecipients: {
+        useQuery: (...args: Parameters<typeof listRecipients>) => listRecipients(...args),
+      },
       listMessages: {
         useQuery: (...args: Parameters<typeof listMessages>) => listMessages(...args),
       },
@@ -75,15 +81,6 @@ vi.mock("@/lib/trpc", () => ({
       },
       sendMessage: {
         useMutation: () => ({ mutate: sendMessage, isPending: false }),
-      },
-    },
-    patients: {
-      careTeam: {
-        getByPatient: {
-          useQuery: () => ({
-            data: [{ provider_id: "provider-1", role: "Physician", specialty: "General" }],
-          }),
-        },
       },
     },
   },
@@ -130,6 +127,7 @@ describe("PatientMessagesPage", () => {
   it("lets caregivers read permitted threads without compose or reply controls", () => {
     render(<PatientMessagesPage />);
 
+    expect(listRecipients).toHaveBeenLastCalledWith(undefined, { enabled: false });
     expect(screen.queryByRole("button", { name: /new message/i })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /follow-up visit/i }));
 
@@ -164,6 +162,7 @@ describe("PatientMessagesPage", () => {
     conversations = [];
     render(<PatientMessagesPage />);
 
+    expect(listRecipients).toHaveBeenLastCalledWith(undefined, { enabled: true });
     expect(screen.queryByRole("note")).not.toBeInTheDocument();
     expect(screen.getByText(/use "new message"/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /new message/i }));

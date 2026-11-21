@@ -10,16 +10,16 @@ export default function RefillPage() {
   const { user } = useAuth();
   const router = useRouter();
 
-  const { patient: myRecord, isLoading: patientLoading, isUnlinked } = useMyPatientRecord();
+  const { patient: myRecord, isUnlinked } = useMyPatientRecord();
 
   const medsQuery = trpc.clinicalData.medications.getByPatient.useQuery(
     { patientId: myRecord?.id ?? "" },
     { enabled: !!myRecord },
   );
 
-  const careTeamQuery = trpc.patients.careTeam.getByPatient.useQuery(
-    { patientId: myRecord?.id ?? "" },
-    { enabled: !!myRecord },
+  const recipientsQuery = trpc.messaging.listRecipients.useQuery(
+    undefined,
+    { enabled: !!myRecord && user?.role === "patient" },
   );
 
   const createConvoMutation = trpc.messaging.createConversation.useMutation();
@@ -36,17 +36,15 @@ export default function RefillPage() {
   }
 
   const activeMeds = (medsQuery.data ?? []).filter((m) => m.status === "active");
-  const careTeam = careTeamQuery.data ?? [];
+  const recipients = recipientsQuery.data ?? [];
 
-  // Find the prescribing provider or primary care team member
-  function findRecipient(prescribedBy?: string | null): string | null {
-    if (prescribedBy) {
-      const match = careTeam.find((m) => m.provider_id === prescribedBy);
-      if (match) return match.provider_id;
-    }
-    // Fallback to first active care team member
-    const primary = careTeam.find((m) => m.role === "primary");
-    return primary?.provider_id ?? careTeam[0]?.provider_id ?? null;
+  function findRecipient(orderingProviderId?: string | null, prescribedBy?: string | null): string | null {
+    const prescriber = recipients.find((recipient) => recipient.provider_id === orderingProviderId)
+      ?? recipients.find((recipient) => recipient.provider_id === prescribedBy);
+    if (prescriber) return prescriber.provider_id;
+
+    const primary = recipients.find((recipient) => recipient.role === "primary");
+    return primary?.provider_id ?? recipients[0]?.provider_id ?? null;
   }
 
   async function handleRequestRefill(med: {
@@ -56,10 +54,11 @@ export default function RefillPage() {
     dose_unit?: string | null;
     frequency?: string | null;
     prescribed_by?: string | null;
+    ordering_provider_id?: string | null;
   }) {
-    if (!user || !myRecord) return;
+    if (user?.role !== "patient" || !myRecord) return;
 
-    const recipientId = findRecipient(med.prescribed_by);
+    const recipientId = findRecipient(med.ordering_provider_id, med.prescribed_by);
     if (!recipientId) return;
 
     setSubmittingMedId(med.id);
@@ -182,7 +181,7 @@ export default function RefillPage() {
             ) : (
               <button
                 onClick={() => handleRequestRefill(med)}
-                disabled={submittingMedId === med.id}
+                disabled={user.role !== "patient" || !myRecord || recipients.length === 0 || submittingMedId === med.id}
                 style={{
                   padding: "6px 14px",
                   backgroundColor: "#2563eb",
