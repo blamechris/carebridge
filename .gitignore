@@ -13,3 +13,5 @@ services/epic-connector/scripts/
 
 # Claude Code runtime state — local-only.
 .claude/*.lock
+# ...except the skill-templates manifest, which is tracked (pull-model lockfile).
+!.claude/skills.lock

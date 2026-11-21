@@ -15,7 +15,7 @@ Examples:
 ```
 /decompose-issue #15
 /decompose-issue 15 --force
-/decompose-issue #42 --label from-review
+/decompose-issue #42 --label area:auth
 ```
 
 ## Instructions
@@ -82,7 +82,7 @@ Read the parent body, then explore the codebase enough to understand the work:
 
 - Grep for files / symbols the issue names.
 - Read `CLAUDE.md` for project conventions if not already in context.
-- Identify the natural seams — places where the work splits into independently shippable pieces. In CareBridge, natural seams follow the Turborepo build order: `packages/*` (shared types, validators, medical-logic, ai-prompts, db-schema) → `services/*` (api-gateway, ai-oversight, clinical workers) → `apps/*` (clinician-portal). Also consider commit scopes (`db`, `ai`, `notes`, `clinical`, `auth`, `gateway`, `portal`, `infra`) as sub-issue boundaries. Clinical-data event-emission changes always warrant a separate sub-issue from the producer and consumer to make the contract review-able in isolation.
+- Identify the natural seams — places where the work splits into independently shippable pieces (different files, different test surfaces, different acceptance criteria).
 
 Propose **2-5 sub-issues**. Each sub-issue must be:
 
@@ -101,7 +101,7 @@ Present the proposed breakdown to the user as a table and wait for confirmation:
 | 2 | type(scope): … | Files: src/c.ts; new test surface | medium |
 | 3 | type(scope): … | Migration + backfill | medium |
 
-**Labels each sub-issue will receive:** enhancement, bug, or from-review (matching parent's primary label)
+**Labels each sub-issue will receive:** the parent's primary label (`enhancement`, `bug`, or `from-review`) — this repo has no `complexity:*` labels and no `parent:#N` label scheme, plus any `--label` flags
 
 Approve to create these 3 sub-issues, or reply with changes (e.g. "merge 1 and 2", "drop 3", "add a sub-issue for X").
 ```
@@ -118,6 +118,10 @@ for SUB in "${PROPOSED_SUBS[@]}"; do
     --title "${SUB_TITLE}" \
     --label "${SUB_LABELS}" \
     --body "$(cat <<EOF
+## Context
+
+Filed from: #${PARENT_NUM}
+
 ## Summary
 
 ${SUB_DESCRIPTION}
@@ -144,8 +148,13 @@ done
 Label set for each sub-issue:
 
 ```bash
-# Use the parent's primary label (enhancement, bug, or from-review)
+# Default sub-issue label: the parent's primary label (enhancement, bug, or from-review).
+# This repo has no complexity:* labels, so none is added.
+PARENT_PRIMARY_LABEL=$(gh issue view "$PARENT_NUM" --json labels -q '[.labels[].name | select(. == "bug" or . == "from-review" or . == "enhancement")][0] // "enhancement"')
 SUB_LABELS="${PARENT_PRIMARY_LABEL}"
+
+# Always tag with parent reference (if the repo uses such a label; skip if not)
+# Parent link: the body line "Part of #N" only — this repo has no parent:#N label scheme
 
 # Add any --label flags the user passed
 for extra in "${EXTRA_LABELS[@]}"; do
@@ -175,6 +184,14 @@ EOF
 )"
 ```
 
+Optionally apply a `decomposed` label to the parent if the repo uses one:
+
+```bash
+if gh label list --json name -q '.[].name' | grep -q '^decomposed$'; then
+  gh issue edit "$PARENT_NUM" --add-label "decomposed"
+fi
+```
+
 **Do NOT close the parent.** It stays open until every sub-issue is merged, so the broader scope remains tracked.
 
 ### 7. Report to User
@@ -186,9 +203,9 @@ Output a summary table as the primary result:
 
 | Sub-issue | Title | Labels |
 |-----------|-------|--------|
-| #${SUB_1} | … | enhancement |
-| #${SUB_2} | … | enhancement |
-| #${SUB_3} | … | enhancement |
+| #${SUB_1} | … | enhancement, complexity:low |
+| #${SUB_2} | … | enhancement, complexity:medium |
+| #${SUB_3} | … | enhancement, complexity:medium |
 
 **Parent:** #${PARENT_NUM} (stays open)
 **Comment posted on parent:** ✓
@@ -204,7 +221,7 @@ Next: `/autonomous-dev-flow #${SUB_1} #${SUB_2} #${SUB_3}` to implement them, or
 4. **Each sub-issue must be independently implementable.** A separate PR could ship it. If a sub-issue depends on another sub-issue's code, you split wrong — re-think the seams.
 5. **Cross-link both directions.** Every sub-issue body says "Part of #N". The parent gets a single "Decomposed into #A, #B, #C" comment.
 6. **2-5 sub-issues.** Fewer than 2 means the parent wasn't actually too complex (recommend `--force` exit instead). More than 5 means the work is unbounded and probably needs a design doc, not decomposition.
-7. **Respect labels that don't exist.** Skip missing labels gracefully — don't fail the run because the repo doesn't use a label.
+7. **Respect labels that don't exist.** Skip missing labels gracefully — don't fail the run because the repo doesn't use `complexity:*`.
 8. **NO attribution.** Follow the project's attribution policy. No "Generated with Claude" / `Co-Authored-By` lines in issue bodies or comments.
 
 ## When NOT to use this skill
@@ -213,4 +230,5 @@ Next: `/autonomous-dev-flow #${SUB_1} #${SUB_2} #${SUB_3}` to implement them, or
 - The parent describes a single atomic operation (a migration, a one-line config change, a single test) → it doesn't decompose, it just gets done.
 - The parent already has a "Decomposed into" comment → use the existing sub-issues unless they're wrong.
 - The work spans multiple repos → that's a coordination problem, not a decomposition problem. Open issues in each repo separately.
-<!-- skill-templates: decompose-issue b194666 2026-05-28 -->
+
+<!-- skill-templates: decompose-issue 699a5ca 2026-11-03 -->

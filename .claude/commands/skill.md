@@ -40,7 +40,10 @@ every skill into every repo, a repo pulls a skill the moment it needs one and th
 - **Targets** — the coding agents a skill is compiled for. `.claude/commands/<name>.md`
   (the customized install) is the provider-NEUTRAL source; `scripts/compile-skill-targets.mjs`
   emits each agent's NATIVE custom-command format: `claude` → `.claude/skills/<name>/SKILL.md`,
-  `gemini` → `.gemini/commands/<name>.toml`, `codex` → `.codex/skills/<name>/SKILL.md`. The active
+  `gemini` → `.gemini/commands/<name>.toml`, `codex` → `.codex/skills/<name>/SKILL.md`,
+  `pi` → `~/.pi/agent/skills/<name>/SKILL.md`. The first three are repo-tracked; **`pi` is the one
+  user-global target** — Pi has no repo-local discovery, so its artifact lands in the user's home
+  dir and is opt-in rather than a safe default. The active
   list comes from the `targets:` line in `.claude/skill-profile.md` (prompt the user if absent;
   the compiler falls back to `claude`). This is what makes a skill model-agnostic — author once,
   run under any model. The neutral arg token is `$ARGUMENTS`; the compiler maps it per agent
@@ -118,12 +121,16 @@ note in the report that hashes may be stale. Record which source you used.
      the customized output. A guard miss means customization stripped a load-bearing
      section; restore it. (These are the content checks ported from `sync.sh`.)
    - If any check fails, fix and re-check before writing. Never write defective output.
-5. **Write + stamp.** Create `.claude/commands/` if absent, strip any pre-existing
-   `<!-- skill-templates: … -->` lines from the body, then write to
+5. **Write + stamp.** This writes into the repo's shared working copy, which another
+   session may have moved to its own branch since this one started — so re-check first:
+   `git branch --show-current`. If it is not the branch you started on, STOP and tell the
+   user rather than writing; a skill install landing on someone else's branch is how it
+   gets swept into their commit. Then create `.claude/commands/` if absent, strip any
+   pre-existing `<!-- skill-templates: … -->` lines from the body, and write to
    `.claude/commands/<name>.md` ending with exactly:
    `<!-- skill-templates: <name> <hash> <date> -->` (today's date, `YYYY-MM-DD`).
 6. **Lint (deterministic gate).** Run the registry's mechanical linter on the file just
-   written — it re-checks markers, attribution, the stamp, and guards independently of
+   written — it re-checks markers, attribution, the stamp, guards, and the posture pin independently of
    the agent's judgment. From a **local clone** (the preferred path):
    `"$REG/scripts/skill-lint.sh" <name> .claude/commands/<name>.md`
    (where `$REG` is the resolved registry clone). If it exits non-zero, fix the reported
@@ -173,17 +180,17 @@ note in the report that hashes may be stale. Record which source you used.
    markers** — `ERROR:` is printed for an unknown skill *and* then followed by
    findings at exit 1, and a usage error exits 2 printing no marker at all. Only
    `~` is exclusive to exit 2.
-   - **exit 0** (`✓`) — clean, all four checks passed.
+   - **exit 0** (`✓`) — clean, every check passed.
    - **exit 1** (`✗`) — real findings. Fix and re-lint; never lock. This includes a
      file that is **stamped but absent from the index**: a stamp is proof of a
      registry install, so an index that has never heard of the skill means a stale
      clone, a renamed or retired skill, a typo'd `<name>`, or the wrong
      `registry.json` — and its guards went unapplied. The reported findings name
      which, and the stamp checks are applied on this path too.
-   - **exit 2** — could not be fully verified. Five causes, and only one is benign:
+   - **exit 2** — could not be fully verified. Six causes, and only one is benign:
      an **unstamped** skill absent from the index (the `~` line — a repo-only skill,
      with genuinely nothing to verify), plus missing registry file, missing
-     `python3`, unreadable skill file, and usage error. The last four are
+     `python3`, unreadable skill file, an explicitly passed profile that cannot be read, and usage error. The last five are
      environment breakage.
 
    For `skill add`, exit 2 is always a failure: `add` stops before writing if the
@@ -221,14 +228,17 @@ note in the report that hashes may be stale. Record which source you used.
    `gh api repos/blamechris/skill-templates/contents/assets/compile-skill-targets.mjs --jq '.content' | base64 -d > scripts/compile-skill-targets.mjs`.
    Write it to `scripts/` and track it in VCS so it travels with the repo. Read the `targets:` line
    from `.claude/skill-profile.md`;
-   if there is none, **ask the user** which agents to compile for (claude / gemini / codex) and
+   if there is none, **ask the user** which agents to compile for (claude / gemini / codex / pi) and
    offer to record the choice in the profile (the compiler falls back to `claude` if unset). Then
    run `node scripts/compile-skill-targets.mjs --name <name>` (it reads the profile targets), or
    `--targets <list>` to override. It writes the native artifact per target and exits non-zero on
    any emit failure — treat that as a hard gate: fix and re-run before locking. Codex emits a
    repo-tracked skill folder under `.codex/skills/` so it can be reviewed, copied into
-   `~/.codex/skills`, or used by runners that support repo-local Codex skills. Keep the list of
-   `targets` you compiled with for the next step.
+   `~/.codex/skills`, or used by runners that support repo-local Codex skills. **`pi` writes outside
+   the repo** (`~/.pi/agent/skills/`), so only add it when the user actually drives this repo with
+   Pi — never volunteer it into a committed `targets:` line on their behalf. The compiler prints a
+   hint if it sees `~/.pi` on the machine but `pi` is unselected; that hint is advisory and never
+   adds the target itself. Keep the list of `targets` you compiled with for the next step.
 8. **Record in the lockfile.** Only after a successful compile, create `.claude/skills.lock`
    (schema below) if absent and upsert `<name>` **atomically** with: the template `hash`; the
    `profileHash` when a `.claude/skill-profile.md` exists (so `update` can tell when the *profile*
@@ -273,8 +283,12 @@ note in the report that hashes may be stale. Record which source you used.
 Read the skill's `targets` from its `.claude/skills.lock` entry, then delete
 `.claude/commands/<name>.md`, its lock entry, and exactly the native artifacts for those targets:
 `claude` → `.claude/skills/<name>/` (dir), `gemini` → `.gemini/commands/<name>.toml`,
-`codex` → `.codex/skills/<name>/` (dir). If the lock entry has no `targets` (an older install),
-fall back to removing whichever of those three exist. Report what was removed.
+`codex` → `.codex/skills/<name>/` (dir), `pi` → `~/.pi/agent/skills/<name>/` (dir, **outside the
+repo** — remove it only when `pi` is in the lock entry's `targets`, and say so in the report since
+the user may not expect a repo command to touch their home dir). If the lock entry has no `targets`
+(an older install), fall back to removing whichever of the three **repo-local** artifacts exist —
+never probe `~/.pi` on a guess, because an unrelated Pi skill of the same name could live there.
+Report what was removed.
 
 ## Lockfile schema (`.claude/skills.lock`)
 
@@ -321,4 +335,4 @@ fall back to removing whichever of those three exist. Report what was removed.
 - **Self-contained on first use.** `/skill` needs no customization to work — it ships
   with sane registry defaults so it can bootstrap a repo that has nothing else installed.
 
-<!-- skill-templates: skill 987eb2b 2026-07-29 -->
+<!-- skill-templates: skill af9c1e4 2026-11-03 -->
