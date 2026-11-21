@@ -15,7 +15,7 @@
  * URL params can be spoofed by anyone with a clinician-facing link
  * (e.g. `?epic_patient=fake-id`), so we:
  *
- *   1. Always issue the `getLaunchContext` query (regardless of URL).
+ *   1. Query `getLaunchContext` after authentication (regardless of URL).
  *   2. Render null while the query is in flight, on error, or when the
  *      server returns null (no valid Epic connection).
  *   3. When server context is present AND URL params are present, they
@@ -37,6 +37,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useAuth } from "@/lib/auth";
 import { trpc } from "@/lib/trpc";
 
 const SUPPRESS_KEY = "carebridge_epic_launch_suppressed";
@@ -47,6 +48,7 @@ export interface EpicLaunchBannerProps {
 }
 
 export function EpicLaunchBanner({ storage }: EpicLaunchBannerProps = {}) {
+  const { isAuthenticated } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -54,10 +56,11 @@ export function EpicLaunchBanner({ storage }: EpicLaunchBannerProps = {}) {
   const urlEpicPatient = searchParams?.get("epic_patient") ?? null;
   const urlEpicEncounter = searchParams?.get("epic_encounter") ?? null;
 
-  // Always query the server. URL params are a hint at best — the server
+  // Once authenticated, query the server. URL params are a hint at best — the server
   // is the source of truth for whether a launch context is real and what
   // the actual patient/org/encounter ids are.
   const contextQuery = trpc.epicAuth.getLaunchContext.useQuery(undefined, {
+    enabled: isAuthenticated,
     staleTime: 60_000,
   });
 
@@ -111,7 +114,7 @@ export function EpicLaunchBanner({ storage }: EpicLaunchBannerProps = {}) {
 
   // Hide while loading or on error — better to flash nothing than to
   // flash an unverified URL-derived banner.
-  if (contextQuery.isLoading || contextQuery.isError) return null;
+  if (!isAuthenticated || contextQuery.isLoading || contextQuery.isError) return null;
 
   // Server says no valid Epic connection → render nothing, even if the
   // URL claims otherwise. This is the anti-spoofing gate.

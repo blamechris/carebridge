@@ -37,7 +37,7 @@ export default function LoginPage() {
         user: { id: string; name: string; email: string; role: UserRole };
         session: { id: string };
       };
-      setSession(loginResult.user, loginResult.session.id);
+      await setSession(loginResult.user, loginResult.session.id);
       router.push("/");
     } catch (err: unknown) {
       const message =
@@ -59,7 +59,7 @@ export default function LoginPage() {
         mfaSessionId,
         code: totpCode.trim(),
       });
-      setSession(result.user, result.session.id);
+      await setSession(result.user, result.session.id);
       router.push("/");
     } catch (err: unknown) {
       const message =
