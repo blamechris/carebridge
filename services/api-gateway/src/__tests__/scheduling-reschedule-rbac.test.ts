@@ -47,6 +47,7 @@ const mocks = vi.hoisted(() => {
       const result: Record<string | symbol, unknown> = {
         orderBy: fn(async () => nextResult()),
         limit: fn(async () => nextResult()),
+        for: fn(() => result),
       };
       (result as { then: (r: (v: unknown) => void) => unknown }).then = (
         resolve,
@@ -68,6 +69,7 @@ const mocks = vi.hoisted(() => {
 
   const transactionFn = fn(async (cb: (tx: unknown) => Promise<unknown>) => {
     const tx: Record<string, unknown> = {
+      execute: fn(async () => undefined),
       select: fn(() => makeSelectChain()),
       insert: insertFn,
       update: updateFn,
@@ -81,6 +83,8 @@ const mocks = vi.hoisted(() => {
     insertFn,
     updateFn,
     transactionFn,
+    scheduleReminders: fn(async () => ({})),
+    cancelReminders: fn(async () => undefined),
     assertCareTeamAccess: fn(async () => true),
     mockDb: {
       select: fn(() => makeSelectChain()),
@@ -132,10 +136,18 @@ vi.mock("@carebridge/db-schema", () => ({
 vi.mock("drizzle-orm", () => ({
   eq: (col: unknown, val: unknown) => ({ op: "eq", col, val }),
   and: (...args: unknown[]) => ({ op: "and", args }),
+  gt: (col: unknown, val: unknown) => ({ op: "gt", col, val }),
   gte: (col: unknown, val: unknown) => ({ op: "gte", col, val }),
+  lt: (col: unknown, val: unknown) => ({ op: "lt", col, val }),
   lte: (col: unknown, val: unknown) => ({ op: "lte", col, val }),
   ne: (col: unknown, val: unknown) => ({ op: "ne", col, val }),
   desc: (col: unknown) => ({ op: "desc", col }),
+  sql: vi.fn(),
+}));
+
+vi.mock("@carebridge/scheduling", () => ({
+  scheduleReminders: mocks.scheduleReminders,
+  cancelReminders: mocks.cancelReminders,
 }));
 
 vi.mock("../middleware/rbac.js", () => ({
@@ -336,9 +348,29 @@ describe("schedulingRbacRouter.appointments.reschedule — atomic reschedule (#8
 
     await expect(
       callerFor(patient).appointments.reschedule(RESCHEDULE_INPUT),
-    ).rejects.toThrow(/conflict/i);
-    // No INSERT ran — tx aborted after overlap check.
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(mocks.updateFn).not.toHaveBeenCalled();
     expect(mocks.insertFn).not.toHaveBeenCalled();
+    expect(mocks.cancelReminders).not.toHaveBeenCalled();
+    expect(mocks.scheduleReminders).not.toHaveBeenCalled();
+  });
+
+  it("returns CONFLICT if the original is cancelled while acquiring the booking lock", async () => {
+    const patient = makeUser("patient", PATIENT_USER_ID, {
+      patient_id: PATIENT_RECORD_ID,
+    });
+    mocks.state.queue = [
+      [originalAppointment],
+      [{ ...originalAppointment, status: "cancelled" }],
+    ];
+
+    await expect(
+      callerFor(patient).appointments.reschedule(RESCHEDULE_INPUT),
+    ).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(mocks.updateFn).not.toHaveBeenCalled();
+    expect(mocks.insertFn).not.toHaveBeenCalled();
+    expect(mocks.cancelReminders).not.toHaveBeenCalled();
+    expect(mocks.scheduleReminders).not.toHaveBeenCalled();
   });
 
   it("allows an admin to reschedule across patients (unrestricted)", async () => {
