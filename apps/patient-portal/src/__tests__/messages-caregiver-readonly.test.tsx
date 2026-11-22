@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import type { FetchStatus, QueryStatus } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PatientMessagesPage from "../../app/messages/page";
 
@@ -16,6 +17,8 @@ const message = {
 };
 const caregiverUser = { id: "caregiver-1", role: "family_caregiver" };
 const patientUser = { id: "patient-1", role: "patient" };
+const primary = { provider_id: "provider-1", role: "primary", specialty: "General" };
+const specialist = { provider_id: "provider-2", role: "specialist", specialty: "Neurology" };
 const authState = {
   user: caregiverUser as typeof caregiverUser | null,
   hydrated: true,
@@ -32,8 +35,15 @@ let conversations = [conversation];
 const push = vi.fn();
 const replace = vi.fn();
 const listConversations = vi.fn(() => ({ data: conversations, isLoading: false }));
-const listRecipients = vi.fn((_input: undefined, options: { enabled: boolean }) => ({
-  data: options.enabled ? [{ provider_id: "provider-1", role: "primary", specialty: "General" }] : undefined,
+const refetchRecipients = vi.fn();
+const recipientLookup: {
+  data: Array<typeof primary> | undefined;
+  status: QueryStatus;
+  fetchStatus: FetchStatus;
+} = { data: [primary], status: "success", fetchStatus: "idle" };
+const listRecipients = vi.fn((_input: undefined, _options: { enabled: boolean }) => ({
+  ...recipientLookup,
+  refetch: refetchRecipients,
 }));
 const listMessages = vi.fn((input: { conversationId: string }, options: { enabled: boolean }) => ({
   data: options.enabled && input.conversationId === conversation.id ? [message] : [],
@@ -94,7 +104,8 @@ describe("PatientMessagesPage", () => {
       verifying: false,
       isAuthenticated: true,
     });
-    Object.assign(patientRecordState, { patient, isLoading: false });
+    Object.assign(patientRecordState, { patient, isLoading: false, isUnlinked: false });
+    Object.assign(recipientLookup, { data: [primary], status: "success", fetchStatus: "idle" });
     conversations = [conversation];
     vi.clearAllMocks();
   });
@@ -182,8 +193,89 @@ describe("PatientMessagesPage", () => {
     });
   });
 
-  it("lets patients reply to an existing conversation", () => {
+  it("distinguishes loading and an empty care team lookup in the composer", () => {
     authState.user = patientUser;
+    Object.assign(recipientLookup, { data: undefined, status: "pending", fetchStatus: "fetching" });
+    const { rerender } = render(<PatientMessagesPage />);
+    fireEvent.click(screen.getByRole("button", { name: /new message/i }));
+
+    expect(screen.getByRole("status")).toHaveTextContent(/loading your care team/i);
+    expect(screen.queryByText(/no care team members/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("To")).toBeDisabled();
+    expect(screen.getByRole("button", { name: /send message/i })).toBeDisabled();
+
+    Object.assign(recipientLookup, { data: [], status: "success", fetchStatus: "idle" });
+    rerender(<PatientMessagesPage />);
+
+    expect(screen.getByRole("status")).toHaveTextContent(/no care team members.*contact your care team/i);
+    expect(screen.queryByRole("button", { name: /try again/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /send message/i })).toBeDisabled();
+  });
+
+  it("keeps the draft and requires a current eligible recipient after a failed lookup", () => {
+    authState.user = patientUser;
+    const { rerender } = render(<PatientMessagesPage />);
+    fireEvent.click(screen.getByRole("button", { name: /new message/i }));
+    const recipient = screen.getByLabelText("To");
+    const send = screen.getByRole("button", { name: /send message/i });
+    fireEvent.change(recipient, { target: { value: primary.provider_id } });
+    fireEvent.change(screen.getByLabelText("Subject"), { target: { value: "Visit question" } });
+    fireEvent.change(screen.getByLabelText("Message"), { target: { value: "What should I bring?" } });
+    expect(send).toBeEnabled();
+
+    recipientLookup.fetchStatus = "fetching";
+    rerender(<PatientMessagesPage />);
+    expect(screen.getByRole("status")).toHaveTextContent(/loading your care team/i);
+    expect(send).toBeDisabled();
+
+    Object.assign(recipientLookup, { status: "error", fetchStatus: "idle" });
+    rerender(<PatientMessagesPage />);
+    expect(screen.getByRole("alert")).toHaveTextContent(/couldn.t load your care team/i);
+    expect(screen.queryByText(/no care team members/i)).not.toBeInTheDocument();
+    expect(send).toBeDisabled();
+    fireEvent.click(send);
+    expect(createConversation).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+    expect(refetchRecipients).toHaveBeenCalledExactlyOnceWith();
+
+    Object.assign(recipientLookup, { data: [specialist], status: "success" });
+    rerender(<PatientMessagesPage />);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Subject")).toHaveValue("Visit question");
+    expect(screen.getByLabelText("Message")).toHaveValue("What should I bring?");
+    expect(recipient).toHaveValue("");
+    expect(send).toBeDisabled();
+
+    fireEvent.change(recipient, { target: { value: specialist.provider_id } });
+    expect(send).toBeEnabled();
+    fireEvent.click(send);
+    expect(createConversation).toHaveBeenCalledExactlyOnceWith({
+      patientId: patient.id,
+      subject: "Visit question",
+      participantIds: [specialist.provider_id],
+    });
+  });
+
+  it("keeps the recipient lookup and compose sending disabled for unlinked patients", () => {
+    authState.user = patientUser;
+    Object.assign(patientRecordState, { patient: null, isUnlinked: true });
+    render(<PatientMessagesPage />);
+    fireEvent.click(screen.getByRole("button", { name: /new message/i }));
+
+    expect(listRecipients).toHaveBeenLastCalledWith(undefined, { enabled: false });
+    expect(screen.getByText(/account is not linked/i)).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("To")).toBeDisabled();
+    expect(screen.getByRole("button", { name: /send message/i })).toBeDisabled();
+    expect(createConversation).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("lets patients reply to an existing conversation after a care team lookup failure", () => {
+    authState.user = patientUser;
+    recipientLookup.status = "error";
     render(<PatientMessagesPage />);
 
     fireEvent.click(screen.getByRole("button", { name: /follow-up visit/i }));

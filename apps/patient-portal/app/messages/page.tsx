@@ -3,8 +3,10 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { AuthGuard } from "@carebridge/portal-shared/auth-guard";
+import { CareTeamRecipientNotice } from "@/components/care-team-recipient-notice";
 import { useAuth } from "@/lib/auth";
 import { trpc } from "@/lib/trpc";
+import { useCareTeamRecipients } from "@/lib/use-care-team-recipients";
 import { useMyPatientRecord } from "@/lib/use-my-patient";
 
 function formatRelative(iso: string): string {
@@ -32,10 +34,8 @@ function PatientMessagesContent() {
     { enabled: !!user },
   );
 
-  const recipientsQuery = trpc.messaging.listRecipients.useQuery(
-    undefined,
-    { enabled: !!myRecord && user?.role === "patient" },
-  );
+  const { recipients, status: recipientStatus, refetch: retryRecipients } =
+    useCareTeamRecipients(!!myRecord && user?.role === "patient");
 
   const [selectedConvoId, setSelectedConvoId] = useState<string | null>(null);
   const [replyText, setReplyText] = useState("");
@@ -79,8 +79,10 @@ function PatientMessagesContent() {
 
   const conversations = conversationsQuery.data ?? [];
   const messages = messagesQuery.data ?? [];
-  const recipients = recipientsQuery.data ?? [];
   const isComposeOpen = !isReadOnly && showCompose;
+  const hasSelectedRecipient = recipients.some((recipient) => recipient.provider_id === composeRecipient);
+  const canSendCompose =
+    hasSelectedRecipient && !!composeSubject.trim() && !!composeBody.trim() && !createConvoMutation.isPending;
 
   function handleSend() {
     if (!selectedConvoId || !user || isReadOnly || !replyText.trim()) return;
@@ -91,7 +93,7 @@ function PatientMessagesContent() {
   }
 
   function handleCompose() {
-    if (!user || isReadOnly || !myRecord || !composeSubject.trim() || !composeRecipient) return;
+    if (!user || isReadOnly || !myRecord || !canSendCompose) return;
     createConvoMutation.mutate({
       patientId: myRecord.id,
       subject: composeSubject.trim(),
@@ -156,13 +158,16 @@ function PatientMessagesContent() {
         <div style={{ backgroundColor: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: 8, padding: "1.25rem", marginBottom: "1.5rem" }}>
           <h3 style={{ margin: "0 0 1rem", fontSize: "0.95rem" }}>New Message to Care Team</h3>
 
+          <CareTeamRecipientNotice status={recipientStatus} onRetry={retryRecipients} />
+
           <div style={{ marginBottom: "0.75rem" }}>
             <label htmlFor="compose-recipient" style={{ display: "block", marginBottom: 4, fontSize: "0.8rem", color: "#999" }}>To</label>
             <select
               id="compose-recipient"
-              value={composeRecipient}
+              value={hasSelectedRecipient ? composeRecipient : ""}
+              disabled={recipients.length === 0}
               onChange={(e) => setComposeRecipient(e.target.value)}
-              style={{ ...inputStyle, cursor: "pointer" }}
+              style={{ ...inputStyle, cursor: recipients.length ? "pointer" : "not-allowed" }}
             >
               <option value="">Select care team member...</option>
               {recipients.map((member) => (
@@ -199,14 +204,14 @@ function PatientMessagesContent() {
 
           <button
             onClick={handleCompose}
-            disabled={!composeSubject.trim() || !composeRecipient || !composeBody.trim() || createConvoMutation.isPending}
+            disabled={!canSendCompose}
             style={{
               padding: "8px 16px",
-              backgroundColor: composeSubject.trim() && composeRecipient ? "#2563eb" : "#333",
+              backgroundColor: canSendCompose ? "#2563eb" : "#333",
               border: "none",
               borderRadius: 6,
-              color: composeSubject.trim() && composeRecipient ? "#fff" : "#666",
-              cursor: composeSubject.trim() && composeRecipient ? "pointer" : "not-allowed",
+              color: canSendCompose ? "#fff" : "#666",
+              cursor: canSendCompose ? "pointer" : "not-allowed",
               fontSize: "0.85rem",
             }}
           >

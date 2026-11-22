@@ -3,8 +3,10 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { AuthGuard } from "@carebridge/portal-shared/auth-guard";
+import { CareTeamRecipientNotice } from "@/components/care-team-recipient-notice";
 import { useAuth } from "@/lib/auth";
 import { trpc } from "@/lib/trpc";
+import { useCareTeamRecipients } from "@/lib/use-care-team-recipients";
 import { useMyPatientRecord } from "@/lib/use-my-patient";
 
 function RefillContent() {
@@ -19,10 +21,8 @@ function RefillContent() {
     { enabled: !!myRecord },
   );
 
-  const recipientsQuery = trpc.messaging.listRecipients.useQuery(
-    undefined,
-    { enabled: !!myRecord && canRequestRefill },
-  );
+  const { recipients, status: recipientStatus, refetch: retryRecipients } =
+    useCareTeamRecipients(!!myRecord && canRequestRefill);
 
   const createConvoMutation = trpc.messaging.createConversation.useMutation();
   const sendMutation = trpc.messaging.sendMessage.useMutation();
@@ -33,7 +33,7 @@ function RefillContent() {
   const [note, setNote] = useState("");
 
   const activeMeds = (medsQuery.data ?? []).filter((m) => m.status === "active");
-  const recipients = recipientsQuery.data ?? [];
+  const hasRecipients = recipients.length > 0;
 
   function findRecipient(orderingProviderId?: string | null, prescribedBy?: string | null): string | null {
     const prescriberId = orderingProviderId ?? prescribedBy;
@@ -148,6 +148,8 @@ function RefillContent() {
         <p style={{ color: "#999" }}>No active medications found.</p>
       )}
 
+      <CareTeamRecipientNotice status={recipientStatus} onRetry={retryRecipients} />
+
       {activeMeds.map((med) => (
         <div
           key={med.id}
@@ -178,16 +180,16 @@ function RefillContent() {
             ) : (
               <button
                 onClick={() => handleRequestRefill(med)}
-                disabled={!canRequestRefill || !myRecord || recipients.length === 0 || submittingMedId === med.id}
+                disabled={!canRequestRefill || !myRecord || !hasRecipients || submittingMedId === med.id}
                 style={{
                   padding: "6px 14px",
                   backgroundColor: "#2563eb",
                   border: "none",
                   borderRadius: 6,
                   color: "#fff",
-                  cursor: submittingMedId === med.id ? "wait" : "pointer",
+                  cursor: submittingMedId === med.id ? "wait" : hasRecipients ? "pointer" : "not-allowed",
                   fontSize: "0.8rem",
-                  opacity: submittingMedId === med.id ? 0.6 : 1,
+                  opacity: hasRecipients && submittingMedId !== med.id ? 1 : 0.6,
                 }}
               >
                 {submittingMedId === med.id ? "Sending..." : "Message Provider"}
