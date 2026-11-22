@@ -212,6 +212,7 @@ function RefillContent() {
             placeholder="e.g., Running low, need refill by next week"
             style={{
               width: "100%",
+              boxSizing: "border-box",
               padding: "8px 12px",
               backgroundColor: "#222",
               border: "1px solid #444",
