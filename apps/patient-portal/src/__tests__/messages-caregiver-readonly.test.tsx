@@ -136,6 +136,7 @@ describe("PatientMessagesPage", () => {
   });
 
   it("lets caregivers read permitted threads without compose or reply controls", () => {
+    recipientLookup.fetchStatus = "paused";
     render(<PatientMessagesPage />);
 
     expect(listRecipients).toHaveBeenLastCalledWith(undefined, { enabled: false });
@@ -149,6 +150,7 @@ describe("PatientMessagesPage", () => {
     expect(screen.getByText(message.body)).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: /reply/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^send/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(createConversation).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
   });
@@ -212,6 +214,56 @@ describe("PatientMessagesPage", () => {
     expect(screen.getByRole("button", { name: /send message/i })).toBeDisabled();
   });
 
+  it("explains a first recipient lookup paused before any data is available", () => {
+    authState.user = patientUser;
+    Object.assign(recipientLookup, { data: undefined, status: "pending", fetchStatus: "paused" });
+    render(<PatientMessagesPage />);
+    fireEvent.click(screen.getByRole("button", { name: /new message/i }));
+
+    expect(screen.getByRole("status")).toHaveTextContent(/waiting for a connection.*automatically.*back online/i);
+    expect(screen.queryByRole("button", { name: /try again/i })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("To")).toBeDisabled();
+    expect(screen.getByRole("button", { name: /send message/i })).toBeDisabled();
+  });
+
+  it("keeps a compose draft through a paused refresh with cached recipients", () => {
+    authState.user = patientUser;
+    const { rerender } = render(<PatientMessagesPage />);
+    fireEvent.click(screen.getByRole("button", { name: /new message/i }));
+    const recipient = screen.getByLabelText("To");
+    const subject = screen.getByLabelText("Subject");
+    const body = screen.getByLabelText("Message");
+    const send = screen.getByRole("button", { name: /send message/i });
+    fireEvent.change(recipient, { target: { value: primary.provider_id } });
+    fireEvent.change(subject, { target: { value: "Visit question" } });
+    fireEvent.change(body, { target: { value: "What should I bring?" } });
+    expect(send).toBeEnabled();
+
+    recipientLookup.fetchStatus = "paused";
+    rerender(<PatientMessagesPage />);
+    expect(screen.getByRole("status")).toHaveTextContent(/waiting for a connection/i);
+    expect(recipient).toBeDisabled();
+    expect(send).toBeDisabled();
+    fireEvent.click(send);
+    expect(createConversation).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    recipientLookup.fetchStatus = "fetching";
+    rerender(<PatientMessagesPage />);
+    expect(screen.getByRole("status")).toHaveTextContent(/loading your care team/i);
+    expect(send).toBeDisabled();
+
+    recipientLookup.fetchStatus = "idle";
+    rerender(<PatientMessagesPage />);
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(recipient).toHaveValue(primary.provider_id);
+    expect(subject).toHaveValue("Visit question");
+    expect(body).toHaveValue("What should I bring?");
+    expect(send).toBeEnabled();
+    expect(createConversation).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   it("keeps the draft and requires a current eligible recipient after a failed lookup", () => {
     authState.user = patientUser;
     const { rerender } = render(<PatientMessagesPage />);
@@ -261,6 +313,7 @@ describe("PatientMessagesPage", () => {
   it("keeps the recipient lookup and compose sending disabled for unlinked patients", () => {
     authState.user = patientUser;
     Object.assign(patientRecordState, { patient: null, isUnlinked: true });
+    recipientLookup.fetchStatus = "paused";
     render(<PatientMessagesPage />);
     fireEvent.click(screen.getByRole("button", { name: /new message/i }));
 
