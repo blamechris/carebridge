@@ -5,7 +5,7 @@ import type { DatabaseClient } from "../database-client.js";
 import { checkDatabase, resolveExpectedRole } from "../database-check.js";
 import { migrationsFolder } from "../database-command.js";
 
-const validIdentity = { version: 160011, role_matches: true };
+const validIdentity = { version: 160011, role_matches: true, in_recovery: false };
 const validJournal = readMigrationFiles({ migrationsFolder }).map(({ folderMillis, hash }) => ({
   created_at: String(folderMillis),
   hash,
@@ -60,6 +60,7 @@ test("preflight closes on rejected version, role, journal and schema checks", as
   const cases: [Read[], string, number][] = [
     [[() => [{ ...validIdentity, version: 170000 }]], "DB_CHECK_VERSION_MISMATCH", 1],
     [[() => [{ ...validIdentity, role_matches: false }]], "DB_CHECK_ROLE_MISMATCH", 1],
+    [[() => [{ ...validIdentity, in_recovery: true }]], "DB_CHECK_NOT_WRITABLE", 1],
     [[identity, () => validJournal.slice(1)], "DB_CHECK_JOURNAL_MISMATCH", 2],
     [[identity, () => [{ ...validJournal[0], hash: "different" }, ...validJournal.slice(1)]], "DB_CHECK_JOURNAL_MISMATCH", 2],
     [[identity, () => { throw new Error("private driver diagnostic"); }], "DB_CHECK_JOURNAL_UNAVAILABLE", 2],

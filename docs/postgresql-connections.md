@@ -7,7 +7,8 @@ Issue #1365 remains open; the separate note lifecycle work remains in #916.
 
 ## Configuration and process boundaries
 
-Commands do not automatically load `.env`. Inject an exported environment from
+`pnpm db:migrate`, `pnpm db:check` and `pnpm db:seed` do not automatically load
+`.env`. Inject an exported environment from
 your deployment's secret manager or explicitly load only a trusted,
 shell-compatible local file. Never put connection values in a portal, source,
 command transcript, checked-in example or diagnostic output.
@@ -17,7 +18,7 @@ command transcript, checked-in example or diagnostic output.
 | `DATABASE_MODE` | `local-dev`; omitted only with unset, development or test `NODE_ENV` | `managed`; production requires this explicitly |
 | `DATABASE_URL` | Existing URL or bundled loopback fallback | Required runtime/preflight URL; no fallback |
 | `DATABASE_MIGRATION_URL` | Migration may use the development URL | Required only in the migration job; never substituted with the runtime URL |
-| `DATABASE_TLS_CA_FILE` | Optional under the local contract | Required mounted PEM CA file; chain and endpoint hostname/IP validation remain enabled |
+| `DATABASE_TLS_CA_FILE` | Ignored; TLS retains the existing URL/driver behavior | Required absolute path to a mounted PEM CA file; chain and endpoint hostname/IP validation remain enabled |
 | `DATABASE_POOL_MAX` | Driver baseline 10 unless explicitly set | Required positive integer 1–50 for each runtime process |
 | `DATABASE_CONNECT_TIMEOUT_SECONDS` | Default 30 | Integer 1–60, default 30; connection establishment only |
 | `DATABASE_IDLE_TIMEOUT_SECONDS` | Driver baseline: idle close disabled when omitted | Integer 1–600, default 30 |
@@ -28,8 +29,10 @@ PostgreSQL endpoint with a user and database; query parameters and fragments are
 rejected. Supply TLS, pool and timeouts through the named settings. Ambient
 `PG*` variables cannot change the managed connection. The first contract uses
 one mounted trust root set for both purposes; differing runtime/migration trust
-roots need separate qualification. Managed endpoints must be writable (`target_session_attrs=read-write`); read
-replicas are not accepted by this contract. CA bundles must be regular PEM files
+roots need separate qualification. Managed endpoints must be writable. The driver uses
+`target_session_attrs=read-write` for its default-read-only check; preflight also
+rejects `pg_is_in_recovery()`. Runtime does not continuously recheck recovery
+state, so failover/read-replica qualification remains outside this contract. CA bundles must be regular PEM files
 no larger than 1 MiB. External poolers and client certificate identity are outside
 this increment.
 
@@ -56,7 +59,9 @@ loader; they do not need the `tsx` CLI control socket.
 
 These examples contain command names only. An operator supplies secret references
 at the process boundary; no generic shell sourcing or secret-manager integration
-is added. SQL generation remains offline through `pnpm db:generate`.
+is added. SQL generation is database-offline through `pnpm db:generate`. Drizzle Kit may
+load a package-local `.env` itself; the generation config contains no connection
+credentials, and generating SQL does not establish database connectivity.
 
 ## Stop, migrate, check, start
 
@@ -69,7 +74,8 @@ is added. SQL generation remains offline through `pnpm db:generate`.
    requires `DATABASE_MIGRATION_URL` and CA. Success emits `DB_MIGRATION_OK`.
 4. Start a separate environment with runtime URL, bounded pool, CA and expected
    runtime role; omit migration settings. Run `pnpm db:check`. Success emits
-   `DB_CHECK_OK` after PG16, current-role and exact migration-baseline checks.
+   `DB_CHECK_OK` after PG16, non-recovery, current-role and exact
+   migration-baseline checks.
 5. Start services/workers with runtime settings and no migration endpoint.
    Use ordinary portal actions and audit/outbox checks to verify the deployment.
    Existing `/health` endpoints retain their existing liveness semantics.
@@ -80,6 +86,12 @@ configuration/schema prerequisite; do not retry with disabled verification, a
 fallback database or reseeding. Preserve only code, command, timing and
 sanitized counts/booleans in operator evidence. Raw driver errors may contain
 connection details and must not be published.
+
+The runtime preflight identity needs `USAGE` on the `drizzle` schema and `SELECT`
+on `drizzle.__drizzle_migrations`, in addition to its separately reviewed
+application privileges. These are operator-supplied prerequisites; this package
+changes no grants. `DB_CHECK_JOURNAL_UNAVAILABLE` can mean missing metadata access
+or an absent journal; it is distinct from a role mismatch.
 
 Preflight reads PostgreSQL metadata and the installed migration journal; it does
 not initialize a schema, migrate, seed or write clinical data. A passing check is
@@ -131,6 +143,13 @@ distinct runtime/migrator identities or least privilege. Separate names and
 process environments establish routing/isolation only. This increment changes no
 roles, memberships, schema grants or access policies. Identity qualification waits
 for separately supplied preprovisioned roles; no superuser result discharges it.
+
+Exact journal checks include historical SQL bytes. Older installations can
+retain hashes from earlier versions of already-applied files, even when their
+schema is compatible. The existing migrator only applies newer timestamps;
+rerunning `db:migrate` does not repair those historical mismatches. Stop on
+`DB_CHECK_JOURNAL_MISMATCH` and use a separately reviewed upgrade/reconciliation
+procedure. Never rewrite journal rows merely to make preflight pass.
 
 Before declaring a topology supported, also require a separately authorized
 provider/private-network matrix, reviewed role grants, previous-supported-release

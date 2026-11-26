@@ -44,7 +44,7 @@ async function readAppliedJournal(sql: postgres.TransactionSql, limit: number) {
 
 async function inspectDatabase(sql: postgres.TransactionSql, expectedRole: string) {
   const expected = readExpectedJournal();
-  const [identity] = await sql<{ version: number; role_matches: boolean }[]>`
+  const [identity] = await sql<{ version: number; role_matches: boolean; in_recovery: boolean }[]>`
     select pg_catalog.current_setting('server_version_num')::integer as version,
            current_user::text collate "C" = ${expectedRole} as role_matches
   `;
@@ -52,6 +52,8 @@ async function inspectDatabase(sql: postgres.TransactionSql, expectedRole: strin
     throw new DatabaseError("DB_CHECK_VERSION_MISMATCH");
   }
   if (!identity.role_matches) throw new DatabaseError("DB_CHECK_ROLE_MISMATCH");
+  // The pinned driver's read-write target does not itself reject every hot standby.
+  if (identity.in_recovery !== false) throw new DatabaseError("DB_CHECK_NOT_WRITABLE");
 
   const applied = await readAppliedJournal(sql, expected.length + 1);
   if (applied.length !== expected.length || expected.some(({ folderMillis, hash }, index) =>

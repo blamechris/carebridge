@@ -18,6 +18,7 @@ const messages = {
   DB_CHECK_TIMEOUT: "Database preflight exceeded its deadline.",
   DB_CHECK_FAILED: "Could not connect to the database or read readiness metadata.",
   DB_CHECK_VERSION_MISMATCH: "Database preflight requires PostgreSQL 16.",
+  DB_CHECK_NOT_WRITABLE: "Database preflight requires a writable primary outside recovery.",
   DB_CHECK_ROLE_MISMATCH: "The active database role differs from the expected runtime role.",
   DB_CHECK_JOURNAL_INVALID: "The packaged database migration history is invalid or unavailable.",
   DB_CHECK_JOURNAL_UNAVAILABLE: "The runtime role could not read the database migration journal.",
