@@ -18,6 +18,7 @@
     "test": "node --test --import tsx src/__tests__/*.test.ts",
     "generate": "drizzle-kit generate",
     "migrate": "tsx src/migrate.ts",
+    "check": "tsx src/check.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {

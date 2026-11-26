@@ -98,3 +98,47 @@ test("operator references avoid legacy paths and nonexistent commands", () => {
   assert.ok(json("packages/db-schema/package.json").scripts.test, "documented schema test command exists");
   assert.match(json("package.json").scripts.test, /node --test scripts\/operator-commands\.test\.mjs/, "root test must run the regression guard");
 });
+
+test("database operator commands dispatch separately without loading a local env file", (t) => {
+  const dir = fixture(t);
+  const workspace = join(dir, "packages/db-schema");
+  mkdirSync(join(workspace, "node_modules/.bin"), { recursive: true });
+  mkdirSync(join(workspace, "src"));
+  const schemaScripts = json("packages/db-schema/package.json").scripts;
+  const rootScripts = json("package.json").scripts;
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ private: true, packageManager: json("package.json").packageManager, scripts: { "db:check": rootScripts["db:check"], "db:migrate": rootScripts["db:migrate"] } }));
+  writeFileSync(join(dir, "pnpm-workspace.yaml"), "packages:\n  - 'packages/*'\n");
+  writeFileSync(join(workspace, "package.json"), JSON.stringify({ name: "@carebridge/db-schema", private: true, scripts: { check: schemaScripts.check, migrate: schemaScripts.migrate } }));
+  writeFileSync(join(dir, ".env"), "DATABASE_URL=must-not-autoload\nDATABASE_MIGRATION_URL=must-not-autoload\n");
+  writeFileSync(join(workspace, ".env"), "DATABASE_URL=must-not-autoload\nDATABASE_MIGRATION_URL=must-not-autoload\n");
+  writeFileSync(join(workspace, "node_modules/.bin/tsx"), `#!${process.execPath}\nconsole.log('DISPATCH '+JSON.stringify({args:process.argv.slice(2),runtime:process.env.DATABASE_URL,migration:process.env.DATABASE_MIGRATION_URL,expected:process.env.DATABASE_EXPECTED_ROLE}));\n`, { mode: 0o755 });
+  for (const [command, entry] of [["db:check", "src/check.ts"], ["db:migrate", "src/migrate.ts"]]) {
+    assert.ok(readFileSync(join(root, "packages/db-schema", entry), "utf8"));
+    const env = { ...cleanEnv(dir), DATABASE_MODE: "managed", DATABASE_URL: "synthetic-runtime", DATABASE_EXPECTED_ROLE: "synthetic-role", ...(command === "db:migrate" ? { DATABASE_MIGRATION_URL: "synthetic-migration" } : {}) };
+    const result = spawnSync("pnpm", [command], { cwd: dir, env, encoding: "utf8", timeout: 15000 });
+    assert.equal(result.status, 0, result.stderr);
+    const row = result.stdout.split("\n").find((line) => line.startsWith("DISPATCH "));
+    assert.ok(row, result.stdout);
+    assert.deepEqual(JSON.parse(row.slice(9)), { args: [entry], runtime: "synthetic-runtime", ...(command === "db:migrate" ? { migration: "synthetic-migration" } : {}), expected: "synthetic-role" });
+  }
+});
+
+test("actual Turbo strict execution forwards managed runtime names and excludes migration injection", (t) => {
+  const dir = fixture(t);
+  const workspace = join(dir, "packages/probe");
+  mkdirSync(workspace, { recursive: true });
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ private: true, packageManager: json("package.json").packageManager, workspaces: ["packages/*"] }));
+  writeFileSync(join(dir, "pnpm-workspace.yaml"), "packages:\n  - 'packages/*'\n");
+  writeFileSync(join(dir, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\nimporters:\n  .: {}\n  packages/probe: {}\n");
+  const names = ["DATABASE_URL", "DATABASE_MODE", "DATABASE_TLS_CA_FILE", "DATABASE_POOL_MAX", "DATABASE_CONNECT_TIMEOUT_SECONDS", "DATABASE_IDLE_TIMEOUT_SECONDS"];
+  const config = json("turbo.json");
+  writeFileSync(join(dir, "turbo.json"), JSON.stringify({ globalPassThroughEnv: config.globalPassThroughEnv, tasks: { probe: { cache: false } } }));
+  writeFileSync(join(workspace, "package.json"), JSON.stringify({ name: "@carebridge/connection-env-probe", private: true, scripts: { probe: "node probe.cjs" } }));
+  writeFileSync(join(workspace, "probe.cjs"), `console.log('ENV_PROBE '+JSON.stringify(Object.fromEntries(${JSON.stringify([...names, "DATABASE_MIGRATION_URL", "DATABASE_EXPECTED_ROLE"])}.map(k=>[k,process.env[k]??null]))));\n`);
+  const env = { ...cleanEnv(dir), TURBO_TELEMETRY_DISABLED: "1", ...Object.fromEntries([...names, "DATABASE_MIGRATION_URL", "DATABASE_EXPECTED_ROLE"].map((name) => [name, `synthetic-${name}`])) };
+  const result = spawnSync(join(root, "node_modules/.bin/turbo"), ["run", "probe", "--env-mode=strict", "--output-logs=full"], { cwd: dir, env, encoding: "utf8", timeout: 20000 });
+  assert.equal(result.status, 0, result.stderr);
+  const match = result.stdout.match(/ENV_PROBE (\{[^\n]+\})/);
+  assert.ok(match, result.stdout);
+  assert.deepEqual(JSON.parse(match[1]), { ...Object.fromEntries(names.map((name) => [name, `synthetic-${name}`])), DATABASE_MIGRATION_URL: null, DATABASE_EXPECTED_ROLE: null });
+});

@@ -58,6 +58,11 @@ What distinguishes the approach:
 - **Cross-specialty context, not threshold alerts.** Rules evaluate the patient's recorded cross-specialty context — diagnoses, medications, vitals, symptoms together — not just the latest chart entry, which is the gap single-value EHR alerts leave open.
 - **Synthetic scenarios as fixtures.** Seeded synthetic patients exercise each rule end to end, so the safety behavior is testable in CI without ever touching real data.
 
+For the explicit PostgreSQL connection contract, separate migration injection,
+operator preflight and current qualification limits, see
+[PostgreSQL connections](docs/postgresql-connections.md). Bundled development remains
+the quick-start baseline; customer-managed topologies are not yet qualified.
+
 ## Quick Start
 
 ### Prerequisites

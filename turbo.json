@@ -2,6 +2,11 @@
   "$schema": "https://turbo.build/schema.json",
   "globalPassThroughEnv": [
     "DATABASE_URL",
+    "DATABASE_MODE",
+    "DATABASE_TLS_CA_FILE",
+    "DATABASE_POOL_MAX",
+    "DATABASE_CONNECT_TIMEOUT_SECONDS",
+    "DATABASE_IDLE_TIMEOUT_SECONDS",
     "TEST_DATABASE_URL",
     "REDIS_URL",
     "REDIS_HOST",
