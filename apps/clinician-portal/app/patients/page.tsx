@@ -50,7 +50,7 @@ function PatientsContent() {
         </div>
       ) : (
         <div className="table-container">
-          <table>
+          <table className="patients-table">
             <thead>
               <tr>
                 <th>Patient Name</th>

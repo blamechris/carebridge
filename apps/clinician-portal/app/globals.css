@@ -924,6 +924,18 @@ tr:hover td {
     border-bottom: none;
   }
 
+  .patients-table td {
+    overflow-wrap: anywhere;
+  }
+
+  .patients-table .table-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    min-width: 44px;
+    min-height: 44px;
+  }
+
   /* Touch-friendly buttons (WCAG 2.5.5 — 44x44 min) */
   .btn,
   .btn-sm {
