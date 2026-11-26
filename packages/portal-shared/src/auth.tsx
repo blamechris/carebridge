@@ -60,6 +60,16 @@ const USER_KEY = "carebridge_user";
 // hydration on page reload.
 const HAS_SESSION_KEY = "carebridge_has_session";
 
+function removeStoredSession() {
+  for (const key of [USER_KEY, HAS_SESSION_KEY]) {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // Storage may be unavailable. Continue clearing the remaining auth state.
+    }
+  }
+}
+
 /**
  * Sends the session token to the API gateway which writes it into an HttpOnly
  * cookie. This is the primary session transport — the cookie is inaccessible
@@ -146,8 +156,7 @@ export function AuthProvider({ children, queryClient }: AuthProviderProps) {
    * Called when `/auth/me` fails or returns a different identity.
    */
   const invalidateAndRedirect = useCallback(() => {
-    localStorage.removeItem(USER_KEY);
-    localStorage.removeItem(HAS_SESSION_KEY);
+    removeStoredSession();
     setUser(null);
     setSessionId(null);
     clearQueryCache();
@@ -237,8 +246,7 @@ export function AuthProvider({ children, queryClient }: AuthProviderProps) {
     ++sessionOperation.current;
     setVerifying(false);
     void enqueueCookieOperation(clearSessionCookie);
-    localStorage.removeItem(USER_KEY);
-    localStorage.removeItem(HAS_SESSION_KEY);
+    removeStoredSession();
     setUser(null);
     setSessionId(null);
     clearQueryCache();

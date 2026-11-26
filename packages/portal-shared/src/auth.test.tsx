@@ -211,6 +211,76 @@ describe("AuthProvider /auth/me hydration", () => {
     expect(result.current.isAuthenticated).toBe(false);
   });
 
+  it.each([
+    { failure: "profile", keys: ["carebridge_user"] },
+    { failure: "session flag", keys: ["carebridge_has_session"] },
+    { failure: "both keys", keys: ["carebridge_user", "carebridge_has_session"] },
+  ])("completes logout when removal fails for $failure", async ({ keys }) => {
+    localStorage.setItem("carebridge_user", JSON.stringify(TEST_USER));
+    localStorage.setItem("carebridge_has_session", "true");
+    mockAuthMeResponse(TEST_USER);
+
+    const queryClient = new QueryClient();
+    const queryKey = ["synthetic-session-query"];
+    const { result } = renderHook(() => useAuth(), { wrapper: makeWrapper(queryClient) });
+    await waitFor(() => expect(result.current.isAuthenticated).toBe(true));
+    queryClient.setQueryData(queryKey, "synthetic data");
+
+    const removeItem = localStorage.removeItem.bind(localStorage);
+    const removeSpy = vi.spyOn(localStorage, "removeItem").mockImplementation((key) => {
+      if (keys.includes(key)) throw new Error("Storage unavailable");
+      removeItem(key);
+    });
+
+    const push = vi.fn();
+    await act(async () => {
+      result.current.clearSession();
+      push("/login");
+    });
+
+    expect(removeSpy.mock.calls).toEqual([["carebridge_user"], ["carebridge_has_session"]]);
+    expect(result.current.user).toBeNull();
+    expect(result.current.sessionId).toBeNull();
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(result.current.verifying).toBe(false);
+    expect(queryClient.getQueryData(queryKey)).toBeUndefined();
+    expect(push).toHaveBeenCalledWith("/login");
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/auth/session/clear"),
+      expect.objectContaining({ method: "POST", credentials: "include" }),
+    );
+  });
+
+  it("clears queries and redirects when neither restoration nor storage cleanup can finish", async () => {
+    localStorage.setItem("carebridge_user", JSON.stringify(TEST_USER));
+    localStorage.setItem("carebridge_has_session", "true");
+    let respond!: (response: Pick<Response, "ok" | "json">) => void;
+    fetchMock.mockReturnValueOnce(new Promise((resolve) => { respond = resolve; }));
+
+    const queryClient = new QueryClient();
+    const queryKey = ["synthetic-session-query"];
+    queryClient.setQueryData(queryKey, "synthetic data");
+    const { result } = renderHook(() => useAuth(), { wrapper: makeWrapper(queryClient) });
+    expect(result.current.verifying).toBe(true);
+
+    vi.spyOn(localStorage, "setItem").mockImplementationOnce(() => {
+      throw new Error("Storage write unavailable");
+    });
+    const removeSpy = vi.spyOn(localStorage, "removeItem").mockImplementation(() => {
+      throw new Error("Storage removal unavailable");
+    });
+
+    await act(async () => respond({ ok: true, json: async () => TEST_USER }));
+
+    expect(removeSpy.mock.calls).toEqual([["carebridge_user"], ["carebridge_has_session"]]);
+    expect(result.current.user).toBeNull();
+    expect(result.current.sessionId).toBeNull();
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(result.current.verifying).toBe(false);
+    expect(queryClient.getQueryData(queryKey)).toBeUndefined();
+    expect(window.location.href).toBe("/login");
+  });
+
   it("pins User.role to the UserRole literal union (issue #829)", () => {
     // This test is deliberately compile-time driven: if someone widens
     // `User.role` back to `string`, the `UserRole` assignment below will
@@ -424,7 +494,7 @@ describe("AuthProvider /auth/me hydration", () => {
     expect(result.current.isAuthenticated).toBe(true);
   });
 
-  it("orders logout after a pending cookie write and before the next login", async () => {
+  it.each([false, true])("orders logout between cookie writes when removal fails = %s", async (removalFails) => {
     let finishWrite!: (response: Pick<Response, "ok">) => void;
     let finishLogout!: (response: Pick<Response, "ok">) => void;
     fetchMock
@@ -441,6 +511,11 @@ describe("AuthProvider /auth/me hydration", () => {
     });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
+    if (removalFails) {
+      vi.spyOn(localStorage, "removeItem").mockImplementationOnce(() => {
+        throw new Error("Storage unavailable");
+      });
+    }
     let secondLogin!: Promise<void>;
     act(() => {
       result.current.clearSession();
@@ -460,6 +535,9 @@ describe("AuthProvider /auth/me hydration", () => {
       finishLogout({ ok: true });
       await secondLogin;
     });
+    expect(fetchMock.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
+      "/auth/session", "/auth/session/clear", "/auth/session/clear", "/auth/session", "/auth/me",
+    ]);
     expect(result.current.user).toEqual(DIFFERENT_USER);
     expect(result.current.isAuthenticated).toBe(true);
   });
