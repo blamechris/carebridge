@@ -52,8 +52,8 @@ export function CancelAppointmentModal({
           rows={4} style={{ ...inputBase, width: "100%", resize: "vertical" }}
           placeholder="e.g., Scheduling conflict, feeling better, travel" />
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: "1rem" }}>
-          <button type="button" onClick={onClose} style={btnGhost}>Close</button>
-          <button type="submit" disabled={!isValid} style={{
+          <button type="button" tabIndex={0} onClick={onClose} style={btnGhost}>Close</button>
+          <button type="submit" tabIndex={0} disabled={!isValid} style={{
             padding: "8px 16px",
             backgroundColor: isValid ? "#ef4444" : "#333",
             border: "none", borderRadius: 6,

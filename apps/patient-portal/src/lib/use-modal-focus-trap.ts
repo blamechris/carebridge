@@ -16,6 +16,9 @@ import { useEffect, useRef } from "react";
  *  - On close or unmount, restores focus to the opener if it is still
  *    connected.
  *
+ * Dialog buttons and radios opt into native Tab navigation with
+ * `tabIndex={0}` so WebKit includes them under its default keyboard settings.
+ *
  * Mirrors `useSidebarFocusTrap` from the clinician portal (Wave 7 #898).
  * Kept portal-local because the two portals ship independently and
  * elevating it to a shared package added bundle weight without a concrete
@@ -27,8 +30,20 @@ export const MODAL_FOCUSABLE_SELECTOR = [
   "input:not([disabled])",
   "select:not([disabled])",
   "textarea:not([disabled])",
-  '[tabindex]:not([tabindex="-1"])',
+  '[tabindex]:not([tabindex="-1"]):not([disabled])',
 ].join(",");
+
+function sameNamedRadioGroup(first: HTMLElement, second: HTMLElement) {
+  return (
+    first instanceof HTMLInputElement &&
+    second instanceof HTMLInputElement &&
+    first.type === "radio" &&
+    second.type === "radio" &&
+    first.name !== "" &&
+    first.name === second.name &&
+    first.form === second.form
+  );
+}
 
 function getTabStops(container: HTMLElement) {
   const items = Array.from(
@@ -39,12 +54,9 @@ function getTabStops(container: HTMLElement) {
   );
 
   // A selected radio represents its entire group in the browser's tab order.
-  return items.filter((item) => {
-    if (!(item instanceof HTMLInputElement) || item.type !== "radio" || !item.name || item.checked) {
-      return true;
-    }
-    return !selectedRadios.some((radio) => radio.name === item.name && radio.form === item.form);
-  });
+  return items.filter((item) =>
+    !selectedRadios.some((radio) => radio !== item && sameNamedRadioGroup(radio, item)),
+  );
 }
 
 export function useModalFocusTrap(
@@ -96,7 +108,13 @@ export function useModalFocusTrap(
       const boundary = event.shiftKey ? first : last;
 
       // Advancing the wizard can remove or disable the focused control.
-      if (active === boundary || !current.contains(active)) {
+      // Browsers can enter an unchecked radio group at either end.
+      if (
+        !active ||
+        !items.includes(active) ||
+        active === boundary ||
+        sameNamedRadioGroup(active, boundary)
+      ) {
         event.preventDefault();
         (event.shiftKey ? last : first).focus();
       }

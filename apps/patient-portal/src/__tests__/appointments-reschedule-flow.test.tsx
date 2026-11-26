@@ -80,6 +80,10 @@ describe("AppointmentsPageInner", () => {
     const dialog = screen.getByRole("dialog", { name: /select provider/i });
     const first = within(dialog).getByRole("radio", { name: /dr\. smith/i });
     const last = within(dialog).getByRole("button", { name: /close/i });
+    const disabledNext = within(dialog).getByRole("button", { name: /next/i });
+    expect(disabledNext).toHaveAttribute("tabindex", "0");
+    expect(disabledNext).toBeDisabled();
+
     expect(document.activeElement).toBe(first);
     fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
     expect(document.activeElement).toBe(last);
@@ -91,7 +95,7 @@ describe("AppointmentsPageInner", () => {
     expect(document.activeElement).toBe(opener);
   });
 
-  it("wraps focus around the selected provider in a radio group", () => {
+  it("wraps focus around the provider radio group before and after selection", () => {
     render(<AppointmentsPageInner {...props({
       careTeam: [
         ...careTeam,
@@ -104,6 +108,13 @@ describe("AppointmentsPageInner", () => {
 
     const dialog = screen.getByRole("dialog", { name: /select provider/i });
     const alternate = within(dialog).getByRole("radio", { name: /dr\. example/i });
+    const close = within(dialog).getByRole("button", { name: /close/i });
+
+    // Native reverse traversal can enter the unchecked group at its last radio.
+    alternate.focus();
+    fireEvent.keyDown(alternate, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(close);
+
     alternate.focus();
     fireEvent.click(alternate);
     const last = within(dialog).getByRole("button", { name: /next/i });
@@ -112,6 +123,24 @@ describe("AppointmentsPageInner", () => {
     expect(document.activeElement).toBe(last);
     fireEvent.keyDown(last, { key: "Tab" });
     expect(document.activeElement).toBe(alternate);
+  });
+
+  it("recaptures Tab after the focused Next button becomes disabled", () => {
+    render(<AppointmentsPageInner {...props()} />);
+    const opener = screen.getByRole("button", { name: /book appointment/i });
+    opener.focus();
+    fireEvent.click(opener);
+    fireEvent.click(screen.getByRole("radio", { name: /dr\. smith/i }));
+
+    const next = screen.getByRole("button", { name: /next/i });
+    next.focus();
+    fireEvent.click(next);
+    expect(next).toBeDisabled();
+
+    const dialog = screen.getByRole("dialog", { name: /appointment type/i });
+    const [firstType] = within(dialog).getAllByRole("radio");
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Tab" });
+    expect(document.activeElement).toBe(firstType);
   });
 
   it("keeps focus across a page rerender and restores it when the reopened wizard closes", () => {

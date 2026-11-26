@@ -49,7 +49,7 @@ export function AppointmentDetailView({ appointment, providerName, onClose }: Ap
           {prepInstructionsFor(appointment.appointment_type)}
         </p>
         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "1.25rem" }}>
-          <button type="button" onClick={onClose} style={{
+          <button type="button" tabIndex={0} onClick={onClose} style={{
             padding: "8px 16px", backgroundColor: "#2563eb", border: "none",
             borderRadius: 6, color: "#fff", cursor: "pointer", fontSize: "0.85rem",
           }}>
