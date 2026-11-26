@@ -96,6 +96,17 @@ describe("useModalFocusTrap", () => {
     expect(document.activeElement).toBe(last);
   });
 
+  it("recaptures forward Tab when focus falls outside the dialog after a control is removed", () => {
+    const { rerender } = render(<Harness />);
+    fireEvent.click(screen.getByTestId("opener"));
+    screen.getByTestId("modal-btn-1").focus();
+    rerender(<Harness buttons={1} />);
+    expect(document.activeElement).toBe(document.body);
+
+    fireEvent.keyDown(document.body, { key: "Tab" });
+    expect(document.activeElement).toBe(screen.getByTestId("modal-btn-0"));
+  });
+
   it("invokes onClose when Escape is pressed", () => {
     const onClose = vi.fn();
     render(<Harness onClose={onClose} />);
@@ -117,5 +128,37 @@ describe("useModalFocusTrap", () => {
     // Escape closes the modal — the harness sets open=false on onClose.
     fireEvent.keyDown(document, { key: "Escape" });
     expect(document.activeElement).toBe(opener);
+  });
+
+  it("uses the latest close callback without moving focus on rerender", () => {
+    const initialClose = vi.fn();
+    const latestClose = vi.fn();
+    const { rerender } = render(<Harness onClose={initialClose} />);
+    const opener = screen.getByTestId("opener");
+    opener.focus();
+    fireEvent.click(opener);
+    const last = screen.getByTestId("modal-btn-1");
+    last.focus();
+
+    rerender(<Harness onClose={latestClose} />);
+    expect(document.activeElement).toBe(last);
+    fireEvent.keyDown(last, { key: "Escape" });
+    expect(initialClose).not.toHaveBeenCalled();
+    expect(latestClose).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("removes the key listener and skips a detached opener on unmount", () => {
+    const onClose = vi.fn();
+    const { unmount } = render(<Harness onClose={onClose} />);
+    const opener = screen.getByTestId("opener");
+    opener.focus();
+    fireEvent.click(opener);
+    const restoreFocus = vi.spyOn(opener, "focus");
+
+    unmount();
+    expect(restoreFocus).not.toHaveBeenCalled();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
   });
 });
