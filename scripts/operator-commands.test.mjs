@@ -111,7 +111,7 @@ test("database operator commands dispatch separately without loading a local env
   writeFileSync(join(workspace, "package.json"), JSON.stringify({ name: "@carebridge/db-schema", private: true, scripts: { check: schemaScripts.check, migrate: schemaScripts.migrate } }));
   writeFileSync(join(dir, ".env"), "DATABASE_URL=must-not-autoload\nDATABASE_MIGRATION_URL=must-not-autoload\n");
   writeFileSync(join(workspace, ".env"), "DATABASE_URL=must-not-autoload\nDATABASE_MIGRATION_URL=must-not-autoload\n");
-  writeFileSync(join(workspace, "node_modules/.bin/tsx"), `#!${process.execPath}\nconsole.log('DISPATCH '+JSON.stringify({args:process.argv.slice(2),runtime:process.env.DATABASE_URL,migration:process.env.DATABASE_MIGRATION_URL,expected:process.env.DATABASE_EXPECTED_ROLE}));\n`, { mode: 0o755 });
+  writeFileSync(join(workspace, "node_modules/.bin/node"), `#!${process.execPath}\nconsole.log('DISPATCH '+JSON.stringify({args:process.argv.slice(2),runtime:process.env.DATABASE_URL,migration:process.env.DATABASE_MIGRATION_URL,expected:process.env.DATABASE_EXPECTED_ROLE}));\n`, { mode: 0o755 });
   for (const [command, entry] of [["db:check", "src/check.ts"], ["db:migrate", "src/migrate.ts"]]) {
     assert.ok(readFileSync(join(root, "packages/db-schema", entry), "utf8"));
     const env = { ...cleanEnv(dir), DATABASE_MODE: "managed", DATABASE_URL: "synthetic-runtime", DATABASE_EXPECTED_ROLE: "synthetic-role", ...(command === "db:migrate" ? { DATABASE_MIGRATION_URL: "synthetic-migration" } : {}) };
@@ -119,7 +119,7 @@ test("database operator commands dispatch separately without loading a local env
     assert.equal(result.status, 0, result.stderr);
     const row = result.stdout.split("\n").find((line) => line.startsWith("DISPATCH "));
     assert.ok(row, result.stdout);
-    assert.deepEqual(JSON.parse(row.slice(9)), { args: [entry], runtime: "synthetic-runtime", ...(command === "db:migrate" ? { migration: "synthetic-migration" } : {}), expected: "synthetic-role" });
+    assert.deepEqual(JSON.parse(row.slice(9)), { args: ["--import", "tsx", entry], runtime: "synthetic-runtime", ...(command === "db:migrate" ? { migration: "synthetic-migration" } : {}), expected: "synthetic-role" });
   }
 });
 

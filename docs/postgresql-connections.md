@@ -51,6 +51,9 @@ pnpm db:migrate
 pnpm db:check
 ```
 
+Migration, check and seed scripts use Node with the installed `--import tsx`
+loader; they do not need the `tsx` CLI control socket.
+
 These examples contain command names only. An operator supplies secret references
 at the process boundary; no generic shell sourcing or secret-manager integration
 is added. SQL generation remains offline through `pnpm db:generate`.
