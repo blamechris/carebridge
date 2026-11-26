@@ -13,8 +13,11 @@ import { useEffect, useRef } from "react";
  *    itself. Pass `tabIndex={-1}` on the container to make this work.
  *  - While open: Tab / Shift+Tab wrap within focusable descendants.
  *  - Escape closes the modal via `onClose`.
- *  - On close: restores focus to the element that opened the modal
- *    (usually the button that triggered it).
+ *  - On close or unmount, restores focus to the opener if it is still
+ *    connected.
+ *
+ * Dialog buttons and radios opt into native Tab navigation with
+ * `tabIndex={0}` so WebKit includes them under its default keyboard settings.
  *
  * Mirrors `useSidebarFocusTrap` from the clinician portal (Wave 7 #898).
  * Kept portal-local because the two portals ship independently and
@@ -27,15 +30,46 @@ export const MODAL_FOCUSABLE_SELECTOR = [
   "input:not([disabled])",
   "select:not([disabled])",
   "textarea:not([disabled])",
-  '[tabindex]:not([tabindex="-1"])',
+  '[tabindex]:not([tabindex="-1"]):not([disabled])',
 ].join(",");
+
+function sameNamedRadioGroup(first: HTMLElement, second: HTMLElement) {
+  return (
+    first instanceof HTMLInputElement &&
+    second instanceof HTMLInputElement &&
+    first.type === "radio" &&
+    second.type === "radio" &&
+    first.name !== "" &&
+    first.name === second.name &&
+    first.form === second.form
+  );
+}
+
+function getTabStops(container: HTMLElement) {
+  const items = Array.from(
+    container.querySelectorAll<HTMLElement>(MODAL_FOCUSABLE_SELECTOR),
+  );
+  const selectedRadios = Array.from(
+    container.querySelectorAll<HTMLInputElement>('input[type="radio"]:checked:not(:disabled)'),
+  );
+
+  // A selected radio represents its entire group in the browser's tab order.
+  return items.filter((item) =>
+    !selectedRadios.some((radio) => radio !== item && sameNamedRadioGroup(radio, item)),
+  );
+}
 
 export function useModalFocusTrap(
   isOpen: boolean,
   containerRef: React.RefObject<HTMLElement | null>,
   onClose: () => void,
 ) {
-  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+
+  // Keep Escape current without restarting the open dialog's focus trap.
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -43,13 +77,9 @@ export function useModalFocusTrap(
     const container = containerRef.current;
     if (!container) return;
 
-    previousFocusRef.current =
-      (document.activeElement as HTMLElement | null) ?? null;
+    const previousFocus = document.activeElement as HTMLElement | null;
 
-    const focusables = Array.from(
-      container.querySelectorAll<HTMLElement>(MODAL_FOCUSABLE_SELECTOR),
-    );
-    const firstFocusable = focusables[0];
+    const firstFocusable = getTabStops(container)[0];
     if (firstFocusable) {
       firstFocusable.focus();
     } else {
@@ -59,16 +89,14 @@ export function useModalFocusTrap(
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key !== "Tab") return;
 
       const current = containerRef.current;
       if (!current) return;
-      const items = Array.from(
-        current.querySelectorAll<HTMLElement>(MODAL_FOCUSABLE_SELECTOR),
-      );
+      const items = getTabStops(current);
       if (items.length === 0) {
         event.preventDefault();
         current.focus();
@@ -77,32 +105,28 @@ export function useModalFocusTrap(
       const first = items[0]!;
       const last = items[items.length - 1]!;
       const active = document.activeElement as HTMLElement | null;
+      const boundary = event.shiftKey ? first : last;
 
-      if (event.shiftKey) {
-        if (active === first || !current.contains(active)) {
-          event.preventDefault();
-          last.focus();
-        }
-      } else {
-        if (active === last) {
-          event.preventDefault();
-          first.focus();
-        }
+      // Advancing the wizard can remove or disable the focused control.
+      // Browsers can enter an unchecked radio group at either end.
+      if (
+        !active ||
+        !items.includes(active) ||
+        active === boundary ||
+        sameNamedRadioGroup(active, boundary)
+      ) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
       }
     }
 
     document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
+      // Restore before the next dialog captures focus during rescheduling.
+      if (previousFocus?.isConnected && typeof previousFocus.focus === "function") {
+        previousFocus.focus();
+      }
     };
-  }, [isOpen, containerRef, onClose]);
-
-  useEffect(() => {
-    if (isOpen) return;
-    const previous = previousFocusRef.current;
-    if (previous && typeof previous.focus === "function") {
-      previous.focus();
-    }
-    previousFocusRef.current = null;
-  }, [isOpen]);
+  }, [isOpen, containerRef]);
 }

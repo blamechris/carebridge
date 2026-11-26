@@ -99,7 +99,7 @@ export function BookAppointmentModal({ careTeam, onLoadSlots, onConfirm, onClose
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {careTeam.map((p) => (
                   <label key={p.provider_id} style={radioLabel(providerId === p.provider_id)}>
-                    <input type="radio" name="provider" value={p.provider_id}
+                    <input type="radio" tabIndex={0} name="provider" value={p.provider_id}
                       checked={providerId === p.provider_id}
                       onChange={() => setProviderId(p.provider_id)} />
                     <span>
@@ -118,7 +118,7 @@ export function BookAppointmentModal({ careTeam, onLoadSlots, onConfirm, onClose
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {TYPES.map((t) => (
                 <label key={t} style={radioLabel(apptType === t)}>
-                  <input type="radio" name="apptType" value={t}
+                  <input type="radio" tabIndex={0} name="apptType" value={t}
                     checked={apptType === t} onChange={() => setApptType(t)} />
                   <span>{appointmentTypeLabel(t)}</span>
                 </label>
@@ -142,7 +142,7 @@ export function BookAppointmentModal({ careTeam, onLoadSlots, onConfirm, onClose
                 {slots.map((s) => {
                   const selected = selectedSlot?.start === s.start;
                   return (
-                    <button key={s.start} type="button"
+                    <button key={s.start} type="button" tabIndex={0}
                       data-testid={`slot-option-${s.start}`}
                       disabled={!s.available}
                       onClick={() => setSelectedSlot(s)}
@@ -174,17 +174,17 @@ export function BookAppointmentModal({ careTeam, onLoadSlots, onConfirm, onClose
         )}
 
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: "1.25rem" }}>
-          <button type="button" onClick={onClose} style={btnGhost}>Close</button>
+          <button type="button" tabIndex={0} onClick={onClose} style={btnGhost}>Close</button>
           {step > 1 && (
-            <button type="button" onClick={() => setStep((p) => (p > 1 ? ((p - 1) as 1 | 2 | 3 | 4) : p))} style={btnGhost}>Back</button>
+            <button type="button" tabIndex={0} onClick={() => setStep((p) => (p > 1 ? ((p - 1) as 1 | 2 | 3 | 4) : p))} style={btnGhost}>Back</button>
           )}
           {step < 4 && (
-            <button type="button" disabled={!canNext}
+            <button type="button" tabIndex={0} disabled={!canNext}
               onClick={() => canNext && setStep((p) => (p < 4 ? ((p + 1) as 1 | 2 | 3 | 4) : p))}
               style={btnPrimary(canNext)}>Next</button>
           )}
           {step === 4 && (
-            <button type="button" onClick={confirmBooking} style={btnPrimary(true)}>Confirm</button>
+            <button type="button" tabIndex={0} onClick={confirmBooking} style={btnPrimary(true)}>Confirm</button>
           )}
         </div>
       </div>

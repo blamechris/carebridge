@@ -6,9 +6,9 @@
  * scheduling service exposes cancel + create separately, not a single
  * atomic reschedule — called out as a follow-up in the PR body.
  */
-import React from "react";
+import React, { StrictMode } from "react";
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
-import { render, cleanup, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, cleanup, screen, fireEvent, waitFor, within } from "@testing-library/react";
 
 import {
   AppointmentsPageInner, type AppointmentsPageInnerProps,
@@ -47,7 +47,9 @@ async function walkBookWizard() {
   fireEvent.change(screen.getByLabelText(/date/i), { target: { value: "2026-04-30" } });
   fireEvent.click(await screen.findByTestId("slot-option-2026-04-30T15:00:00.000Z"));
   fireEvent.click(screen.getByRole("button", { name: /next/i }));
-  fireEvent.click(screen.getByRole("button", { name: /confirm/i }));
+  const confirm = screen.getByRole("button", { name: /confirm/i });
+  confirm.focus();
+  fireEvent.click(confirm);
 }
 
 describe("AppointmentsPageInner", () => {
@@ -68,6 +70,139 @@ describe("AppointmentsPageInner", () => {
     vi.useRealTimers();
   });
   afterEach(() => cleanup());
+
+  it("traps focus in the booking wizard and restores it on Escape", () => {
+    render(<StrictMode><AppointmentsPageInner {...props()} /></StrictMode>);
+    const opener = screen.getByRole("button", { name: /book appointment/i });
+    opener.focus();
+    fireEvent.click(opener);
+
+    const dialog = screen.getByRole("dialog", { name: /select provider/i });
+    const first = within(dialog).getByRole("radio", { name: /dr\. smith/i });
+    const last = within(dialog).getByRole("button", { name: /close/i });
+    const disabledNext = within(dialog).getByRole("button", { name: /next/i });
+    expect(disabledNext).toHaveAttribute("tabindex", "0");
+    expect(disabledNext).toBeDisabled();
+
+    expect(document.activeElement).toBe(first);
+    fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(last);
+    fireEvent.keyDown(last, { key: "Tab" });
+    expect(document.activeElement).toBe(first);
+
+    fireEvent.keyDown(first, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it("wraps focus around the provider radio group before and after selection", () => {
+    render(<AppointmentsPageInner {...props({
+      careTeam: [
+        ...careTeam,
+        { provider_id: "prov-example", name: "Dr. Example", specialty: null, role: "secondary" },
+      ],
+    })} />);
+    const opener = screen.getByRole("button", { name: /book appointment/i });
+    opener.focus();
+    fireEvent.click(opener);
+
+    const dialog = screen.getByRole("dialog", { name: /select provider/i });
+    const alternate = within(dialog).getByRole("radio", { name: /dr\. example/i });
+    const close = within(dialog).getByRole("button", { name: /close/i });
+
+    // Native reverse traversal can enter the unchecked group at its last radio.
+    alternate.focus();
+    fireEvent.keyDown(alternate, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(close);
+
+    alternate.focus();
+    fireEvent.click(alternate);
+    const last = within(dialog).getByRole("button", { name: /next/i });
+
+    fireEvent.keyDown(alternate, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(last);
+    fireEvent.keyDown(last, { key: "Tab" });
+    expect(document.activeElement).toBe(alternate);
+  });
+
+  it("recaptures Tab after the focused Next button becomes disabled", () => {
+    render(<AppointmentsPageInner {...props()} />);
+    const opener = screen.getByRole("button", { name: /book appointment/i });
+    opener.focus();
+    fireEvent.click(opener);
+    fireEvent.click(screen.getByRole("radio", { name: /dr\. smith/i }));
+
+    const next = screen.getByRole("button", { name: /next/i });
+    next.focus();
+    fireEvent.click(next);
+    expect(next).toBeDisabled();
+
+    const dialog = screen.getByRole("dialog", { name: /appointment type/i });
+    const [firstType] = within(dialog).getAllByRole("radio");
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Tab" });
+    expect(document.activeElement).toBe(firstType);
+  });
+
+  it("keeps focus across a page rerender and restores it when the reopened wizard closes", () => {
+    const pageProps = props();
+    const { rerender } = render(<AppointmentsPageInner {...pageProps} />);
+    const opener = screen.getByRole("button", { name: /book appointment/i });
+    opener.focus();
+    fireEvent.click(opener);
+    fireEvent.click(screen.getByRole("button", { name: /close/i }));
+
+    opener.focus();
+    fireEvent.click(opener);
+    const closeButton = screen.getByRole("button", { name: /close/i });
+    closeButton.focus();
+
+    // The page can receive a refreshed appointment list while the wizard is open.
+    rerender(<AppointmentsPageInner {...pageProps} appointments={[]} />);
+    expect(document.activeElement).toBe(closeButton);
+
+    fireEvent.click(closeButton);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it.each(["atomic", "legacy"])("keeps focus through the %s reschedule handoff and restores it on close", async (flow) => {
+    render(<AppointmentsPageInner {...props({
+      onReschedule: flow === "atomic" ? vi.fn().mockResolvedValue(undefined) : undefined,
+    })} />);
+    const opener = screen.getByRole("button", { name: /reschedule/i });
+    opener.focus();
+    fireEvent.click(opener);
+
+    const reason = screen.getByLabelText(/reason/i);
+    expect(document.activeElement).toBe(reason);
+    fireEvent.change(reason, { target: { value: "Rescheduling" } });
+    const next = screen.getByRole("button", { name: /continue|confirm cancel/i });
+    next.focus();
+    fireEvent.click(next);
+
+    const dialog = await screen.findByRole("dialog", { name: /select provider/i });
+    const first = within(dialog).getByRole("radio", { name: /dr\. smith/i });
+    expect(document.activeElement).toBe(first);
+    fireEvent.keyDown(first, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it.each([
+    { openerName: "Cancel", heading: "Cancel appointment" },
+    { openerName: "View details", heading: "Appointment details" },
+  ])("keeps $heading keyboard-accessible", ({ openerName, heading }) => {
+    render(<AppointmentsPageInner {...props()} />);
+    const opener = screen.getByRole("button", { name: openerName });
+    opener.focus();
+    fireEvent.click(opener);
+
+    const dialog = screen.getByRole("dialog", { name: heading });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(opener);
+  });
 
   it("cancel flow: invokes onCancel with appointmentId and reason", async () => {
     const onCancel = vi.fn().mockResolvedValue(undefined);
@@ -166,13 +301,15 @@ describe("AppointmentsPageInner", () => {
     expect(onBook).not.toHaveBeenCalled();
   });
 
-  it("atomic reschedule surface failures: conflict on new slot leaves UI in slot picker", async () => {
+  it("keeps focus in the wizard after an atomic reschedule conflict", async () => {
     const onReschedule = vi
       .fn()
       .mockRejectedValue(new Error("New time slot conflicts with an existing appointment"));
     render(<AppointmentsPageInner {...props({ onReschedule })} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /reschedule/i }));
+    const opener = screen.getByRole("button", { name: /reschedule/i });
+    opener.focus();
+    fireEvent.click(opener);
     fireEvent.change(await screen.findByLabelText(/reason/i), { target: { value: "Rescheduling" } });
     fireEvent.click(screen.getByRole("button", { name: /continue/i }));
 
@@ -182,5 +319,11 @@ describe("AppointmentsPageInner", () => {
     await waitFor(() =>
       expect(screen.getByRole("alert").textContent).toMatch(/conflict/i),
     );
+    const confirm = screen.getByRole("button", { name: /confirm/i });
+    expect(document.activeElement).toBe(confirm);
+
+    fireEvent.keyDown(confirm, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(opener);
   });
 });
