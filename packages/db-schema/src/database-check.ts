@@ -46,7 +46,8 @@ async function inspectDatabase(sql: postgres.TransactionSql, expectedRole: strin
   const expected = readExpectedJournal();
   const [identity] = await sql<{ version: number; role_matches: boolean; in_recovery: boolean }[]>`
     select pg_catalog.current_setting('server_version_num')::integer as version,
-           current_user::text collate "C" = ${expectedRole} as role_matches
+           current_user::text collate "C" = ${expectedRole} as role_matches,
+           pg_catalog.pg_is_in_recovery() as in_recovery
   `;
   if (!identity || identity.version < 160000 || identity.version >= 170000) {
     throw new DatabaseError("DB_CHECK_VERSION_MISMATCH");

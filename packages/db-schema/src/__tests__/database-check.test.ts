@@ -49,6 +49,7 @@ test("preflight reads only bound role and schema metadata and closes after succe
   assert.equal(db.closeCount(), 1);
   assert.equal(db.queries.length, 3);
   assert.ok(db.queries.every((query) => query.startsWith("select") && !query.includes(role)));
+  assert.match(db.queries[0], /pg_catalog\.pg_is_in_recovery\(\) as in_recovery/);
   assert.ok(db.queries[1].includes("from drizzle.__drizzle_migrations"));
   assert.ok(db.queries[2].includes("namespace.nspname = 'public'"));
   assert.throws(() => resolveExpectedRole({}), { code: "DB_CHECK_ROLE_REQUIRED" });
