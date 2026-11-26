@@ -176,12 +176,54 @@ describe("RefillPage recipients", () => {
     await waitFor(() => expect(sendMessage).toHaveBeenCalledOnce());
   });
 
+  it("keeps the refill note while a recipient refresh is paused with cached data", async () => {
+    const { rerender } = render(<RefillPage />);
+    const note = screen.getByLabelText("Optional note for your provider");
+    const send = screen.getByRole("button", { name: "Message Provider" });
+    const draft = "I need a refill before my trip.";
+    fireEvent.change(note, { target: { value: draft } });
+    expect(send).toBeEnabled();
+
+    recipientLookup.fetchStatus = "paused";
+    rerender(<RefillPage />);
+    expect(screen.getByRole("status")).toHaveTextContent(/waiting for a connection/i);
+    expect(send).toBeDisabled();
+    fireEvent.click(send);
+    expect(createConversation).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    recipientLookup.fetchStatus = "fetching";
+    rerender(<RefillPage />);
+    expect(screen.getByRole("status")).toHaveTextContent(/loading your care team/i);
+    expect(send).toBeDisabled();
+
+    recipientLookup.fetchStatus = "idle";
+    rerender(<RefillPage />);
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(note).toHaveValue(draft);
+    expect(send).toBeEnabled();
+    expect(createConversation).not.toHaveBeenCalled();
+
+    fireEvent.click(send);
+    expect(createConversation).toHaveBeenCalledExactlyOnceWith({
+      patientId: patient.id,
+      subject: `Refill Request: ${medication.name}`,
+      participantIds: [primary.provider_id],
+    });
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledExactlyOnceWith({
+      conversationId: "conversation-1",
+      body: expect.stringContaining(`Patient Note: ${draft}`),
+      messageType: "refill_request",
+    }));
+  });
+
   it.each([
     { state: "caregivers", user: { role: "family_caregiver" }, isUnlinked: false },
     { state: "unlinked patients", user: patientUser, isUnlinked: true },
   ])("keeps the recipient lookup and refill sending disabled for $state", ({ user, isUnlinked }) => {
     authState.user = user;
     Object.assign(patientRecordState, { patient: isUnlinked ? null : patient, isUnlinked });
+    recipientLookup.fetchStatus = "paused";
     render(<RefillPage />);
 
     expect(listRecipients).toHaveBeenLastCalledWith(undefined, { enabled: false });

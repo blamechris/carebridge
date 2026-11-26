@@ -1,6 +1,6 @@
 import { trpc } from "@/lib/trpc";
 
-export type CareTeamRecipientStatus = "disabled" | "loading" | "error" | "empty" | "ready";
+export type CareTeamRecipientStatus = "disabled" | "paused" | "loading" | "error" | "empty" | "ready";
 
 export function useCareTeamRecipients(enabled: boolean) {
   const query = trpc.messaging.listRecipients.useQuery(undefined, { enabled });
@@ -9,7 +9,9 @@ export function useCareTeamRecipients(enabled: boolean) {
   let status: CareTeamRecipientStatus;
   if (!enabled) {
     status = "disabled";
-  } else if (query.status === "pending" || query.fetchStatus !== "idle") {
+  } else if (query.fetchStatus === "paused") {
+    status = "paused";
+  } else if (query.status === "pending" || query.fetchStatus === "fetching") {
     status = "loading";
   } else if (query.status === "error") {
     status = "error";

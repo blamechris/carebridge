@@ -6,6 +6,14 @@ type Props = {
 };
 
 export function CareTeamRecipientNotice({ status, onRetry }: Props) {
+  if (status === "paused") {
+    return (
+      <p role="status" style={{ color: "#999", fontSize: "0.85rem" }}>
+        Waiting for a connection. Your care team will load automatically when you’re back online.
+      </p>
+    );
+  }
+
   if (status === "loading") {
     return <p role="status" style={{ color: "#999", fontSize: "0.85rem" }}>Loading your care team...</p>;
   }
