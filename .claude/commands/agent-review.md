@@ -47,32 +47,41 @@ The agent reviews against these standards:
 - [ ] tRPC client via `@carebridge/clinician-portal/src/lib/trpc.ts`
 - [ ] No direct database access from frontend
 
+**General:**
+- [ ] Follows project style guide (per CLAUDE.md)
+- [ ] Proper error handling
+- [ ] No obvious security issues (injection, path traversal, credential exposure)
+- [ ] Clean naming and structure
+
 #### Architecture Alignment
 - [ ] Monorepo build order respected: `packages/*` → `services/*` → `apps/*`
 - [ ] All clinical data mutations emit `ClinicalEvent` to Redis queue `clinical-events`
 - [ ] AI oversight worker subscribes to that queue — deterministic rules first, then LLM review
 - [ ] No service imports from another service directly — use tRPC via api-gateway
 - [ ] `packages/db-schema` is the only place that imports `drizzle-orm` and `postgres`
+- [ ] Clinical data: never store or log raw patient PII in non-patient-records contexts
+- [ ] Clinical flags use only the 5 valid statuses: `open`, `acknowledged`, `resolved`, `dismissed`, `escalated`
+- [ ] Rule IDs follow pattern: `DOMAIN-CONDITION-SEQ` (e.g., `ONCO-VTE-NEURO-001`)
+- [ ] All AI-generated content includes rationale + suggested_action
+- [ ] Changes follow established patterns
+- [ ] No breaking changes to existing interfaces/APIs
+- [ ] New patterns documented if introduced
 
 #### Testing
+- [ ] `pnpm typecheck` passes
+- [ ] `pnpm lint` passes
 - [ ] Tests pass
 - [ ] New functionality has test coverage where appropriate
 - [ ] No test regressions
-- [ ] `pnpm typecheck` passes
-- [ ] `pnpm lint` passes
 
 #### Performance
 - [ ] No obvious N-squared loops on collections
 - [ ] No unbounded buffers or memory leaks
 - [ ] Proper cleanup of resources (timers, listeners, processes, connections)
 
-#### Clinical Data Rules
-- [ ] Never store or log raw patient PII in non-patient-records contexts
-- [ ] Clinical flags have 5 valid statuses: `open`, `acknowledged`, `resolved`, `dismissed`, `escalated`
-- [ ] Rule IDs follow pattern: `DOMAIN-CONDITION-SEQ` (e.g., `ONCO-VTE-NEURO-001`)
-- [ ] All AI-generated content includes rationale + suggested_action
-
 ### 3. Generate Review
+
+**Deciding vs escalating.** A finding is not automatically a question for the user. If the code, the git history, the issue thread or the docs answer it, answer it in the review; if the call is cheap and reversible, state it, note the assumption, and move on. Escalate to the user only when the answers lead to materially different work, or the action is irreversible or outward-facing — and when you do, escalate through `/decide` (the `AskUserQuestion` tool, 2-4 concrete options, your recommendation first with its costs named), never as prose buried in the review body. Keep reviewing the rest of the diff while the question is open.
 
 Create a comprehensive review:
 
@@ -116,6 +125,64 @@ How this change fits within the project architecture.
 - [ ] Comment - Feedback only, author decides
 ```
 
+#### Structured result (machine-read)
+
+The reviewer's final report MUST end with a fenced ```` ```json review-result ```` block
+conforming to `review-result.py schema` (#267) — placed **immediately before** the mechanical
+`**Status:**` block, which stays the actual last thing in the message per the global
+end-of-message convention. This block is what makes the verdict and findings queryable across
+runs instead of existing only as prose:
+
+```json review-result
+{
+  "kind": "review-result",
+  "verdict": "approve",
+  "body_matches_tree": true,
+  "findings": [
+    {
+      "severity": "critical",
+      "title": "one line, matches the table row above",
+      "file": "path/to/file.ext",
+      "line": 42,
+      "evidence": "the command output or quoted lines that support this — not a restatement of the title",
+      "mutation_ran": true,
+      "red_line": false
+    }
+  ],
+  "pr": 123,
+  "repo": "owner/repo",
+  "skill": "agent-review",
+  "round": 1
+}
+```
+
+If more than one such block appears in the report (a draft superseded by a final revision),
+the LAST one is what gets recorded — always end with the one that should count.
+
+One line per field:
+- **kind** — always the literal string `"review-result"`; the positive marker that tells this
+  apart from any other verdict/findings-shaped dict (`review-result.py list --near-misses`
+  is what a missing `kind` shows up as).
+- **verdict** — `approve` / `request_changes` / `comment`; matches the checkbox ticked above.
+- **body_matches_tree** — bool or null; see the rule below. Never left `true` by default.
+- **findings** — every row from Critical/Suggestions/Nitpicks above, one object each.
+- **severity** — `critical` / `suggestion` / `nitpick`, matching which table the row came from.
+- **file** / **line** — where the finding lives, or `null` when it doesn't apply.
+- **evidence** — the command output or quoted lines that back the finding.
+- **mutation_ran** — see the rule below.
+- **red_line** — true only for a hard rule violation no severity downgrade can waive (a secret,
+  an attribution miss, a protected-branch bypass); independent of `severity`.
+- **pr** / **repo** / **round** — context; `round` increments on a re-review of the same PR.
+
+Two rules, non-negotiable:
+1. **`mutation_ran` is true only if the reviewer actually RE-RAN the cited check or mutation in
+   this review.** A finding asserted from reading the diff, however confident, is `false` — this
+   field is what lets `review-result.py list` count proven findings separately from asserted ones.
+2. **`body_matches_tree` is true only after comparing the PR body's claims against the diff.** A
+   review that never checked the body (or the PR carries none) reports `null`, never a
+   default-true.
+
+
 ### 4. Post Review on PR
 
 Post review as a PR comment using heredoc:
@@ -140,8 +207,10 @@ ISSUE_URL=$(gh issue create \
   --title "Short descriptive title" \
   --label "enhancement" \
   --label "from-review" \
-  --body "$(cat <<'EOF'
+  --body "$(cat <<EOF
 ## Context
+
+Filed from: #${PR_NUM}
 
 Identified during review of PR #${PR_NUM}.
 
@@ -198,11 +267,26 @@ Then below the table, list:
 - URLs for all created/closed issues
 - Link to posted review comment
 
+**Capture the result.** When this review ran as a subagent (spawned via the Agent tool), the
+orchestrator records its structured result — the agent's full report, including the
+`review-result` block from step 3, fed on stdin — beside the subagent sidecar: `python3
+~/.claude/scripts/review-result.py record --agent <id> --skill agent-review --pr ${PR_NUM}
+<<'EOF' … EOF` (the agent's report between the markers, or `< report.md` if it was saved to a
+file first), where `<id>` is the agent id the Agent tool result reported.
+
+If the orchestrator never runs `record` (the agent's report was only read, not captured),
+`review-result.py harvest` recovers the block from the transcript afterward — see
+`/session-lifecycle`. When this review ran inline rather than as a subagent, there is no
+sidecar to record beside; the block in step 3 still satisfies the `structured-review-result`
+guard on this skill.
+
 ## Agent Persona
 
 **CareBridge Inspector** — expert in TypeScript, Fastify, tRPC, Next.js 15, Drizzle ORM, BullMQ, Zod, healthcare data modeling, event-driven architecture, AI/LLM system design.
 
 Mindset: "Is this type-safe end-to-end? Does it handle clinical data correctly, respect the event-driven architecture, and avoid leaking patient data?"
+
+You are an expert code reviewer with deep knowledge of the project's tech stack. You review with the mindset of reliability, maintainability, and correctness.
 
 ## Review Philosophy
 
@@ -211,4 +295,5 @@ Mindset: "Is this type-safe end-to-end? Does it handle clinical data correctly, 
 3. **Pragmatic over perfect** - Working code first, polish later
 4. **Reliability first** - Always consider error recovery and edge cases
 5. **Keep it simple** - No over-engineering, no premature abstractions
-<!-- skill-templates: agent-review b194666 2026-05-28 -->
+
+<!-- skill-templates: agent-review 81d191b 2026-11-03 -->
