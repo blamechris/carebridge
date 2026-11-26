@@ -928,6 +928,10 @@ tr:hover td {
     overflow-wrap: anywhere;
   }
 
+  .patients-table td::before {
+    flex-shrink: 0;
+  }
+
   .patients-table .table-link {
     display: inline-flex;
     align-items: center;
