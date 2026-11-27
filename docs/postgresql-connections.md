@@ -150,6 +150,10 @@ separate disposable-fixture procedure for distinct runtime/migration identities,
 explicit grants, logical restore and one historical schema transition. Record
 the observed results and remaining gates for each rehearsal before claiming it
 qualified. The scripts apply only to newly created fixture identities and objects.
+The same runbook describes a separate physical PITR rehearsal with replacement
+Redis and recovered synthetic keys, plus the evidence needed to distinguish a
+supported-release upgrade from a historical schema trial. These procedures do
+not change the supported-version policy or declare a deployment supported.
 
 Exact journal checks include historical SQL bytes. Older installations can
 retain hashes from earlier versions of already-applied files, even when their

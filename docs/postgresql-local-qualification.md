@@ -147,3 +147,107 @@ This transition is a rehearsal between two repository schemas. CareBridge's
 [security policy](../SECURITY.md#supported-versions) identifies the main branch
 as supported. A previous-supported-release upgrade and broader historical
 journal reconciliation still require separate baselines and verification.
+
+## Establish a supported-release upgrade baseline
+
+Before calling a trial a supported-release upgrade, inspect the support policy,
+published releases and tags. Record the exact previous release source, its
+lockfile and installed dependency provenance. Use that release's application
+and migration entry points before moving to the candidate. Preserve synthetic
+data without resetting or reseeding it, then verify the candidate's ordinary
+application reads and writes. Running historical migration SQL with current
+dependencies establishes only that particular schema rehearsal.
+
+At the November 26, 2026 qualification baseline, the policy supports `main`
+only, and the published release and tag inventories are empty. There is no
+previous supported release to qualify. An internal checkpoint or arbitrary
+commit does not supply one. Record this result as unavailable, retain the
+historical rehearsal's narrower result, and leave the release-support and
+upgrade policy open. A lockfile matching the current candidate establishes
+current dependency provenance; it cannot establish an absent release baseline.
+
+## Rehearse physical PITR with Redis and key recovery
+
+Use a new disposable cluster and fresh synthetic data for this rehearsal.
+Logical dumps cannot supply the physical base backup required for WAL replay.
+Use the same PostgreSQL major and compatible client tools for backup and
+recovery. Keep backup material, database credentials, TLS material and application
+keys in the private fixture storage, outside the repository. Never print key
+values or include them in command arguments or retained logs.
+
+1. Start the ordinary source application with the fixture role profile and
+   verified TLS. Enable continuous WAL archiving in this owned fixture before
+   taking its physical base backup. Use an archive command that refuses to
+   overwrite an existing segment. Record the cluster system identifier,
+   PostgreSQL patch and archive status. Use the fixture bootstrap administrator
+   for `pg_basebackup`; runtime and migration grants stay unchanged.
+2. Take a physical `pg_basebackup` with a backup manifest and the WAL required
+   to make it consistent. Verify it with `pg_verifybackup`. After backup
+   completion, use the real portals to create and sign a synthetic note and
+   book an appointment. This ensures recovery must replay changes newer than
+   the base backup. Verify the note's history and applicable ordinary effects.
+3. Stop all application writers and queue workers, including the gateway's
+   background work. Capture table fingerprints, the complete journal and
+   sequences, ownership and grants, the signed note/history, keyed lookup and
+   delayed reminder records. Create a uniquely named PostgreSQL restore point.
+   Switch WAL and wait until the archive contains the segment holding that
+   point, without archiver failures. The named point defines the recovery
+   boundary; wall-clock timings alone do not prove it.
+4. With writers stopped, take a Redis RDB snapshot and an independent backup
+   of all synthetic application keys needed for this fixture. Record backup
+   integrity without recording secret values. Resume only the source gateway
+   and portals long enough to create a distinct later note through the UI.
+   Stop them and verify that this write exists on the source after the chosen
+   boundary. Switch WAL again, archive through this later write and include
+   that WAL in the recovery inputs. Its exclusion after replay can then prove
+   the named target stopped recovery despite later WAL being available. Do not
+   advance the saved Redis or key backup to this later state.
+5. Copy the base backup, required WAL and RDB to independent private storage.
+   Remove the owned source PostgreSQL and Redis containers and their original
+   data volumes. Restore into fresh owned containers. Configure PostgreSQL's
+   `restore_command`, `recovery_target_name` and target action with a
+   `recovery.signal` file. Require its recovery log to identify the named point
+   and completion of recovery. Remove the copied active WAL before replay only
+   as prescribed by the PostgreSQL recovery procedure; preserve the archived
+   WAL and backup manifest used for verification.
+6. Restore the RDB before Redis starts. Use a clean data directory, the intended
+   `dir` and `dbfilename`, and explicit `appendonly no`; an enabled AOF takes
+   precedence over an RDB. Verify the startup log reports loading the RDB.
+   Discard the active synthetic application
+   key values and reload them from the independent backup. Compare the saved
+   and recovered key fingerprints, then verify decryption and keyed lookup
+   through the actual application libraries. This exercises retrieval of
+   existing keys; it does not qualify rotation or a remote key manager.
+7. Before restarting any application writer, require the recovered table,
+   journal, sequence and owner/grant snapshots to match the target. Require the
+   target note to exist and the later note to be absent. Verify Redis reminder
+   records against the frozen snapshot before workers can mutate them. Run
+   `pnpm db:check` using the runtime identity and verify both connection
+   factories' identities and TLS on the recovered primary.
+8. Resume only the recovered application. In the real portals, read the
+   original signed note and history, verify the appointment, create and sign a
+   fresh note, and book another appointment. Independently verify that the new
+   signed note postdates recovery readiness. Correlate the ordinary successful
+   `notes.sign` audit by signer and time. If its resource ID is empty, record
+   this temporal association explicitly. Observe each portal's session behavior
+   before signing in again; report a required fresh login
+   separately from successful data recovery. Record queue/outbox outcomes,
+   terminal review states and any external processing omitted from the trial.
+9. Stop and remove only this run's owned processes, containers and volumes.
+   Delete private backups, RDB, keys and TLS working material after retaining
+   redacted results and integrity evidence. Verify no owned listener or private
+   payload remains. Preserve failed phases and their diagnostics alongside any
+   corrected run; an incomplete run is not successful qualification.
+
+This procedure checks one coordinated, quiesced synthetic recovery boundary.
+It does not establish consistency between independently timed live backups,
+arbitrary queue replay, provider failover, backup retention or customer RPO/RTO.
+Report base-backup, target capture, replay, application readiness and observed
+workflow durations separately. Include human interaction in elapsed timings
+when it falls inside a measured interval. Local key-file retrieval does not
+qualify key custody, offsite recovery, revocation or rotation.
+
+References: [PostgreSQL 16 continuous archiving and PITR](https://www.postgresql.org/docs/16/continuous-archiving.html),
+[pg_basebackup](https://www.postgresql.org/docs/16/app-pgbasebackup.html),
+[pg_verifybackup](https://www.postgresql.org/docs/16/app-pgverifybackup.html),
+and [Redis persistence](https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/).
