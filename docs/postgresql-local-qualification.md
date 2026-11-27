@@ -16,7 +16,10 @@ and environment contract in [PostgreSQL connections](postgresql-connections.md).
    characters. The cluster bootstrap login must be the prefix plus `_admin`.
    Run [role provisioning](../tooling/qualification/pg16-fixture-roles.sql)
    against `postgres` as that login. Supply `CBQ_MIGRATOR_PASSWORD` and
-   `CBQ_RUNTIME_PASSWORD` in that short-lived child environment.
+   `CBQ_RUNTIME_PASSWORD` in that short-lived child environment. Set the libpq
+   inputs `PGHOST`, `PGPORT`, `PGDATABASE=postgres` and `PGUSER` to this fixture
+   and its bootstrap login. Supply its password through the child environment,
+   with `PGSSLMODE=verify-full` and `PGSSLROOTCERT` pointing to the fixture CA.
 
    ```sh
    psql -X -q -v ON_ERROR_STOP=1 -v fixture_prefix="$CBQ_PREFIX" \
@@ -38,11 +41,15 @@ and environment contract in [PostgreSQL connections](postgresql-connections.md).
    the migrator on that database using the same `psql` flags and prefix. Require
    `CBQ_GRANTS_OK`. The grants require a matching database, database owner and
    restricted roles. Review the explicit table list again when a migration adds
-   objects. PostgreSQL preserves the original owner on existing tables.
+   objects. PostgreSQL preserves the original owner on existing tables. For the
+   grant and catalog commands, select the corresponding fixture database and
+   login in the libpq inputs while retaining verified TLS.
 5. Seed the source fixture once in a separate bootstrap process. The bundled
    `pnpm db:seed` uses its own client and reads `DATABASE_URL`. Use only the
-   intended fixture database and keys for that command. Save the migrator's
-   connection input for migration and backup operations.
+   intended fixture database and keys for that command. Its direct Postgres.js
+   client uses a URL with `sslmode=verify-full` and `NODE_EXTRA_CA_CERTS` pointing
+   to the fixture CA; the managed factory settings do not configure this client.
+   Save the migrator's connection input for migration and backup operations.
 6. In an isolated runtime environment, set `DATABASE_URL` and
    `DATABASE_EXPECTED_ROLE` for the runtime login, omit migration settings, and
    run `pnpm db:check`. Require `DB_CHECK_OK`. Start the application processes
