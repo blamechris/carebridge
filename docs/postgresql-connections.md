@@ -141,9 +141,15 @@ establish any of these integration results.
 
 A fixture initialized with only the container's bootstrap identity cannot qualify
 distinct runtime/migrator identities or least privilege. Separate names and
-process environments establish routing/isolation only. This increment changes no
-roles, memberships, schema grants or access policies. Identity qualification waits
-for separately supplied preprovisioned roles; no superuser result discharges it.
+process environments establish routing/isolation only. The connection foundation changes no
+roles, memberships, schema grants or access policies. Its identity qualification
+requires separately provisioned roles; no superuser result discharges it.
+
+The [local qualification runbook](postgresql-local-qualification.md) adds a
+separate disposable-fixture procedure for distinct runtime/migration identities,
+explicit grants, logical restore and one historical schema transition. Record
+the observed results and remaining gates for each rehearsal before claiming it
+qualified. The scripts apply only to newly created fixture identities and objects.
 
 Exact journal checks include historical SQL bytes. Older installations can
 retain hashes from earlier versions of already-applied files, even when their
